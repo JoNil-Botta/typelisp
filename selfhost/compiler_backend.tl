@@ -9806,10 +9806,20 @@
                 provides-print-f64))
             (or
               (backend-or8
-                (compiler-backend-provides-runtime-name?
-                  name
-                  "tl_process_output"
-                  provides-process-output)
+                (or
+                  (compiler-backend-provides-runtime-name?
+                    name
+                    "tl_process_output"
+                    provides-process-output)
+                  (or
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_process_start"
+                      provides-process-output)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_process_wait"
+                      provides-process-output)))
                 (compiler-backend-provides-runtime-name?
                   name
                   ".L_tl_read_file_status"
@@ -10005,6 +10015,10 @@
       (compiler-backend-function-list-defines? functions "tl_region_reset")]
     [defines-process-output : bool
       (compiler-backend-function-list-defines? functions "tl_process_output")]
+    [defines-process-start : bool
+      (compiler-backend-function-list-defines? functions "tl_process_start")]
+    [defines-process-wait : bool
+      (compiler-backend-function-list-defines? functions "tl_process_wait")]
     [defines-random-system-seed : bool
       (compiler-backend-function-list-defines?
         functions
@@ -10227,6 +10241,10 @@
         "tl_flush_stdout")]
     [extern-process-output : bool
       (compiler-backend-extern-list-references? externs "tl_process_output")]
+    [extern-process-start : bool
+      (compiler-backend-extern-list-references? externs "tl_process_start")]
+    [extern-process-wait : bool
+      (compiler-backend-extern-list-references? externs "tl_process_wait")]
     [extern-region-mark : bool
       (compiler-backend-extern-list-references? externs "tl_region_mark")]
     [extern-region-reset : bool
@@ -10387,6 +10405,10 @@
       (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")]
     [calls-process-output : bool
       (compiler-backend-function-list-calls? functions "tl_process_output")]
+    [calls-process-start : bool
+      (compiler-backend-function-list-calls? functions "tl_process_start")]
+    [calls-process-wait : bool
+      (compiler-backend-function-list-calls? functions "tl_process_wait")]
     [calls-region-mark : bool
       (compiler-backend-function-list-calls? functions "tl_region_mark")]
     [calls-region-reset : bool
@@ -10520,9 +10542,17 @@
     [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
     [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
     [needs-process-output : bool
-      (and
-        (not defines-process-output)
-        (or extern-process-output calls-process-output))]
+      (or
+        (and
+          (not defines-process-output)
+          (or extern-process-output calls-process-output))
+        (or
+          (and
+            (not defines-process-start)
+            (or extern-process-start calls-process-start))
+          (and
+            (not defines-process-wait)
+            (or extern-process-wait calls-process-wait))))]
     [needs-region-mark : bool
       (and (not defines-region-mark) (or extern-region-mark calls-region-mark))]
     [needs-region-reset : bool
@@ -10894,6 +10924,9 @@ tl_profile_alloc_peak_bytes:
 .L_tl_process_unsupported_msg:
     .ascii \"process: runtime execution is not supported on this target\"
     .set .L_tl_process_unsupported_msg_len, . - .L_tl_process_unsupported_msg
+.L_tl_process_async_unsupported_msg:
+    .ascii \"process: async child handles are not supported by this runtime\"
+    .set .L_tl_process_async_unsupported_msg_len, . - .L_tl_process_async_unsupported_msg
 .L_tl_process_spawn_msg:
     .ascii \"process: spawn failed\"
     .set .L_tl_process_spawn_msg_len, . - .L_tl_process_spawn_msg
@@ -15696,7 +15729,31 @@ tl_string_concat:
 ")
 
 (define (compiler-backend-runtime-windows-process-output-functions) : String
-  "tl_process_output:
+  "tl_process_start:
+    push %rbp
+    mov %rsp, %rbp
+    movq $3, %rcx
+    leaq .L_tl_process_async_unsupported_msg(%rip), %rdx
+    movq $.L_tl_process_async_unsupported_msg_len, %r8
+    sub $32, %rsp
+    call .L_tl_process_error_result
+    add $32, %rsp
+    pop %rbp
+    ret
+
+tl_process_wait:
+    push %rbp
+    mov %rsp, %rbp
+    movq $3, %rcx
+    leaq .L_tl_process_async_unsupported_msg(%rip), %rdx
+    movq $.L_tl_process_async_unsupported_msg_len, %r8
+    sub $32, %rsp
+    call .L_tl_process_error_result
+    add $32, %rsp
+    pop %rbp
+    ret
+
+tl_process_output:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -16516,7 +16573,29 @@ tl_string_concat:
 ")
 
 (define (compiler-backend-runtime-process-output-functions) : String
-  "tl_process_output:
+  "tl_process_start:
+    push %rbp
+    movq %rsp, %rbp
+    leaq .L_tl_process_async_unsupported_msg(%rip), %rdi
+    movq $.L_tl_process_async_unsupported_msg_len, %rsi
+    movq $3, %rdx
+    call .L_tl_process_make_error
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+tl_process_wait:
+    push %rbp
+    movq %rsp, %rbp
+    leaq .L_tl_process_async_unsupported_msg(%rip), %rdi
+    movq $.L_tl_process_async_unsupported_msg_len, %rsi
+    movq $3, %rdx
+    call .L_tl_process_make_error
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+tl_process_output:
     push %rbp
     movq %rsp, %rbp
     push %rbx

@@ -4365,6 +4365,39 @@
   "(defmacro (again) : Expr `(again))
 (define (main) : i64 (again))")
 
+(define (compiler-typecheck-macro-export-source) : String
+  "(module bool)
+(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(export (macro and2))
+(module main)
+(import \"bool.tl\" module bool :as b)
+(define (main) : i64
+  (if (b/and2 true true) 42 0))")
+
+(define (compiler-typecheck-macro-private-source) : String
+  "(module hidden)
+(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(module main)
+(import \"hidden.tl\" module hidden :as hidden)
+(define (main) : i64
+  (if (hidden/private-and true true) 0 1))")
+
+(define (compiler-typecheck-macro-missing-export-source) : String
+  "(module hidden)
+(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(module main)
+(import \"hidden.tl\" module hidden :as hidden)
+(define (main) : i64
+  (if (hidden/missing true true) 0 1))")
+
+(define (compiler-typecheck-macro-late-local-source) : String
+  "(define eager : bool (late true))
+(defmacro (late [value : bool]) : bool value)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-macro-hygiene-capture-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
   `(let ([tmp : i64 1])
@@ -4407,6 +4440,21 @@
   `(danger ,x))
 (define (main) : i64 (call-danger 1))")
 
+(define (compiler-typecheck-macro-export-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-macro-private-source)
+        "typecheck: private macro hidden/private-and")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-macro-missing-export-source)
+          "typecheck: missing macro export hidden/missing")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-macro-late-local-source)
+          "typecheck: local macro late is defined later")))))
+
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.
 (define (compiler-typecheck-macro-expand-tests-ok?) : bool
@@ -4429,19 +4477,22 @@
               (compiler-typecheck-macro-expand-depth-source)
               "macro expansion exceeded depth limit")))))
     (and
-      (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-capture-source))
+      (compiler-typecheck-macro-export-tests-ok?)
       (and
         (compiler-typecheck-ok?
-          (compiler-typecheck-macro-hygiene-definition-source))
+          (compiler-typecheck-macro-hygiene-capture-source))
         (and
           (compiler-typecheck-ok?
-            (compiler-typecheck-macro-hygiene-nested-source))
+            (compiler-typecheck-macro-hygiene-definition-source))
           (and
             (compiler-typecheck-ok?
-              (compiler-typecheck-macro-hygiene-splice-source))
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-macro-hygiene-unsafe-global-source)
-              "typecheck: danger requires unsafe context")))))))
+              (compiler-typecheck-macro-hygiene-nested-source))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-macro-hygiene-splice-source))
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-macro-hygiene-unsafe-global-source)
+                "typecheck: danger requires unsafe context"))))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

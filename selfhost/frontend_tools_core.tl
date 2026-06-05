@@ -511,14 +511,17 @@
 
 (define (front-resource-binding-render [binding : AstResourceBinding]) : String
   (match binding
-    [(AstResourceBinding name init cleanup)
-      (front-cat3
-        "ResourceBinding { name: \""
-        name
+    [(AstResourceBinding name init-box cleanup-box)
+      (let
+        [init : AstExpr (box-get init-box)]
+        [cleanup : AstExpr (box-get cleanup-box)]
         (front-cat3
-          "\", init: "
-          (front-expr-render init)
-          (front-cat3 ", cleanup: " (front-expr-render cleanup) " }")))]))
+          "ResourceBinding { name: \""
+          name
+          (front-cat3
+            "\", init: "
+            (front-expr-render init)
+            (front-cat3 ", cleanup: " (front-expr-render cleanup) " }"))))]))
 
 (define (front-resource-binding-list-render [bindings : AstResourceBindingList]) : String
   (match bindings
@@ -534,132 +537,167 @@
 
 (define (front-expr-render [expr : AstExpr]) : String
   (match (ast-expr-unspan expr)
-    [(AstExprSpanned inner _) (front-expr-render inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-expr-render inner))]
     [(AstExprLiteral lit) (front-literal-render lit)]
     [(AstExprVar name) (front-cat3 "Var(\"" name "\")")]
-    [(AstExprBinary op lhs rhs)
-      (front-cat3
-        "Binary { op: "
-        (front-binop-render op)
+    [(AstExprBinary op lhs-box rhs-box)
+      (let
+        [lhs : AstExpr (box-get lhs-box)]
+        [rhs : AstExpr (box-get rhs-box)]
         (front-cat3
-          ", lhs: "
-          (front-expr-render lhs)
-          (front-cat3 ", rhs: " (front-expr-render rhs) " }")))]
-    [(AstExprUnary op inner)
-      (front-cat3
-        "Unary { op: "
-        (front-unop-render op)
-        (front-cat3 ", expr: " (front-expr-render inner) " }"))]
-    [(AstExprCall func args)
-      (front-cat3
-        "Call { func: "
-        (front-expr-render func)
-        (front-cat3 ", args: [" (front-expr-list-render args) "] }"))]
-    [(AstExprIf cond then-branch else-branch)
-      (front-cat3
-        "If { cond: "
-        (front-expr-render cond)
+          "Binary { op: "
+          (front-binop-render op)
+          (front-cat3
+            ", lhs: "
+            (front-expr-render lhs)
+            (front-cat3 ", rhs: " (front-expr-render rhs) " }"))))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
         (front-cat3
-          ", then: "
-          (front-expr-render then-branch)
-          (front-cat3 ", else: " (front-expr-render else-branch) " }")))]
-    [(AstExprLet _ body)
-      (front-cat3 "Let { body: " (front-expr-render body) " }")]
-    [(AstExprLambda _ _ body)
-      (front-cat3 "Lambda { body: " (front-expr-render body) " }")]
+          "Unary { op: "
+          (front-unop-render op)
+          (front-cat3 ", expr: " (front-expr-render inner) " }")))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (front-cat3
+          "Call { func: "
+          (front-expr-render func)
+          (front-cat3 ", args: [" (front-expr-list-render args) "] }")))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (front-cat3
+          "If { cond: "
+          (front-expr-render cond)
+          (front-cat3
+            ", then: "
+            (front-expr-render then-branch)
+            (front-cat3 ", else: " (front-expr-render else-branch) " }"))))]
+    [(AstExprLet _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (front-cat3 "Let { body: " (front-expr-render body) " }"))]
+    [(AstExprLambda _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (front-cat3 "Lambda { body: " (front-expr-render body) " }"))]
     [(AstExprTuple elems)
       (front-cat3 "Tuple([" (front-expr-list-render elems) "])")]
-    [(AstExprTupleRef inner index)
-      (front-cat3
-        "TupleRef { expr: "
-        (front-expr-render inner)
-        (front-cat3 ", index: " (int->string index) " }"))]
+    [(AstExprTupleRef inner-box index)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3
+          "TupleRef { expr: "
+          (front-expr-render inner)
+          (front-cat3 ", index: " (int->string index) " }")))]
     [(AstExprArray elems)
       (front-cat3 "Array([" (front-expr-list-render elems) "])")]
-    [(AstExprMakeArray elem-ty len)
-      (front-cat3
-        "MakeArray { elem_ty: "
-        (front-type-render elem-ty)
-        (front-cat3 ", len: " (front-expr-render len) " }"))]
-    [(AstExprArrayRef arr index)
-      (front-cat3
-        "ArrayRef { expr: "
-        (front-expr-render arr)
-        (front-cat3 ", index: " (front-expr-render index) " }"))]
-    [(AstExprArraySet arr index value)
-      (front-cat3
-        "ArraySet { expr: "
-        (front-expr-render arr)
+    [(AstExprMakeArray elem-ty len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
         (front-cat3
-          ", index: "
-          (front-expr-render index)
+          "MakeArray { elem_ty: "
+          (front-type-render elem-ty)
+          (front-cat3 ", len: " (front-expr-render len) " }")))]
+    [(AstExprArrayRef arr-box index-box)
+      (let
+        [arr : AstExpr (box-get arr-box)]
+        [index : AstExpr (box-get index-box)]
+        (front-cat3
+          "ArrayRef { expr: "
+          (front-expr-render arr)
+          (front-cat3 ", index: " (front-expr-render index) " }")))]
+    [(AstExprArraySet arr-box index-box value-box)
+      (let
+        [arr : AstExpr (box-get arr-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (front-cat3
+          "ArraySet { expr: "
+          (front-expr-render arr)
+          (front-cat3
+            ", index: "
+            (front-expr-render index)
+            (front-cat3 ", value: " (front-expr-render value) " }"))))]
+    [(AstExprArrayPush arr-box value-box)
+      (let
+        [arr : AstExpr (box-get arr-box)]
+        [value : AstExpr (box-get value-box)]
+        (front-cat3
+          "ArrayPush { expr: "
+          (front-expr-render arr)
           (front-cat3 ", value: " (front-expr-render value) " }")))]
-    [(AstExprArrayPush arr value)
-      (front-cat3
-        "ArrayPush { expr: "
-        (front-expr-render arr)
-        (front-cat3 ", value: " (front-expr-render value) " }"))]
-    [(AstExprStringRef text index)
-      (front-cat3
-        "StringRef { expr: "
-        (front-expr-render text)
-        (front-cat3 ", index: " (front-expr-render index) " }"))]
-    [(AstExprWhile cond body)
-      (front-cat3
-        "While { cond: "
-        (front-expr-render cond)
-        (front-cat3 ", body: " (front-expr-render body) " }"))]
+    [(AstExprStringRef text-box index-box)
+      (let
+        [text : AstExpr (box-get text-box)]
+        [index : AstExpr (box-get index-box)]
+        (front-cat3
+          "StringRef { expr: "
+          (front-expr-render text)
+          (front-cat3 ", index: " (front-expr-render index) " }")))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (front-cat3
+          "While { cond: "
+          (front-expr-render cond)
+          (front-cat3 ", body: " (front-expr-render body) " }")))]
     [(AstExprBegin exprs)
       (front-cat3 "Begin([" (front-expr-list-render exprs) "])")]
     [(AstExprUnsafe exprs)
       (front-cat3 "Unsafe([" (front-expr-list-render exprs) "])")]
-    [(AstExprSet name value)
-      (front-cat3
-        "Set(\""
-        name
-        (front-cat3 "\", " (front-expr-render value) ")"))]
-    [(AstExprAnn inner ty)
-      (front-cat3
-        "Ann { expr: "
-        (front-expr-render inner)
-        (front-cat3 ", ty: " (front-type-render ty) " }"))]
-    [(AstExprCast inner ty)
-      (front-cat3
-        "Cast { expr: "
-        (front-expr-render inner)
-        (front-cat3 ", ty: " (front-type-render ty) " }"))]
-    [(AstExprBorrow lifetime place)
-      (front-cat3
-        "Borrow { lifetime: "
-        (match lifetime
-          [(AstBorrowLifetimeInferred) "Infer"]
-          [(AstBorrowLifetimeNamed name) (front-cat3 "\"" name "\"")])
-        (front-cat3 ", place: " (front-expr-render place) " }"))]
-    [(AstExprMatch scrutinee _)
-      (front-cat3 "Match { scrutinee: " (front-expr-render scrutinee) " }")]
-    [(AstExprForeach name index-ty start end body)
-      (front-cat3
-        "Foreach { index: "
-        name
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
         (front-cat3
-          ", index_ty: "
-          (front-type-render index-ty)
-          (front-cat3
-            ", start: "
-            (front-expr-render start)
-            (front-cat3
-              ", end: "
-              (front-expr-render end)
-              (front-cat3 ", body: " (front-expr-render body) " }")))))]
-    [(AstExprSpmdReduce op name index-ty start end init value)
-      (front-cat3
-        "SpmdReduce { op: "
-        (front-reduce-op-render op)
+          "Set(\""
+          name
+          (front-cat3 "\", " (front-expr-render value) ")")))]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
         (front-cat3
-          ", index: \""
+          "Ann { expr: "
+          (front-expr-render inner)
+          (front-cat3 ", ty: " (front-type-render ty) " }")))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3
+          "Cast { expr: "
+          (front-expr-render inner)
+          (front-cat3 ", ty: " (front-type-render ty) " }")))]
+    [(AstExprBorrow lifetime place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (front-cat3
+          "Borrow { lifetime: "
+          (match lifetime
+            [(AstBorrowLifetimeInferred) "Infer"]
+            [(AstBorrowLifetimeNamed name) (front-cat3 "\"" name "\"")])
+          (front-cat3 ", place: " (front-expr-render place) " }")))]
+    [(AstExprMatch scrutinee-box _)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (front-cat3 "Match { scrutinee: " (front-expr-render scrutinee) " }"))]
+    [(AstExprForeach name index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (front-cat3
+          "Foreach { index: "
           name
           (front-cat3
-            "\", index_ty: "
+            ", index_ty: "
             (front-type-render index-ty)
             (front-cat3
               ", start: "
@@ -667,112 +705,193 @@
               (front-cat3
                 ", end: "
                 (front-expr-render end)
+                (front-cat3 ", body: " (front-expr-render body) " }"))))))]
+    [(AstExprSpmdReduce op name index-ty start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (front-cat3
+          "SpmdReduce { op: "
+          (front-reduce-op-render op)
+          (front-cat3
+            ", index: \""
+            name
+            (front-cat3
+              "\", index_ty: "
+              (front-type-render index-ty)
+              (front-cat3
+                ", start: "
+                (front-expr-render start)
                 (front-cat3
-                  ", init: "
-                  (front-expr-render init)
-                  (front-cat3 ", value: " (front-expr-render value) " }")))))))]
-    [(AstExprStructGet inner field)
-      (front-cat3
-        "StructGet { expr: "
-        (front-expr-render inner)
-        (front-cat3 ", field: \"" field "\" }"))]
+                  ", end: "
+                  (front-expr-render end)
+                  (front-cat3
+                    ", init: "
+                    (front-expr-render init)
+                    (front-cat3 ", value: " (front-expr-render value) " }"))))))))]
+    [(AstExprStructGet inner-box field)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3
+          "StructGet { expr: "
+          (front-expr-render inner)
+          (front-cat3 ", field: \"" field "\" }")))]
     [(AstExprWithRegion region body)
       (front-cat3
         "WithRegion { region: \""
         region
         (front-cat3 "\", body: [" (front-expr-list-render body) "] }"))]
-    [(AstExprWithEscape scratch body)
-      (front-cat3
-        "WithEscape { arena: "
-        (front-expr-render scratch)
-        (front-cat3 ", body: [" (front-expr-list-render body) "] }"))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (front-cat3
+          "WithEscape { arena: "
+          (front-expr-render scratch)
+          (front-cat3 ", body: [" (front-expr-list-render body) "] }")))]
     [(AstExprWithResource bindings body)
       (front-cat3
         "WithResource { bindings: ["
         (front-resource-binding-list-render bindings)
         (front-cat3 "], body: [" (front-expr-list-render body) "] }"))]
-    [(AstExprBox inner)
-      (front-cat3 "Box { expr: " (front-expr-render inner) " }")]
-    [(AstExprBoxGet inner)
-      (front-cat3 "BoxGet { expr: " (front-expr-render inner) " }")]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Box { expr: " (front-expr-render inner) " }"))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "BoxGet { expr: " (front-expr-render inner) " }"))]
     [(AstExprTypeLiteral ty)
       (front-cat3 "TypeLiteral { ty: " (front-type-render ty) " }")]
-    [(AstExprComptime inner)
-      (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]
-    [(AstExprQuote inner)
-      (front-cat3 "Quote { expr: " (front-expr-render inner) " }")]
-    [(AstExprQuasiquote inner)
-      (front-cat3 "Quasiquote { expr: " (front-expr-render inner) " }")]
-    [(AstExprUnquote inner)
-      (front-cat3 "Unquote { expr: " (front-expr-render inner) " }")]
-    [(AstExprUnquoteSplicing inner)
-      (front-cat3 "UnquoteSplicing { expr: " (front-expr-render inner) " }")]
-    [(AstExprTry inner)
-      (front-cat3 "Try { expr: " (front-expr-render inner) " }")]
-    [(AstExprReturn inner)
-      (front-cat3 "Return { expr: " (front-expr-render inner) " }")]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Comptime { expr: " (front-expr-render inner) " }"))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Quote { expr: " (front-expr-render inner) " }"))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Quasiquote { expr: " (front-expr-render inner) " }"))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Unquote { expr: " (front-expr-render inner) " }"))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "UnquoteSplicing { expr: " (front-expr-render inner) " }"))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Try { expr: " (front-expr-render inner) " }"))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "Return { expr: " (front-expr-render inner) " }"))]
     [(AstExprPtrNull ty)
       (front-cat3 "PtrNull { ty: " (front-type-render ty) " }")]
-    [(AstExprPtrNullCheck inner)
-      (front-cat3 "PtrNullCheck { expr: " (front-expr-render inner) " }")]
-    [(AstExprPtrRead ptr)
-      (front-cat3 "PtrRead { ptr: " (front-expr-render ptr) " }")]
-    [(AstExprPtrWrite ptr value)
-      (front-cat3
-        "PtrWrite { ptr: "
-        (front-expr-render ptr)
-        (front-cat3 ", value: " (front-expr-render value) " }"))]
-    [(AstExprPtrOffset ptr offset)
-      (front-cat3
-        "PtrOffset { ptr: "
-        (front-expr-render ptr)
-        (front-cat3 ", offset: " (front-expr-render offset) " }"))]
-    [(AstExprPtrCast ptr ty)
-      (front-cat3
-        "PtrCast { ptr: "
-        (front-expr-render ptr)
-        (front-cat3 ", ty: " (front-type-render ty) " }"))]
-    [(AstExprPtrToInt ptr)
-      (front-cat3 "PtrToInt { ptr: " (front-expr-render ptr) " }")]
-    [(AstExprIntToPtr value ty)
-      (front-cat3
-        "IntToPtr { value: "
-        (front-expr-render value)
-        (front-cat3 ", ty: " (front-type-render ty) " }"))]
-    [(AstExprStringData inner)
-      (front-cat3 "StringData { expr: " (front-expr-render inner) " }")]
-    [(AstExprStringFromBytes ptr len)
-      (front-cat3
-        "StringFromBytes { ptr: "
-        (front-expr-render ptr)
-        (front-cat3 ", len: " (front-expr-render len) " }"))]
-    [(AstExprArrayData inner)
-      (front-cat3 "ArrayData { expr: " (front-expr-render inner) " }")]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "PtrNullCheck { expr: " (front-expr-render inner) " }"))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (front-cat3 "PtrRead { ptr: " (front-expr-render ptr) " }"))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (front-cat3
+          "PtrWrite { ptr: "
+          (front-expr-render ptr)
+          (front-cat3 ", value: " (front-expr-render value) " }")))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (front-cat3
+          "PtrOffset { ptr: "
+          (front-expr-render ptr)
+          (front-cat3 ", offset: " (front-expr-render offset) " }")))]
+    [(AstExprPtrCast ptr-box ty)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (front-cat3
+          "PtrCast { ptr: "
+          (front-expr-render ptr)
+          (front-cat3 ", ty: " (front-type-render ty) " }")))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (front-cat3 "PtrToInt { ptr: " (front-expr-render ptr) " }"))]
+    [(AstExprIntToPtr value-box ty)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (front-cat3
+          "IntToPtr { value: "
+          (front-expr-render value)
+          (front-cat3 ", ty: " (front-type-render ty) " }")))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "StringData { expr: " (front-expr-render inner) " }"))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (front-cat3
+          "StringFromBytes { ptr: "
+          (front-expr-render ptr)
+          (front-cat3 ", len: " (front-expr-render len) " }")))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (front-cat3 "ArrayData { expr: " (front-expr-render inner) " }"))]
     [(AstExprProgramArgc) "ProgramArgc"]
     [(AstExprProgramArgv) "ProgramArgv"]
     [(AstExprProgramEnvp) "ProgramEnvp"]
-    [(AstExprCpuIdEax leaf subleaf)
-      (front-cat3
-        "CpuIdEax { leaf: "
-        (front-expr-render leaf)
-        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (front-cat3
-        "CpuIdEbx { leaf: "
-        (front-expr-render leaf)
-        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (front-cat3
-        "CpuIdEcx { leaf: "
-        (front-expr-render leaf)
-        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (front-cat3
-        "CpuIdEdx { leaf: "
-        (front-expr-render leaf)
-        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
-    [(AstExprXgetbv index)
-      (front-cat3 "Xgetbv { index: " (front-expr-render index) " }")]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (front-cat3
+          "CpuIdEax { leaf: "
+          (front-expr-render leaf)
+          (front-cat3 ", subleaf: " (front-expr-render subleaf) " }")))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (front-cat3
+          "CpuIdEbx { leaf: "
+          (front-expr-render leaf)
+          (front-cat3 ", subleaf: " (front-expr-render subleaf) " }")))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (front-cat3
+          "CpuIdEcx { leaf: "
+          (front-expr-render leaf)
+          (front-cat3 ", subleaf: " (front-expr-render subleaf) " }")))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (front-cat3
+          "CpuIdEdx { leaf: "
+          (front-expr-render leaf)
+          (front-cat3 ", subleaf: " (front-expr-render subleaf) " }")))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (front-cat3 "Xgetbv { index: " (front-expr-render index) " }"))]))
 
 (define (front-maybe-module-render [name : AstMaybeModuleName]) : String
   (match name

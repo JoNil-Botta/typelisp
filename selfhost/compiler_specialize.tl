@@ -12,26 +12,47 @@
 
 (defenum SpecTemplateList
   (SpecTemplateNil)
-  (SpecTemplateCons SpecTemplate SpecTemplateList))
+  (SpecTemplateCons SpecTemplate (Box SpecTemplateList)))
 
 (defenum SpecCache
   (SpecCacheNil)
-  (SpecCacheCons String String SpecCache))
+  (SpecCacheCons String String (Box SpecCache)))
 
 (defenum SpecState
   (SpecState AstDeclList SpecCache CtfeEnv))
 
 (defenum SpecValueList
   (SpecValueNil)
-  (SpecValueCons CompilerCtfeValue SpecValueList))
+  (SpecValueCons CompilerCtfeValue (Box SpecValueList)))
 
 (defenum SpecValueSubst
   (SpecValueSubstNil)
-  (SpecValueSubstCons String CompilerCtfeValue SpecValueSubst))
+  (SpecValueSubstCons String CompilerCtfeValue (Box SpecValueSubst)))
 
 (defenum SpecTypeSubst
   (SpecTypeSubstNil)
-  (SpecTypeSubstCons String AstType SpecTypeSubst))
+  (SpecTypeSubstCons String AstType (Box SpecTypeSubst)))
+
+(define (spec-template-cons [head : SpecTemplate] [rest : SpecTemplateList]) : SpecTemplateList
+  (SpecTemplateCons head (box rest)))
+
+(define (spec-cache-cons [key : String] [name : String] [rest : SpecCache]) : SpecCache
+  (SpecCacheCons key name (box rest)))
+
+(define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
+  (SpecValueCons head (box rest)))
+
+(define (spec-value-subst-cons
+  [key : String]
+  [value : CompilerCtfeValue]
+  [rest : SpecValueSubst]) : SpecValueSubst
+  (SpecValueSubstCons key value (box rest)))
+
+(define (spec-type-subst-cons
+  [key : String]
+  [ty : AstType]
+  [rest : SpecTypeSubst]) : SpecTypeSubst
+  (SpecTypeSubstCons key ty (box rest)))
 
 (defenum SpecMaybeString
   (SpecNoString)
@@ -146,7 +167,7 @@
         [(SpecTemplate template-name _ _ _)
           (if (string-eq template-name name)
             (SpecSomeTemplate template)
-            (spec-template-lookup rest name))])]))
+            (spec-template-lookup (box-get rest) name))])]))
 
 (define (spec-template-list-remove-name
   [templates : SpecTemplateList]
@@ -157,10 +178,10 @@
       (match template
         [(SpecTemplate template-name _ _ _)
           (if (string-eq template-name name)
-            (spec-template-list-remove-name rest name)
-            (SpecTemplateCons
+            (spec-template-list-remove-name (box-get rest) name)
+            (spec-template-cons
               template
-              (spec-template-list-remove-name rest name)))])]))
+              (spec-template-list-remove-name (box-get rest) name)))])]))
 
 (define (spec-template-list-remove-params
   [templates : SpecTemplateList]
@@ -193,12 +214,16 @@
   [pattern : AstPattern]) : SpecTemplateList
   (match pattern
     [(AstPatVar name _) (spec-template-list-remove-name templates name)]
-    [(AstPatTuple patterns)
-      (spec-template-list-remove-pattern-list templates patterns)]
+    [(AstPatTuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (spec-template-list-remove-pattern-list templates patterns))]
     [(AstPatWildcard) templates]
     [(AstPatBinding name) (spec-template-list-remove-name templates name)]
-    [(AstPatVariant _ patterns)
-      (spec-template-list-remove-pattern-list templates patterns)]
+    [(AstPatVariant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (spec-template-list-remove-pattern-list templates patterns))]
     [(AstPatLiteral _) templates]))
 
 (define (spec-template-list-remove-pattern-list
@@ -222,13 +247,13 @@
         (match decl
           [(AstDeclUnsafe (AstDeclDefFn name params ret body))
             (if (spec-param-list-has-comptime? params)
-              (SpecTemplateCons
+              (spec-template-cons
                 (SpecTemplate name params ret body)
                 (spec-collect-templates rest))
               (spec-collect-templates rest))]
           [(AstDeclDefFn name params ret body)
             (if (spec-param-list-has-comptime? params)
-              (SpecTemplateCons
+              (spec-template-cons
                 (SpecTemplate name params ret body)
                 (spec-collect-templates rest))
               (spec-collect-templates rest))]
@@ -240,7 +265,7 @@
     [(SpecCacheCons cached-key name rest)
       (if (string-eq cached-key key)
         (SpecSomeString name)
-        (spec-cache-lookup rest key))]))
+        (spec-cache-lookup (box-get rest) key))]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
@@ -396,7 +421,7 @@
     [(SpecValueCons head rest)
       (string-append
         (spec-value-key head)
-        (string-append "_" (spec-values-key rest)))]))
+        (string-append "_" (spec-values-key (box-get rest))))]))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
   (string-append name (string-append ":" (spec-values-key values))))
@@ -436,7 +461,7 @@
     [(SpecTypeSubstCons key _ rest)
       (if (string-eq key name)
         (SpecSomeString key)
-        (spec-type-subst-lookup rest name))]))
+        (spec-type-subst-lookup (box-get rest) name))]))
 
 (define (spec-type-subst-type [subs : SpecTypeSubst] [name : String]) : AstType
   (match subs
@@ -444,7 +469,7 @@
     [(SpecTypeSubstCons key ty rest)
       (if (string-eq key name)
         ty
-        (spec-type-subst-type rest name))]))
+        (spec-type-subst-type (box-get rest) name))]))
 
 (define (spec-value-subst-lookup [subs : SpecValueSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -452,7 +477,7 @@
     [(SpecValueSubstCons key _ rest)
       (if (string-eq key name)
         (SpecSomeString key)
-        (spec-value-subst-lookup rest name))]))
+        (spec-value-subst-lookup (box-get rest) name))]))
 
 (define (spec-value-subst-value [subs : SpecValueSubst] [name : String]) : CompilerCtfeValue
   (match subs
@@ -460,15 +485,18 @@
     [(SpecValueSubstCons key value rest)
       (if (string-eq key name)
         value
-        (spec-value-subst-value rest name))]))
+        (spec-value-subst-value (box-get rest) name))]))
 
 (define (spec-value-subst-remove-name [subs : SpecValueSubst] [name : String]) : SpecValueSubst
   (match subs
     [(SpecValueSubstNil) SpecValueSubstNil]
     [(SpecValueSubstCons key value rest)
       (if (string-eq key name)
-        (spec-value-subst-remove-name rest name)
-        (SpecValueSubstCons key value (spec-value-subst-remove-name rest name)))]))
+        (spec-value-subst-remove-name (box-get rest) name)
+        (spec-value-subst-cons
+          key
+          value
+          (spec-value-subst-remove-name (box-get rest) name)))]))
 
 (define (spec-value-subst-remove-params
   [subs : SpecValueSubst]
@@ -501,12 +529,16 @@
   [pattern : AstPattern]) : SpecValueSubst
   (match pattern
     [(AstPatVar name _) (spec-value-subst-remove-name subs name)]
-    [(AstPatTuple patterns)
-      (spec-value-subst-remove-pattern-list subs patterns)]
+    [(AstPatTuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (spec-value-subst-remove-pattern-list subs patterns))]
     [(AstPatWildcard) subs]
     [(AstPatBinding name) (spec-value-subst-remove-name subs name)]
-    [(AstPatVariant _ patterns)
-      (spec-value-subst-remove-pattern-list subs patterns)]
+    [(AstPatVariant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (spec-value-subst-remove-pattern-list subs patterns))]
     [(AstPatLiteral _) subs]))
 
 (define (spec-value-subst-remove-pattern-list
@@ -526,8 +558,11 @@
     [(SpecTypeSubstNil) SpecTypeSubstNil]
     [(SpecTypeSubstCons key ty rest)
       (if (string-eq key name)
-        (spec-type-subst-remove-name rest name)
-        (SpecTypeSubstCons key ty (spec-type-subst-remove-name rest name)))]))
+        (spec-type-subst-remove-name (box-get rest) name)
+        (spec-type-subst-cons
+          key
+          ty
+          (spec-type-subst-remove-name (box-get rest) name)))]))
 
 (define (spec-type-subst-remove-params
   [subs : SpecTypeSubst]
@@ -560,11 +595,16 @@
   [pattern : AstPattern]) : SpecTypeSubst
   (match pattern
     [(AstPatVar name _) (spec-type-subst-remove-name subs name)]
-    [(AstPatTuple patterns) (spec-type-subst-remove-pattern-list subs patterns)]
+    [(AstPatTuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (spec-type-subst-remove-pattern-list subs patterns))]
     [(AstPatWildcard) subs]
     [(AstPatBinding name) (spec-type-subst-remove-name subs name)]
-    [(AstPatVariant _ patterns)
-      (spec-type-subst-remove-pattern-list subs patterns)]
+    [(AstPatVariant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (spec-type-subst-remove-pattern-list subs patterns))]
     [(AstPatLiteral _) subs]))
 
 (define (spec-type-subst-remove-pattern-list
@@ -704,21 +744,23 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name ty value)
-            (match (spec-rewrite-expr value templates state)
-              [(OkSpecExpr rewritten-value value-state)
-                (match (spec-rewrite-let-bindings
-                  rest
-                  (spec-template-list-remove-name templates name)
-                  value-state)
-                  [(OkSpecLetBindingList rewritten-rest rest-state)
-                    (OkSpecLetBindingList
-                      (ast-let-binding-cons
-                        (AstLetBinding name ty rewritten-value)
-                        rewritten-rest)
-                      rest-state)]
-                  [(ErrSpecLetBindingList diag) (ErrSpecLetBindingList diag)])]
-              [(ErrSpecExpr diag) (ErrSpecLetBindingList diag)])]))]))
+          [(AstLetBinding name ty value-box)
+            (let
+              [value : AstExpr (box-get value-box)]
+              (match (spec-rewrite-expr value templates state)
+                [(OkSpecExpr rewritten-value value-state)
+                  (match (spec-rewrite-let-bindings
+                    rest
+                    (spec-template-list-remove-name templates name)
+                    value-state)
+                    [(OkSpecLetBindingList rewritten-rest rest-state)
+                      (OkSpecLetBindingList
+                        (ast-let-binding-cons
+                          (ast-let-binding name ty rewritten-value)
+                          rewritten-rest)
+                        rest-state)]
+                    [(ErrSpecLetBindingList diag) (ErrSpecLetBindingList diag)])]
+                [(ErrSpecExpr diag) (ErrSpecLetBindingList diag)]))]))]))
 
 (define (spec-rewrite-match-arms
   [arms : AstMatchArmList]
@@ -730,21 +772,23 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (spec-rewrite-expr
-              body
-              (spec-template-list-remove-pattern templates pattern)
-              state)
-              [(OkSpecExpr rewritten-body body-state)
-                (match (spec-rewrite-match-arms rest templates body-state)
-                  [(OkSpecMatchArmList rewritten-rest rest-state)
-                    (OkSpecMatchArmList
-                      (ast-match-arm-cons
-                        (AstMatchArm pattern rewritten-body)
-                        rewritten-rest)
-                      rest-state)]
-                  [(ErrSpecMatchArmList diag) (ErrSpecMatchArmList diag)])]
-              [(ErrSpecExpr diag) (ErrSpecMatchArmList diag)])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (spec-rewrite-expr
+                body
+                (spec-template-list-remove-pattern templates pattern)
+                state)
+                [(OkSpecExpr rewritten-body body-state)
+                  (match (spec-rewrite-match-arms rest templates body-state)
+                    [(OkSpecMatchArmList rewritten-rest rest-state)
+                      (OkSpecMatchArmList
+                        (ast-match-arm-cons
+                          (ast-match-arm pattern rewritten-body)
+                          rewritten-rest)
+                        rest-state)]
+                    [(ErrSpecMatchArmList diag) (ErrSpecMatchArmList diag)])]
+                [(ErrSpecExpr diag) (ErrSpecMatchArmList diag)]))]))]))
 
 (define (spec-rewrite-specialized-call
   [template : SpecTemplate]
@@ -764,7 +808,7 @@
             origin)
             [(OkSpecEnsure specialized-name ensure-state)
               (OkSpecExpr
-                (AstExprCall (AstExprVar specialized-name) runtime-args)
+                (ast-expr-call (AstExprVar specialized-name) runtime-args)
                 ensure-state)]
             [(ErrSpecEnsure diag) (ErrSpecExpr diag)])]
         [(ErrSpecArgs diag) (ErrSpecExpr diag)])]))
@@ -811,7 +855,7 @@
                                     rest-runtime
                                     rest-state)
                                   (OkSpecArgs
-                                    (SpecValueCons value rest-values)
+                                    (spec-value-cons value rest-values)
                                     rest-runtime
                                     rest-state)]
                                 [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
@@ -837,7 +881,7 @@
                               fn-name)
                               [(OkSpecArgs rest-values rest-runtime rest-state)
                                 (OkSpecArgs
-                                  (SpecValueCons value rest-values)
+                                  (spec-value-cons value rest-values)
                                   rest-runtime
                                   rest-state)]
                               [(ErrSpecArgs diag) (ErrSpecArgs diag)])
@@ -898,7 +942,9 @@
             (if is-comptime
               (match values
                 [(SpecValueCons value rest-values)
-                  (match (spec-build-specialization rest-params rest-values)
+                  (match (spec-build-specialization
+                    rest-params
+                    (box-get rest-values))
                     [(OkSpecBuild runtime value-subs type-subs)
                       (if (spec-type-kind? ty)
                         (match value
@@ -906,7 +952,7 @@
                             (OkSpecBuild
                               runtime
                               value-subs
-                              (SpecTypeSubstCons name actual-ty type-subs))]
+                              (spec-type-subst-cons name actual-ty type-subs))]
                           [_
                             (ErrSpecBuild
                               (compiler-diagnostic-at-start
@@ -914,7 +960,7 @@
                                 "specialize: expected type value"))])
                         (OkSpecBuild
                           runtime
-                          (SpecValueSubstCons name value value-subs)
+                          (spec-value-subst-cons name value value-subs)
                           type-subs))]
                     [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
                 [_
@@ -959,7 +1005,7 @@
                                 [cached-state : SpecState
                                   (SpecState
                                     generated
-                                    (SpecCacheCons key generated-name cache)
+                                    (spec-cache-cons key generated-name cache)
                                     ctfe-env)]
                                 (match (spec-rewrite-expr
                                   valued-body
@@ -999,165 +1045,207 @@
   [templates : SpecTemplateList]
   [state : SpecState]) : ResultSpecExpr
   (match expr
-    [(AstExprSpanned inner span)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten rewritten-state)
-          (OkSpecExpr (AstExprSpanned rewritten span) rewritten-state)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten rewritten-state)
+            (OkSpecExpr (ast-expr-spanned rewritten span) rewritten-state)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprLiteral _) (OkSpecExpr expr state)]
     [(AstExprVar _) (OkSpecExpr expr state)]
     [(AstExprTypeLiteral _) (OkSpecExpr expr state)]
-    [(AstExprBinary op left right)
-      (match (spec-rewrite-expr left templates state)
-        [(OkSpecExpr rewritten-left left-state)
-          (match (spec-rewrite-expr right templates left-state)
-            [(OkSpecExpr rewritten-right right-state)
-              (OkSpecExpr
-                (AstExprBinary op rewritten-left rewritten-right)
-                right-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprUnary op inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten rewritten-state)
-          (OkSpecExpr (AstExprUnary op rewritten) rewritten-state)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprCall func args)
-      (match (spec-expr-var-name func)
-        [(SpecSomeString name)
-          (match (spec-template-lookup templates name)
-            [(SpecSomeTemplate template)
-              (spec-rewrite-specialized-call template args templates state expr)]
-            [(SpecNoTemplate)
-              (match (spec-rewrite-expr func templates state)
-                [(OkSpecExpr rewritten-func func-state)
-                  (match (spec-rewrite-expr-list args templates func-state)
-                    [(OkSpecExprList rewritten-args args-state)
-                      (OkSpecExpr
-                        (AstExprCall rewritten-func rewritten-args)
-                        args-state)]
-                    [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-                [(ErrSpecExpr diag) (ErrSpecExpr diag)])])]
-        [(SpecNoString)
-          (match (spec-rewrite-expr func templates state)
-            [(OkSpecExpr rewritten-func func-state)
-              (match (spec-rewrite-expr-list args templates func-state)
-                [(OkSpecExprList rewritten-args args-state)
-                  (OkSpecExpr
-                    (AstExprCall rewritten-func rewritten-args)
-                    args-state)]
-                [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])])]
-    [(AstExprIf cond then-branch else-branch)
-      (match (spec-rewrite-expr cond templates state)
-        [(OkSpecExpr rewritten-cond cond-state)
-          (match (spec-rewrite-expr then-branch templates cond-state)
-            [(OkSpecExpr rewritten-then then-state)
-              (match (spec-rewrite-expr else-branch templates then-state)
-                [(OkSpecExpr rewritten-else else-state)
-                  (OkSpecExpr
-                    (AstExprIf rewritten-cond rewritten-then rewritten-else)
-                    else-state)]
-                [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprLet bindings body)
-      (match (spec-rewrite-let-bindings bindings templates state)
-        [(OkSpecLetBindingList rewritten-bindings binding-state)
-          (match (spec-rewrite-expr
-            body
-            (spec-template-list-remove-let-binding-names templates bindings)
-            binding-state)
-            [(OkSpecExpr rewritten-body body-state)
-              (OkSpecExpr
-                (AstExprLet rewritten-bindings rewritten-body)
-                body-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecLetBindingList diag) (ErrSpecExpr diag)])]
-    [(AstExprLambda params ret body)
-      (match (spec-rewrite-expr
-        body
-        (spec-template-list-remove-params templates params)
-        state)
-        [(OkSpecExpr rewritten-body body-state)
-          (OkSpecExpr (AstExprLambda params ret rewritten-body) body-state)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (spec-rewrite-expr left templates state)
+          [(OkSpecExpr rewritten-left left-state)
+            (match (spec-rewrite-expr right templates left-state)
+              [(OkSpecExpr rewritten-right right-state)
+                (OkSpecExpr
+                  (ast-expr-binary op rewritten-left rewritten-right)
+                  right-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten rewritten-state)
+            (OkSpecExpr (ast-expr-unary op rewritten) rewritten-state)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (spec-expr-var-name func)
+          [(SpecSomeString name)
+            (match (spec-template-lookup templates name)
+              [(SpecSomeTemplate template)
+                (spec-rewrite-specialized-call
+                  template
+                  args
+                  templates
+                  state
+                  expr)]
+              [(SpecNoTemplate)
+                (match (spec-rewrite-expr func templates state)
+                  [(OkSpecExpr rewritten-func func-state)
+                    (match (spec-rewrite-expr-list args templates func-state)
+                      [(OkSpecExprList rewritten-args args-state)
+                        (OkSpecExpr
+                          (ast-expr-call rewritten-func rewritten-args)
+                          args-state)]
+                      [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])])]
+          [(SpecNoString)
+            (match (spec-rewrite-expr func templates state)
+              [(OkSpecExpr rewritten-func func-state)
+                (match (spec-rewrite-expr-list args templates func-state)
+                  [(OkSpecExprList rewritten-args args-state)
+                    (OkSpecExpr
+                      (ast-expr-call rewritten-func rewritten-args)
+                      args-state)]
+                  [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (spec-rewrite-expr cond templates state)
+          [(OkSpecExpr rewritten-cond cond-state)
+            (match (spec-rewrite-expr then-branch templates cond-state)
+              [(OkSpecExpr rewritten-then then-state)
+                (match (spec-rewrite-expr else-branch templates then-state)
+                  [(OkSpecExpr rewritten-else else-state)
+                    (OkSpecExpr
+                      (ast-expr-if rewritten-cond rewritten-then rewritten-else)
+                      else-state)]
+                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-rewrite-let-bindings bindings templates state)
+          [(OkSpecLetBindingList rewritten-bindings binding-state)
+            (match (spec-rewrite-expr
+              body
+              (spec-template-list-remove-let-binding-names templates bindings)
+              binding-state)
+              [(OkSpecExpr rewritten-body body-state)
+                (OkSpecExpr
+                  (ast-expr-let rewritten-bindings rewritten-body)
+                  body-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecLetBindingList diag) (ErrSpecExpr diag)]))]
+    [(AstExprLambda params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-rewrite-expr
+          body
+          (spec-template-list-remove-params templates params)
+          state)
+          [(OkSpecExpr rewritten-body body-state)
+            (OkSpecExpr (ast-expr-lambda params ret rewritten-body) body-state)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprTuple exprs)
       (match (spec-rewrite-expr-list exprs templates state)
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprTuple rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-    [(AstExprTupleRef inner index)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprTupleRef rewritten index) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprTupleRef inner-box index)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-tuple-ref rewritten index) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprArray exprs)
       (match (spec-rewrite-expr-list exprs templates state)
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprArray rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-    [(AstExprMakeArray elem-ty len)
-      (match (spec-rewrite-expr len templates state)
-        [(OkSpecExpr rewritten-len state2)
-          (OkSpecExpr (AstExprMakeArray elem-ty rewritten-len) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprArrayRef array index)
-      (match (spec-rewrite-expr array templates state)
-        [(OkSpecExpr rewritten-array array-state)
-          (match (spec-rewrite-expr index templates array-state)
-            [(OkSpecExpr rewritten-index index-state)
-              (OkSpecExpr
-                (AstExprArrayRef rewritten-array rewritten-index)
-                index-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprArraySet array index value)
-      (match (spec-rewrite-expr array templates state)
-        [(OkSpecExpr rewritten-array array-state)
-          (match (spec-rewrite-expr index templates array-state)
-            [(OkSpecExpr rewritten-index index-state)
-              (match (spec-rewrite-expr value templates index-state)
-                [(OkSpecExpr rewritten-value value-state)
-                  (OkSpecExpr
-                    (AstExprArraySet
-                      rewritten-array
-                      rewritten-index
-                      rewritten-value)
-                    value-state)]
-                [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprArrayPush array value)
-      (match (spec-rewrite-expr array templates state)
-        [(OkSpecExpr rewritten-array array-state)
-          (match (spec-rewrite-expr value templates array-state)
-            [(OkSpecExpr rewritten-value value-state)
-              (OkSpecExpr
-                (AstExprArrayPush rewritten-array rewritten-value)
-                value-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprStringRef text index)
-      (match (spec-rewrite-expr text templates state)
-        [(OkSpecExpr rewritten-text text-state)
-          (match (spec-rewrite-expr index templates text-state)
-            [(OkSpecExpr rewritten-index index-state)
-              (OkSpecExpr
-                (AstExprStringRef rewritten-text rewritten-index)
-                index-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprWhile cond body)
-      (match (spec-rewrite-expr cond templates state)
-        [(OkSpecExpr rewritten-cond cond-state)
-          (match (spec-rewrite-expr body templates cond-state)
-            [(OkSpecExpr rewritten-body body-state)
-              (OkSpecExpr
-                (AstExprWhile rewritten-cond rewritten-body)
-                body-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprMakeArray elem-ty len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (match (spec-rewrite-expr len templates state)
+          [(OkSpecExpr rewritten-len state2)
+            (OkSpecExpr (ast-expr-make-array elem-ty rewritten-len) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (spec-rewrite-expr array templates state)
+          [(OkSpecExpr rewritten-array array-state)
+            (match (spec-rewrite-expr index templates array-state)
+              [(OkSpecExpr rewritten-index index-state)
+                (OkSpecExpr
+                  (ast-expr-array-ref rewritten-array rewritten-index)
+                  index-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr array templates state)
+          [(OkSpecExpr rewritten-array array-state)
+            (match (spec-rewrite-expr index templates array-state)
+              [(OkSpecExpr rewritten-index index-state)
+                (match (spec-rewrite-expr value templates index-state)
+                  [(OkSpecExpr rewritten-value value-state)
+                    (OkSpecExpr
+                      (ast-expr-array-set
+                        rewritten-array
+                        rewritten-index
+                        rewritten-value)
+                      value-state)]
+                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr array templates state)
+          [(OkSpecExpr rewritten-array array-state)
+            (match (spec-rewrite-expr value templates array-state)
+              [(OkSpecExpr rewritten-value value-state)
+                (OkSpecExpr
+                  (ast-expr-array-push rewritten-array rewritten-value)
+                  value-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprStringRef text-box index-box)
+      (let
+        [text : AstExpr (box-get text-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (spec-rewrite-expr text templates state)
+          [(OkSpecExpr rewritten-text text-state)
+            (match (spec-rewrite-expr index templates text-state)
+              [(OkSpecExpr rewritten-index index-state)
+                (OkSpecExpr
+                  (ast-expr-string-ref rewritten-text rewritten-index)
+                  index-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (spec-rewrite-expr cond templates state)
+          [(OkSpecExpr rewritten-cond cond-state)
+            (match (spec-rewrite-expr body templates cond-state)
+              [(OkSpecExpr rewritten-body body-state)
+                (OkSpecExpr
+                  (ast-expr-while rewritten-cond rewritten-body)
+                  body-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprBegin exprs)
       (match (spec-rewrite-expr-list exprs templates state)
         [(OkSpecExprList rewritten state2)
@@ -1168,268 +1256,346 @@
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprUnsafe rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-    [(AstExprSet name value)
-      (match (spec-rewrite-expr value templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprSet name rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprAnn inner ty)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprAnn rewritten ty) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprCast inner ty)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprCast rewritten ty) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprMatch scrutinee arms)
-      (match (spec-rewrite-expr scrutinee templates state)
-        [(OkSpecExpr rewritten-scrutinee scrutinee-state)
-          (match (spec-rewrite-match-arms arms templates scrutinee-state)
-            [(OkSpecMatchArmList rewritten-arms arms-state)
-              (OkSpecExpr
-                (AstExprMatch rewritten-scrutinee rewritten-arms)
-                arms-state)]
-            [(ErrSpecMatchArmList diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprForeach index index-ty start end body)
-      (match (spec-rewrite-expr start templates state)
-        [(OkSpecExpr rewritten-start start-state)
-          (match (spec-rewrite-expr end templates start-state)
-            [(OkSpecExpr rewritten-end end-state)
-              (match (spec-rewrite-expr
-                body
-                (spec-template-list-remove-name templates index)
-                end-state)
-                [(OkSpecExpr rewritten-body body-state)
-                  (OkSpecExpr
-                    (AstExprForeach
-                      index
-                      index-ty
-                      rewritten-start
-                      rewritten-end
-                      rewritten-body)
-                    body-state)]
-                [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprSpmdReduce op index index-ty start end init value)
-      (match (spec-rewrite-expr start templates state)
-        [(OkSpecExpr rewritten-start start-state)
-          (match (spec-rewrite-expr end templates start-state)
-            [(OkSpecExpr rewritten-end end-state)
-              (match (spec-rewrite-expr init templates end-state)
-                [(OkSpecExpr rewritten-init init-state)
-                  (match (spec-rewrite-expr
-                    value
-                    (spec-template-list-remove-name templates index)
-                    init-state)
-                    [(OkSpecExpr rewritten-value value-state)
-                      (OkSpecExpr
-                        (AstExprSpmdReduce
-                          op
-                          index
-                          index-ty
-                          rewritten-start
-                          rewritten-end
-                          rewritten-init
-                          rewritten-value)
-                        value-state)]
-                    [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprStructGet receiver field)
-      (match (spec-rewrite-expr receiver templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprStructGet rewritten field) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr value templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-set name rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-ann rewritten ty) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-cast rewritten ty) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (match (spec-rewrite-expr scrutinee templates state)
+          [(OkSpecExpr rewritten-scrutinee scrutinee-state)
+            (match (spec-rewrite-match-arms arms templates scrutinee-state)
+              [(OkSpecMatchArmList rewritten-arms arms-state)
+                (OkSpecExpr
+                  (ast-expr-match rewritten-scrutinee rewritten-arms)
+                  arms-state)]
+              [(ErrSpecMatchArmList diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (spec-rewrite-expr start templates state)
+          [(OkSpecExpr rewritten-start start-state)
+            (match (spec-rewrite-expr end templates start-state)
+              [(OkSpecExpr rewritten-end end-state)
+                (match (spec-rewrite-expr
+                  body
+                  (spec-template-list-remove-name templates index)
+                  end-state)
+                  [(OkSpecExpr rewritten-body body-state)
+                    (OkSpecExpr
+                      (ast-expr-foreach
+                        index
+                        index-ty
+                        rewritten-start
+                        rewritten-end
+                        rewritten-body)
+                      body-state)]
+                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprSpmdReduce op index index-ty start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr start templates state)
+          [(OkSpecExpr rewritten-start start-state)
+            (match (spec-rewrite-expr end templates start-state)
+              [(OkSpecExpr rewritten-end end-state)
+                (match (spec-rewrite-expr init templates end-state)
+                  [(OkSpecExpr rewritten-init init-state)
+                    (match (spec-rewrite-expr
+                      value
+                      (spec-template-list-remove-name templates index)
+                      init-state)
+                      [(OkSpecExpr rewritten-value value-state)
+                        (OkSpecExpr
+                          (ast-expr-spmd-reduce
+                            op
+                            index
+                            index-ty
+                            rewritten-start
+                            rewritten-end
+                            rewritten-init
+                            rewritten-value)
+                          value-state)]
+                      [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprStructGet receiver-box field)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (match (spec-rewrite-expr receiver templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-struct-get rewritten field) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-rewrite-expr-list body templates state)
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprWithRegion region rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-    [(AstExprWithEscape scratch body)
-      (match (spec-rewrite-expr scratch templates state)
-        [(OkSpecExpr rewritten-scratch scratch-state)
-          (match (spec-rewrite-expr-list body templates scratch-state)
-            [(OkSpecExprList rewritten-body body-state)
-              (OkSpecExpr
-                (AstExprWithEscape rewritten-scratch rewritten-body)
-                body-state)]
-            [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (match (spec-rewrite-expr scratch templates state)
+          [(OkSpecExpr rewritten-scratch scratch-state)
+            (match (spec-rewrite-expr-list body templates scratch-state)
+              [(OkSpecExprList rewritten-body body-state)
+                (OkSpecExpr
+                  (ast-expr-with-escape rewritten-scratch rewritten-body)
+                  body-state)]
+              [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprWithResource bindings body)
       (OkSpecExpr (AstExprWithResource bindings body) state)]
-    [(AstExprBox inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprBox rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprBoxGet inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprBoxGet rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprComptime inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprComptime rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprTry inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprTry rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprReturn inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprReturn rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-box rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-box-get rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-comptime rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-try rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-return rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprPtrNull ty) (OkSpecExpr (AstExprPtrNull ty) state)]
-    [(AstExprPtrNullCheck inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprPtrNullCheck rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprPtrRead ptr)
-      (match (spec-rewrite-expr ptr templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprPtrRead rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprPtrWrite ptr value)
-      (match (spec-rewrite-expr ptr templates state)
-        [(OkSpecExpr rewritten-ptr ptr-state)
-          (match (spec-rewrite-expr value templates ptr-state)
-            [(OkSpecExpr rewritten-value value-state)
-              (OkSpecExpr
-                (AstExprPtrWrite rewritten-ptr rewritten-value)
-                value-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprPtrOffset ptr offset)
-      (match (spec-rewrite-expr ptr templates state)
-        [(OkSpecExpr rewritten-ptr ptr-state)
-          (match (spec-rewrite-expr offset templates ptr-state)
-            [(OkSpecExpr rewritten-offset offset-state)
-              (OkSpecExpr
-                (AstExprPtrOffset rewritten-ptr rewritten-offset)
-                offset-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprPtrCast ptr ty)
-      (match (spec-rewrite-expr ptr templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprPtrCast rewritten ty) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprPtrToInt ptr)
-      (match (spec-rewrite-expr ptr templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprPtrToInt rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprIntToPtr value ty)
-      (match (spec-rewrite-expr value templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprIntToPtr rewritten ty) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprStringData inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprStringData rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprStringFromBytes ptr len)
-      (match (spec-rewrite-expr ptr templates state)
-        [(OkSpecExpr rewritten-ptr ptr-state)
-          (match (spec-rewrite-expr len templates ptr-state)
-            [(OkSpecExpr rewritten-len len-state)
-              (OkSpecExpr
-                (AstExprStringFromBytes rewritten-ptr rewritten-len)
-                len-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprArrayData inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprArrayData rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-ptr-null-check rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-rewrite-expr ptr templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-ptr-read rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr ptr templates state)
+          [(OkSpecExpr rewritten-ptr ptr-state)
+            (match (spec-rewrite-expr value templates ptr-state)
+              [(OkSpecExpr rewritten-value value-state)
+                (OkSpecExpr
+                  (ast-expr-ptr-write rewritten-ptr rewritten-value)
+                  value-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (match (spec-rewrite-expr ptr templates state)
+          [(OkSpecExpr rewritten-ptr ptr-state)
+            (match (spec-rewrite-expr offset templates ptr-state)
+              [(OkSpecExpr rewritten-offset offset-state)
+                (OkSpecExpr
+                  (ast-expr-ptr-offset rewritten-ptr rewritten-offset)
+                  offset-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprPtrCast ptr-box ty)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-rewrite-expr ptr templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-ptr-cast rewritten ty) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-rewrite-expr ptr templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-ptr-to-int rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprIntToPtr value-box ty)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr value templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-int-to-ptr rewritten ty) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-string-data rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (match (spec-rewrite-expr ptr templates state)
+          [(OkSpecExpr rewritten-ptr ptr-state)
+            (match (spec-rewrite-expr len templates ptr-state)
+              [(OkSpecExpr rewritten-len len-state)
+                (OkSpecExpr
+                  (ast-expr-string-from-bytes rewritten-ptr rewritten-len)
+                  len-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-array-data rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprProgramArgc) (OkSpecExpr (AstExprProgramArgc) state)]
     [(AstExprProgramArgv) (OkSpecExpr (AstExprProgramArgv) state)]
     [(AstExprProgramEnvp) (OkSpecExpr (AstExprProgramEnvp) state)]
-    [(AstExprCpuIdEax leaf subleaf)
-      (match (spec-rewrite-expr leaf templates state)
-        [(OkSpecExpr rewritten-leaf leaf-state)
-          (match (spec-rewrite-expr subleaf templates leaf-state)
-            [(OkSpecExpr rewritten-subleaf subleaf-state)
-              (OkSpecExpr
-                (AstExprCpuIdEax rewritten-leaf rewritten-subleaf)
-                subleaf-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (match (spec-rewrite-expr leaf templates state)
-        [(OkSpecExpr rewritten-leaf leaf-state)
-          (match (spec-rewrite-expr subleaf templates leaf-state)
-            [(OkSpecExpr rewritten-subleaf subleaf-state)
-              (OkSpecExpr
-                (AstExprCpuIdEbx rewritten-leaf rewritten-subleaf)
-                subleaf-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (match (spec-rewrite-expr leaf templates state)
-        [(OkSpecExpr rewritten-leaf leaf-state)
-          (match (spec-rewrite-expr subleaf templates leaf-state)
-            [(OkSpecExpr rewritten-subleaf subleaf-state)
-              (OkSpecExpr
-                (AstExprCpuIdEcx rewritten-leaf rewritten-subleaf)
-                subleaf-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (match (spec-rewrite-expr leaf templates state)
-        [(OkSpecExpr rewritten-leaf leaf-state)
-          (match (spec-rewrite-expr subleaf templates leaf-state)
-            [(OkSpecExpr rewritten-subleaf subleaf-state)
-              (OkSpecExpr
-                (AstExprCpuIdEdx rewritten-leaf rewritten-subleaf)
-                subleaf-state)]
-            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprXgetbv index)
-      (match (spec-rewrite-expr index templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprXgetbv rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprQuote inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprQuote rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprQuasiquote inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprQuasiquote rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprUnquote inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprUnquote rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-    [(AstExprUnquoteSplicing inner)
-      (match (spec-rewrite-expr inner templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecExpr (AstExprUnquoteSplicing rewritten) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-rewrite-expr leaf templates state)
+          [(OkSpecExpr rewritten-leaf leaf-state)
+            (match (spec-rewrite-expr subleaf templates leaf-state)
+              [(OkSpecExpr rewritten-subleaf subleaf-state)
+                (OkSpecExpr
+                  (ast-expr-cpuid-eax rewritten-leaf rewritten-subleaf)
+                  subleaf-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-rewrite-expr leaf templates state)
+          [(OkSpecExpr rewritten-leaf leaf-state)
+            (match (spec-rewrite-expr subleaf templates leaf-state)
+              [(OkSpecExpr rewritten-subleaf subleaf-state)
+                (OkSpecExpr
+                  (ast-expr-cpuid-ebx rewritten-leaf rewritten-subleaf)
+                  subleaf-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-rewrite-expr leaf templates state)
+          [(OkSpecExpr rewritten-leaf leaf-state)
+            (match (spec-rewrite-expr subleaf templates leaf-state)
+              [(OkSpecExpr rewritten-subleaf subleaf-state)
+                (OkSpecExpr
+                  (ast-expr-cpuid-ecx rewritten-leaf rewritten-subleaf)
+                  subleaf-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-rewrite-expr leaf templates state)
+          [(OkSpecExpr rewritten-leaf leaf-state)
+            (match (spec-rewrite-expr subleaf templates leaf-state)
+              [(OkSpecExpr rewritten-subleaf subleaf-state)
+                (OkSpecExpr
+                  (ast-expr-cpuid-edx rewritten-leaf rewritten-subleaf)
+                  subleaf-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (match (spec-rewrite-expr index templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-xgetbv rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-quote rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-quasiquote rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-unquote rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-rewrite-expr inner templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecExpr (ast-expr-unquote-splicing rewritten) state2)]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprBorrow _ _) (OkSpecExpr expr state)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
   (match expr
-    [(AstExprSpanned inner span)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprSpanned rewritten span))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-spanned rewritten span))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprVar name)
       (match (spec-value-subst-lookup subs name)
         [(SpecSomeString _)
@@ -1437,120 +1603,160 @@
         [(SpecNoString) (OkSpecSubExpr expr)])]
     [(AstExprLiteral _) (OkSpecSubExpr expr)]
     [(AstExprTypeLiteral _) (OkSpecSubExpr expr)]
-    [(AstExprBinary op left right)
-      (match (spec-substitute-values-expr left subs)
-        [(OkSpecSubExpr rewritten-left)
-          (match (spec-substitute-values-expr right subs)
-            [(OkSpecSubExpr rewritten-right)
-              (OkSpecSubExpr (AstExprBinary op rewritten-left rewritten-right))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprUnary op inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprUnary op rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCall func args)
-      (match (spec-substitute-values-expr func subs)
-        [(OkSpecSubExpr rewritten-func)
-          (match (spec-substitute-values-expr-list args subs)
-            [(OkSpecSubExprList rewritten-args)
-              (OkSpecSubExpr (AstExprCall rewritten-func rewritten-args))]
-            [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprIf cond then-branch else-branch)
-      (match (spec-substitute-values-expr cond subs)
-        [(OkSpecSubExpr rewritten-cond)
-          (match (spec-substitute-values-expr then-branch subs)
-            [(OkSpecSubExpr rewritten-then)
-              (match (spec-substitute-values-expr else-branch subs)
-                [(OkSpecSubExpr rewritten-else)
-                  (OkSpecSubExpr
-                    (AstExprIf rewritten-cond rewritten-then rewritten-else))]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprLet bindings body)
-      (match (spec-substitute-values-let-bindings bindings subs)
-        [(OkSpecSubLetBindingList rewritten-bindings)
-          (match (spec-substitute-values-expr
-            body
-            (spec-value-subst-remove-let-binding-names subs bindings))
-            [(OkSpecSubExpr rewritten-body)
-              (OkSpecSubExpr (AstExprLet rewritten-bindings rewritten-body))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprLambda params ret body)
-      (match (spec-substitute-values-expr
-        body
-        (spec-value-subst-remove-params subs params))
-        [(OkSpecSubExpr rewritten-body)
-          (OkSpecSubExpr (AstExprLambda params ret rewritten-body))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (spec-substitute-values-expr left subs)
+          [(OkSpecSubExpr rewritten-left)
+            (match (spec-substitute-values-expr right subs)
+              [(OkSpecSubExpr rewritten-right)
+                (OkSpecSubExpr
+                  (ast-expr-binary op rewritten-left rewritten-right))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-unary op rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (spec-substitute-values-expr func subs)
+          [(OkSpecSubExpr rewritten-func)
+            (match (spec-substitute-values-expr-list args subs)
+              [(OkSpecSubExprList rewritten-args)
+                (OkSpecSubExpr (ast-expr-call rewritten-func rewritten-args))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (spec-substitute-values-expr cond subs)
+          [(OkSpecSubExpr rewritten-cond)
+            (match (spec-substitute-values-expr then-branch subs)
+              [(OkSpecSubExpr rewritten-then)
+                (match (spec-substitute-values-expr else-branch subs)
+                  [(OkSpecSubExpr rewritten-else)
+                    (OkSpecSubExpr
+                      (ast-expr-if rewritten-cond rewritten-then rewritten-else))]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-values-let-bindings bindings subs)
+          [(OkSpecSubLetBindingList rewritten-bindings)
+            (match (spec-substitute-values-expr
+              body
+              (spec-value-subst-remove-let-binding-names subs bindings))
+              [(OkSpecSubExpr rewritten-body)
+                (OkSpecSubExpr (ast-expr-let rewritten-bindings rewritten-body))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprLambda params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-values-expr
+          body
+          (spec-value-subst-remove-params subs params))
+          [(OkSpecSubExpr rewritten-body)
+            (OkSpecSubExpr (ast-expr-lambda params ret rewritten-body))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprTuple exprs)
       (match (spec-substitute-values-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprTuple rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprTupleRef inner index)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprTupleRef rewritten index))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprTupleRef inner-box index)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-tuple-ref rewritten index))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprArray exprs)
       (match (spec-substitute-values-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprArray rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprMakeArray elem-ty len)
-      (match (spec-substitute-values-expr len subs)
-        [(OkSpecSubExpr rewritten-len)
-          (OkSpecSubExpr (AstExprMakeArray elem-ty rewritten-len))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArrayRef array index)
-      (match (spec-substitute-values-expr array subs)
-        [(OkSpecSubExpr rewritten-array)
-          (match (spec-substitute-values-expr index subs)
-            [(OkSpecSubExpr rewritten-index)
-              (OkSpecSubExpr (AstExprArrayRef rewritten-array rewritten-index))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArraySet array index value)
-      (match (spec-substitute-values-expr array subs)
-        [(OkSpecSubExpr rewritten-array)
-          (match (spec-substitute-values-expr index subs)
-            [(OkSpecSubExpr rewritten-index)
-              (match (spec-substitute-values-expr value subs)
-                [(OkSpecSubExpr rewritten-value)
-                  (OkSpecSubExpr
-                    (AstExprArraySet
-                      rewritten-array
-                      rewritten-index
-                      rewritten-value))]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArrayPush array value)
-      (match (spec-substitute-values-expr array subs)
-        [(OkSpecSubExpr rewritten-array)
-          (match (spec-substitute-values-expr value subs)
-            [(OkSpecSubExpr rewritten-value)
-              (OkSpecSubExpr (AstExprArrayPush rewritten-array rewritten-value))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStringRef text index)
-      (match (spec-substitute-values-expr text subs)
-        [(OkSpecSubExpr rewritten-text)
-          (match (spec-substitute-values-expr index subs)
-            [(OkSpecSubExpr rewritten-index)
-              (OkSpecSubExpr (AstExprStringRef rewritten-text rewritten-index))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprWhile cond body)
-      (match (spec-substitute-values-expr cond subs)
-        [(OkSpecSubExpr rewritten-cond)
-          (match (spec-substitute-values-expr body subs)
-            [(OkSpecSubExpr rewritten-body)
-              (OkSpecSubExpr (AstExprWhile rewritten-cond rewritten-body))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprMakeArray elem-ty len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (match (spec-substitute-values-expr len subs)
+          [(OkSpecSubExpr rewritten-len)
+            (OkSpecSubExpr (ast-expr-make-array elem-ty rewritten-len))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (spec-substitute-values-expr array subs)
+          [(OkSpecSubExpr rewritten-array)
+            (match (spec-substitute-values-expr index subs)
+              [(OkSpecSubExpr rewritten-index)
+                (OkSpecSubExpr
+                  (ast-expr-array-ref rewritten-array rewritten-index))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-values-expr array subs)
+          [(OkSpecSubExpr rewritten-array)
+            (match (spec-substitute-values-expr index subs)
+              [(OkSpecSubExpr rewritten-index)
+                (match (spec-substitute-values-expr value subs)
+                  [(OkSpecSubExpr rewritten-value)
+                    (OkSpecSubExpr
+                      (ast-expr-array-set
+                        rewritten-array
+                        rewritten-index
+                        rewritten-value))]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-values-expr array subs)
+          [(OkSpecSubExpr rewritten-array)
+            (match (spec-substitute-values-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-array-push rewritten-array rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStringRef text-box index-box)
+      (let
+        [text : AstExpr (box-get text-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (spec-substitute-values-expr text subs)
+          [(OkSpecSubExpr rewritten-text)
+            (match (spec-substitute-values-expr index subs)
+              [(OkSpecSubExpr rewritten-index)
+                (OkSpecSubExpr
+                  (ast-expr-string-ref rewritten-text rewritten-index))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-values-expr cond subs)
+          [(OkSpecSubExpr rewritten-cond)
+            (match (spec-substitute-values-expr body subs)
+              [(OkSpecSubExpr rewritten-body)
+                (OkSpecSubExpr (ast-expr-while rewritten-cond rewritten-body))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBegin exprs)
       (match (spec-substitute-values-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
@@ -1560,235 +1766,328 @@
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprUnsafe rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprSet name value)
-      (match (spec-value-subst-lookup subs name)
-        [(SpecSomeString _)
-          (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string-append
-                "cannot assign to comptime parameter '"
-                (string-append name "'"))))]
-        [(SpecNoString)
-          (match (spec-substitute-values-expr value subs)
-            [(OkSpecSubExpr rewritten)
-              (OkSpecSubExpr (AstExprSet name rewritten))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])])]
-    [(AstExprAnn inner ty)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprAnn rewritten ty))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCast inner ty)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprCast rewritten ty))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprMatch scrutinee arms)
-      (match (spec-substitute-values-expr scrutinee subs)
-        [(OkSpecSubExpr rewritten-scrutinee)
-          (match (spec-substitute-values-match-arms arms subs)
-            [(OkSpecSubMatchArmList rewritten-arms)
-              (OkSpecSubExpr (AstExprMatch rewritten-scrutinee rewritten-arms))]
-            [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprForeach index index-ty start end body)
-      (match (spec-substitute-values-expr start subs)
-        [(OkSpecSubExpr rewritten-start)
-          (match (spec-substitute-values-expr end subs)
-            [(OkSpecSubExpr rewritten-end)
-              (match (spec-substitute-values-expr
-                body
-                (spec-value-subst-remove-name subs index))
-                [(OkSpecSubExpr rewritten-body)
-                  (OkSpecSubExpr
-                    (AstExprForeach
-                      index
-                      index-ty
-                      rewritten-start
-                      rewritten-end
-                      rewritten-body))]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprSpmdReduce op index index-ty start end init value)
-      (match (spec-substitute-values-expr start subs)
-        [(OkSpecSubExpr rewritten-start)
-          (match (spec-substitute-values-expr end subs)
-            [(OkSpecSubExpr rewritten-end)
-              (match (spec-substitute-values-expr init subs)
-                [(OkSpecSubExpr rewritten-init)
-                  (match (spec-substitute-values-expr
-                    value
-                    (spec-value-subst-remove-name subs index))
-                    [(OkSpecSubExpr rewritten-value)
-                      (OkSpecSubExpr
-                        (AstExprSpmdReduce
-                          op
-                          index
-                          index-ty
-                          rewritten-start
-                          rewritten-end
-                          rewritten-init
-                          rewritten-value))]
-                    [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStructGet receiver field)
-      (match (spec-substitute-values-expr receiver subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprStructGet rewritten field))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-value-subst-lookup subs name)
+          [(SpecSomeString _)
+            (ErrSpecSubExpr
+              (spec-diagnostic-at-expr
+                expr
+                (string-append
+                  "cannot assign to comptime parameter '"
+                  (string-append name "'"))))]
+          [(SpecNoString)
+            (match (spec-substitute-values-expr value subs)
+              [(OkSpecSubExpr rewritten)
+                (OkSpecSubExpr (ast-expr-set name rewritten))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ann rewritten ty))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-cast rewritten ty))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (match (spec-substitute-values-expr scrutinee subs)
+          [(OkSpecSubExpr rewritten-scrutinee)
+            (match (spec-substitute-values-match-arms arms subs)
+              [(OkSpecSubMatchArmList rewritten-arms)
+                (OkSpecSubExpr
+                  (ast-expr-match rewritten-scrutinee rewritten-arms))]
+              [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-values-expr start subs)
+          [(OkSpecSubExpr rewritten-start)
+            (match (spec-substitute-values-expr end subs)
+              [(OkSpecSubExpr rewritten-end)
+                (match (spec-substitute-values-expr
+                  body
+                  (spec-value-subst-remove-name subs index))
+                  [(OkSpecSubExpr rewritten-body)
+                    (OkSpecSubExpr
+                      (ast-expr-foreach
+                        index
+                        index-ty
+                        rewritten-start
+                        rewritten-end
+                        rewritten-body))]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSpmdReduce op index index-ty start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-values-expr start subs)
+          [(OkSpecSubExpr rewritten-start)
+            (match (spec-substitute-values-expr end subs)
+              [(OkSpecSubExpr rewritten-end)
+                (match (spec-substitute-values-expr init subs)
+                  [(OkSpecSubExpr rewritten-init)
+                    (match (spec-substitute-values-expr
+                      value
+                      (spec-value-subst-remove-name subs index))
+                      [(OkSpecSubExpr rewritten-value)
+                        (OkSpecSubExpr
+                          (ast-expr-spmd-reduce
+                            op
+                            index
+                            index-ty
+                            rewritten-start
+                            rewritten-end
+                            rewritten-init
+                            rewritten-value))]
+                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStructGet receiver-box field)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (match (spec-substitute-values-expr receiver subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-struct-get rewritten field))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-values-expr-list body subs)
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprWithRegion region rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprWithEscape scratch body)
-      (match (spec-substitute-values-expr scratch subs)
-        [(OkSpecSubExpr rewritten-scratch)
-          (match (spec-substitute-values-expr-list body subs)
-            [(OkSpecSubExprList rewritten-body)
-              (OkSpecSubExpr
-                (AstExprWithEscape rewritten-scratch rewritten-body))]
-            [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (match (spec-substitute-values-expr scratch subs)
+          [(OkSpecSubExpr rewritten-scratch)
+            (match (spec-substitute-values-expr-list body subs)
+              [(OkSpecSubExprList rewritten-body)
+                (OkSpecSubExpr
+                  (ast-expr-with-escape rewritten-scratch rewritten-body))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithResource bindings body)
       (OkSpecSubExpr (AstExprWithResource bindings body))]
-    [(AstExprBox inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBox rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprBoxGet inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBoxGet rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprComptime inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprComptime rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprTry inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprTry rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprReturn inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprReturn rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-box rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-box-get rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-comptime rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-try rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-return rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprPtrNull ty) (OkSpecSubExpr (AstExprPtrNull ty))]
-    [(AstExprPtrNullCheck inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrRead ptr)
-      (match (spec-substitute-values-expr ptr subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrRead rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrWrite ptr value)
-      (match (spec-substitute-values-expr ptr subs)
-        [(OkSpecSubExpr rewritten-ptr)
-          (match (spec-substitute-values-expr value subs)
-            [(OkSpecSubExpr rewritten-value)
-              (OkSpecSubExpr (AstExprPtrWrite rewritten-ptr rewritten-value))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrOffset ptr offset)
-      (match (spec-substitute-values-expr ptr subs)
-        [(OkSpecSubExpr rewritten-ptr)
-          (match (spec-substitute-values-expr offset subs)
-            [(OkSpecSubExpr rewritten-offset)
-              (OkSpecSubExpr (AstExprPtrOffset rewritten-ptr rewritten-offset))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrCast ptr ty)
-      (match (spec-substitute-values-expr ptr subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprPtrCast rewritten ty))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrToInt ptr)
-      (match (spec-substitute-values-expr ptr subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrToInt rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprIntToPtr value ty)
-      (match (spec-substitute-values-expr value subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprIntToPtr rewritten ty))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStringData inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprStringData rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStringFromBytes ptr len)
-      (match (spec-substitute-values-expr ptr subs)
-        [(OkSpecSubExpr rewritten-ptr)
-          (match (spec-substitute-values-expr len subs)
-            [(OkSpecSubExpr rewritten-len)
-              (OkSpecSubExpr
-                (AstExprStringFromBytes rewritten-ptr rewritten-len))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArrayData inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprArrayData rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-substitute-values-expr ptr subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-read rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-values-expr ptr subs)
+          [(OkSpecSubExpr rewritten-ptr)
+            (match (spec-substitute-values-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-ptr-write rewritten-ptr rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (match (spec-substitute-values-expr ptr subs)
+          [(OkSpecSubExpr rewritten-ptr)
+            (match (spec-substitute-values-expr offset subs)
+              [(OkSpecSubExpr rewritten-offset)
+                (OkSpecSubExpr
+                  (ast-expr-ptr-offset rewritten-ptr rewritten-offset))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrCast ptr-box ty)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-substitute-values-expr ptr subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-cast rewritten ty))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-substitute-values-expr ptr subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-to-int rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprIntToPtr value-box ty)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-values-expr value subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-int-to-ptr rewritten ty))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-string-data rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (match (spec-substitute-values-expr ptr subs)
+          [(OkSpecSubExpr rewritten-ptr)
+            (match (spec-substitute-values-expr len subs)
+              [(OkSpecSubExpr rewritten-len)
+                (OkSpecSubExpr
+                  (ast-expr-string-from-bytes rewritten-ptr rewritten-len))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-array-data rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprProgramArgc) (OkSpecSubExpr (AstExprProgramArgc))]
     [(AstExprProgramArgv) (OkSpecSubExpr (AstExprProgramArgv))]
     [(AstExprProgramEnvp) (OkSpecSubExpr (AstExprProgramEnvp))]
-    [(AstExprCpuIdEax leaf subleaf)
-      (match (spec-substitute-values-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-values-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEax rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (match (spec-substitute-values-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-values-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEbx rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (match (spec-substitute-values-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-values-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEcx rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (match (spec-substitute-values-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-values-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEdx rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprXgetbv index)
-      (match (spec-substitute-values-expr index subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprXgetbv rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprQuote inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprQuote rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprQuasiquote inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprQuasiquote rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprUnquote inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprUnquote rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprUnquoteSplicing inner)
-      (match (spec-substitute-values-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprUnquoteSplicing rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-values-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-values-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-eax rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-values-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-values-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-ebx rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-values-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-values-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-ecx rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-values-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-values-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-edx rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (match (spec-substitute-values-expr index subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-quote rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-quasiquote rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-unquote rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-values-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
 
 (define (spec-substitute-values-expr-list
@@ -1817,20 +2116,22 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name ty value)
-            (match (spec-substitute-values-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (match (spec-substitute-values-let-bindings
-                  rest
-                  (spec-value-subst-remove-name subs name))
-                  [(OkSpecSubLetBindingList rewritten-rest)
-                    (OkSpecSubLetBindingList
-                      (ast-let-binding-cons
-                        (AstLetBinding name ty rewritten-value)
-                        rewritten-rest))]
-                  [(ErrSpecSubLetBindingList diag)
-                    (ErrSpecSubLetBindingList diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)])]))]))
+          [(AstLetBinding name ty value-box)
+            (let
+              [value : AstExpr (box-get value-box)]
+              (match (spec-substitute-values-expr value subs)
+                [(OkSpecSubExpr rewritten-value)
+                  (match (spec-substitute-values-let-bindings
+                    rest
+                    (spec-value-subst-remove-name subs name))
+                    [(OkSpecSubLetBindingList rewritten-rest)
+                      (OkSpecSubLetBindingList
+                        (ast-let-binding-cons
+                          (ast-let-binding name ty rewritten-value)
+                          rewritten-rest))]
+                    [(ErrSpecSubLetBindingList diag)
+                      (ErrSpecSubLetBindingList diag)])]
+                [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)]))]))]))
 
 (define (spec-substitute-values-match-arms
   [arms : AstMatchArmList]
@@ -1841,27 +2142,32 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (spec-substitute-values-expr
-              body
-              (spec-value-subst-remove-pattern subs pattern))
-              [(OkSpecSubExpr rewritten-body)
-                (match (spec-substitute-values-match-arms rest subs)
-                  [(OkSpecSubMatchArmList rewritten-rest)
-                    (OkSpecSubMatchArmList
-                      (ast-match-arm-cons
-                        (AstMatchArm pattern rewritten-body)
-                        rewritten-rest))]
-                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubMatchArmList diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (spec-substitute-values-expr
+                body
+                (spec-value-subst-remove-pattern subs pattern))
+                [(OkSpecSubExpr rewritten-body)
+                  (match (spec-substitute-values-match-arms rest subs)
+                    [(OkSpecSubMatchArmList rewritten-rest)
+                      (OkSpecSubMatchArmList
+                        (ast-match-arm-cons
+                          (ast-match-arm pattern rewritten-body)
+                          rewritten-rest))]
+                    [(ErrSpecSubMatchArmList diag)
+                      (ErrSpecSubMatchArmList diag)])]
+                [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)]))]))]))
 
 (define (spec-substitute-types-expr [expr : AstExpr] [subs : SpecTypeSubst]) : ResultSpecSubExpr
   (match expr
-    [(AstExprSpanned inner span)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprSpanned rewritten span))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-spanned rewritten span))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprVar name)
       (match (spec-type-subst-lookup subs name)
         [(SpecSomeString _)
@@ -1875,178 +2181,235 @@
     [(AstExprLiteral _) (OkSpecSubExpr expr)]
     [(AstExprTypeLiteral ty)
       (OkSpecSubExpr (AstExprTypeLiteral (spec-substitute-type ty subs)))]
-    [(AstExprMakeArray elem-ty len)
-      (match (spec-substitute-types-expr len subs)
-        [(OkSpecSubExpr rewritten-len)
-          (OkSpecSubExpr
-            (AstExprMakeArray (spec-substitute-type elem-ty subs) rewritten-len))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprAnn inner ty)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprAnn rewritten (spec-substitute-type ty subs)))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCast inner ty)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprCast rewritten (spec-substitute-type ty subs)))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprLambda params ret body)
-      (match (spec-substitute-types-expr
-        body
-        (spec-type-subst-remove-params subs params))
-        [(OkSpecSubExpr rewritten-body)
-          (OkSpecSubExpr
-            (AstExprLambda
-              (spec-substitute-param-types params subs)
-              (spec-substitute-maybe-type ret subs)
-              rewritten-body))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprForeach index index-ty start end body)
-      (match (spec-substitute-types-expr start subs)
-        [(OkSpecSubExpr rewritten-start)
-          (match (spec-substitute-types-expr end subs)
-            [(OkSpecSubExpr rewritten-end)
-              (match (spec-substitute-types-expr
-                body
-                (spec-type-subst-remove-name subs index))
-                [(OkSpecSubExpr rewritten-body)
-                  (OkSpecSubExpr
-                    (AstExprForeach
-                      index
-                      (spec-substitute-type index-ty subs)
-                      rewritten-start
-                      rewritten-end
-                      rewritten-body))]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprSpmdReduce op index index-ty start end init value)
-      (match (spec-substitute-types-expr start subs)
-        [(OkSpecSubExpr rewritten-start)
-          (match (spec-substitute-types-expr end subs)
-            [(OkSpecSubExpr rewritten-end)
-              (match (spec-substitute-types-expr init subs)
-                [(OkSpecSubExpr rewritten-init)
-                  (match (spec-substitute-types-expr
-                    value
-                    (spec-type-subst-remove-name subs index))
-                    [(OkSpecSubExpr rewritten-value)
-                      (OkSpecSubExpr
-                        (AstExprSpmdReduce
-                          op
-                          index
-                          (spec-substitute-type index-ty subs)
-                          rewritten-start
-                          rewritten-end
-                          rewritten-init
-                          rewritten-value))]
-                    [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprBinary op left right)
-      (match (spec-substitute-types-expr left subs)
-        [(OkSpecSubExpr rewritten-left)
-          (match (spec-substitute-types-expr right subs)
-            [(OkSpecSubExpr rewritten-right)
-              (OkSpecSubExpr (AstExprBinary op rewritten-left rewritten-right))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprUnary op inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprUnary op rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCall func args)
-      (match (spec-substitute-types-expr func subs)
-        [(OkSpecSubExpr rewritten-func)
-          (match (spec-substitute-types-expr-list args subs)
-            [(OkSpecSubExprList rewritten-args)
-              (OkSpecSubExpr (AstExprCall rewritten-func rewritten-args))]
-            [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprIf cond then-branch else-branch)
-      (match (spec-substitute-types-expr cond subs)
-        [(OkSpecSubExpr rewritten-cond)
-          (match (spec-substitute-types-expr then-branch subs)
-            [(OkSpecSubExpr rewritten-then)
-              (match (spec-substitute-types-expr else-branch subs)
-                [(OkSpecSubExpr rewritten-else)
-                  (OkSpecSubExpr
-                    (AstExprIf rewritten-cond rewritten-then rewritten-else))]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprLet bindings body)
-      (match (spec-substitute-types-let-bindings bindings subs)
-        [(OkSpecSubLetBindingList rewritten-bindings)
-          (match (spec-substitute-types-expr
-            body
-            (spec-type-subst-remove-let-binding-names subs bindings))
-            [(OkSpecSubExpr rewritten-body)
-              (OkSpecSubExpr (AstExprLet rewritten-bindings rewritten-body))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprMakeArray elem-ty len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (match (spec-substitute-types-expr len subs)
+          [(OkSpecSubExpr rewritten-len)
+            (OkSpecSubExpr
+              (ast-expr-make-array
+                (spec-substitute-type elem-ty subs)
+                rewritten-len))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr
+              (ast-expr-ann rewritten (spec-substitute-type ty subs)))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr
+              (ast-expr-cast rewritten (spec-substitute-type ty subs)))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprLambda params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-types-expr
+          body
+          (spec-type-subst-remove-params subs params))
+          [(OkSpecSubExpr rewritten-body)
+            (OkSpecSubExpr
+              (ast-expr-lambda
+                (spec-substitute-param-types params subs)
+                (spec-substitute-maybe-type ret subs)
+                rewritten-body))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-types-expr start subs)
+          [(OkSpecSubExpr rewritten-start)
+            (match (spec-substitute-types-expr end subs)
+              [(OkSpecSubExpr rewritten-end)
+                (match (spec-substitute-types-expr
+                  body
+                  (spec-type-subst-remove-name subs index))
+                  [(OkSpecSubExpr rewritten-body)
+                    (OkSpecSubExpr
+                      (ast-expr-foreach
+                        index
+                        (spec-substitute-type index-ty subs)
+                        rewritten-start
+                        rewritten-end
+                        rewritten-body))]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSpmdReduce op index index-ty start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-types-expr start subs)
+          [(OkSpecSubExpr rewritten-start)
+            (match (spec-substitute-types-expr end subs)
+              [(OkSpecSubExpr rewritten-end)
+                (match (spec-substitute-types-expr init subs)
+                  [(OkSpecSubExpr rewritten-init)
+                    (match (spec-substitute-types-expr
+                      value
+                      (spec-type-subst-remove-name subs index))
+                      [(OkSpecSubExpr rewritten-value)
+                        (OkSpecSubExpr
+                          (ast-expr-spmd-reduce
+                            op
+                            index
+                            (spec-substitute-type index-ty subs)
+                            rewritten-start
+                            rewritten-end
+                            rewritten-init
+                            rewritten-value))]
+                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (spec-substitute-types-expr left subs)
+          [(OkSpecSubExpr rewritten-left)
+            (match (spec-substitute-types-expr right subs)
+              [(OkSpecSubExpr rewritten-right)
+                (OkSpecSubExpr
+                  (ast-expr-binary op rewritten-left rewritten-right))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-unary op rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (spec-substitute-types-expr func subs)
+          [(OkSpecSubExpr rewritten-func)
+            (match (spec-substitute-types-expr-list args subs)
+              [(OkSpecSubExprList rewritten-args)
+                (OkSpecSubExpr (ast-expr-call rewritten-func rewritten-args))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (spec-substitute-types-expr cond subs)
+          [(OkSpecSubExpr rewritten-cond)
+            (match (spec-substitute-types-expr then-branch subs)
+              [(OkSpecSubExpr rewritten-then)
+                (match (spec-substitute-types-expr else-branch subs)
+                  [(OkSpecSubExpr rewritten-else)
+                    (OkSpecSubExpr
+                      (ast-expr-if rewritten-cond rewritten-then rewritten-else))]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-types-let-bindings bindings subs)
+          [(OkSpecSubLetBindingList rewritten-bindings)
+            (match (spec-substitute-types-expr
+              body
+              (spec-type-subst-remove-let-binding-names subs bindings))
+              [(OkSpecSubExpr rewritten-body)
+                (OkSpecSubExpr (ast-expr-let rewritten-bindings rewritten-body))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)]))]
     [(AstExprTuple exprs)
       (match (spec-substitute-types-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprTuple rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprTupleRef inner index)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprTupleRef rewritten index))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprTupleRef inner-box index)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-tuple-ref rewritten index))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprArray exprs)
       (match (spec-substitute-types-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprArray rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArrayRef array index)
-      (match (spec-substitute-types-expr array subs)
-        [(OkSpecSubExpr rewritten-array)
-          (match (spec-substitute-types-expr index subs)
-            [(OkSpecSubExpr rewritten-index)
-              (OkSpecSubExpr (AstExprArrayRef rewritten-array rewritten-index))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArraySet array index value)
-      (match (spec-substitute-types-expr array subs)
-        [(OkSpecSubExpr rewritten-array)
-          (match (spec-substitute-types-expr index subs)
-            [(OkSpecSubExpr rewritten-index)
-              (match (spec-substitute-types-expr value subs)
-                [(OkSpecSubExpr rewritten-value)
-                  (OkSpecSubExpr
-                    (AstExprArraySet
-                      rewritten-array
-                      rewritten-index
-                      rewritten-value))]
-                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArrayPush array value)
-      (match (spec-substitute-types-expr array subs)
-        [(OkSpecSubExpr rewritten-array)
-          (match (spec-substitute-types-expr value subs)
-            [(OkSpecSubExpr rewritten-value)
-              (OkSpecSubExpr (AstExprArrayPush rewritten-array rewritten-value))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStringRef text index)
-      (match (spec-substitute-types-expr text subs)
-        [(OkSpecSubExpr rewritten-text)
-          (match (spec-substitute-types-expr index subs)
-            [(OkSpecSubExpr rewritten-index)
-              (OkSpecSubExpr (AstExprStringRef rewritten-text rewritten-index))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprWhile cond body)
-      (match (spec-substitute-types-expr cond subs)
-        [(OkSpecSubExpr rewritten-cond)
-          (match (spec-substitute-types-expr body subs)
-            [(OkSpecSubExpr rewritten-body)
-              (OkSpecSubExpr (AstExprWhile rewritten-cond rewritten-body))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (spec-substitute-types-expr array subs)
+          [(OkSpecSubExpr rewritten-array)
+            (match (spec-substitute-types-expr index subs)
+              [(OkSpecSubExpr rewritten-index)
+                (OkSpecSubExpr
+                  (ast-expr-array-ref rewritten-array rewritten-index))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-types-expr array subs)
+          [(OkSpecSubExpr rewritten-array)
+            (match (spec-substitute-types-expr index subs)
+              [(OkSpecSubExpr rewritten-index)
+                (match (spec-substitute-types-expr value subs)
+                  [(OkSpecSubExpr rewritten-value)
+                    (OkSpecSubExpr
+                      (ast-expr-array-set
+                        rewritten-array
+                        rewritten-index
+                        rewritten-value))]
+                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-types-expr array subs)
+          [(OkSpecSubExpr rewritten-array)
+            (match (spec-substitute-types-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-array-push rewritten-array rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStringRef text-box index-box)
+      (let
+        [text : AstExpr (box-get text-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (spec-substitute-types-expr text subs)
+          [(OkSpecSubExpr rewritten-text)
+            (match (spec-substitute-types-expr index subs)
+              [(OkSpecSubExpr rewritten-index)
+                (OkSpecSubExpr
+                  (ast-expr-string-ref rewritten-text rewritten-index))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (spec-substitute-types-expr cond subs)
+          [(OkSpecSubExpr rewritten-cond)
+            (match (spec-substitute-types-expr body subs)
+              [(OkSpecSubExpr rewritten-body)
+                (OkSpecSubExpr (ast-expr-while rewritten-cond rewritten-body))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBegin exprs)
       (match (spec-substitute-types-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
@@ -2056,187 +2419,265 @@
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprUnsafe rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprSet name value)
-      (match (spec-type-subst-lookup subs name)
-        [(SpecSomeString _)
-          (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string-append
-                "type-valued comptime parameter '"
-                (string-append name "' cannot be assigned"))))]
-        [(SpecNoString)
-          (match (spec-substitute-types-expr value subs)
-            [(OkSpecSubExpr rewritten)
-              (OkSpecSubExpr (AstExprSet name rewritten))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])])]
-    [(AstExprMatch scrutinee arms)
-      (match (spec-substitute-types-expr scrutinee subs)
-        [(OkSpecSubExpr rewritten-scrutinee)
-          (match (spec-substitute-types-match-arms arms subs)
-            [(OkSpecSubMatchArmList rewritten-arms)
-              (OkSpecSubExpr (AstExprMatch rewritten-scrutinee rewritten-arms))]
-            [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStructGet receiver field)
-      (match (spec-substitute-types-expr receiver subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprStructGet rewritten field))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-type-subst-lookup subs name)
+          [(SpecSomeString _)
+            (ErrSpecSubExpr
+              (spec-diagnostic-at-expr
+                expr
+                (string-append
+                  "type-valued comptime parameter '"
+                  (string-append name "' cannot be assigned"))))]
+          [(SpecNoString)
+            (match (spec-substitute-types-expr value subs)
+              [(OkSpecSubExpr rewritten)
+                (OkSpecSubExpr (ast-expr-set name rewritten))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (match (spec-substitute-types-expr scrutinee subs)
+          [(OkSpecSubExpr rewritten-scrutinee)
+            (match (spec-substitute-types-match-arms arms subs)
+              [(OkSpecSubMatchArmList rewritten-arms)
+                (OkSpecSubExpr
+                  (ast-expr-match rewritten-scrutinee rewritten-arms))]
+              [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStructGet receiver-box field)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (match (spec-substitute-types-expr receiver subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-struct-get rewritten field))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-types-expr-list body subs)
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprWithRegion region rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprWithEscape scratch body)
-      (match (spec-substitute-types-expr scratch subs)
-        [(OkSpecSubExpr rewritten-scratch)
-          (match (spec-substitute-types-expr-list body subs)
-            [(OkSpecSubExprList rewritten-body)
-              (OkSpecSubExpr
-                (AstExprWithEscape rewritten-scratch rewritten-body))]
-            [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (match (spec-substitute-types-expr scratch subs)
+          [(OkSpecSubExpr rewritten-scratch)
+            (match (spec-substitute-types-expr-list body subs)
+              [(OkSpecSubExprList rewritten-body)
+                (OkSpecSubExpr
+                  (ast-expr-with-escape rewritten-scratch rewritten-body))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithResource bindings body)
       (OkSpecSubExpr (AstExprWithResource bindings body))]
-    [(AstExprBox inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBox rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprBoxGet inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBoxGet rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprComptime inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprComptime rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprTry inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprTry rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprReturn inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprReturn rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-box rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-box-get rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-comptime rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-try rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-return rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprPtrNull ty)
       (OkSpecSubExpr (AstExprPtrNull (spec-substitute-type ty subs)))]
-    [(AstExprPtrNullCheck inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrRead ptr)
-      (match (spec-substitute-types-expr ptr subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrRead rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrWrite ptr value)
-      (match (spec-substitute-types-expr ptr subs)
-        [(OkSpecSubExpr rewritten-ptr)
-          (match (spec-substitute-types-expr value subs)
-            [(OkSpecSubExpr rewritten-value)
-              (OkSpecSubExpr (AstExprPtrWrite rewritten-ptr rewritten-value))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrOffset ptr offset)
-      (match (spec-substitute-types-expr ptr subs)
-        [(OkSpecSubExpr rewritten-ptr)
-          (match (spec-substitute-types-expr offset subs)
-            [(OkSpecSubExpr rewritten-offset)
-              (OkSpecSubExpr (AstExprPtrOffset rewritten-ptr rewritten-offset))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrCast ptr ty)
-      (match (spec-substitute-types-expr ptr subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr
-            (AstExprPtrCast rewritten (spec-substitute-type ty subs)))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprPtrToInt ptr)
-      (match (spec-substitute-types-expr ptr subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrToInt rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprIntToPtr value ty)
-      (match (spec-substitute-types-expr value subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr
-            (AstExprIntToPtr rewritten (spec-substitute-type ty subs)))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStringData inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprStringData rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprStringFromBytes ptr len)
-      (match (spec-substitute-types-expr ptr subs)
-        [(OkSpecSubExpr rewritten-ptr)
-          (match (spec-substitute-types-expr len subs)
-            [(OkSpecSubExpr rewritten-len)
-              (OkSpecSubExpr
-                (AstExprStringFromBytes rewritten-ptr rewritten-len))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprArrayData inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprArrayData rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-substitute-types-expr ptr subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-read rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-types-expr ptr subs)
+          [(OkSpecSubExpr rewritten-ptr)
+            (match (spec-substitute-types-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-ptr-write rewritten-ptr rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (match (spec-substitute-types-expr ptr subs)
+          [(OkSpecSubExpr rewritten-ptr)
+            (match (spec-substitute-types-expr offset subs)
+              [(OkSpecSubExpr rewritten-offset)
+                (OkSpecSubExpr
+                  (ast-expr-ptr-offset rewritten-ptr rewritten-offset))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrCast ptr-box ty)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-substitute-types-expr ptr subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr
+              (ast-expr-ptr-cast rewritten (spec-substitute-type ty subs)))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (spec-substitute-types-expr ptr subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-ptr-to-int rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprIntToPtr value-box ty)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-substitute-types-expr value subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr
+              (ast-expr-int-to-ptr rewritten (spec-substitute-type ty subs)))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-string-data rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (match (spec-substitute-types-expr ptr subs)
+          [(OkSpecSubExpr rewritten-ptr)
+            (match (spec-substitute-types-expr len subs)
+              [(OkSpecSubExpr rewritten-len)
+                (OkSpecSubExpr
+                  (ast-expr-string-from-bytes rewritten-ptr rewritten-len))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-array-data rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprProgramArgc) (OkSpecSubExpr (AstExprProgramArgc))]
     [(AstExprProgramArgv) (OkSpecSubExpr (AstExprProgramArgv))]
     [(AstExprProgramEnvp) (OkSpecSubExpr (AstExprProgramEnvp))]
-    [(AstExprCpuIdEax leaf subleaf)
-      (match (spec-substitute-types-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-types-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEax rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (match (spec-substitute-types-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-types-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEbx rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (match (spec-substitute-types-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-types-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEcx rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (match (spec-substitute-types-expr leaf subs)
-        [(OkSpecSubExpr rewritten-leaf)
-          (match (spec-substitute-types-expr subleaf subs)
-            [(OkSpecSubExpr rewritten-subleaf)
-              (OkSpecSubExpr (AstExprCpuIdEdx rewritten-leaf rewritten-subleaf))]
-            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprXgetbv index)
-      (match (spec-substitute-types-expr index subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprXgetbv rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprQuote inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprQuote rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprQuasiquote inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprQuasiquote rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprUnquote inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprUnquote rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-    [(AstExprUnquoteSplicing inner)
-      (match (spec-substitute-types-expr inner subs)
-        [(OkSpecSubExpr rewritten)
-          (OkSpecSubExpr (AstExprUnquoteSplicing rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-types-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-types-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-eax rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-types-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-types-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-ebx rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-types-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-types-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-ecx rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (spec-substitute-types-expr leaf subs)
+          [(OkSpecSubExpr rewritten-leaf)
+            (match (spec-substitute-types-expr subleaf subs)
+              [(OkSpecSubExpr rewritten-subleaf)
+                (OkSpecSubExpr
+                  (ast-expr-cpuid-edx rewritten-leaf rewritten-subleaf))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (match (spec-substitute-types-expr index subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-quote rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-quasiquote rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-unquote rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (spec-substitute-types-expr inner subs)
+          [(OkSpecSubExpr rewritten)
+            (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
 
 (define (spec-substitute-types-expr-list
@@ -2265,23 +2706,25 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name ty value)
-            (match (spec-substitute-types-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (match (spec-substitute-types-let-bindings
-                  rest
-                  (spec-type-subst-remove-name subs name))
-                  [(OkSpecSubLetBindingList rewritten-rest)
-                    (OkSpecSubLetBindingList
-                      (ast-let-binding-cons
-                        (AstLetBinding
-                          name
-                          (spec-substitute-maybe-type ty subs)
-                          rewritten-value)
-                        rewritten-rest))]
-                  [(ErrSpecSubLetBindingList diag)
-                    (ErrSpecSubLetBindingList diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)])]))]))
+          [(AstLetBinding name ty value-box)
+            (let
+              [value : AstExpr (box-get value-box)]
+              (match (spec-substitute-types-expr value subs)
+                [(OkSpecSubExpr rewritten-value)
+                  (match (spec-substitute-types-let-bindings
+                    rest
+                    (spec-type-subst-remove-name subs name))
+                    [(OkSpecSubLetBindingList rewritten-rest)
+                      (OkSpecSubLetBindingList
+                        (ast-let-binding-cons
+                          (ast-let-binding
+                            name
+                            (spec-substitute-maybe-type ty subs)
+                            rewritten-value)
+                          rewritten-rest))]
+                    [(ErrSpecSubLetBindingList diag)
+                      (ErrSpecSubLetBindingList diag)])]
+                [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)]))]))]))
 
 (define (spec-substitute-types-match-arms
   [arms : AstMatchArmList]
@@ -2292,19 +2735,22 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (spec-substitute-types-expr
-              body
-              (spec-type-subst-remove-pattern subs pattern))
-              [(OkSpecSubExpr rewritten-body)
-                (match (spec-substitute-types-match-arms rest subs)
-                  [(OkSpecSubMatchArmList rewritten-rest)
-                    (OkSpecSubMatchArmList
-                      (ast-match-arm-cons
-                        (AstMatchArm pattern rewritten-body)
-                        rewritten-rest))]
-                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubMatchArmList diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (spec-substitute-types-expr
+                body
+                (spec-type-subst-remove-pattern subs pattern))
+                [(OkSpecSubExpr rewritten-body)
+                  (match (spec-substitute-types-match-arms rest subs)
+                    [(OkSpecSubMatchArmList rewritten-rest)
+                      (OkSpecSubMatchArmList
+                        (ast-match-arm-cons
+                          (ast-match-arm pattern rewritten-body)
+                          rewritten-rest))]
+                    [(ErrSpecSubMatchArmList diag)
+                      (ErrSpecSubMatchArmList diag)])]
+                [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)]))]))]))
 
 (define (spec-rewrite-decl
   [decl : AstDecl]
@@ -2481,7 +2927,8 @@
 
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
-    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    [subs : SpecTypeSubst
+      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
       (string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
       (and
@@ -2501,15 +2948,15 @@
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
-      (SpecValueCons (CtfeType (AstTyI64)) (SpecValueNil))]
+      (spec-value-cons (CtfeType (AstTyI64)) (SpecValueNil))]
     [vals-bool : SpecValueList
-      (SpecValueCons (CtfeType (AstTyBool)) (SpecValueNil))]
+      (spec-value-cons (CtfeType (AstTyBool)) (SpecValueNil))]
     [vals-multi : SpecValueList
-      (SpecValueCons
+      (spec-value-cons
         (CtfeType (AstTyI64))
-        (SpecValueCons (CtfeI64 5) (SpecValueNil)))]
+        (spec-value-cons (CtfeI64 5) (SpecValueNil)))]
     [vals-string : SpecValueList
-      (SpecValueCons (CtfeString "a b") (SpecValueNil))]
+      (spec-value-cons (CtfeString "a b") (SpecValueNil))]
     (and
       (string-eq
         (spec-specialized-name "alloc" vals-i64)
@@ -2594,7 +3041,8 @@
 ;: the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
 (define (compiler-specialize-subst-ok?) : bool
   (let
-    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    [subs : SpecTypeSubst
+      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
       (string-eq
         (spec-type-key (spec-substitute-type (AstTyVar "T") subs))
@@ -2629,7 +3077,7 @@
 (define (compiler-specialize-value-subst-ok?) : bool
   (let
     [subs : SpecValueSubst
-      (SpecValueSubstCons "x" (CtfeI64 5) SpecValueSubstNil)]
+      (spec-value-subst-cons "x" (CtfeI64 5) SpecValueSubstNil)]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr (AstExprVar "x") subs)
@@ -2651,26 +3099,82 @@
           [(ErrSpecSubExpr _) false])
         ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
         (match (spec-substitute-values-expr
-          (AstExprIf
+          (ast-expr-if
             (AstExprVar "x")
             (AstExprLiteral (AstLitInt 1))
             (AstExprVar "y"))
           subs)
           [(OkSpecSubExpr e)
             (match e
-              [(AstExprIf cond _ else-branch)
-                (and
-                  (match cond
-                    [(AstExprLiteral lit)
-                      (match lit
-                        [(AstLitInt n) (= n 5)]
-                        [_ false])]
-                    [_ false])
-                  (match else-branch
-                    [(AstExprVar name) (string-eq name "y")]
-                    [_ false]))]
+              [(AstExprIf cond-box _ else-branch-box)
+                (let
+                  [cond : AstExpr (box-get cond-box)]
+                  [else-branch : AstExpr (box-get else-branch-box)]
+                  (and
+                    (match cond
+                      [(AstExprLiteral lit)
+                        (match lit
+                          [(AstLitInt n) (= n 5)]
+                          [_ false])]
+                      [_ false])
+                    (match else-branch
+                      [(AstExprVar name) (string-eq name "y")]
+                      [_ false])))]
               [_ false])]
           [(ErrSpecSubExpr _) false])))))
+
+(define (compiler-specialize-boxed-tails-ok?) : bool
+  (let
+    [templates : SpecTemplateList
+      (spec-template-cons
+        (SpecTemplate
+          "first"
+          AstParamNil
+          (AstTyI64)
+          (AstExprLiteral (AstLitInt 1)))
+        (spec-template-cons
+          (SpecTemplate
+            "second"
+            AstParamNil
+            (AstTyBool)
+            (AstExprLiteral (AstLitBool true)))
+          SpecTemplateNil))]
+    [cache : SpecCache
+      (spec-cache-cons
+        "one"
+        "generated-one"
+        (spec-cache-cons "two" "generated-two" SpecCacheNil))]
+    [values : SpecValueList
+      (spec-value-cons
+        (CtfeI64 1)
+        (spec-value-cons (CtfeBool true) SpecValueNil))]
+    [value-subs : SpecValueSubst
+      (spec-value-subst-cons
+        "x"
+        (CtfeI64 1)
+        (spec-value-subst-cons "flag" (CtfeBool true) SpecValueSubstNil))]
+    [type-subs : SpecTypeSubst
+      (spec-type-subst-cons
+        "T"
+        (AstTyI64)
+        (spec-type-subst-cons "U" (AstTyBool) SpecTypeSubstNil))]
+    (and
+      (match (spec-template-lookup templates "second")
+        [(SpecSomeTemplate template)
+          (match template
+            [(SpecTemplate name _ _ _) (string-eq name "second")])]
+        [(SpecNoTemplate) false])
+      (and
+        (match (spec-cache-lookup cache "two")
+          [(SpecSomeString name) (string-eq name "generated-two")]
+          [(SpecNoString) false])
+        (and
+          (string-eq (spec-values-key values) "i64_1_bool_1_none")
+          (and
+            (match (spec-value-subst-value value-subs "flag")
+              [(CtfeBool flag) flag]
+              [_ false])
+            (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstTyBool))))))))
 
 (define (compiler-specialize-reflection-string-param-source) : String
   "(defstruct Point (x i64))
@@ -2701,5 +3205,6 @@
     (unless (compiler-specialize-reuse-ok?) (return 0))
     (unless (compiler-specialize-subst-ok?) (return 0))
     (unless (compiler-specialize-value-subst-ok?) (return 0))
+    (unless (compiler-specialize-boxed-tails-ok?) (return 0))
     (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
     1))

@@ -158,26 +158,43 @@
 ;: transparent.
 (define (lint-ladder-length [expr : AstExpr]) : i64
   (match expr
-    [(AstExprSpanned inner _) (lint-ladder-length inner)]
-    [(AstExprIf _ _ else-branch) (+ 1 (lint-ladder-length else-branch))]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-ladder-length inner))]
+    [(AstExprIf _ _ else-branch-box)
+      (let
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (+ 1 (lint-ladder-length else-branch)))]
     [_ 0]))
 
 (define (lint-return-path-chain-length [expr : AstExpr]) : i64
   (match expr
-    [(AstExprSpanned inner _) (lint-return-path-chain-length inner)]
-    [(AstExprIf _ then-branch _)
-      (+ 1 (lint-return-path-chain-length then-branch))]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-return-path-chain-length inner))]
+    [(AstExprIf _ then-branch-box _)
+      (let
+        [then-branch : AstExpr (box-get then-branch-box)]
+        (+ 1 (lint-return-path-chain-length then-branch)))]
     [_ 0]))
 
 (define (lint-unit-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner _) (lint-unit-expr? inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-unit-expr? inner))]
     [(AstExprLiteral AstLitUnit) true]
     [_ false]))
 
 (define (lint-return-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner _) (lint-return-expr? inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-return-expr? inner))]
     [(AstExprReturn _) true]
     [_ false]))
 
@@ -193,7 +210,10 @@
 
 (define (lint-return-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner _) (lint-return-branch? inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-return-branch? inner))]
     [(AstExprReturn _) true]
     [(AstExprBegin exprs) (lint-expr-list-has-return? exprs)]
     [_ false]))
@@ -259,11 +279,13 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ init)
-            (lint-walk-let-bindings
-              rest
-              threshold
-              (lint-walk-expr init threshold acc))]))]))
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (lint-walk-let-bindings
+                rest
+                threshold
+                (lint-walk-expr init threshold acc)))]))]))
 
 (define (lint-let-bindings-contain-name?
   [bindings : AstLetBindingList]
@@ -295,13 +317,19 @@
 
 (define (lint-nested-let-body? [body : AstExpr]) : bool
   (match body
-    [(AstExprSpanned inner _) (lint-nested-let-body? inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-nested-let-body? inner))]
     [(AstExprLet _ _) true]
     [_ false]))
 
 (define (lint-nested-let-shadows? [outer : AstLetBindingList] [body : AstExpr]) : bool
   (match body
-    [(AstExprSpanned inner _) (lint-nested-let-shadows? outer inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-nested-let-shadows? outer inner))]
     [(AstExprLet inner-bindings _)
       (lint-let-bindings-shadow-outer? outer inner-bindings)]
     [_ false]))
@@ -353,14 +381,17 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding _ init cleanup)
-            (lint-walk-resource-bindings
-              rest
-              threshold
-              (lint-walk-expr
-                cleanup
+          [(AstResourceBinding _ init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
+              (lint-walk-resource-bindings
+                rest
                 threshold
-                (lint-walk-expr init threshold acc)))]))]))
+                (lint-walk-expr
+                  cleanup
+                  threshold
+                  (lint-walk-expr init threshold acc))))]))]))
 
 ;: Walk each match-arm body in `arms`.
 (define (lint-walk-match-arms
@@ -373,11 +404,13 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body)
-            (lint-walk-match-arms
-              rest
-              threshold
-              (lint-walk-expr body threshold acc))]))]))
+          [(AstMatchArm _ body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (lint-walk-match-arms
+                rest
+                threshold
+                (lint-walk-expr body threshold acc)))]))]))
 
 ;: Descend an if/else-`if` ladder whose head has already been flagged: walk
 ;: each rung's condition and then-branch as fresh sub-walks (so a ladder nested
@@ -389,22 +422,28 @@
   [tail-return-path : bool]
   [acc : LintFindingList]) : LintFindingList
   (match expr
-    [(AstExprSpanned inner _)
-      (lint-walk-ladder inner threshold tail-return-path acc)]
-    [(AstExprIf cond then-branch else-branch)
-      (lint-walk-ladder
-        else-branch
-        threshold
-        tail-return-path
-        (if tail-return-path
-          (lint-walk-tail-expr
-            then-branch
-            threshold
-            (lint-walk-expr cond threshold acc))
-          (lint-walk-expr
-            then-branch
-            threshold
-            (lint-walk-expr cond threshold acc))))]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-ladder inner threshold tail-return-path acc))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (lint-walk-ladder
+          else-branch
+          threshold
+          tail-return-path
+          (if tail-return-path
+            (lint-walk-tail-expr
+              then-branch
+              threshold
+              (lint-walk-expr cond threshold acc))
+            (lint-walk-expr
+              then-branch
+              threshold
+              (lint-walk-expr cond threshold acc)))))]
     [_
       (if tail-return-path
         (lint-walk-tail-expr expr threshold acc)
@@ -415,15 +454,22 @@
   [threshold : i64]
   [acc : LintFindingList]) : LintFindingList
   (match expr
-    [(AstExprSpanned inner _) (lint-walk-return-path-chain inner threshold acc)]
-    [(AstExprIf cond then-branch else-branch)
-      (lint-walk-return-path-chain
-        then-branch
-        threshold
-        (lint-walk-expr
-          else-branch
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-return-path-chain inner threshold acc))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (lint-walk-return-path-chain
+          then-branch
           threshold
-          (lint-walk-expr cond threshold acc)))]
+          (lint-walk-expr
+            else-branch
+            threshold
+            (lint-walk-expr cond threshold acc))))]
     [_ (lint-walk-tail-expr expr threshold acc)]))
 
 (define (lint-walk-unit-if-guard-branch
@@ -473,14 +519,14 @@
             (lint-walk-expr cond threshold acc)))]
       [(and tail-return-path (>= return-chain threshold))
         (lint-walk-return-path-chain
-          (AstExprIf cond then-branch else-branch)
+          (ast-expr-if cond then-branch else-branch)
           threshold
           (LintFindingCons
             (lint-return-path-chain-finding return-chain span)
             acc))]
       [(>= ladder threshold)
         (lint-walk-ladder
-          (AstExprIf cond then-branch else-branch)
+          (ast-expr-if cond then-branch else-branch)
           threshold
           tail-return-path
           (LintFindingCons (lint-ladder-finding ladder span) acc))]
@@ -531,11 +577,13 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body)
-            (lint-walk-tail-match-arms
-              rest
-              threshold
-              (lint-walk-tail-expr body threshold acc))]))]))
+          [(AstMatchArm _ body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (lint-walk-tail-match-arms
+                rest
+                threshold
+                (lint-walk-tail-expr body threshold acc)))]))]))
 
 ;;; Walk `expr` in a function/lambda/test tail context. The return-path-chain
 ;;; rule is only valid here: in non-tail value contexts, introducing
@@ -545,41 +593,76 @@
   [threshold : i64]
   [acc : LintFindingList]) : LintFindingList
   (match expr
-    [(AstExprSpanned inner span)
-      (match inner
-        [(AstExprIf cond then-branch else-branch)
-          (lint-walk-if cond then-branch else-branch span true threshold acc)]
-        [(AstExprLet bindings body)
-          (lint-walk-tail-let bindings body span threshold acc)]
-        [_ (lint-walk-tail-expr inner threshold acc)])]
-    [(AstExprIf cond then-branch else-branch)
-      (lint-walk-if
-        cond
-        then-branch
-        else-branch
-        (lint-no-span)
-        true
-        threshold
-        acc)]
-    [(AstExprLet bindings body)
-      (lint-walk-tail-let bindings body (lint-no-span) threshold acc)]
-    [(AstExprLambda _ _ body) (lint-walk-tail-expr body threshold acc)]
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match inner
+          [(AstExprIf cond-box then-branch-box else-branch-box)
+            (let
+              [cond : AstExpr (box-get cond-box)]
+              [then-branch : AstExpr (box-get then-branch-box)]
+              [else-branch : AstExpr (box-get else-branch-box)]
+              (lint-walk-if
+                cond
+                then-branch
+                else-branch
+                span
+                true
+                threshold
+                acc))]
+          [(AstExprLet bindings body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (lint-walk-tail-let bindings body span threshold acc))]
+          [_ (lint-walk-tail-expr inner threshold acc)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (lint-walk-if
+          cond
+          then-branch
+          else-branch
+          (lint-no-span)
+          true
+          threshold
+          acc))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-tail-let bindings body (lint-no-span) threshold acc))]
+    [(AstExprLambda _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-tail-expr body threshold acc))]
     [(AstExprBegin exprs) (lint-walk-tail-expr-list exprs threshold acc)]
     [(AstExprUnsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
-    [(AstExprAnn inner _) (lint-walk-tail-expr inner threshold acc)]
-    [(AstExprCast inner _) (lint-walk-tail-expr inner threshold acc)]
-    [(AstExprMatch scrutinee arms)
-      (lint-walk-tail-match-arms
-        arms
-        threshold
-        (lint-walk-expr scrutinee threshold acc))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-tail-expr inner threshold acc))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-tail-expr inner threshold acc))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (lint-walk-tail-match-arms
+          arms
+          threshold
+          (lint-walk-expr scrutinee threshold acc)))]
     [(AstExprWithRegion _ body) (lint-walk-tail-expr-list body threshold acc)]
     [(AstExprWithResource bindings body)
       (lint-walk-tail-expr-list
         body
         threshold
         (lint-walk-resource-bindings bindings threshold acc))]
-    [(AstExprTry inner) (lint-walk-tail-expr inner threshold acc)]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-tail-expr inner threshold acc))]
     [_ (lint-walk-expr expr threshold acc)]))
 
 ;: Walk `expr`, flagging each maximal nested-`if` ladder of length >=
@@ -590,123 +673,271 @@
   [threshold : i64]
   [acc : LintFindingList]) : LintFindingList
   (match expr
-    [(AstExprSpanned inner span)
-      (match inner
-        [(AstExprIf cond then-branch else-branch)
-          (lint-walk-if cond then-branch else-branch span false threshold acc)]
-        [(AstExprLet bindings body)
-          (lint-walk-let bindings body span threshold acc)]
-        [_ (lint-walk-expr inner threshold acc)])]
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match inner
+          [(AstExprIf cond-box then-branch-box else-branch-box)
+            (let
+              [cond : AstExpr (box-get cond-box)]
+              [then-branch : AstExpr (box-get then-branch-box)]
+              [else-branch : AstExpr (box-get else-branch-box)]
+              (lint-walk-if
+                cond
+                then-branch
+                else-branch
+                span
+                false
+                threshold
+                acc))]
+          [(AstExprLet bindings body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (lint-walk-let bindings body span threshold acc))]
+          [_ (lint-walk-expr inner threshold acc)]))]
     [(AstExprLiteral _) acc]
     [(AstExprVar _) acc]
     [(AstExprTypeLiteral _) acc]
-    [(AstExprBinary _ left right)
-      (lint-walk-expr right threshold (lint-walk-expr left threshold acc))]
-    [(AstExprUnary _ inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprCall func args)
-      (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc))]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (lint-walk-expr right threshold (lint-walk-expr left threshold acc)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc)))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
       ;; A directly-reached (unspanned) `if`: no wrapper span, so the finding
       ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
-      (lint-walk-if
-        cond
-        then-branch
-        else-branch
-        (lint-no-span)
-        false
-        threshold
-        acc)]
-    [(AstExprLet bindings body)
-      (lint-walk-let bindings body (lint-no-span) threshold acc)]
-    [(AstExprLambda _ _ body) (lint-walk-expr body threshold acc)]
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (lint-walk-if
+          cond
+          then-branch
+          else-branch
+          (lint-no-span)
+          false
+          threshold
+          acc))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-let bindings body (lint-no-span) threshold acc))]
+    [(AstExprLambda _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-expr body threshold acc))]
     [(AstExprTuple exprs) (lint-walk-expr-list exprs threshold acc)]
-    [(AstExprTupleRef tuple _) (lint-walk-expr tuple threshold acc)]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (lint-walk-expr tuple threshold acc))]
     [(AstExprArray exprs) (lint-walk-expr-list exprs threshold acc)]
-    [(AstExprMakeArray _ len) (lint-walk-expr len threshold acc)]
-    [(AstExprArrayRef array index)
-      (lint-walk-expr index threshold (lint-walk-expr array threshold acc))]
-    [(AstExprArraySet array index value)
-      (lint-walk-expr
-        value
-        threshold
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (lint-walk-expr len threshold acc))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
         (lint-walk-expr index threshold (lint-walk-expr array threshold acc)))]
-    [(AstExprArrayPush array value)
-      (lint-walk-expr value threshold (lint-walk-expr array threshold acc))]
-    [(AstExprStringRef str index)
-      (lint-walk-expr index threshold (lint-walk-expr str threshold acc))]
-    [(AstExprWhile cond body)
-      (lint-walk-expr body threshold (lint-walk-expr cond threshold acc))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (lint-walk-expr
+          value
+          threshold
+          (lint-walk-expr index threshold (lint-walk-expr array threshold acc))))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (lint-walk-expr value threshold (lint-walk-expr array threshold acc)))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (lint-walk-expr index threshold (lint-walk-expr str threshold acc)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-expr body threshold (lint-walk-expr cond threshold acc)))]
     [(AstExprBegin exprs) (lint-walk-expr-list exprs threshold acc)]
     [(AstExprUnsafe exprs) (lint-walk-expr-list exprs threshold acc)]
-    [(AstExprSet _ value) (lint-walk-expr value threshold acc)]
-    [(AstExprAnn inner _) (lint-walk-expr inner threshold acc)]
-    [(AstExprCast inner _) (lint-walk-expr inner threshold acc)]
-    [(AstExprBorrow _ place) (lint-walk-expr place threshold acc)]
-    [(AstExprMatch scrutinee arms)
-      (lint-walk-match-arms
-        arms
-        threshold
-        (lint-walk-expr scrutinee threshold acc))]
-    [(AstExprForeach _ _ start end body)
-      (lint-walk-expr
-        body
-        threshold
-        (lint-walk-expr end threshold (lint-walk-expr start threshold acc)))]
-    [(AstExprSpmdReduce _ _ _ start end init value)
-      (lint-walk-expr
-        value
-        threshold
+    [(AstExprSet _ value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (lint-walk-expr value threshold acc))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (lint-walk-expr place threshold acc))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (lint-walk-match-arms
+          arms
+          threshold
+          (lint-walk-expr scrutinee threshold acc)))]
+    [(AstExprForeach _ _ start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
         (lint-walk-expr
-          init
+          body
           threshold
           (lint-walk-expr end threshold (lint-walk-expr start threshold acc))))]
-    [(AstExprStructGet receiver _) (lint-walk-expr receiver threshold acc)]
+    [(AstExprSpmdReduce _ _ _ start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (lint-walk-expr
+          value
+          threshold
+          (lint-walk-expr
+            init
+            threshold
+            (lint-walk-expr end threshold (lint-walk-expr start threshold acc)))))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (lint-walk-expr receiver threshold acc))]
     [(AstExprWithRegion _ body) (lint-walk-expr-list body threshold acc)]
-    [(AstExprWithEscape scratch body)
-      (lint-walk-expr-list
-        body
-        threshold
-        (lint-walk-expr scratch threshold acc))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (lint-walk-expr-list
+          body
+          threshold
+          (lint-walk-expr scratch threshold acc)))]
     [(AstExprWithResource bindings body)
       (lint-walk-expr-list
         body
         threshold
         (lint-walk-resource-bindings bindings threshold acc))]
-    [(AstExprBox inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprBoxGet inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprComptime inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
     [(AstExprQuote _) acc]
     [(AstExprQuasiquote _) acc]
-    [(AstExprUnquote inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprUnquoteSplicing inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprTry inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprReturn inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
     [(AstExprPtrNull _) acc]
-    [(AstExprPtrNullCheck inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprPtrRead ptr) (lint-walk-expr ptr threshold acc)]
-    [(AstExprPtrWrite ptr value)
-      (lint-walk-expr value threshold (lint-walk-expr ptr threshold acc))]
-    [(AstExprPtrOffset ptr offset)
-      (lint-walk-expr offset threshold (lint-walk-expr ptr threshold acc))]
-    [(AstExprPtrCast ptr _) (lint-walk-expr ptr threshold acc)]
-    [(AstExprPtrToInt ptr) (lint-walk-expr ptr threshold acc)]
-    [(AstExprIntToPtr value _) (lint-walk-expr value threshold acc)]
-    [(AstExprStringData inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprStringFromBytes ptr len)
-      (lint-walk-expr len threshold (lint-walk-expr ptr threshold acc))]
-    [(AstExprArrayData inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (lint-walk-expr ptr threshold acc))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (lint-walk-expr value threshold (lint-walk-expr ptr threshold acc)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (lint-walk-expr offset threshold (lint-walk-expr ptr threshold acc)))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (lint-walk-expr ptr threshold acc))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (lint-walk-expr ptr threshold acc))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (lint-walk-expr value threshold acc))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (lint-walk-expr len threshold (lint-walk-expr ptr threshold acc)))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-walk-expr inner threshold acc))]
     [(AstExprProgramArgc) acc]
     [(AstExprProgramArgv) acc]
     [(AstExprProgramEnvp) acc]
-    [(AstExprCpuIdEax leaf subleaf)
-      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
-    [(AstExprXgetbv index) (lint-walk-expr index threshold acc)]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (lint-walk-expr index threshold acc))]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl
@@ -754,52 +985,52 @@
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
     [unit-expr : AstExpr (AstExprLiteral AstLitUnit)]
     [ladder3 : AstExpr
-      (AstExprIf vx one (AstExprIf vx one (AstExprIf vx one one)))]
-    [ladder2 : AstExpr (AstExprIf vx one (AstExprIf vx one one))]
+      (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one)))]
+    [ladder2 : AstExpr (ast-expr-if vx one (ast-expr-if vx one one))]
     [ladder4 : AstExpr
-      (AstExprIf
+      (ast-expr-if
         vx
         one
-        (AstExprIf vx one (AstExprIf vx one (AstExprIf vx one one))))]
+        (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one))))]
     [return-chain3 : AstExpr
-      (AstExprIf vx (AstExprIf vx (AstExprIf vx one one) one) one)]
-    [return-one : AstExpr (AstExprReturn one)]
-    [unit-then-guard : AstExpr (AstExprIf vx unit-expr return-one)]
-    [unit-else-guard : AstExpr (AstExprIf vx return-one unit-expr)]
-    [unit-value-guard : AstExpr (AstExprIf vx one unit-expr)]
+      (ast-expr-if vx (ast-expr-if vx (ast-expr-if vx one one) one) one)]
+    [return-one : AstExpr (ast-expr-return one)]
+    [unit-then-guard : AstExpr (ast-expr-if vx unit-expr return-one)]
+    [unit-else-guard : AstExpr (ast-expr-if vx return-one unit-expr)]
+    [unit-value-guard : AstExpr (ast-expr-if vx one unit-expr)]
     [nested : AstExpr (AstExprBegin (ast-expr-cons ladder3 (AstExprNil)))]
     [in-let : AstExpr
-      (AstExprLet
+      (ast-expr-let
         (ast-let-binding-cons
-          (AstLetBinding "y" (AstNoType) ladder3)
+          (ast-let-binding "y" (AstNoType) ladder3)
           (AstLetBindingNil))
         vx)]
     [outer-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (AstLetBinding "a" (AstNoType) one)
+        (ast-let-binding "a" (AstNoType) one)
         (AstLetBindingNil))]
     [inner-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (AstLetBinding "b" (AstNoType) vx)
+        (ast-let-binding "b" (AstNoType) vx)
         (AstLetBindingNil))]
     [shadowing-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (AstLetBinding "a" (AstNoType) one)
+        (ast-let-binding "a" (AstNoType) one)
         (AstLetBindingNil))]
     [nested-let : AstExpr
-      (AstExprLet outer-let-bindings (AstExprLet inner-let-bindings vx))]
+      (ast-expr-let outer-let-bindings (ast-expr-let inner-let-bindings vx))]
     [shadowing-nested-let : AstExpr
-      (AstExprLet outer-let-bindings (AstExprLet shadowing-let-bindings vx))]
+      (ast-expr-let outer-let-bindings (ast-expr-let shadowing-let-bindings vx))]
     [begin-inner-let : AstExpr
-      (AstExprLet
+      (ast-expr-let
         outer-let-bindings
         (AstExprBegin
           (ast-expr-cons
-            (AstExprLet inner-let-bindings vx)
+            (ast-expr-let inner-let-bindings vx)
             (ast-expr-cons vx (AstExprNil)))))]
-    [spanned : AstExpr (AstExprSpanned ladder3 (AstSourceSpan 7 3 9 4))]
+    [spanned : AstExpr (ast-expr-spanned ladder3 (AstSourceSpan 7 3 9 4))]
     [spanned-nested-let : AstExpr
-      (AstExprSpanned nested-let (AstSourceSpan 11 5 15 6))]
+      (ast-expr-spanned nested-let (AstSourceSpan 11 5 15 6))]
     (begin
       ;; ladder length math
       (if (= (lint-ladder-length ladder3) 3)

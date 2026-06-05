@@ -306,7 +306,7 @@
     (span-end-col span)))
 
 (define (ast-expr-wrap-span [expr : AstExpr] [s : SpannedSexpr]) : AstExpr
-  (AstExprSpanned
+  (ast-expr-spanned
     expr
     (ast-source-span-from-source-span (spanned-sexpr-span s))))
 
@@ -1618,7 +1618,7 @@
     [(SCons (SSym name) args)
       (match (parse-ast-pattern-list dispatch args)
         [(OkAstPatternList parsed-args)
-          (OkAstPattern (AstPatVariant name parsed-args))]
+          (OkAstPattern (ast-pat-variant name parsed-args))]
         [(ErrAstPatternList message) (ErrAstPattern message)])]
     [_ (ErrAstPattern "parse: expected pattern")]))
 
@@ -1695,7 +1695,7 @@
         [(OkAstExpr parsed-left)
           (match (parse-ast-expr dispatch right)
             [(OkAstExpr parsed-right)
-              (OkAstExpr (AstExprBinary op parsed-left parsed-right))]
+              (OkAstExpr (ast-expr-binary op parsed-left parsed-right))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed binary expression")]))
@@ -1707,7 +1707,7 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprUnary op parsed-expr))]
+        [(OkAstExpr parsed-expr) (OkAstExpr (ast-expr-unary op parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed unary expression")]))
 
@@ -1720,7 +1720,7 @@
             [(OkAstExpr parsed-then)
               (match (parse-ast-expr dispatch else-branch)
                 [(OkAstExpr parsed-else)
-                  (OkAstExpr (AstExprIf parsed-cond parsed-then parsed-else))]
+                  (OkAstExpr (ast-expr-if parsed-cond parsed-then parsed-else))]
                 [(ErrAstExpr message) (ErrAstExpr message)])]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -1761,8 +1761,8 @@
                       (AstExprBegin
                         (parse-ast-expr-list-append-unit parsed-body))]
                     (if is-unless
-                      (OkAstExpr (AstExprIf parsed-cond unit-expr body-expr))
-                      (OkAstExpr (AstExprIf parsed-cond body-expr unit-expr))))]
+                      (OkAstExpr (ast-expr-if parsed-cond unit-expr body-expr))
+                      (OkAstExpr (ast-expr-if parsed-cond body-expr unit-expr))))]
                 [(ErrAstExprList message) (ErrAstExpr message)])]
             [(ErrAstExpr message) (ErrAstExpr message)])])]
     [_ (ErrAstExpr (parse-ast-when-like-error is-unless))]))
@@ -1784,7 +1784,7 @@
         [(OkAstExpr parsed-body)
           (match (parse-ast-cond-arms dispatch rest true)
             [(OkAstExpr parsed-else)
-              (OkAstExpr (AstExprIf parsed-cond parsed-body parsed-else))]
+              (OkAstExpr (ast-expr-if parsed-cond parsed-body parsed-else))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [(ErrAstExpr message) (ErrAstExpr message)]))
@@ -1831,7 +1831,7 @@
         [(OkAstExpr parsed-cond)
           (match (parse-ast-expr dispatch body)
             [(OkAstExpr parsed-body)
-              (OkAstExpr (AstExprWhile parsed-cond parsed-body))]
+              (OkAstExpr (ast-expr-while parsed-cond parsed-body))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed while")]))
@@ -1840,7 +1840,7 @@
   (match rest
     [(SpSCons (SpSSym name _) (SpSCons value (SpSNil _) _) _)
       (match (parse-ast-expr dispatch value)
-        [(OkAstExpr parsed-value) (OkAstExpr (AstExprSet name parsed-value))]
+        [(OkAstExpr parsed-value) (OkAstExpr (ast-expr-set name parsed-value))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed set!")]))
 
@@ -1856,8 +1856,8 @@
             (match (parse-ast-type dispatch (spanned-sexpr-form ty))
               [(OkAstType parsed-ty)
                 (if is-cast
-                  (OkAstExpr (AstExprCast parsed-expr parsed-ty))
-                  (OkAstExpr (AstExprAnn parsed-expr parsed-ty)))]
+                  (OkAstExpr (ast-expr-cast parsed-expr parsed-ty))
+                  (OkAstExpr (ast-expr-ann parsed-expr parsed-ty)))]
               [(ErrAstType message) (ErrAstExpr message)])]
           [(ErrAstExpr message) (ErrAstExpr message)])
         (ErrAstExpr "parse: expected ':' in annotation"))]
@@ -1876,14 +1876,14 @@
             (match (parse-ast-expr dispatch value)
               [(OkAstExpr parsed-value)
                 (OkAstLetBinding
-                  (AstLetBinding name (AstSomeType parsed-ty) parsed-value))]
+                  (ast-let-binding name (AstSomeType parsed-ty) parsed-value))]
               [(ErrAstExpr message) (ErrAstLetBinding message)])]
           [(ErrAstType message) (ErrAstLetBinding message)])
         (ErrAstLetBinding "parse: expected ':' in let binding"))]
     [(SpSCons (SpSSym name _) (SpSCons value (SpSNil _) _) _)
       (match (parse-ast-expr dispatch value)
         [(OkAstExpr parsed-value)
-          (OkAstLetBinding (AstLetBinding name AstNoType parsed-value))]
+          (OkAstLetBinding (ast-let-binding name AstNoType parsed-value))]
         [(ErrAstExpr message) (ErrAstLetBinding message)])]
     [_ (ErrAstLetBinding "parse: malformed let binding")]))
 
@@ -1940,7 +1940,7 @@
             [(OkAstLetParts parsed-bindings parsed-body)
               (if (ast-let-binding-list-empty? parsed-bindings)
                 (ErrAstExpr "parse: let requires at least one binding")
-                (OkAstExpr (AstExprLet parsed-bindings parsed-body)))]
+                (OkAstExpr (ast-expr-let parsed-bindings parsed-body)))]
             [(ErrAstLetParts message) (ErrAstExpr message)])]
         [_ (ErrAstExpr "parse: let requires at least one binding")])]
     [_ (ErrAstExpr "parse: malformed let")]))
@@ -1955,7 +1955,7 @@
             (ErrAstExpr "parse: let requires at least one binding")
             (match (parse-ast-expr dispatch body)
               [(OkAstExpr parsed-body)
-                (OkAstExpr (AstExprLet parsed-bindings parsed-body))]
+                (OkAstExpr (ast-expr-let parsed-bindings parsed-body))]
               [(ErrAstExpr message) (ErrAstExpr message)]))]
         [(ErrAstLetBindingList message) (ErrAstExpr message)])]
     [(SpSCons _ _ _) (ErrAstExpr "parse: let requires at least one binding")]
@@ -1978,7 +1978,7 @@
                   (match (parse-ast-expr dispatch body)
                     [(OkAstExpr parsed-body)
                       (OkAstExpr
-                        (AstExprLambda
+                        (ast-expr-lambda
                           parsed-params
                           (AstSomeType parsed-ret)
                           parsed-body))]
@@ -1994,7 +1994,8 @@
               "comptime parameters are only supported on top-level function definitions")
             (match (parse-ast-expr dispatch body)
               [(OkAstExpr parsed-body)
-                (OkAstExpr (AstExprLambda parsed-params AstNoType parsed-body))]
+                (OkAstExpr
+                  (ast-expr-lambda parsed-params AstNoType parsed-body))]
               [(ErrAstExpr message) (ErrAstExpr message)]))]
         [(ErrAstParamList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed lambda")]))
@@ -2004,7 +2005,7 @@
     [(SpSCons expr (SpSCons (SpSInt index _) (SpSNil _) _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
-          (OkAstExpr (AstExprTupleRef parsed-expr index))]
+          (OkAstExpr (ast-expr-tuple-ref parsed-expr index))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [(SpSCons _ (SpSCons _ (SpSNil _) _) _)
       (ErrAstExpr "parse: tuple-ref index must be integer")]
@@ -2017,7 +2018,7 @@
         [(OkAstType parsed-ty)
           (match (parse-ast-expr dispatch len)
             [(OkAstExpr parsed-len)
-              (OkAstExpr (AstExprMakeArray parsed-ty parsed-len))]
+              (OkAstExpr (ast-expr-make-array parsed-ty parsed-len))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstType message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed make-array")]))
@@ -2033,8 +2034,8 @@
           (match (parse-ast-expr dispatch index)
             [(OkAstExpr parsed-index)
               (if is-string
-                (OkAstExpr (AstExprStringRef parsed-expr parsed-index))
-                (OkAstExpr (AstExprArrayRef parsed-expr parsed-index)))]
+                (OkAstExpr (ast-expr-string-ref parsed-expr parsed-index))
+                (OkAstExpr (ast-expr-array-ref parsed-expr parsed-index)))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed ref expression")]))
@@ -2049,7 +2050,7 @@
               (match (parse-ast-expr dispatch value)
                 [(OkAstExpr parsed-value)
                   (OkAstExpr
-                    (AstExprArraySet parsed-expr parsed-index parsed-value))]
+                    (ast-expr-array-set parsed-expr parsed-index parsed-value))]
                 [(ErrAstExpr message) (ErrAstExpr message)])]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -2062,7 +2063,7 @@
         [(OkAstExpr parsed-expr)
           (match (parse-ast-expr dispatch value)
             [(OkAstExpr parsed-value)
-              (OkAstExpr (AstExprArrayPush parsed-expr parsed-value))]
+              (OkAstExpr (ast-expr-array-push parsed-expr parsed-value))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed array-push!")]))
@@ -2072,7 +2073,7 @@
     [(SpSCons place (SpSNil _) _)
       (match (parse-ast-expr dispatch place)
         [(OkAstExpr parsed-place)
-          (OkAstExpr (AstExprBorrow AstBorrowLifetimeInferred parsed-place))]
+          (OkAstExpr (ast-expr-borrow AstBorrowLifetimeInferred parsed-place))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [(SpSCons lifetime (SpSCons place (SpSNil _) _) _)
       (match lifetime
@@ -2080,7 +2081,7 @@
           (match (parse-ast-expr dispatch place)
             [(OkAstExpr parsed-place)
               (OkAstExpr
-                (AstExprBorrow (AstBorrowLifetimeNamed name) parsed-place))]
+                (ast-expr-borrow (AstBorrowLifetimeNamed name) parsed-place))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [_ (ErrAstExpr "parse: borrow lifetime must be an identifier")])]
     [_ (ErrAstExpr "parse: borrow expects a place or lifetime and place")]))
@@ -2090,7 +2091,7 @@
     [(SpSCons expr (SpSCons (SpSSym field _) (SpSNil _) _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
-          (OkAstExpr (AstExprStructGet parsed-expr field))]
+          (OkAstExpr (ast-expr-struct-get parsed-expr field))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed struct-get")]))
 
@@ -2100,7 +2101,7 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprComptime parsed-expr))]
+        [(OkAstExpr parsed-expr) (OkAstExpr (ast-expr-comptime parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: comptime expects exactly one expression")]))
 
@@ -2153,7 +2154,7 @@
                         (match (parse-ast-expr dispatch value)
                           [(OkAstExpr parsed-value)
                             (OkAstExpr
-                              (AstExprSpmdReduce
+                              (ast-expr-spmd-reduce
                                 op
                                 index
                                 parsed-index-ty
@@ -2189,7 +2190,7 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprTry parsed-expr))]
+        [(OkAstExpr parsed-expr) (OkAstExpr (ast-expr-try parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: try expects exactly one expression")]))
 
@@ -2197,7 +2198,7 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprReturn parsed-expr))]
+        [(OkAstExpr parsed-expr) (OkAstExpr (ast-expr-return parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: return expects exactly one expression")]))
 
@@ -2210,8 +2211,8 @@
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
           (if is-get
-            (OkAstExpr (AstExprBoxGet parsed-expr))
-            (OkAstExpr (AstExprBox parsed-expr)))]
+            (OkAstExpr (ast-expr-box-get parsed-expr))
+            (OkAstExpr (ast-expr-box parsed-expr)))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_
       (ErrAstExpr
@@ -2238,7 +2239,8 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrNullCheck parsed-expr))]
+        [(OkAstExpr parsed-expr)
+          (OkAstExpr (ast-expr-ptr-null-check parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")]))
 
@@ -2246,7 +2248,7 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrRead parsed-expr))]
+        [(OkAstExpr parsed-expr) (OkAstExpr (ast-expr-ptr-read parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")]))
 
@@ -2257,7 +2259,7 @@
         [(OkAstExpr parsed-ptr)
           (match (parse-ast-expr dispatch value)
             [(OkAstExpr parsed-value)
-              (OkAstExpr (AstExprPtrWrite parsed-ptr parsed-value))]
+              (OkAstExpr (ast-expr-ptr-write parsed-ptr parsed-value))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr-write! expects exactly two expressions")]))
@@ -2269,7 +2271,7 @@
         [(OkAstExpr parsed-ptr)
           (match (parse-ast-expr dispatch offset)
             [(OkAstExpr parsed-offset)
-              (OkAstExpr (AstExprPtrOffset parsed-ptr parsed-offset))]
+              (OkAstExpr (ast-expr-ptr-offset parsed-ptr parsed-offset))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr-offset expects exactly two expressions")]))
@@ -2286,8 +2288,8 @@
             (match (parse-ast-type dispatch (spanned-sexpr-form ty))
               [(OkAstType parsed-ty)
                 (if is-int-to-ptr
-                  (OkAstExpr (AstExprIntToPtr parsed-expr parsed-ty))
-                  (OkAstExpr (AstExprPtrCast parsed-expr parsed-ty)))]
+                  (OkAstExpr (ast-expr-int-to-ptr parsed-expr parsed-ty))
+                  (OkAstExpr (ast-expr-ptr-cast parsed-expr parsed-ty)))]
               [(ErrAstType message) (ErrAstExpr message)])]
           [(ErrAstExpr message) (ErrAstExpr message)])
         (ErrAstExpr "parse: expected ':' in pointer cast"))]
@@ -2297,7 +2299,7 @@
   (match rest
     [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
-        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrToInt parsed-expr))]
+        [(OkAstExpr parsed-expr) (OkAstExpr (ast-expr-ptr-to-int parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr->int expects exactly one expression")]))
 
@@ -2334,7 +2336,7 @@
 
 (define (parse-ast-string-data [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch rest "string-data")
-    [(OkAstExpr expr) (OkAstExpr (AstExprStringData expr))]
+    [(OkAstExpr expr) (OkAstExpr (ast-expr-string-data expr))]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
 (define (parse-ast-string-from-bytes
@@ -2343,14 +2345,14 @@
   (match (parse-ast-two-exprs dispatch rest "string-from-bytes")
     [(OkAstExprPair pair)
       (OkAstExpr
-        (AstExprStringFromBytes
+        (ast-expr-string-from-bytes
           (struct-get pair first)
           (struct-get pair second)))]
     [(ErrAstExprPair message) (ErrAstExpr message)]))
 
 (define (parse-ast-array-data [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch rest "array-data")
-    [(OkAstExpr expr) (OkAstExpr (AstExprArrayData expr))]
+    [(OkAstExpr expr) (OkAstExpr (ast-expr-array-data expr))]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
 (define (parse-ast-no-arg-low-level
@@ -2374,17 +2376,17 @@
         [subleaf : AstExpr (struct-get pair second)]
         (cond
           [(= tag (compiler-parse-tag-expr-cpuid-eax))
-            (OkAstExpr (AstExprCpuIdEax leaf subleaf))]
+            (OkAstExpr (ast-expr-cpuid-eax leaf subleaf))]
           [(= tag (compiler-parse-tag-expr-cpuid-ebx))
-            (OkAstExpr (AstExprCpuIdEbx leaf subleaf))]
+            (OkAstExpr (ast-expr-cpuid-ebx leaf subleaf))]
           [(= tag (compiler-parse-tag-expr-cpuid-ecx))
-            (OkAstExpr (AstExprCpuIdEcx leaf subleaf))]
-          [else (OkAstExpr (AstExprCpuIdEdx leaf subleaf))]))]
+            (OkAstExpr (ast-expr-cpuid-ecx leaf subleaf))]
+          [else (OkAstExpr (ast-expr-cpuid-edx leaf subleaf))]))]
     [(ErrAstExprPair message) (ErrAstExpr message)]))
 
 (define (parse-ast-xgetbv [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch rest "xgetbv")
-    [(OkAstExpr expr) (OkAstExpr (AstExprXgetbv expr))]
+    [(OkAstExpr expr) (OkAstExpr (ast-expr-xgetbv expr))]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
@@ -2418,7 +2420,7 @@
             [(OkAstExpr parsed-scratch)
               (match (parse-ast-expr-list dispatch body)
                 [(OkAstExprList exprs)
-                  (OkAstExpr (AstExprWithEscape parsed-scratch exprs))]
+                  (OkAstExpr (ast-expr-with-escape parsed-scratch exprs))]
                 [(ErrAstExprList message) (ErrAstExpr message)])]
             [(ErrAstExpr message) (ErrAstExpr message)])])]
     [_ (ErrAstExpr "parse: malformed with-escape")]))
@@ -2444,7 +2446,10 @@
                       (match (parse-ast-expr dispatch cleanup)
                         [(OkAstExpr parsed-cleanup)
                           (OkAstResourceBinding
-                            (AstResourceBinding name parsed-init parsed-cleanup))]
+                            (ast-resource-binding
+                              name
+                              parsed-init
+                              parsed-cleanup))]
                         [(ErrAstExpr message) (ErrAstResourceBinding message)])]
                     [(ErrAstExpr message) (ErrAstResourceBinding message)])]
                 [_
@@ -2511,7 +2516,7 @@
         [(OkAstPattern parsed-pattern)
           (match (parse-ast-expr dispatch body)
             [(OkAstExpr parsed-body)
-              (OkAstMatchArm (AstMatchArm parsed-pattern parsed-body))]
+              (OkAstMatchArm (ast-match-arm parsed-pattern parsed-body))]
             [(ErrAstExpr message) (ErrAstMatchArm message)])]
         [(ErrAstPattern message) (ErrAstMatchArm message)])]
     [_ (ErrAstMatchArm "parse: malformed match arm")]))
@@ -2536,7 +2541,7 @@
         [(OkAstExpr parsed-scrutinee)
           (match (parse-ast-match-arm-list dispatch arms)
             [(OkAstMatchArmList parsed-arms)
-              (OkAstExpr (AstExprMatch parsed-scrutinee parsed-arms))]
+              (OkAstExpr (ast-expr-match parsed-scrutinee parsed-arms))]
             [(ErrAstMatchArmList message) (ErrAstExpr message)])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed match")]))
@@ -2564,7 +2569,7 @@
                     (match (parse-ast-expr dispatch body)
                       [(OkAstExpr parsed-body)
                         (OkAstExpr
-                          (AstExprForeach
+                          (ast-expr-foreach
                             index
                             parsed-index-ty
                             parsed-start
@@ -2591,7 +2596,7 @@
     [(OkAstExpr parsed-head)
       (match (parse-ast-expr-list dispatch rest)
         [(OkAstExprList parsed-args)
-          (OkAstExpr (AstExprCall parsed-head parsed-args))]
+          (OkAstExpr (ast-expr-call parsed-head parsed-args))]
         [(ErrAstExprList message) (ErrAstExpr message)])]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
@@ -2631,12 +2636,12 @@
         [(OkAstExpr parsed)
           (cond
             [(= tag (compiler-parse-tag-expr-quote))
-              (OkAstExpr (AstExprQuote parsed))]
+              (OkAstExpr (ast-expr-quote parsed))]
             [(= tag (compiler-parse-tag-expr-quasiquote))
-              (OkAstExpr (AstExprQuasiquote parsed))]
+              (OkAstExpr (ast-expr-quasiquote parsed))]
             [(= tag (compiler-parse-tag-expr-unquote))
-              (OkAstExpr (AstExprUnquote parsed))]
-            [else (OkAstExpr (AstExprUnquoteSplicing parsed))])]
+              (OkAstExpr (ast-expr-unquote parsed))]
+            [else (OkAstExpr (ast-expr-unquote-splicing parsed))])]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: quote form expects exactly one expression")]))
 
@@ -3693,17 +3698,31 @@
       (match decls
         [(AstDeclCons (AstDeclDefFn _ _ _ body) _)
           (match body
-            [(AstExprSpanned (AstExprBinary _ _ right) body-span)
-              (match right
-                [(AstExprSpanned (AstExprBinary _ _ _) right-span)
-                  (and
-                    (= (ast-source-span-start-line body-span) 1)
-                    (and
-                      (= (ast-source-span-start-line right-span) 1)
-                      (>
-                        (ast-source-span-start-col right-span)
-                        (ast-source-span-start-col body-span))))]
-                [_ false])]
+            [(AstExprSpanned inner-box body-span)
+              (let
+                [inner : AstExpr (box-get inner-box)]
+                (match inner
+                  [(AstExprBinary _ _ right-box)
+                    (let
+                      [right : AstExpr (box-get right-box)]
+                      (match right
+                        [(AstExprSpanned right-inner-box right-span)
+                          (let
+                            [right-inner : AstExpr (box-get right-inner-box)]
+                            (match right-inner
+                              [(AstExprBinary _ _ _)
+                                (and
+                                  (= (ast-source-span-start-line body-span) 1)
+                                  (and
+                                    (=
+                                      (ast-source-span-start-line right-span)
+                                      1)
+                                    (>
+                                      (ast-source-span-start-col right-span)
+                                      (ast-source-span-start-col body-span))))]
+                              [_ false]))]
+                        [_ false]))]
+                  [_ false]))]
             [_ false])]
         [_ false])]
     [_ false]))
@@ -4146,24 +4165,33 @@
                               (match (ast-expr-unspan first)
                                 [(AstExprBorrow
                                     AstBorrowLifetimeInferred
-                                    first-place)
-                                  (match (ast-expr-unspan first-place)
-                                    [(AstExprVar first-name)
-                                      (if (string-eq first-name "x")
-                                        (match (ast-expr-unspan second)
-                                          [(AstExprBorrow
-                                              (AstBorrowLifetimeNamed lifetime)
-                                              second-place)
-                                            (match (ast-expr-unspan
-                                              second-place)
-                                              [(AstExprVar second-name)
-                                                (and
-                                                  (string-eq lifetime "x")
-                                                  (string-eq second-name "x"))]
-                                              [_ false])]
-                                          [_ false])
-                                        false)]
-                                    [_ false])]
+                                    first-place-box)
+                                  (let
+                                    [first-place : AstExpr
+                                      (box-get first-place-box)]
+                                    (match (ast-expr-unspan first-place)
+                                      [(AstExprVar first-name)
+                                        (if (string-eq first-name "x")
+                                          (match (ast-expr-unspan second)
+                                            [(AstExprBorrow
+                                                (AstBorrowLifetimeNamed
+                                                  lifetime)
+                                                second-place-box)
+                                              (let
+                                                [second-place : AstExpr
+                                                  (box-get second-place-box)]
+                                                (match (ast-expr-unspan
+                                                  second-place)
+                                                  [(AstExprVar second-name)
+                                                    (and
+                                                      (string-eq lifetime "x")
+                                                      (string-eq
+                                                        second-name
+                                                        "x"))]
+                                                  [_ false]))]
+                                            [_ false])
+                                          false)]
+                                      [_ false]))]
                                 [_ false])]
                             [_ false]))]
                       [_ false])]
@@ -4227,10 +4255,12 @@
             (match rest
               [(AstDeclNil)
                 (match (ast-expr-unspan body)
-                  [(AstExprReturn inner)
-                    (match (ast-expr-unspan inner)
-                      [(AstExprLiteral (AstLitInt 42)) true]
-                      [_ false])]
+                  [(AstExprReturn inner-box)
+                    (let
+                      [inner : AstExpr (box-get inner-box)]
+                      (match (ast-expr-unspan inner)
+                        [(AstExprLiteral (AstLitInt 42)) true]
+                        [_ false]))]
                   [_ false])]
               [_ false]))]
         [_ false])]
@@ -4274,18 +4304,22 @@
             (match rest
               [(AstDeclNil)
                 (match (ast-expr-unspan body)
-                  [(AstExprIf cond then-branch else-branch)
-                    (and
-                      (match (ast-expr-unspan cond)
-                        [(AstExprVar name) (string-eq name "ok")]
-                        [_ false])
-                      (if is-unless
-                        (and
-                          (compiler-parse-unit-expr? then-branch)
-                          (compiler-parse-return-then-unit-begin? else-branch))
-                        (and
-                          (compiler-parse-return-then-unit-begin? then-branch)
-                          (compiler-parse-unit-expr? else-branch))))]
+                  [(AstExprIf cond-box then-branch-box else-branch-box)
+                    (let
+                      [cond : AstExpr (box-get cond-box)]
+                      [then-branch : AstExpr (box-get then-branch-box)]
+                      [else-branch : AstExpr (box-get else-branch-box)]
+                      (and
+                        (match (ast-expr-unspan cond)
+                          [(AstExprVar name) (string-eq name "ok")]
+                          [_ false])
+                        (if is-unless
+                          (and
+                            (compiler-parse-unit-expr? then-branch)
+                            (compiler-parse-return-then-unit-begin? else-branch))
+                          (and
+                            (compiler-parse-return-then-unit-begin? then-branch)
+                            (compiler-parse-unit-expr? else-branch)))))]
                   [_ false])]
               [_ false]))]
         [_ false])]
@@ -5224,23 +5258,27 @@
             (match rest
               [(AstDeclNil)
                 (match (ast-expr-unspan body)
-                  [(AstExprWithEscape scratch body-exprs)
-                    (match (ast-expr-unspan scratch)
-                      [(AstExprCall callee AstExprNil)
-                        (match (ast-expr-unspan callee)
-                          [(AstExprVar name)
-                            (and
-                              (string-eq name "arena-make")
-                              (match body-exprs
-                                [(AstExprCons _ tail)
-                                  (let
-                                    [tail : AstExprList (box-get tail)]
-                                    (match tail
-                                      [(AstExprNil) true]
-                                      [_ false]))]
-                                [_ false]))]
-                          [_ false])]
-                      [_ false])]
+                  [(AstExprWithEscape scratch-box body-exprs)
+                    (let
+                      [scratch : AstExpr (box-get scratch-box)]
+                      (match (ast-expr-unspan scratch)
+                        [(AstExprCall callee-box AstExprNil)
+                          (let
+                            [callee : AstExpr (box-get callee-box)]
+                            (match (ast-expr-unspan callee)
+                              [(AstExprVar name)
+                                (and
+                                  (string-eq name "arena-make")
+                                  (match body-exprs
+                                    [(AstExprCons _ tail)
+                                      (let
+                                        [tail : AstExprList (box-get tail)]
+                                        (match tail
+                                          [(AstExprNil) true]
+                                          [_ false]))]
+                                    [_ false]))]
+                              [_ false]))]
+                        [_ false]))]
                   [_ false])]
               [_ false]))]
         [_ false])]
@@ -5367,16 +5405,22 @@
                     [(AstTyVar name) (string-eq name "Expr")]
                     [_ false])
                   (match (ast-expr-unspan body)
-                    [(AstExprQuasiquote template)
-                      (match (ast-expr-unspan template)
-                        [(AstExprIf cond _ _)
-                          (match (ast-expr-unspan cond)
-                            [(AstExprUnquote unquoted)
-                              (match (ast-expr-unspan unquoted)
-                                [(AstExprVar name) (string-eq name "e")]
-                                [_ false])]
-                            [_ false])]
-                        [_ false])]
+                    [(AstExprQuasiquote template-box)
+                      (let
+                        [template : AstExpr (box-get template-box)]
+                        (match (ast-expr-unspan template)
+                          [(AstExprIf cond-box _ _)
+                            (let
+                              [cond : AstExpr (box-get cond-box)]
+                              (match (ast-expr-unspan cond)
+                                [(AstExprUnquote unquoted-box)
+                                  (let
+                                    [unquoted : AstExpr (box-get unquoted-box)]
+                                    (match (ast-expr-unspan unquoted)
+                                      [(AstExprVar name) (string-eq name "e")]
+                                      [_ false]))]
+                                [_ false]))]
+                          [_ false]))]
                     [_ false]))]
               [_ false]))]
         [_ false])]

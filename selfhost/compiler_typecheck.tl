@@ -4155,6 +4155,24 @@
   (let ([macro-helper : bool true])
     (unless2 false unit)))")
 
+(define (compiler-typecheck-macro-hygiene-nested-source) : String
+  "(defmacro (with-temp-bool [body : bool]) : bool
+  `(let ([tmp : i64 1])
+     ,body))
+(defmacro (wrap-temp [body : bool]) : bool
+  `(with-temp-bool ,body))
+(define (main) : bool
+  (let ([tmp : bool true])
+    (wrap-temp tmp)))")
+
+(define (compiler-typecheck-macro-hygiene-splice-source) : String
+  "(defmacro (with-temp-do [steps : unit ...]) : unit
+  `(let ([tmp : i64 1])
+     (begin ,@steps)))
+(define (main) : unit
+  (let ([tmp : unit unit])
+    (with-temp-do tmp)))")
+
 (define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
 (defmacro (call-danger [x : i64]) : i64
@@ -4187,9 +4205,15 @@
       (and
         (compiler-typecheck-ok?
           (compiler-typecheck-macro-hygiene-definition-source))
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-hygiene-unsafe-global-source)
-          "typecheck: danger requires unsafe context")))))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-macro-hygiene-nested-source))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-macro-hygiene-splice-source))
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-macro-hygiene-unsafe-global-source)
+              "typecheck: danger requires unsafe context")))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

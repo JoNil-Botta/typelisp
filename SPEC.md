@@ -3249,6 +3249,36 @@ arena: the innermost scoped arena, or the default program-lifetime arena when
 no scoped arena is active. Executable stdlib policy tests use `with-arena` to
 verify these active-arena semantics.
 
+#### Lifetime owners and v1 outlives model
+
+The v1 checker treats a written lifetime name as the name of a visible owner,
+not as an independently quantified region. There are two owner classes:
+
+- **Stack/frame owners:** function parameters and lexical bindings in the
+  current frame. A reference type such as `(& x T)` names the stack slot or
+  aggregate handle bound as `x`.
+- **Arena/region owners:** the implicit default program-lifetime arena and
+  lexical `with-arena` binders. A scoped arena binder `phase` is named in
+  `(& phase T)` reference types and in `(in phase T)` region-tagged handles.
+  Untagged aggregate handles allocated outside any scoped arena are owned by
+  the default program-lifetime arena; borrow inference uses the reserved
+  lifetime name `program` for that storage, but there is no source binder to
+  introduce.
+
+The v1 outlives relation is lexical. The same owner outlives itself. An owner
+introduced by an outer parameter, `let` binding, or `with-arena` outlives
+owners introduced in nested scopes. A nested stack slot or scoped arena does
+not outlive its enclosing owner, so references and region-tagged handles tied
+to the nested owner cannot be returned, stored into longer-lived bindings or
+aggregates, or captured by closures that may escape. Non-lexical lifetime
+shortening is deferred to #810.
+
+`with-escape` is not a lexical lifetime binder and does not introduce a written
+lifetime name. Its scratch arena is a first-class arena handle. The only
+supported escape from that scratch arena is the form's clone step: supported
+body results are cloned into the saved enclosing arena, the scratch arena is
+rewound, and the result leaves the form without the scratch region tag.
+
 #### Standard library and builtin allocation policy
 
 Written reference and arena lifetime syntax exists, but current stdlib
@@ -3307,8 +3337,9 @@ body, switches back to the enclosing arena, clones the body result when the type
 requires it, rewinds the scratch arena to the entry mark, and restores the
 enclosing active arena. This lowers to the same `arena-current` / `arena-set!` /
 `arena-mark` / `clone` / `arena-rewind` sequence that hand-written escape sites
-used before. The form is intended for first-class scratch arenas; lexical region
-cleanup remains the job of `with-arena`.
+used before. The form is intended for first-class scratch arenas; it is not a
+lexical lifetime binder, and lexical region cleanup remains the job of
+`with-arena`.
 
 #### Scoped non-memory resources (reserved) - `with`
 

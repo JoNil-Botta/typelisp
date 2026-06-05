@@ -4020,6 +4020,66 @@
         (compiler-backend-inline-boxed-recursive-ok?)
         (compiler-backend-inline-aggregate-call-ok?)))))
 
+(define (compiler-backend-test-mode-scalar? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(BackendModeScalar) true]
+    [_ false]))
+
+(define (compiler-backend-test-mode-avx2? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(BackendModeAvx2) true]
+    [_ false]))
+
+(define (compiler-backend-test-mode-avx512? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(BackendModeAvx512) true]
+    [_ false]))
+
+(define (compiler-backend-defdispatch-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(define (dot-avx2 [x : i64]) : i64 (+ x 2))
+(define (dot-avx512 [x : i64]) : i64 (+ x 5))
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
+(define (main) : i64 (dot 40))")
+
+(define (compiler-backend-defdispatch-thunk-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-defdispatch-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "__tl_dispatch_cache_dot")
+          (compiler-backend-string-contains? asm "__tl_dispatch_variant_avx2")
+          (compiler-backend-string-contains? asm "__tl_dispatch_variant_avx512")
+          (compiler-backend-string-contains? asm "    cpuid\n")
+          (compiler-backend-string-contains? asm "    xgetbv\n")
+          (compiler-backend-string-contains? asm "    call *%rax\n")
+          (compiler-backend-string-contains? asm "    vzeroupper\n")
+          (compiler-backend-string-contains? asm "main:\n"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-dispatch-variant-mode-ok?) : bool
+  (and
+    (backend-and4
+      (compiler-backend-test-mode-avx2?
+        (compiler-backend-effective-mode-for-function-name
+          (BackendModeScalar)
+          "__tl_dispatch_variant_avx2_dot__dot-avx2"))
+      (compiler-backend-test-mode-avx512?
+        (compiler-backend-effective-mode-for-function-name
+          (BackendModeScalar)
+          "__tl_dispatch_variant_avx512_dot__dot-avx512"))
+      (compiler-backend-test-mode-scalar?
+        (compiler-backend-effective-mode-for-function-name
+          (BackendModeScalar)
+          "__tl_dispatch_variant_scalar_dot__dot-scalar"))
+      (compiler-backend-test-mode-avx2?
+        (compiler-backend-effective-mode-for-function-name
+          (BackendModeAvx2)
+          "ordinary")))
+    (compiler-backend-defdispatch-thunk-ok?)))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -4129,7 +4189,9 @@
                                     (compiler-backend-windows-sdk-registry-runtime-ok?)
                                     (and
                                       (compiler-backend-windows-runtime-guard-ok?)
-                                      (compiler-backend-simd-vector-ok?)))))))))))))))))))
+                                      (and
+                                        (compiler-backend-simd-vector-ok?)
+                                        (compiler-backend-dispatch-variant-mode-ok?))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

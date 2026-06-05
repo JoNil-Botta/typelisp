@@ -174,6 +174,16 @@
     CompilerSourceSpans)
   (ErrLowerDecls CompilerDiagnostic))
 
+(defenum LowerDispatchDecl
+  (LowerDispatchDecl
+    CompilerIrGlobal
+    CompilerIrFunctionList
+    CompilerSourceSpans))
+
+(defenum ResultLowerDispatchDecl
+  (OkLowerDispatchDecl LowerDispatchDecl)
+  (ErrLowerDispatchDecl CompilerDiagnostic))
+
 ;; A successful lowering returns the IR `CompilerIrProgram` plus a
 ;;
 ;; `CompilerSourceSpans` side table (#605) mapping each lowered function's name
@@ -629,6 +639,11 @@
         decl-path
         (compiler-symbol-module-key module source-name)))))
 
+(define (lower-dispatch-source-name [module : String] [name : String]) : String
+  (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+    (compiler-symbol-module-key module name)
+    name))
+
 (define (lower-current-decl-logical-name
   [names : LowerNameEnv]
   [module : String]
@@ -672,6 +687,12 @@
         name
         (lower-decl-logical-name entry-path decl-path module name))]
     [(AstDeclDefFn name _ _ _)
+      (lower-name-env-add-module-binding
+        names
+        module
+        name
+        (lower-decl-logical-name entry-path decl-path module name))]
+    [(AstDeclDefDispatch name _)
       (lower-name-env-add-module-binding
         names
         module
@@ -853,6 +874,11 @@
         (lower-alias-logical-name entry-path decl-path module name path-aware)
         names)]
     [(AstDeclDefFn name _ _ _)
+      (LowerNameBind
+        (compiler-symbol-module-key alias name)
+        (lower-alias-logical-name entry-path decl-path module name path-aware)
+        names)]
+    [(AstDeclDefDispatch name _)
       (LowerNameBind
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
@@ -2766,12 +2792,114 @@
               [(LowerNoFunctionBody)
                 (lower-reach-process all-functions names body-index popped)]))])]))
 
+(define (lower-dispatch-variant-logical-name
+  [module : String]
+  [names : LowerNameCache]
+  [variant-name : String]) : String
+  (lower-name-cache-resolve
+    names
+    (lower-dispatch-source-name module variant-name)))
+
+(define (lower-dispatch-variant-set-add-list
+  [variants : AstDispatchVariantList]
+  [module : String]
+  [names : LowerNameCache]
+  [out : StringI64Map]) : StringI64Map
+  (match variants
+    [(AstDispatchVariantNil) out]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant _ variant-name)
+            (lower-dispatch-variant-set-add-list
+              rest
+              module
+              names
+              (string-i64-map-put
+                out
+                (lower-dispatch-variant-logical-name module names variant-name)
+                1))]))]))
+
+(define (lower-dispatch-variant-set-add-decl
+  [decl : AstDecl]
+  [module : String]
+  [names : LowerNameCache]
+  [out : StringI64Map]) : StringI64Map
+  (match decl
+    [(AstDeclDefDispatch _ variants)
+      (lower-dispatch-variant-set-add-list variants module names out)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-dispatch-variant-set-add-decl inner module names out))]
+    [_ out]))
+
+(define (lower-dispatch-variant-set-from-decls-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [out : StringI64Map]) : StringI64Map
+  (match decls
+    [(AstDeclNil) out]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-dispatch-variant-set-from-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              next-module
+              names
+              out)]
+          [_
+            (lower-dispatch-variant-set-from-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              names
+              (lower-dispatch-variant-set-add-decl decl module names out))]))]))
+
+(define (lower-dispatch-variant-set-from-decls
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameCache]) : StringI64Map
+  (lower-dispatch-variant-set-from-decls-in-module
+    decls
+    paths
+    entry-path
+    ""
+    names
+    (string-i64-map-with-capacity 1024)))
+
+(define (lower-function-kept-by-reach-or-dispatch?
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]
+  [logical-name : String]) : bool
+  (or
+    (string-i64-map-contains? reachable logical-name)
+    (string-i64-map-contains? dispatch-variants logical-name)))
+
 (define (lower-filter-reachable-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable : StringI64Map]) : AstDeclList
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]) : AstDeclList
   (match decls
     [(AstDeclNil) AstDeclNil]
     [(AstDeclCons decl rest)
@@ -2797,10 +2925,12 @@
                 rest-paths
                 entry-path
                 next-module
-                reachable))]
+                reachable
+                dispatch-variants))]
           [(AstDeclDefFn name _ _ _)
-            (if (string-i64-map-contains?
+            (if (lower-function-kept-by-reach-or-dispatch?
               reachable
+              dispatch-variants
               (lower-decl-logical-name entry-path decl-path module name))
               (ast-decl-cons
                 decl
@@ -2809,13 +2939,15 @@
                   rest-paths
                   entry-path
                   module
-                  reachable))
+                  reachable
+                  dispatch-variants))
               (lower-filter-reachable-decls-in-module
                 rest
                 rest-paths
                 entry-path
                 module
-                reachable))]
+                reachable
+                dispatch-variants))]
           [_
             (ast-decl-cons
               decl
@@ -2824,14 +2956,16 @@
                 rest-paths
                 entry-path
                 module
-                reachable))]))]))
+                reachable
+                dispatch-variants))]))]))
 
 (define (lower-filter-reachable-paths-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable : StringI64Map]) : AstDeclPathList
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]) : AstDeclPathList
   (match decls
     [(AstDeclNil) AstDeclPathNil]
     [(AstDeclCons decl rest)
@@ -2857,10 +2991,12 @@
                 rest-paths
                 entry-path
                 next-module
-                reachable))]
+                reachable
+                dispatch-variants))]
           [(AstDeclDefFn name _ _ _)
-            (if (string-i64-map-contains?
+            (if (lower-function-kept-by-reach-or-dispatch?
               reachable
+              dispatch-variants
               (lower-decl-logical-name entry-path decl-path module name))
               (ast-decl-path-cons
                 decl-path
@@ -2869,13 +3005,15 @@
                   rest-paths
                   entry-path
                   module
-                  reachable))
+                  reachable
+                  dispatch-variants))
               (lower-filter-reachable-paths-in-module
                 rest
                 rest-paths
                 entry-path
                 module
-                reachable))]
+                reachable
+                dispatch-variants))]
           [_
             (ast-decl-path-cons
               decl-path
@@ -2884,7 +3022,8 @@
                 rest-paths
                 entry-path
                 module
-                reachable))]))]))
+                reachable
+                dispatch-variants))]))]))
 
 ;; The synthesized clone$<T> helpers (compiler_clone.tl) are referenced by
 ;; `(clone x)` forms only after lowering. Seed exactly the helpers needed by
@@ -2926,6 +3065,12 @@
             entry-path
             (lower-function-decl-count decls))]
         [name-cache : LowerNameCache (lower-name-cache-from-env names)]
+        [dispatch-variants : StringI64Map
+          (lower-dispatch-variant-set-from-decls
+            decls
+            paths
+            entry-path
+            name-cache)]
         (if (string-i64-map-contains? all-functions "main")
           (match (lower-reach-process
             all-functions
@@ -2953,13 +3098,15 @@
                     paths
                     entry-path
                     ""
-                    reachable))
+                    reachable
+                    dispatch-variants))
                 (lower-filter-reachable-paths-in-module
                   decls
                   paths
                   entry-path
                   ""
-                  reachable))])
+                  reachable
+                  dispatch-variants))])
           (LowerPrunedProgram program paths)))]))
 
 (define (lower-prune-unreachable-functions
@@ -4759,7 +4906,13 @@
           (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-function-define))
-          (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-extern)))]
+          (or
+            (=
+              (compiler-symbol-handle-kind handle)
+              (compiler-symbol-kind-extern))
+            (=
+              (compiler-symbol-handle-kind handle)
+              (compiler-symbol-kind-defdispatch))))]
       [(NoneI64) false])))
 
 (define (lower-function-value-or-var
@@ -16429,6 +16582,644 @@
       (OkLowerFunction fns (lower-record-function-span spans logical-name body))]
     [(ErrLowerFunction message) (ErrLowerFunction message)]))
 
+(define (lower-dispatch-cache-name [logical-name : String]) : String
+  (string-append "__tl_dispatch_cache_" logical-name))
+
+(define (lower-dispatch-variant-prefix [isa : AstDispatchIsa]) : String
+  (match isa
+    [(AstDispatchScalar) "__tl_dispatch_variant_scalar_"]
+    [(AstDispatchAvx2) "__tl_dispatch_variant_avx2_"]
+    [(AstDispatchAvx512) "__tl_dispatch_variant_avx512_"]))
+
+(define (lower-dispatch-variant-internal-name
+  [dispatch-name : String]
+  [isa : AstDispatchIsa]
+  [variant-name : String]) : String
+  (string-append
+    (lower-dispatch-variant-prefix isa)
+    (string-append dispatch-name (string-append "__" variant-name))))
+
+(define (lower-dispatch-lower-mode
+  [isa : AstDispatchIsa]
+  [mode : CompilerLowerMode]) : CompilerLowerMode
+  (match isa
+    [(AstDispatchScalar)
+      (if (lower-mode-windows-c-abi? mode)
+        (CompilerLowerWindowsScalar)
+        (if (lower-mode-linux-c-abi? mode)
+          (CompilerLowerLinuxScalar)
+          (CompilerLowerScalar)))]
+    [(AstDispatchAvx2)
+      (if (lower-mode-windows-c-abi? mode)
+        (CompilerLowerWindowsAvx2)
+        (if (lower-mode-linux-c-abi? mode)
+          (CompilerLowerLinuxAvx2)
+          (CompilerLowerAvx2)))]
+    [(AstDispatchAvx512)
+      (if (lower-mode-windows-c-abi? mode)
+        (CompilerLowerWindowsAvx512)
+        (if (lower-mode-linux-c-abi? mode)
+          (CompilerLowerLinuxAvx512)
+          (CompilerLowerAvx512)))]))
+
+(define (lower-dispatch-type-list-without-regions [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons ty rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (ast-type-cons
+          (tc-type-without-regions ty)
+          (lower-dispatch-type-list-without-regions rest)))]))
+
+(define (lower-dispatch-param-type-count [types : AstTypeList]) : i64
+  (match types
+    [(AstTypeNil) 0]
+    [(AstTypeCons _ rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (+ 1 (lower-dispatch-param-type-count rest)))]))
+
+(define (lower-dispatch-param-list-from-types [types : AstTypeList] [idx : i64]) : CompilerIrParamList
+  (match types
+    [(AstTypeNil) IrParamNil]
+    [(AstTypeCons ty rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (compiler-ir-param-cons
+          (IrParam
+            (string-append "arg" (int->string idx))
+            (tc-type-without-regions ty)
+            idx)
+          (lower-dispatch-param-list-from-types rest (+ idx 1))))]))
+
+(define (lower-dispatch-param-values [types : AstTypeList] [idx : i64]) : CompilerIrValueList
+  (match types
+    [(AstTypeNil) IrValueNil]
+    [(AstTypeCons _ rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (compiler-ir-value-cons
+          (IrValueVar idx)
+          (lower-dispatch-param-values rest (+ idx 1))))]))
+
+(define (lower-dispatch-find-internal-name
+  [variants : AstDispatchVariantList]
+  [module : String]
+  [names : LowerNameCache]
+  [dispatch-name : String]
+  [wanted : AstDispatchIsa]) : TcMaybeString
+  (match variants
+    [(AstDispatchVariantNil) (TcNoString)]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant isa variant-name)
+            (if (tc-dispatch-isa-eq? isa wanted)
+              (TcSomeString
+                (lower-dispatch-variant-internal-name
+                  dispatch-name
+                  isa
+                  (lower-dispatch-variant-logical-name
+                    module
+                    names
+                    variant-name)))
+              (lower-dispatch-find-internal-name
+                rest
+                module
+                names
+                dispatch-name
+                wanted))]))]))
+
+(define (lower-dispatch-call-return-instr [call-var : i64] [ret-ty : AstType]) : CompilerIrInstr
+  (IrInstrReturn (lower-return-maybe (IrValueVar call-var) ret-ty)))
+
+(define (lower-dispatch-cached-block
+  [cache-name : String]
+  [args : CompilerIrCallArgs]
+  [ret-ty : AstType]
+  [call-var : i64]) : CompilerIrBlock
+  (IrBlock
+    "cached"
+    (compiler-ir-instr-cons
+      (IrInstrCallIndirect call-var (IrValueGlobal cache-name) args ret-ty)
+      (compiler-ir-instr-cons
+        (lower-dispatch-call-return-instr call-var ret-ty)
+        IrInstrNil))))
+
+(define (lower-dispatch-select-block
+  [label : String]
+  [cache-name : String]
+  [fn-name : String]
+  [fn-ty : AstType]
+  [args : CompilerIrCallArgs]
+  [ret-ty : AstType]
+  [call-var : i64]) : CompilerIrBlock
+  (IrBlock
+    label
+    (compiler-ir-instr-cons
+      (IrInstrStore cache-name (IrValueFunction fn-name) fn-ty)
+      (compiler-ir-instr-cons
+        (IrInstrCallIndirect call-var (IrValueFunction fn-name) args ret-ty)
+        (compiler-ir-instr-cons
+          (lower-dispatch-call-return-instr call-var ret-ty)
+          IrInstrNil)))))
+
+(define (lower-dispatch-entry-block
+  [cache-name : String]
+  [fn-ty : AstType]
+  [cached-var : i64]
+  [resolve-label : String]) : CompilerIrBlock
+  (IrBlock
+    "entry"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp
+        cached-var
+        IrBinNe
+        (IrValueGlobal cache-name)
+        (IrValueI64 0)
+        (AstTyBool))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar cached-var) "cached" resolve-label)
+        IrInstrNil))))
+
+(define (lower-dispatch-feature-blocks
+  [prefix : String]
+  [xcr0-mask : i64]
+  [feature-mask : i64]
+  [select-label : String]
+  [fallback-label : String]
+  [base : i64]
+  [tail : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [check-label : String (clone prefix)]
+    [osxsave-label : String (string-append (clone prefix) "_osxsave")]
+    [xcr0-label : String (string-append (clone prefix) "_xcr0")]
+    [leaf7-label : String (string-append prefix "_leaf7")]
+    [max-leaf-var : i64 base]
+    [max-ok-var : i64 (+ base 1)]
+    [leaf1-ecx-var : i64 (+ base 2)]
+    [osxsave-mask-var : i64 (+ base 3)]
+    [osxsave-ok-var : i64 (+ base 4)]
+    [xcr0-var : i64 (+ base 5)]
+    [xcr0-mask-var : i64 (+ base 6)]
+    [xcr0-ok-var : i64 (+ base 7)]
+    [leaf7-ebx-var : i64 (+ base 8)]
+    [feature-mask-var : i64 (+ base 9)]
+    [feature-ok-var : i64 (+ base 10)]
+    (compiler-ir-block-cons
+      (IrBlock
+        check-label
+        (compiler-ir-instr-cons
+          (IrInstrCpuId max-leaf-var (IrValueI64 0) (IrValueI64 0) 0)
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              max-ok-var
+              IrBinGe
+              (IrValueVar max-leaf-var)
+              (IrValueI64 7)
+              (AstTyBool))
+            (compiler-ir-instr-cons
+              (IrInstrBranch
+                (IrValueVar max-ok-var)
+                osxsave-label
+                fallback-label)
+              IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          osxsave-label
+          (compiler-ir-instr-cons
+            (IrInstrCpuId leaf1-ecx-var (IrValueI64 1) (IrValueI64 0) 2)
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                osxsave-mask-var
+                IrBinBitAnd
+                (IrValueVar leaf1-ecx-var)
+                (IrValueI64 134217728)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  osxsave-ok-var
+                  IrBinNe
+                  (IrValueVar osxsave-mask-var)
+                  (IrValueI64 0)
+                  (AstTyBool))
+                (compiler-ir-instr-cons
+                  (IrInstrBranch
+                    (IrValueVar osxsave-ok-var)
+                    xcr0-label
+                    fallback-label)
+                  IrInstrNil)))))
+        (compiler-ir-block-cons
+          (IrBlock
+            xcr0-label
+            (compiler-ir-instr-cons
+              (IrInstrXgetbv xcr0-var (IrValueI64 0))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  xcr0-mask-var
+                  IrBinBitAnd
+                  (IrValueVar xcr0-var)
+                  (IrValueI64 xcr0-mask)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    xcr0-ok-var
+                    IrBinEq
+                    (IrValueVar xcr0-mask-var)
+                    (IrValueI64 xcr0-mask)
+                    (AstTyBool))
+                  (compiler-ir-instr-cons
+                    (IrInstrBranch
+                      (IrValueVar xcr0-ok-var)
+                      leaf7-label
+                      fallback-label)
+                    IrInstrNil)))))
+          (compiler-ir-block-cons
+            (IrBlock
+              leaf7-label
+              (compiler-ir-instr-cons
+                (IrInstrCpuId leaf7-ebx-var (IrValueI64 7) (IrValueI64 0) 1)
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    feature-mask-var
+                    IrBinBitAnd
+                    (IrValueVar leaf7-ebx-var)
+                    (IrValueI64 feature-mask)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrBinOp
+                      feature-ok-var
+                      IrBinNe
+                      (IrValueVar feature-mask-var)
+                      (IrValueI64 0)
+                      (AstTyBool))
+                    (compiler-ir-instr-cons
+                      (IrInstrBranch
+                        (IrValueVar feature-ok-var)
+                        select-label
+                        fallback-label)
+                      IrInstrNil)))))
+            tail))))))
+
+(define (lower-dispatch-select-blocks
+  [cache-name : String]
+  [fn-ty : AstType]
+  [args : CompilerIrCallArgs]
+  [ret-ty : AstType]
+  [scalar-name : String]
+  [maybe-avx2 : TcMaybeString]
+  [maybe-avx512 : TcMaybeString]
+  [base : i64]) : CompilerIrBlockList
+  (let
+    [scalar-blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (lower-dispatch-select-block
+          "select_scalar"
+          cache-name
+          scalar-name
+          fn-ty
+          args
+          ret-ty
+          (+ base 24))
+        IrBlockNil)]
+    [with-avx2 : CompilerIrBlockList
+      (match maybe-avx2
+        [(TcSomeString avx2-name)
+          (compiler-ir-block-cons
+            (lower-dispatch-select-block
+              "select_avx2"
+              cache-name
+              avx2-name
+              fn-ty
+              args
+              ret-ty
+              (+ base 25))
+            scalar-blocks)]
+        [(TcNoString) scalar-blocks])]
+    (match maybe-avx512
+      [(TcSomeString avx512-name)
+        (compiler-ir-block-cons
+          (lower-dispatch-select-block
+            "select_avx512"
+            cache-name
+            avx512-name
+            fn-ty
+            args
+            ret-ty
+            (+ base 26))
+          with-avx2)]
+      [(TcNoString) with-avx2])))
+
+(define (lower-dispatch-resolve-label
+  [maybe-avx2 : TcMaybeString]
+  [maybe-avx512 : TcMaybeString]) : String
+  (match maybe-avx512
+    [(TcSomeString _) "check_avx512"]
+    [(TcNoString)
+      (match maybe-avx2
+        [(TcSomeString _) "check_avx2"]
+        [(TcNoString) "select_scalar"])]))
+
+(define (lower-dispatch-resolve-blocks
+  [maybe-avx2 : TcMaybeString]
+  [maybe-avx512 : TcMaybeString]
+  [base : i64]
+  [tail : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [with-avx2 : CompilerIrBlockList
+      (match maybe-avx2
+        [(TcSomeString _)
+          (lower-dispatch-feature-blocks
+            "check_avx2"
+            6
+            32
+            "select_avx2"
+            "select_scalar"
+            (+ base 12)
+            tail)]
+        [(TcNoString) tail])]
+    (match maybe-avx512
+      [(TcSomeString _)
+        (lower-dispatch-feature-blocks
+          "check_avx512"
+          230
+          65536
+          "select_avx512"
+          (match maybe-avx2
+            [(TcSomeString _) "check_avx2"]
+            [(TcNoString) "select_scalar"])
+          (+ base 1)
+          with-avx2)]
+      [(TcNoString) with-avx2])))
+
+(define (lower-dispatch-thunk-function
+  [logical-name : String]
+  [fn-ty : AstType]
+  [variants : AstDispatchVariantList]
+  [module : String]
+  [names : LowerNameCache]
+  [spans : CompilerSourceSpans]) : ResultLowerFunction
+  (match fn-ty
+    [(AstTyFunc param-types ret-box)
+      (let
+        [ret-ty : AstType (tc-type-without-regions (box-get ret-box))]
+        [clean-param-types : AstTypeList
+          (lower-dispatch-type-list-without-regions param-types)]
+        [param-count : i64 (lower-dispatch-param-type-count clean-param-types)]
+        [cache-name : String (lower-dispatch-cache-name logical-name)]
+        [args : CompilerIrCallArgs
+          (compiler-ir-call-args-from-list
+            (lower-dispatch-param-values clean-param-types 0))]
+        [maybe-avx2 : TcMaybeString
+          (lower-dispatch-find-internal-name
+            variants
+            module
+            names
+            logical-name
+            (AstDispatchAvx2))]
+        [maybe-avx512 : TcMaybeString
+          (lower-dispatch-find-internal-name
+            variants
+            module
+            names
+            logical-name
+            (AstDispatchAvx512))]
+        (match (lower-dispatch-find-internal-name
+          variants
+          module
+          names
+          logical-name
+          (AstDispatchScalar))
+          [(TcSomeString scalar-name)
+            (let
+              [blocks : CompilerIrBlockList
+                (compiler-ir-block-cons
+                  (lower-dispatch-entry-block
+                    cache-name
+                    fn-ty
+                    param-count
+                    (lower-dispatch-resolve-label maybe-avx2 maybe-avx512))
+                  (compiler-ir-block-cons
+                    (lower-dispatch-cached-block
+                      cache-name
+                      args
+                      ret-ty
+                      (+ param-count 23))
+                    (lower-dispatch-resolve-blocks
+                      maybe-avx2
+                      maybe-avx512
+                      param-count
+                      (lower-dispatch-select-blocks
+                        cache-name
+                        fn-ty
+                        args
+                        ret-ty
+                        scalar-name
+                        maybe-avx2
+                        maybe-avx512
+                        param-count))))]
+              (OkLowerFunction
+                (compiler-ir-function-cons
+                  (IrFunction
+                    logical-name
+                    (lower-dispatch-param-list-from-types clean-param-types 0)
+                    ret-ty
+                    (+ param-count 27)
+                    blocks)
+                  IrFunctionNil)
+                spans))]
+          [(TcNoString)
+            (ErrLowerFunction
+              (lower-diagnostic "lower: defdispatch requires a scalar variant"))]))]
+    [_
+      (ErrLowerFunction
+        (lower-diagnostic "lower: defdispatch did not typecheck as a function"))]))
+
+(define (lower-dispatch-lower-variant-decl
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [internal-name : String]
+  [isa : AstDispatchIsa]
+  [decl : AstDecl]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (match decl
+    [(AstDeclDefFn _ params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lower-function-escaping
+          ctx
+          top-env
+          type-cache
+          internal-name
+          params
+          ret
+          body
+          spans
+          names
+          (lower-dispatch-lower-mode isa mode)))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-dispatch-lower-variant-decl
+          ctx
+          top-env
+          type-cache
+          internal-name
+          isa
+          inner
+          spans
+          names
+          mode))]
+    [_
+      (ErrLowerFunction
+        (lower-diagnostic "lower: defdispatch variants must be local functions"))]))
+
+(define (lower-dispatch-lower-variant
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [dispatch-name : String]
+  [variant : AstDispatchVariant]
+  [module : String]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (match variant
+    [(AstDispatchVariant isa variant-name)
+      (let
+        [lookup-name : String (lower-dispatch-source-name module variant-name)]
+        [variant-logical : String (lower-name-cache-resolve names lookup-name)]
+        [internal-name : String
+          (lower-dispatch-variant-internal-name
+            dispatch-name
+            isa
+            variant-logical)]
+        (match (compiler-symbols-lookup-value
+          (tc-context-symbols ctx)
+          lookup-name)
+          [(SomeI64 handle)
+            (match (compiler-program-decl-at-index
+              (tc-context-program ctx)
+              (compiler-symbol-handle-index handle))
+              [(OkAstDecl decl)
+                (lower-dispatch-lower-variant-decl
+                  ctx
+                  top-env
+                  type-cache
+                  internal-name
+                  isa
+                  decl
+                  spans
+                  names
+                  mode)]
+              [(ErrAstDecl message)
+                (ErrLowerFunction (lower-diagnostic message))])]
+          [(NoneI64)
+            (ErrLowerFunction
+              (lower-diagnostic
+                (string-append
+                  "lower: unknown defdispatch variant "
+                  variant-name)))]))]))
+
+(define (lower-dispatch-lower-variants
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [dispatch-name : String]
+  [variants : AstDispatchVariantList]
+  [module : String]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]
+  [functions : CompilerIrFunctionList]) : ResultLowerFunction
+  (match variants
+    [(AstDispatchVariantNil) (OkLowerFunction functions spans)]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match (lower-dispatch-lower-variant
+          ctx
+          top-env
+          type-cache
+          dispatch-name
+          variant
+          module
+          spans
+          names
+          mode)
+          [(OkLowerFunction lowered-functions function-spans)
+            (lower-dispatch-lower-variants
+              ctx
+              top-env
+              type-cache
+              dispatch-name
+              rest
+              module
+              function-spans
+              names
+              mode
+              (lower-function-list-append lowered-functions functions))]
+          [(ErrLowerFunction message) (ErrLowerFunction message)]))]))
+
+(define (lower-dispatch-decl
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [local-top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [name : String]
+  [variants : AstDispatchVariantList]
+  [spans : CompilerSourceSpans]
+  [name-cache : LowerNameCache]
+  [mode : CompilerLowerMode]
+  [module : String]) : ResultLowerDispatchDecl
+  (let
+    [decl-ctx : TcContext (tc-context-with-module ctx module)]
+    [logical-name : String
+      (lower-current-decl-logical-name-cache name-cache module name)]
+    (match (tc-lookup local-top-env name)
+      [(OkTcType dispatch-ty)
+        (let
+          [fn-ty : AstType
+            (tc-type-without-regions (tc-resolve-type decl-ctx dispatch-ty))]
+          (match (lower-dispatch-lower-variants
+            decl-ctx
+            local-top-env
+            type-cache
+            logical-name
+            variants
+            module
+            spans
+            name-cache
+            mode
+            IrFunctionNil)
+            [(OkLowerFunction variant-functions variant-spans)
+              (match (lower-dispatch-thunk-function
+                logical-name
+                fn-ty
+                variants
+                module
+                name-cache
+                variant-spans)
+                [(OkLowerFunction thunk-functions thunk-spans)
+                  (OkLowerDispatchDecl
+                    (LowerDispatchDecl
+                      (IrGlobal
+                        (lower-dispatch-cache-name logical-name)
+                        fn-ty
+                        (IrValueI64 0))
+                      (lower-function-list-append
+                        thunk-functions
+                        variant-functions)
+                      thunk-spans))]
+                [(ErrLowerFunction message) (ErrLowerDispatchDecl message)])]
+            [(ErrLowerFunction message) (ErrLowerDispatchDecl message)]))]
+      [(ErrTcType message) (ErrLowerDispatchDecl (lower-diagnostic message))])))
+
 (define (lower-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -16439,20 +17230,27 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultLowerDecls
-  (lower-decls-in-module
-    ctx
-    top-env
-    top-env
-    decls
-    globals
-    functions
-    externs
-    spans
-    names
-    (lower-name-cache-from-env names)
-    (lower-type-cache-from-env top-env)
-    mode
-    ""))
+  (let
+    [name-cache : LowerNameCache (lower-name-cache-from-env names)]
+    (lower-decls-in-module
+      ctx
+      top-env
+      top-env
+      decls
+      globals
+      functions
+      externs
+      spans
+      names
+      name-cache
+      (lower-type-cache-from-env top-env)
+      (lower-dispatch-variant-set-from-decls
+        decls
+        AstDeclPathNil
+        "<source>"
+        name-cache)
+      mode
+      "")))
 
 (define (lower-decls-in-module
   [ctx : TcContext]
@@ -16466,6 +17264,7 @@
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [type-cache : LowerTypeCache]
+  [dispatch-variants : StringI64Map]
   [mode : CompilerLowerMode]
   [module : String]) : ResultLowerDecls
   (match decls
@@ -16494,6 +17293,7 @@
                 names
                 name-cache
                 type-cache
+                dispatch-variants
                 mode
                 module))]
           [(AstDeclDef name _ expr-box)
@@ -16525,6 +17325,7 @@
                           names
                           name-cache
                           type-cache
+                          dispatch-variants
                           mode
                           module)]
                       ;; A global whose initializer is not a compile-time
@@ -16562,6 +17363,7 @@
                               names
                               name-cache
                               type-cache
+                              dispatch-variants
                               mode
                               module)]
                           [(ErrLowerFunction init-message)
@@ -16592,39 +17394,59 @@
                   names
                   name-cache
                   type-cache
+                  dispatch-variants
                   mode
                   module)))]
           [(AstDeclDefFn name params ret body-box)
             (let
               [body : AstExpr (box-get body-box)]
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              (match (lower-function-escaping
-                decl-ctx
-                local-top-env
-                type-cache
-                (lower-current-decl-logical-name-cache name-cache module name)
-                params
-                ret
-                body
-                spans
-                name-cache
-                mode)
-                [(OkLowerFunction lowered-functions function-spans)
-                  (lower-decls-in-module
-                    ctx
-                    top-env
-                    local-top-env
-                    rest
-                    globals
-                    (lower-function-list-append lowered-functions functions)
-                    externs
-                    function-spans
-                    names
-                    name-cache
-                    type-cache
-                    mode
-                    module)]
-                [(ErrLowerFunction message) (ErrLowerDecls message)]))]
+              [logical-name : String
+                (lower-current-decl-logical-name-cache name-cache module name)]
+              (if (string-i64-map-contains? dispatch-variants logical-name)
+                (lower-decls-in-module
+                  ctx
+                  top-env
+                  local-top-env
+                  rest
+                  globals
+                  functions
+                  externs
+                  spans
+                  names
+                  name-cache
+                  type-cache
+                  dispatch-variants
+                  mode
+                  module)
+                (match (lower-function-escaping
+                  decl-ctx
+                  local-top-env
+                  type-cache
+                  logical-name
+                  params
+                  ret
+                  body
+                  spans
+                  name-cache
+                  mode)
+                  [(OkLowerFunction lowered-functions function-spans)
+                    (lower-decls-in-module
+                      ctx
+                      top-env
+                      local-top-env
+                      rest
+                      globals
+                      (lower-function-list-append lowered-functions functions)
+                      externs
+                      function-spans
+                      names
+                      name-cache
+                      type-cache
+                      dispatch-variants
+                      mode
+                      module)]
+                  [(ErrLowerFunction message) (ErrLowerDecls message)])))]
           [(AstDeclDefMacro _ _ _ _)
             (lower-decls-in-module
               ctx
@@ -16638,12 +17460,43 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
-          [(AstDeclDefDispatch _ _)
-            (ErrLowerDecls
-              (lower-diagnostic
-                "lower: defdispatch lowering is not implemented (#1484)"))]
+          [(AstDeclDefDispatch name variants)
+            (match (lower-dispatch-decl
+              ctx
+              top-env
+              local-top-env
+              type-cache
+              name
+              variants
+              spans
+              name-cache
+              mode
+              module)
+              [(OkLowerDispatchDecl lowered)
+                (match lowered
+                  [(LowerDispatchDecl
+                      cache-global
+                      lowered-functions
+                      function-spans)
+                    (lower-decls-in-module
+                      ctx
+                      top-env
+                      local-top-env
+                      rest
+                      (compiler-ir-global-cons cache-global globals)
+                      (lower-function-list-append lowered-functions functions)
+                      externs
+                      function-spans
+                      names
+                      name-cache
+                      type-cache
+                      dispatch-variants
+                      mode
+                      module)])]
+              [(ErrLowerDispatchDecl message) (ErrLowerDecls message)])]
           [(AstDeclImport _)
             (lower-decls-in-module
               ctx
@@ -16657,6 +17510,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclIncludeStr _ _)
@@ -16672,6 +17526,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclExport _)
@@ -16687,6 +17542,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclModule next-module)
@@ -16704,6 +17560,7 @@
                   names
                   (lower-name-cache-from-env local-names)
                   (lower-type-cache-from-env next-local-top-env)
+                  dispatch-variants
                   mode
                   next-module)]
               [(ErrLowerModuleLocalEnv message)
@@ -16721,6 +17578,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclDefEnum name variants)
@@ -16740,6 +17598,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclDefEnumLifetimes name _ variants)
@@ -16759,6 +17618,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclDefStruct _ _ _ _)
@@ -16774,6 +17634,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclDefStructLifetimes _ _ _ _ _)
@@ -16789,6 +17650,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]
           [(AstDeclComptimeDecl _ _)
@@ -16804,6 +17666,7 @@
               names
               name-cache
               type-cache
+              dispatch-variants
               mode
               module)]))]))
 
@@ -17317,7 +18180,9 @@
 
 (define (compiler-lower-defdispatch-source) : String
   "(define (dot-scalar [x : i64]) : i64 x)
-(defdispatch dot (scalar dot-scalar))
+(define (dot-avx2 [x : i64]) : i64 (+ x 2))
+(define (dot-avx512 [x : i64]) : i64 (+ x 5))
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
 (define (main [x : i64]) : i64 (dot x))")
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
@@ -19542,6 +20407,93 @@
           (if (string-eq global-name name)
             true
             (lower-test-global-list-has-name? (box-get rest) name))])]))
+
+(define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-defdispatch-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram globals functions _)
+          (let
+            [cache-name : String "__tl_dispatch_cache_dot"]
+            [scalar-name : String
+              "__tl_dispatch_variant_scalar_dot__dot-scalar"]
+            [avx2-name : String "__tl_dispatch_variant_avx2_dot__dot-avx2"]
+            [avx512-name : String
+              "__tl_dispatch_variant_avx512_dot__dot-avx512"]
+            [ok : bool true]
+            (begin
+              (if (lower-test-global-list-has-name? globals cache-name)
+                unit
+                (set! ok false))
+              (if (lower-test-function-defined? functions "dot")
+                unit
+                (set! ok false))
+              (if (lower-test-function-defined? functions scalar-name)
+                unit
+                (set! ok false))
+              (if (lower-test-function-defined? functions avx2-name)
+                unit
+                (set! ok false))
+              (if (lower-test-function-defined? functions avx512-name)
+                unit
+                (set! ok false))
+              (when
+                (lower-test-function-defined? functions "dot-scalar")
+                (set! ok false))
+              (when
+                (lower-test-function-defined? functions "dot-avx2")
+                (set! ok false))
+              (when
+                (lower-test-function-defined? functions "dot-avx512")
+                (set! ok false))
+              (if (= (lower-test-function-call-count functions "main" "dot") 1)
+                unit
+                (set! ok false))
+              (if (>=
+                (lower-test-function-indirect-call-count functions "dot")
+                4)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-store-global-count
+                  functions
+                  "dot"
+                  cache-name)
+                3)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-cpuid-count functions) 6)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-xgetbv-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-callee-function-count
+                  functions
+                  "dot"
+                  scalar-name)
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-callee-function-count
+                  functions
+                  "dot"
+                  avx2-name)
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-callee-function-count
+                  functions
+                  "dot"
+                  avx512-name)
+                1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-module-symbol-source) : String
   "(define answer : i64 40)
@@ -21942,9 +22894,7 @@
       (if (compiler-lower-ok? (compiler-lower-export-source))
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-defdispatch-source)
-        "lower: defdispatch lowering is not implemented (#1484)")
+      (if (compiler-lower-defdispatch-thunk-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-result-try-source))

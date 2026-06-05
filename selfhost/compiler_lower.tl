@@ -17057,7 +17057,7 @@
                         (compiler-lower-profile-detail-finish
                           "function"
                           logical-name))
-                      (ErrLowerDecls message))])))]
+                      (ErrLowerDecls message))]))))]
           [(AstDeclDefMacro _ _ _ _)
             (lower-decls-in-module
               ctx

@@ -6866,18 +6866,6 @@
           frame
           (opt-dce-block-list-array used cfg)))]))
 
-(define (optimize-function-once-dce [func : CompilerIrFunction]) : CompilerIrFunction
-  (match func
-    [(IrFunction name params ret-ty frame blocks)
-      (let
-        [used : (Array bool) (opt-collect-blocks-uses-array frame blocks)]
-        (IrFunction
-          name
-          params
-          ret-ty
-          frame
-          (opt-dce-block-list-array used blocks)))]))
-
 (define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (let
     [next : CompilerIrFunction (optimize-function-once func)]
@@ -6899,7 +6887,7 @@
   (cond
     [(= level 0) func]
     [(= level 1) (optimize-function-once-fast func)]
-    [(= level 2) (optimize-function-once-dce func)]
+    [(= level 2) (optimize-function-once-level2 func)]
     [else (optimize-function func)]))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList

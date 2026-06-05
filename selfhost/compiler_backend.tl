@@ -1769,8 +1769,10 @@
 
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
-    (not (string-eq name "main"))
-    (not (compiler-backend-string-prefix-at? name "__global_init_" 0))))
+    (> (string-length name) 32)
+    (and
+      (not (string-eq name "main"))
+      (not (compiler-backend-string-prefix-at? name "__global_init_" 0)))))
 
 (define (compiler-backend-function-symbol-index
   [index : CompilerBackendProgramIndex]

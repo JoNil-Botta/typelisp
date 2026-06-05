@@ -3610,9 +3610,10 @@
                   (compiler-typecheck-string-builtin-bad-array-source)
                   "typecheck: argument type mismatch")))))))))
 
-;; Bootstrap argv builtin signature rules (#1042): `arg-count` returns i64 and
-;; `arg` accepts an i64 index and returns String. User declarations may shadow
-;; these bootstrap defaults.
+;; Stdlib argv helper signature rules (#1042, #1893): `arg-count` returns i64
+;; and `arg` accepts an i64 index and returns String. User declarations may
+;; still define the same source-level names when no stdlib import brings them
+;; into scope.
 (define (compiler-typecheck-argv-builtin-ok-source) : String
   (compiler-typecheck-with-io-source
     "(define (main) : i64
@@ -3632,6 +3633,12 @@
 (define (arg [n : i64]) : i64 n)
 (define (main) : i64 (+ (arg-count) (arg 1)))")
 
+(define (compiler-typecheck-argv-no-import-count-source) : String
+  "(define (main) : i64 (arg-count))")
+
+(define (compiler-typecheck-argv-no-import-arg-source) : String
+  "(define (main) : String (arg 0))")
+
 (define (compiler-typecheck-argv-builtin-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-ok-source))
@@ -3647,8 +3654,16 @@
           (compiler-typecheck-error-ok?
             (compiler-typecheck-argv-builtin-bad-count-arity-source)
             "typecheck: arity mismatch")
-          (compiler-typecheck-ok?
-            (compiler-typecheck-argv-builtin-shadow-source)))))))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-argv-no-import-count-source)
+              "typecheck: unbound name arg-count")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-argv-no-import-arg-source)
+                "typecheck: unbound name arg")
+              (compiler-typecheck-ok?
+                (compiler-typecheck-argv-builtin-shadow-source)))))))))
 
 (define (compiler-typecheck-lambda-ok-typed-source) : String
   "(define (main) : i64 (let [f : (-> i64 i64) (lambda ([x : i64]) : i64 x)] (f 5)))")
@@ -5137,6 +5152,62 @@
 (define (compiler-typecheck-runtime-builtin-no-import-source) : String
   "(define (main) : i64 (begin (print-string \"hi\") 0))")
 
+(define (compiler-typecheck-runtime-stdlib-no-import-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print 1) 0))"
+        "typecheck: unbound name print")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-runtime-builtin-no-import-source)
+        "typecheck: unbound name print-string")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print-str \"hi\") 0))"
+        "typecheck: unbound name print-str")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print-newline) 0))"
+        "typecheck: unbound name print-newline")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print-bool true) 0))"
+        "typecheck: unbound name print-bool")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print-char #A') 0))"
+        "typecheck: unbound name print-char")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print-float 1.5) 0))"
+        "typecheck: unbound name print-float")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (print-error \"hi\") 0))"
+        "typecheck: unbound name print-error")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (panic \"stop\"))"
+        "typecheck: unbound name panic")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (main) : i64 (error \"stop\"))"
+        "typecheck: unbound name error")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-runtime-builtin-string-ref-bad-index-source) : String
   "(define (main) : i64 (string-ref \"abc\" \"x\"))")
 
@@ -5183,9 +5254,7 @@
                           (compiler-typecheck-runtime-builtin-cpuid-bad-source)
                           "typecheck: argument type mismatch")
                         (and
-                          (compiler-typecheck-error-ok?
-                            (compiler-typecheck-runtime-builtin-no-import-source)
-                            "typecheck: unbound name print-string")
+                          (compiler-typecheck-runtime-stdlib-no-import-tests-ok?)
                           (and
                             (compiler-typecheck-error-ok?
                               (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)

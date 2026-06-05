@@ -5793,6 +5793,668 @@
               [(ErrCompilerOptimizeVerify _) func]))])]
     [(ErrCompilerOptimizeVerify _) func]))
 
+;; --- simple induction-derived cleanup (#1802) ------------------------------
+;;
+;; This first induction slice recognizes canonical `i64` loop-carried phis:
+;; `i = phi(preheader_seed, latch_next)` where `latch_next` is `i +/- const`.
+;; It then strength-reduces one repeated derived offset/address family per loop
+;; by adding a matching derived phi. The pass deliberately rejects loops with
+;; stores, calls, allocation, or unknown-effect instructions and leaves bounds
+;; checks in place. The function verifier gates the final rewritten function.
+(defenum OptInductionPhiInputs
+  (OptNoInductionPhiInputs)
+  (OptSomeInductionPhiInputs CompilerIrValue i64))
+
+(defenum OptInductionFact
+  (OptInductionFact i64 CompilerIrValue i64 i64 AstType))
+
+(defenum OptMaybeInductionFact
+  (OptNoInductionFact)
+  (OptSomeInductionFact OptInductionFact))
+
+(defenum OptInductionDerived
+  (OptInductionDerivedMul i64 AstType)
+  (OptInductionDerivedGep CompilerIrValue AstType))
+
+(defenum OptInductionLoopCandidate
+  (OptNoInductionLoopCandidate)
+  (OptSomeInductionLoopCandidate OptInductionFact OptInductionDerived))
+
+(defenum OptInductionApplyResult
+  (OptInductionApplyResult CompilerIrBlockList i64 bool))
+
+(define (opt-induction-fact-start [fact : OptInductionFact]) : CompilerIrValue
+  (match fact
+    [(OptInductionFact _ start _ _ _) start]))
+
+(define (opt-induction-fact-step [fact : OptInductionFact]) : i64
+  (match fact
+    [(OptInductionFact _ _ _ step _) step]))
+
+(define (opt-induction-i64-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [_ false]))
+
+(define (opt-induction-nonzero-step [step : i64]) : OptMaybeI64
+  (if (= step 0)
+    (OptNoI64)
+    (OptSomeI64 step)))
+
+(define (opt-induction-phi-input-pair
+  [a-value : CompilerIrValue]
+  [a-label : String]
+  [b-value : CompilerIrValue]
+  [b-label : String]
+  [preheader : String]
+  [latch : String]) : OptInductionPhiInputs
+  (if (and (string-eq a-label preheader) (string-eq b-label latch))
+    (match b-value
+      [(IrValueVar back) (OptSomeInductionPhiInputs a-value back)]
+      [_ (OptNoInductionPhiInputs)])
+    (if (and (string-eq b-label preheader) (string-eq a-label latch))
+      (match a-value
+        [(IrValueVar back) (OptSomeInductionPhiInputs b-value back)]
+        [_ (OptNoInductionPhiInputs)])
+      (OptNoInductionPhiInputs))))
+
+(define (opt-induction-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [preheader : String]
+  [latch : String]) : OptInductionPhiInputs
+  (match inputs
+    [(IrPhiInputCons a-value a-label rest)
+      (match (box-get rest)
+        [(IrPhiInputCons b-value b-label rest2)
+          (match (box-get rest2)
+            [(IrPhiInputNil)
+              (opt-induction-phi-input-pair
+                a-value
+                a-label
+                b-value
+                b-label
+                preheader
+                latch)]
+            [_ (OptNoInductionPhiInputs)])]
+        [_ (OptNoInductionPhiInputs)])]
+    [_ (OptNoInductionPhiInputs)]))
+
+(define (opt-induction-step-from-add
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 step) (opt-induction-nonzero-step step)]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [(IrValueI64 step)
+      (match rhs
+        [(IrValueVar var)
+          (if (= var phi-var)
+            (opt-induction-nonzero-step step)
+            (OptNoI64))]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-step-from-sub
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 step) (opt-induction-nonzero-step (- 0 step))]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-step-from-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match op
+    [(IrBinAdd) (opt-induction-step-from-add lhs rhs phi-var)]
+    [(IrBinSub) (opt-induction-step-from-sub lhs rhs phi-var)]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-update-step-instr
+  [instr : CompilerIrInstr]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (match instr
+    [(IrInstrBinOp dst op lhs rhs instr-ty)
+      (if (and
+        (= dst next-var)
+        (and (opt-type-eq instr-ty ty) (opt-induction-i64-type? ty)))
+        (opt-induction-step-from-binop op lhs rhs phi-var)
+        (OptNoI64))]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-find-update-instrs
+  [instrs : CompilerIrInstrList]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (match instrs
+    [(IrInstrNil) (OptNoI64)]
+    [(IrInstrCons instr rest)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 dst)
+          (if (= dst next-var)
+            (opt-induction-update-step-instr instr phi-var next-var ty)
+            (opt-induction-find-update-instrs
+              (box-get rest)
+              phi-var
+              next-var
+              ty))]
+        [(OptNoI64)
+          (opt-induction-find-update-instrs (box-get rest) phi-var next-var ty)])]))
+
+(define (opt-induction-find-update-blocks
+  [body : OptLabelSet]
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (match blocks
+    [(IrBlockNil) (OptNoI64)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (opt-label-contains body label)
+            (match (opt-induction-find-update-instrs instrs phi-var next-var ty)
+              [(OptSomeI64 step) (OptSomeI64 step)]
+              [(OptNoI64)
+                (opt-induction-find-update-blocks
+                  body
+                  (box-get rest)
+                  phi-var
+                  next-var
+                  ty)])
+            (opt-induction-find-update-blocks
+              body
+              (box-get rest)
+              phi-var
+              next-var
+              ty))])]))
+
+(define (opt-induction-fact-from-phi
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instr : CompilerIrInstr]) : OptMaybeInductionFact
+  (match instr
+    [(IrInstrPhi phi-var inputs ty)
+      (if (opt-induction-i64-type? ty)
+        (match (opt-induction-phi-inputs
+          inputs
+          preheader
+          (opt-natural-loop-latch loop))
+          [(OptSomeInductionPhiInputs start next-var)
+            (match (opt-induction-find-update-blocks
+              (opt-natural-loop-body loop)
+              blocks
+              phi-var
+              next-var
+              ty)
+              [(OptSomeI64 step)
+                (OptSomeInductionFact
+                  (OptInductionFact phi-var start next-var step ty))]
+              [(OptNoI64) (OptNoInductionFact)])]
+          [(OptNoInductionPhiInputs) (OptNoInductionFact)])
+        (OptNoInductionFact))]
+    [_ (OptNoInductionFact)]))
+
+(define (opt-induction-find-fact-instrs
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instrs : CompilerIrInstrList]) : OptMaybeInductionFact
+  (match instrs
+    [(IrInstrNil) (OptNoInductionFact)]
+    [(IrInstrCons instr rest)
+      (match (opt-induction-fact-from-phi blocks loop preheader instr)
+        [(OptSomeInductionFact fact) (OptSomeInductionFact fact)]
+        [(OptNoInductionFact)
+          (opt-induction-find-fact-instrs blocks loop preheader (box-get rest))])]))
+
+(define (opt-induction-find-fact
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]) : OptMaybeInductionFact
+  (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-induction-find-fact-instrs blocks loop preheader instrs)])]
+    [(OptNoBlock) (OptNoInductionFact)]))
+
+(define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrAlloc _ _) true]
+    [(IrInstrStorePtr _ _ _) true]
+    [(IrInstrVectorStore _ _ _ _ _) true]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) true]
+    [(IrInstrCpuId _ _ _ _) true]
+    [(IrInstrXgetbv _ _) true]
+    [(IrInstrCall _ _ _ _) true]
+    [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrTailCall _ _ _) true]
+    [(IrInstrStore _ _ _) true]
+    [_ false]))
+
+(define (opt-induction-blocker-instrs? [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (or
+        (opt-induction-blocker-instr? instr)
+        (opt-induction-blocker-instrs? (box-get rest)))]))
+
+(define (opt-induction-loop-blocked?
+  [body : OptLabelSet]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (and
+            (opt-label-contains body label)
+            (opt-induction-blocker-instrs? instrs))
+            true
+            (opt-induction-loop-blocked? body (box-get rest)))])]))
+
+(define (opt-induction-small-const? [value : i64]) : bool
+  (and (>= value (- 0 1000000)) (<= value 1000000)))
+
+(define (opt-induction-scale-ok? [step : i64] [scale : i64]) : bool
+  (and
+    (not (= scale 0))
+    (and
+      (not (= scale 1))
+      (and (opt-induction-small-const? step) (opt-induction-small-const? scale)))))
+
+(define (opt-induction-mul-scale
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]
+  [step : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 scale)
+            (if (opt-induction-scale-ok? step scale)
+              (OptSomeI64 scale)
+              (OptNoI64))]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [(IrValueI64 scale)
+      (match rhs
+        [(IrValueVar var)
+          (if (and (= var phi-var) (opt-induction-scale-ok? step scale))
+            (OptSomeI64 scale)
+            (OptNoI64))]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-find-derived-instr
+  [fact : OptInductionFact]
+  [loop-defs : OptUsedSet]
+  [instr : CompilerIrInstr]) : OptInductionLoopCandidate
+  (match fact
+    [(OptInductionFact phi-var _ _ step _)
+      (match instr
+        [(IrInstrBinOp _ op lhs rhs ty)
+          (match op
+            [(IrBinMul)
+              (if (opt-induction-i64-type? ty)
+                (match (opt-induction-mul-scale lhs rhs phi-var step)
+                  [(OptSomeI64 scale)
+                    (OptSomeInductionLoopCandidate
+                      fact
+                      (OptInductionDerivedMul scale ty))]
+                  [(OptNoI64) (OptNoInductionLoopCandidate)])
+                (OptNoInductionLoopCandidate))]
+            [_ (OptNoInductionLoopCandidate)])]
+        [(IrInstrGep _ base offset ty)
+          (match offset
+            [(IrValueVar offset-var)
+              (if (and
+                (= offset-var phi-var)
+                (opt-licm-value-invariant? loop-defs (OptUsedNil) base))
+                (OptSomeInductionLoopCandidate
+                  fact
+                  (OptInductionDerivedGep base ty))
+                (OptNoInductionLoopCandidate))]
+            [_ (OptNoInductionLoopCandidate)])]
+        [_ (OptNoInductionLoopCandidate)])]))
+
+(define (opt-induction-find-derived-instrs
+  [fact : OptInductionFact]
+  [loop-defs : OptUsedSet]
+  [instrs : CompilerIrInstrList]) : OptInductionLoopCandidate
+  (match instrs
+    [(IrInstrNil) (OptNoInductionLoopCandidate)]
+    [(IrInstrCons instr rest)
+      (match (opt-induction-find-derived-instr fact loop-defs instr)
+        [(OptSomeInductionLoopCandidate found-fact kind)
+          (OptSomeInductionLoopCandidate found-fact kind)]
+        [(OptNoInductionLoopCandidate)
+          (opt-induction-find-derived-instrs fact loop-defs (box-get rest))])]))
+
+(define (opt-induction-find-derived-blocks
+  [fact : OptInductionFact]
+  [body : OptLabelSet]
+  [loop-defs : OptUsedSet]
+  [blocks : CompilerIrBlockList]) : OptInductionLoopCandidate
+  (match blocks
+    [(IrBlockNil) (OptNoInductionLoopCandidate)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (opt-label-contains body label)
+            (match (opt-induction-find-derived-instrs fact loop-defs instrs)
+              [(OptSomeInductionLoopCandidate found-fact kind)
+                (OptSomeInductionLoopCandidate found-fact kind)]
+              [(OptNoInductionLoopCandidate)
+                (opt-induction-find-derived-blocks
+                  fact
+                  body
+                  loop-defs
+                  (box-get rest))])
+            (opt-induction-find-derived-blocks
+              fact
+              body
+              loop-defs
+              (box-get rest)))])]))
+
+(define (opt-induction-derived-type [derived : OptInductionDerived]) : AstType
+  (match derived
+    [(OptInductionDerivedMul _ ty) ty]
+    [(OptInductionDerivedGep _ ty) ty]))
+
+(define (opt-induction-derived-matches?
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [instr : CompilerIrInstr]) : bool
+  (match fact
+    [(OptInductionFact phi-var _ _ step _)
+      (match derived
+        [(OptInductionDerivedMul scale ty)
+          (match instr
+            [(IrInstrBinOp _ op lhs rhs instr-ty)
+              (match op
+                [(IrBinMul)
+                  (and
+                    (opt-type-eq instr-ty ty)
+                    (match (opt-induction-mul-scale lhs rhs phi-var step)
+                      [(OptSomeI64 found-scale) (= found-scale scale)]
+                      [(OptNoI64) false]))]
+                [_ false])]
+            [_ false])]
+        [(OptInductionDerivedGep base ty)
+          (match instr
+            [(IrInstrGep _ instr-base offset instr-ty)
+              (and
+                (opt-type-eq instr-ty ty)
+                (and
+                  (opt-value-eq instr-base base)
+                  (match offset
+                    [(IrValueVar offset-var) (= offset-var phi-var)]
+                    [_ false])))]
+            [_ false])])]))
+
+(define (opt-induction-rewrite-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (if (opt-induction-derived-matches? fact derived instr)
+    (match (opt-instr-def-var instr)
+      [(OptSomeI64 dst)
+        (IrInstrMov
+          dst
+          (IrValueVar derived-phi)
+          (opt-induction-derived-type derived))]
+      [(OptNoI64) instr])
+    instr))
+
+(define (opt-induction-rewrite-instrs
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons
+        (opt-induction-rewrite-instr fact derived derived-phi instr)
+        (opt-induction-rewrite-instrs fact derived derived-phi (box-get rest)))]))
+
+(define (opt-induction-rewrite-blocks
+  [body : OptLabelSet]
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-ir-block-cons
+            (if (opt-label-contains body label)
+              (IrBlock
+                label
+                (opt-induction-rewrite-instrs fact derived derived-phi instrs))
+              block)
+            (opt-induction-rewrite-blocks
+              body
+              fact
+              derived
+              derived-phi
+              (box-get rest)))])]))
+
+(define (opt-induction-seed-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [seed-var : i64]) : CompilerIrInstr
+  (match derived
+    [(OptInductionDerivedMul scale ty)
+      (IrInstrBinOp
+        seed-var
+        (IrBinMul)
+        (opt-induction-fact-start fact)
+        (IrValueI64 scale)
+        ty)]
+    [(OptInductionDerivedGep base ty)
+      (IrInstrGep seed-var base (opt-induction-fact-start fact) ty)]))
+
+(define (opt-induction-next-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [next-var : i64]) : CompilerIrInstr
+  (match derived
+    [(OptInductionDerivedMul scale ty)
+      (IrInstrBinOp
+        next-var
+        (IrBinAdd)
+        (IrValueVar derived-phi)
+        (IrValueI64 (* (opt-induction-fact-step fact) scale))
+        ty)]
+    [(OptInductionDerivedGep _ ty)
+      (IrInstrGep
+        next-var
+        (IrValueVar derived-phi)
+        (IrValueI64 (opt-induction-fact-step fact))
+        ty)]))
+
+(define (opt-induction-phi-instr
+  [derived : OptInductionDerived]
+  [preheader : String]
+  [latch : String]
+  [seed-var : i64]
+  [derived-phi : i64]
+  [next-var : i64]) : CompilerIrInstr
+  (IrInstrPhi
+    derived-phi
+    (compiler-ir-phi-input-cons
+      (IrValueVar seed-var)
+      preheader
+      (compiler-ir-phi-input-cons (IrValueVar next-var) latch (IrPhiInputNil)))
+    (opt-induction-derived-type derived)))
+
+(define (opt-induction-insert-support-blocks
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [seed-instr : CompilerIrInstr]
+  [phi-instr : CompilerIrInstr]
+  [next-instr : CompilerIrInstr]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [with-phi : CompilerIrInstrList
+              (if (string-eq label header)
+                (compiler-ir-instr-cons phi-instr instrs)
+                instrs)]
+            [with-seed : CompilerIrInstrList
+              (if (string-eq label preheader)
+                (opt-licm-insert-before-terminator
+                  (compiler-ir-instr-cons seed-instr IrInstrNil)
+                  with-phi)
+                with-phi)]
+            [with-next : CompilerIrInstrList
+              (if (string-eq label latch)
+                (opt-licm-insert-before-terminator
+                  (compiler-ir-instr-cons next-instr IrInstrNil)
+                  with-seed)
+                with-seed)]
+            (compiler-ir-block-cons
+              (IrBlock label with-next)
+              (opt-induction-insert-support-blocks
+                header
+                preheader
+                latch
+                seed-instr
+                phi-instr
+                next-instr
+                (box-get rest))))])]))
+
+(define (opt-induction-apply-loop
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptInductionApplyResult
+  (match (opt-natural-loop-preheader loop)
+    [(OptSomeLoopPreheader preheader)
+      (let
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        (if (opt-induction-loop-blocked? body blocks)
+          (OptInductionApplyResult blocks frame false)
+          (match (opt-induction-find-fact blocks loop preheader)
+            [(OptSomeInductionFact fact)
+              (let
+                [loop-defs : OptUsedSet
+                  (opt-licm-collect-defs-blocks body blocks (OptUsedNil))]
+                (match (opt-induction-find-derived-blocks
+                  fact
+                  body
+                  loop-defs
+                  blocks)
+                  [(OptSomeInductionLoopCandidate _ derived)
+                    (let
+                      [seed-var : i64 frame]
+                      [derived-phi : i64 (+ frame 1)]
+                      [next-var : i64 (+ frame 2)]
+                      [rewritten : CompilerIrBlockList
+                        (opt-induction-rewrite-blocks
+                          body
+                          fact
+                          derived
+                          derived-phi
+                          blocks)]
+                      [seed-instr : CompilerIrInstr
+                        (opt-induction-seed-instr fact derived seed-var)]
+                      [phi-instr : CompilerIrInstr
+                        (opt-induction-phi-instr
+                          derived
+                          preheader
+                          (opt-natural-loop-latch loop)
+                          seed-var
+                          derived-phi
+                          next-var)]
+                      [next-instr : CompilerIrInstr
+                        (opt-induction-next-instr
+                          fact
+                          derived
+                          derived-phi
+                          next-var)]
+                      (OptInductionApplyResult
+                        (opt-induction-insert-support-blocks
+                          (opt-natural-loop-header loop)
+                          preheader
+                          (opt-natural-loop-latch loop)
+                          seed-instr
+                          phi-instr
+                          next-instr
+                          rewritten)
+                        (+ frame 3)
+                        true))]
+                  [(OptNoInductionLoopCandidate)
+                    (OptInductionApplyResult blocks frame false)]))]
+            [(OptNoInductionFact) (OptInductionApplyResult blocks frame false)])))]
+    [(OptNoLoopPreheader) (OptInductionApplyResult blocks frame false)]))
+
+(define (opt-induction-apply-loops
+  [loops : OptNaturalLoopList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [changed : bool]) : OptInductionApplyResult
+  (match loops
+    [(OptNaturalLoopNil) (OptInductionApplyResult blocks frame changed)]
+    [(OptNaturalLoopCons loop rest)
+      (match (opt-induction-apply-loop blocks frame loop)
+        [(OptInductionApplyResult next-blocks next-frame loop-changed)
+          (opt-induction-apply-loops
+            (box-get rest)
+            next-blocks
+            next-frame
+            (or changed loop-changed))])]))
+
+(define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function func)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (match (opt-induction-apply-loops
+            (opt-cfg-natural-loops blocks)
+            blocks
+            frame
+            false)
+            [(OptInductionApplyResult next-blocks next-frame changed)
+              (if changed
+                (let
+                  [next : CompilerIrFunction
+                    (IrFunction name params ret-ty next-frame next-blocks)]
+                  (match (opt-verify-function next)
+                    [(OkCompilerOptimizeVerify) next]
+                    [(ErrCompilerOptimizeVerify _) func]))
+                func)])])]
+    [(ErrCompilerOptimizeVerify _) func]))
+
 (define (opt-cfg-filter-phi-inputs
   [reachable : OptLabelSet]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -6861,23 +7523,33 @@
                   [licm : CompilerIrFunction
                     (opt-licm-function
                       (IrFunction name params ret-ty promoted-frame cfg))]
-                  [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
+                  [induction : CompilerIrFunction (opt-induction-function licm)]
+                  [induction-frame : i64 (opt-function-frame induction)]
+                  [induction-blocks : CompilerIrBlockList
+                    (opt-function-blocks induction)]
                   ;; Cross-block global value numbering + copy propagation
                   ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
                   ;; the post-stack-promotion frame so its slots stay
                   ;; consistent with the promoted blocks.
                   [global : CompilerIrFunction
                     (opt-global-value-number-function
-                      (IrFunction name params ret-ty promoted-frame licm-blocks))]
+                      (IrFunction
+                        name
+                        params
+                        ret-ty
+                        induction-frame
+                        induction-blocks))]
                   [global-blocks : CompilerIrBlockList
                     (opt-function-blocks global)]
                   [used : (Array bool)
-                    (opt-collect-blocks-uses-array promoted-frame global-blocks)]
+                    (opt-collect-blocks-uses-array
+                      induction-frame
+                      global-blocks)]
                   (IrFunction
                     name
                     params
                     ret-ty
-                    promoted-frame
+                    induction-frame
                     (opt-dce-block-list-array used global-blocks)))])]))]))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
@@ -9677,6 +10349,10 @@
   (match func
     [(IrFunction _ _ _ _ blocks) blocks]))
 
+(define (opt-function-frame [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ frame _) frame]))
+
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]
   [label : String]) : bool
@@ -9801,6 +10477,31 @@
             (opt-count-arith-instrs instrs)
             (opt-count-arith-label-blocks (box-get rest) label))])]))
 
+(define (opt-count-mul-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrBinOp _ op _ _ _)
+            (match op
+              [(IrBinMul) 1]
+              [_ 0])]
+          [_ 0])
+        (opt-count-mul-instrs (box-get rest)))]))
+
+(define (opt-count-mul-label-blocks
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label label)
+            (opt-count-mul-instrs instrs)
+            (opt-count-mul-label-blocks (box-get rest) label))])]))
+
 (define (opt-blocks-mov-dst-i64-value
   [blocks : CompilerIrBlockList]
   [dst : i64]
@@ -9845,6 +10546,18 @@
           (+
             (opt-count-gep-instrs instrs)
             (opt-count-gep-blocks (box-get rest)))])]))
+
+(define (opt-count-gep-label-blocks
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label label)
+            (opt-count-gep-instrs instrs)
+            (opt-count-gep-label-blocks (box-get rest) label))])]))
 
 (define (opt-count-load-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -10932,6 +11645,363 @@
       [(not (opt-verify-ok? (opt-verify-function nested-func))) 12]
       [(not (= (opt-count-arith-label-blocks nested "inner") 0)) 13]
       [(not (= (opt-count-arith-blocks nested) 1)) 14]
+      [else 42])))
+
+(define (opt-induction-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "cond" (AstTyBool) 0)
+    (compiler-ir-param-cons
+      (IrParam "seed" (AstTyI64) 1)
+      (compiler-ir-param-cons (IrParam "ptr" (AstTyI64) 2) (IrParamNil)))))
+
+(define (opt-induction-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "induction" (opt-induction-params) (AstTyI64) 32 blocks))
+
+(define (opt-induction-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-induction-function (opt-induction-test-function blocks)))
+
+(define (opt-induction-offset-blocks [step : i64] [scale : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              4
+              (IrBinMul)
+              (IrValueVar 3)
+              (IrValueI64 scale)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                6
+                (IrBinAdd)
+                (IrValueVar 4)
+                (IrValueI64 7)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 3)
+                  (IrValueI64 step)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-gep-blocks [step : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrGep 4 (IrValueVar 2) (IrValueVar 3) (AstTyU8))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 6 (IrValueVar 4) (AstTyU8))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 3)
+                  (IrValueI64 step)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-unsupported-step-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinMul) (IrValueVar 3) (IrValueI64 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                6
+                (IrBinAdd)
+                (IrValueVar 4)
+                (IrValueI64 7)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinMul)
+                  (IrValueVar 3)
+                  (IrValueI64 2)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-call-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinMul) (IrValueVar 3) (IrValueI64 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall 7 "tl_noop" (IrCallArgsNil) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  6
+                  (IrBinAdd)
+                  (IrValueVar 4)
+                  (IrValueI64 7)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 3)
+                    (IrValueI64 1)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-store-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinMul) (IrValueVar 3) (IrValueI64 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrStore "sink" (IrValueVar 4) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 3)
+                  (IrValueI64 1)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-no-preheader-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "pre-one" "pre-two")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "pre-one"
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "pre-two"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrPhi
+                3
+                (compiler-ir-phi-input-cons
+                  (IrValueVar 1)
+                  "pre-one"
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 1)
+                    "pre-two"
+                    (compiler-ir-phi-input-cons
+                      (IrValueVar 5)
+                      "body"
+                      (IrPhiInputNil))))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 0) "body" "exit")
+                (IrInstrNil))))
+          (compiler-ir-block-cons
+            (IrBlock
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  4
+                  (IrBinMul)
+                  (IrValueVar 3)
+                  (IrValueI64 4)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    6
+                    (IrBinAdd)
+                    (IrValueVar 4)
+                    (IrValueI64 7)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrBinOp
+                      5
+                      (IrBinAdd)
+                      (IrValueVar 3)
+                      (IrValueI64 1)
+                      (AstTyI64))
+                    (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (compiler-optimize-induction-self-test) : i64
+  (let
+    [blocks : CompilerIrBlockList (opt-induction-offset-blocks 1 4)]
+    [func : CompilerIrFunction (opt-induction-optimized-function blocks)]
+    [out : CompilerIrBlockList (opt-function-blocks func)]
+    [nonunit-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-offset-blocks 3 4))]
+    [nonunit : CompilerIrBlockList (opt-function-blocks nonunit-func)]
+    [negative-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-offset-blocks (- 0 2) 4))]
+    [negative : CompilerIrBlockList (opt-function-blocks negative-func)]
+    [gep-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-gep-blocks 1))]
+    [gep : CompilerIrBlockList (opt-function-blocks gep-func)]
+    [unsupported-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-unsupported-step-blocks))]
+    [unsupported : CompilerIrBlockList (opt-function-blocks unsupported-func)]
+    [call-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-call-blocks))]
+    [call-blocks : CompilerIrBlockList (opt-function-blocks call-func)]
+    [store-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-store-blocks))]
+    [store-blocks : CompilerIrBlockList (opt-function-blocks store-func)]
+    [no-preheader-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-no-preheader-blocks))]
+    [no-preheader : CompilerIrBlockList (opt-function-blocks no-preheader-func)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function func))) 1]
+      [(not (= (opt-count-phi-blocks out) 2)) 2]
+      [(not (= (opt-blocks-mov-src-var out 4 (- 0 1)) 33)) 3]
+      [(not (= (opt-count-mul-label-blocks out "body") 0)) 4]
+      [(not (opt-verify-ok? (opt-verify-function nonunit-func))) 5]
+      [(not (= (opt-blocks-mov-src-var nonunit 4 (- 0 1)) 33)) 6]
+      [(not (= (opt-count-mul-label-blocks nonunit "body") 0)) 7]
+      [(not (opt-verify-ok? (opt-verify-function negative-func))) 8]
+      [(not (= (opt-blocks-mov-src-var negative 4 (- 0 1)) 33)) 9]
+      [(not (= (opt-count-mul-label-blocks negative "body") 0)) 10]
+      [(not (opt-verify-ok? (opt-verify-function gep-func))) 11]
+      [(not (= (opt-count-gep-label-blocks gep "body") 1)) 12]
+      [(not (= (opt-blocks-mov-src-var gep 4 (- 0 1)) 33)) 13]
+      [(not (opt-verify-ok? (opt-verify-function unsupported-func))) 14]
+      [(not (= (opt-blocks-mov-src-var unsupported 4 (- 0 1)) (- 0 1))) 15]
+      [(not (= (opt-count-mul-label-blocks unsupported "body") 2)) 16]
+      [(not (opt-verify-ok? (opt-verify-function call-func))) 17]
+      [(not (= (opt-blocks-mov-src-var call-blocks 4 (- 0 1)) (- 0 1))) 18]
+      [(not (= (opt-count-mul-label-blocks call-blocks "body") 1)) 19]
+      [(not (opt-verify-ok? (opt-verify-function store-func))) 20]
+      [(not (= (opt-blocks-mov-src-var store-blocks 4 (- 0 1)) (- 0 1))) 21]
+      [(not (= (opt-count-mul-label-blocks store-blocks "body") 1)) 22]
+      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 23]
+      [(not (= (opt-count-phi-blocks no-preheader) 1)) 24]
+      [(not (= (opt-count-mul-label-blocks no-preheader "body") 1)) 25]
       [else 42])))
 
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList

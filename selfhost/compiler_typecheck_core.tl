@@ -11899,7 +11899,7 @@
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
 
-;; --- whole-local move checker (#1048) ---------------------------------------
+;; --- whole-local move checker (#1048/#1049) ---------------------------------
 ;;
 ;; Reject use-after-move for move-only whole locals/parameters in source
 ;; evaluation order. The staged owner-only policy keeps ordinary aggregate
@@ -11908,7 +11908,8 @@
 ;; merge by union (a place moved on any arm is moved afterward); loops and
 ;; lambdas discard their body's moves for the post-state because they may run
 ;; zero times or be deferred. Reassigning a slot with `set!` clears its moved
-;; mark. Aggregate path moves remain split to #1049.
+;; mark. Owner-consuming aggregate projections are conservatively tracked by
+;; moving their root local; precise per-path state remains a future slice.
 (defstruct TcMovedSet
   (map StringI64Map))
 
@@ -12005,6 +12006,42 @@
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
+;; The root local named by a projection chain. This intentionally returns bare
+;; variables too so consuming sites can share one helper for whole values and
+;; projected owner fields/elements.
+(define (tc-move-root-projection-var [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-root-projection-var inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-root-projection-var inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-root-projection-var inner))]
+    [(AstExprStructGet inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-root-projection-var inner))]
+    [(AstExprTupleRef inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-root-projection-var inner))]
+    [(AstExprArrayRef array-box _)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-move-root-projection-var array))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-root-projection-var inner))]
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
 (define (tc-move-binding-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12033,6 +12070,7 @@
 ;; Mark the source variable moved when an init/rhs is a bare move-only variable
 ;; that names a tracked local/parameter (not an enum constructor or global).
 (define (tc-move-after-bind
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
@@ -12042,7 +12080,18 @@
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
         (tc-moved-add moved v)
         moved)]
-    [(TcNoString) moved]))
+    [(TcNoString)
+      (match (tc-expr ctx env init)
+        [(OkTcType init-ty)
+          (if (tc-type-consuming-by-value-now? ctx init-ty)
+            (match (tc-move-root-projection-var init)
+              [(TcSomeString root)
+                (if (tc-moved-contains? locals root)
+                  (tc-moved-add moved root)
+                  moved)]
+              [(TcNoString) moved])
+            moved)]
+        [(ErrTcType _) moved])]))
 
 (define (tc-move-after-consuming-value
   [ctx : TcContext]
@@ -12050,14 +12099,14 @@
   [moved : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcMovedSet
-  (match (tc-move-bare-var expr)
-    [(TcSomeString v)
-      (if (and
-        (tc-moved-contains? locals v)
-        (tc-type-consuming-by-value-now? ctx target-ty))
-        (tc-moved-add moved v)
-        moved)]
-    [(TcNoString) moved]))
+  (if (tc-type-consuming-by-value-now? ctx target-ty)
+    (match (tc-move-root-projection-var expr)
+      [(TcSomeString root)
+        (if (tc-moved-contains? locals root)
+          (tc-moved-add moved root)
+          moved)]
+      [(TcNoString) moved])
+    moved))
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
@@ -12166,7 +12215,7 @@
                       (tc-move-binding-type ctx env maybe-ty init))
                     (tc-moved-add locals name)
                     (tc-moved-remove
-                      (tc-move-after-bind env locals moved1 init)
+                      (tc-move-after-bind ctx env locals moved1 init)
                       name)
                     rest)]
                 [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
@@ -12374,7 +12423,9 @@
         (match (tc-move-check-expr ctx env locals moved rhs)
           [(OkTcMove moved1)
             (OkTcMove
-              (tc-moved-remove (tc-move-after-bind env locals moved1 rhs) name))]
+              (tc-moved-remove
+                (tc-move-after-bind ctx env locals moved1 rhs)
+                name))]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprAnn inner-box _)
       (let

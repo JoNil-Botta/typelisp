@@ -5260,6 +5260,68 @@
 (define (bad-owner-return [h : FileHandle]) : FileHandle
   (begin (return h) h))")
 
+(define (compiler-typecheck-move-ordinary-projection-source) : String
+  "(defstruct Counter
+  (value i64))
+(defstruct CounterHolder
+  (counter Counter)
+  (tag i64))
+(define (inspect-counter [c : Counter]) : i64 (struct-get c value))
+(define (ordinary-projection [p : CounterHolder]) : i64
+  (begin
+    (inspect-counter (struct-get p counter))
+    (struct-get p tag)))")
+
+(define (compiler-typecheck-move-owner-projection-call-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-call [p : Holder]) : i64
+  (begin
+    (take-handle (struct-get p handle))
+    (struct-get p size)))")
+
+(define (compiler-typecheck-move-owner-projection-bind-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (bad-owner-projection-bind [p : Holder]) : i64
+  (let [h : FileHandle (struct-get p handle)]
+    (struct-get p size)))")
+
+(define (compiler-typecheck-move-owner-tuple-ref-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-tuple-ref [p : (Tuple FileHandle i64)]) : i64
+  (begin
+    (take-handle (tuple-ref p 0))
+    (tuple-ref p 1)))")
+
+(define (compiler-typecheck-move-owner-array-ref-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref [items : (Array FileHandle 1)]) : i64
+  (begin
+    (take-handle (array-ref items 0))
+    (struct-get (array-ref items 0) fd)))")
+
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
   (if flag (let [t : String s] t) s))")
@@ -5293,8 +5355,8 @@
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
-;; aggregate sharing, one-shot owner transfers, and branch/deferred-body
-;; isolation pass.
+;; aggregate/projection sharing, one-shot owner transfers, and branch/deferred
+;; body isolation pass.
 (define (compiler-typecheck-move-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -5339,6 +5401,30 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-return-reuse-source)
         "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-ordinary-projection-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-call-reuse-source)
+        "typecheck: use of moved value `p`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-bind-reuse-source)
+        "typecheck: use of moved value `p`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-tuple-ref-reuse-source)
+        "typecheck: use of moved value `p`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-array-ref-reuse-source)
+        "typecheck: use of moved value `items`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

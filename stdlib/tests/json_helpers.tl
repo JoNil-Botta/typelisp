@@ -113,29 +113,86 @@
         [_ (panic message)])]
     [(ErrJsonParseValue _) (panic message)]))
 
+(define (json-test-char-code-at [text : String] [idx : i64]) : i64
+  (json-char-code-at (& text) idx))
+
+(define (json-test-char-code-eq-at [text : String] [idx : i64] [code : i64]) : bool
+  (json-char-code-eq-at (& text) idx code))
+
+(define (json-test-digit-at? [text : String] [idx : i64]) : bool
+  (json-digit-at? (& text) idx))
+
+(define (json-test-skip-ws [text : String] [pos : i64]) : i64
+  (json-skip-ws (& text) pos))
+
+(define (json-test-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
+  (json-string-prefix-at? (& text) (& prefix) start))
+
+(define (json-test-member-list-get [items : JsonMemberList] [key : String]) : JsonLookup
+  (json-member-list-get items (& key)))
+
+(define (json-test-object-get [value : Json] [key : String]) : JsonLookup
+  (json-object-get value (& key)))
+
+(define (json-test-escape-string [text : String]) : String
+  (json-escape-string (& text)))
+
+(define (json-test-parse-unicode-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+  (json-parse-unicode-escape (& text) pos))
+
+(define (json-test-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+  (json-parse-escape (& text) pos))
+
+(define (json-test-parse-string [text : String] [pos : i64]) : JsonParseStringResult
+  (json-parse-string (& text) pos))
+
+(define (json-test-consume-digits [text : String] [pos : i64]) : i64
+  (json-consume-digits (& text) pos))
+
+(define (json-test-parse-number [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-number (& text) pos))
+
+(define (json-test-parse-keyword
+  [text : String]
+  [pos : i64]
+  [keyword : String]
+  [value : Json]) : JsonParseValueResult
+  (json-parse-keyword (& text) pos keyword value))
+
+(define (json-test-parse-array [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-array (& text) pos))
+
+(define (json-test-parse-object [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-object (& text) pos))
+
+(define (json-test-parse-value [text : String] [pos : i64]) : JsonParseValueResult
+  (json-parse-value (& text) pos))
+
 (define (main) : i64
   (begin
     (assert-string-eq (json-cat3 "a" "b" "c") "abc" "json-cat3")
     (assert-string-eq (json-cat4 "a" "b" "c" "d") "abcd" "json-cat4")
     (assert-i64-eq (json-char-code #A') 65 "json-char-code")
-    (assert-i64-eq (json-char-code-at "AZ" 1) 90 "json-char-code-at")
-    (assert-true (json-char-code-eq-at "AZ" 0 65) "json-char-code-eq-at true")
+    (assert-i64-eq (json-test-char-code-at "AZ" 1) 90 "json-char-code-at")
+    (assert-true
+      (json-test-char-code-eq-at "AZ" 0 65)
+      "json-char-code-eq-at true")
     (assert-false
-      (json-char-code-eq-at "AZ" 2 65)
+      (json-test-char-code-eq-at "AZ" 2 65)
       "json-char-code-eq-at out of range")
     (assert-true (json-space-code? 32) "json-space-code? space")
     (assert-false (json-space-code? 65) "json-space-code? false")
     (assert-true (json-digit-code? 57) "json-digit-code? true")
     (assert-false (json-digit-code? 65) "json-digit-code? false")
-    (assert-true (json-digit-at? "a5" 1) "json-digit-at? true")
-    (assert-false (json-digit-at? "a5" 0) "json-digit-at? false")
-    (assert-false (json-digit-at? "a5" 2) "json-digit-at? out of range")
-    (assert-i64-eq (json-skip-ws "   X" 0) 3 "json-skip-ws")
+    (assert-true (json-test-digit-at? "a5" 1) "json-digit-at? true")
+    (assert-false (json-test-digit-at? "a5" 0) "json-digit-at? false")
+    (assert-false (json-test-digit-at? "a5" 2) "json-digit-at? out of range")
+    (assert-i64-eq (json-test-skip-ws "   X" 0) 3 "json-skip-ws")
     (assert-true
-      (json-string-prefix-at? "abcdef" "cd" 2)
+      (json-test-prefix-at? "abcdef" "cd" 2)
       "json-string-prefix-at? true")
     (assert-false
-      (json-string-prefix-at? "abcdef" "cd" 5)
+      (json-test-prefix-at? "abcdef" "cd" 5)
       "json-string-prefix-at? false")
     (assert-i64-eq
       (json-list-count
@@ -159,7 +216,7 @@
       2
       "json-member-list-count")
     (assert-json-found-number
-      (json-member-list-get
+      (json-test-member-list-get
         (JsonMemberListCons
           "a"
           (JsonNumber "1")
@@ -168,7 +225,7 @@
       "2"
       "json-member-list-get")
     (assert-json-missing
-      (json-member-list-get
+      (json-test-member-list-get
         (JsonMemberListCons "a" (JsonNumber "1") JsonMemberListNil)
         "z")
       "json-member-list-get missing")
@@ -182,13 +239,13 @@
       "\"a\":null,\"b\":true"
       "json-member-list-reverse")
     (assert-json-found-number
-      (json-object-get
+      (json-test-object-get
         (JsonObject (JsonMemberListCons "n" (JsonNumber "7") JsonMemberListNil))
         "n")
       "7"
       "json-object-get")
     (assert-json-missing
-      (json-object-get JsonNull "n")
+      (json-test-object-get JsonNull "n")
       "json-object-get non-object")
     (assert-i64-eq (json-hex-value #A') 10 "json-hex-value upper")
     (assert-i64-eq (json-hex-value #f') 15 "json-hex-value lower")
@@ -205,7 +262,7 @@
     (assert-string-eq (json-escape-char 34) "\\\"" "json-escape-char quote")
     (assert-string-eq (json-escape-char 92) "\\\\" "json-escape-char slash")
     (assert-string-eq
-      (json-escape-string "a\n\"\\")
+      (json-test-escape-string "a\n\"\\")
       "a\\n\\\"\\\\"
       "json-escape-string")
     (assert-string-eq
@@ -220,52 +277,59 @@
       [(OkJsonCodepointString _)
         (panic "json-codepoint-string rejects unsupported")])
     (assert-parse-escape
-      (json-parse-unicode-escape "0041" 0)
+      (json-test-parse-unicode-escape "0041" 0)
       "A"
       4
       "json-parse-unicode-escape")
-    (match (json-parse-unicode-escape "00xz" 0)
+    (match (json-test-parse-unicode-escape "00xz" 0)
       [(ErrJsonParseEscape _) unit]
       [(OkJsonParseEscape _ _)
         (panic "json-parse-unicode-escape rejects invalid")])
-    (assert-parse-escape (json-parse-escape "\\n" 1) "\n" 2 "json-parse-escape")
-    (match (json-parse-escape "\\x" 1)
+    (assert-parse-escape
+      (json-test-parse-escape "\\n" 1)
+      "\n"
+      2
+      "json-parse-escape")
+    (match (json-test-parse-escape "\\x" 1)
       [(ErrJsonParseEscape _) unit]
       [(OkJsonParseEscape _ _) (panic "json-parse-escape rejects invalid")])
     (assert-parse-string
-      (json-parse-string "\"a\\n\"" 0)
+      (json-test-parse-string "\"a\\n\"" 0)
       "a\n"
       5
       "json-parse-string")
-    (match (json-parse-string "\"unterminated" 0)
+    (match (json-test-parse-string "\"unterminated" 0)
       [(ErrJsonParseString _) unit]
       [(OkJsonParseString _ _) (panic "json-parse-string rejects invalid")])
-    (assert-i64-eq (json-consume-digits "123abc" 0) 3 "json-consume-digits")
+    (assert-i64-eq
+      (json-test-consume-digits "123abc" 0)
+      3
+      "json-consume-digits")
     (assert-parse-value-number
-      (json-parse-number "-2.5e3" 0)
+      (json-test-parse-number "-2.5e3" 0)
       "-2.5e3"
       6
       "json-parse-number")
-    (match (json-parse-number "01" 0)
+    (match (json-test-parse-number "01" 0)
       [(ErrJsonParseValue _) unit]
       [(OkJsonParseValue _ _) (panic "json-parse-number rejects leading zero")])
     (assert-parse-value-bool
-      (json-parse-keyword "true" 0 "true" (JsonBool true))
+      (json-test-parse-keyword "true" 0 "true" (JsonBool true))
       true
       4
       "json-parse-keyword")
     (assert-parse-array-count
-      (json-parse-array "[1,true]" 0)
+      (json-test-parse-array "[1,true]" 0)
       2
       8
       "json-parse-array")
     (assert-parse-object-count
-      (json-parse-object "{\"a\":1}" 0)
+      (json-test-parse-object "{\"a\":1}" 0)
       1
       7
       "json-parse-object")
     (assert-parse-value-bool
-      (json-parse-value " false" 0)
+      (json-test-parse-value " false" 0)
       false
       6
       "json-parse-value")

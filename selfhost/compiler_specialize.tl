@@ -210,6 +210,12 @@
     [(AstDeclNil) (SpecTemplateNil)]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclUnsafe (AstDeclDefFn name params ret body))
+          (if (spec-param-list-has-comptime? params)
+            (SpecTemplateCons
+              (SpecTemplate name params ret body)
+              (spec-collect-templates rest))
+            (spec-collect-templates rest))]
         [(AstDeclDefFn name params ret body)
           (if (spec-param-list-has-comptime? params)
             (SpecTemplateCons
@@ -2217,6 +2223,14 @@
               (SpecSomeDecl (AstDeclDefFn name params ret rewritten))
               state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
+    [(AstDeclUnsafe inner)
+      (match (spec-rewrite-decl inner templates state)
+        [(OkSpecDecl maybe state2)
+          (match maybe
+            [(SpecSomeDecl rewritten)
+              (OkSpecDecl (SpecSomeDecl (AstDeclUnsafe rewritten)) state2)]
+            [(SpecNoDecl) (OkSpecDecl SpecNoDecl state2)])]
+        [(ErrSpecDecl diag) (ErrSpecDecl diag)])]
     [(AstDeclDefMacro name params ret body)
       (match (spec-rewrite-expr body templates state)
         [(OkSpecExpr rewritten state2)
@@ -2283,6 +2297,10 @@
     [(AstDeclNil) false]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
+          (if (string-eq fn-name name)
+            true
+            (compiler-specialize-decl-list-defines? rest name))]
         [(AstDeclDefFn fn-name _ _ _)
           (if (string-eq fn-name name)
             true
@@ -2419,6 +2437,10 @@
     [(AstDeclNil) 0]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
+          (if (string-eq fn-name name)
+            (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+            (compiler-specialize-decl-list-count-defs rest name))]
         [(AstDeclDefFn fn-name _ _ _)
           (if (string-eq fn-name name)
             (+ 1 (compiler-specialize-decl-list-count-defs rest name))

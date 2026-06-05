@@ -154,6 +154,8 @@
     (fs-rename-status s s)
     (fs-read-dir-status s)
     (fs-file-kind-status s)
+    (fs-file-size-status s)
+    (fs-file-size s)
     (fs-process-id)
     (fs-current-dir-status)
     (string-length (fs-current-dir))
@@ -3537,6 +3539,16 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
+          "(define (f [p : String]) : i64 (fs-file-size-status p))"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-fs-source
+          "(define (f [p : String]) : i64 (fs-file-size p))"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-fs-source
           "(define (f [from : String] [to : String]) : i64
   (fs-rename-status from to))"))
         unit
@@ -3708,12 +3720,104 @@
 (define (compiler-typecheck-unsafe-empty-source) : String
   "(define (main) : i64 (unsafe))")
 
+(define (compiler-typecheck-unsafe-define-safe-call-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(define (main) : i64 (danger 42))")
+
+(define (compiler-typecheck-unsafe-define-unsafe-call-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(define (main) : i64 (unsafe (danger 42)))")
+
+(define (compiler-typecheck-unsafe-define-safe-alias-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(define (main) : i64
+  (let [f : (-> i64 i64) danger]
+    (f 42)))")
+
+(define (compiler-typecheck-unsafe-define-shadow-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(define (main) : i64
+  (let [danger : (-> i64 i64) (lambda ([x : i64]) : i64 x)]
+    (danger 42)))")
+
+(define (compiler-typecheck-unsafe-extern-safe-call-source) : String
+  "(unsafe (extern raw-call : (-> i64 i64)))
+(define (main) : i64 (raw-call 42))")
+
+(define (compiler-typecheck-unsafe-extern-unsafe-call-source) : String
+  "(unsafe (extern raw-call : (-> i64 i64)))
+(define (main) : i64 (unsafe (raw-call 42)))")
+
+(define (compiler-typecheck-unsafe-import-safe-call-source) : String
+  "(module foreign)
+(unsafe (define (danger [x : i64]) : i64 x))
+(module main)
+(import \"foreign.tl\" module foreign :as f)
+(define (main) : i64 (f/danger 42))")
+
+(define (compiler-typecheck-unsafe-import-unsafe-call-source) : String
+  "(module foreign)
+(unsafe (define (danger [x : i64]) : i64 x))
+(module main)
+(import \"foreign.tl\" module foreign :as f)
+(define (main) : i64 (unsafe (f/danger 42)))")
+
+(define (compiler-typecheck-unsafe-fn-body-still-safe-source) : String
+  "(unsafe (define (read-it [p : (Ptr i64)]) : i64 (ptr-read p)))")
+
 (define (compiler-typecheck-unsafe-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-unsafe-ok-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-unsafe-empty-source)
       "parse: unsafe requires a non-empty body")))
+
+(define (compiler-typecheck-unsafe-decl-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-define-safe-call-source)
+        "typecheck: danger requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-unsafe-define-unsafe-call-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-define-safe-alias-source)
+        "typecheck: danger requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-unsafe-define-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-extern-safe-call-source)
+        "typecheck: raw-call requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-unsafe-extern-unsafe-call-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-import-safe-call-source)
+        "typecheck: f/danger requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-unsafe-import-unsafe-call-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-fn-body-still-safe-source)
+        "typecheck: ptr-read requires unsafe context")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-arena-safe-observe-source) : String
   "(define (main) : i64
@@ -4012,6 +4116,12 @@
   (let ([macro-helper : bool true])
     (unless2 false unit)))")
 
+(define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(defmacro (call-danger [x : i64]) : i64
+  `(danger ,x))
+(define (main) : i64 (call-danger 1))")
+
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.
 (define (compiler-typecheck-macro-expand-tests-ok?) : bool
@@ -4035,8 +4145,12 @@
               "macro expansion exceeded depth limit")))))
     (and
       (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-capture-source))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-macro-hygiene-definition-source)))))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-macro-hygiene-definition-source))
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-macro-hygiene-unsafe-global-source)
+          "typecheck: danger requires unsafe context")))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
@@ -4046,6 +4160,9 @@
     (if (compiler-typecheck-unsafe-tests-ok?)
       unit
       (panic "typecheck: unsafe block tests failed"))
+    (if (compiler-typecheck-unsafe-decl-tests-ok?)
+      unit
+      (panic "typecheck: unsafe declaration tests failed"))
     (if (compiler-typecheck-arena-unsafe-tests-ok?)
       unit
       (panic "typecheck: arena unsafe primitive tests failed"))

@@ -14,7 +14,8 @@
 ;# ```typelisp
 ;# (import "stdlib/hash.tl")
 ;# (define (main) : i64
-;#   (hash-combine (hash-string "symbol") (hash-i64 7)))
+;#   (let [key : String "symbol"]
+;#     (hash-combine (hash-string (& key)) (hash-i64 7))))
 ;# ```
 ;: Return the fixed hash modulus.
 (define (hash-modulus) : i64
@@ -69,22 +70,22 @@
 (define (hash-key-char-eq? [a : char] [b : char]) : bool
   (= (cast a : i64) (cast b : i64)))
 
-;: Hash a `String` key by walking its current byte/char sequence.
+;: Hash borrowed text by walking its current byte/char sequence.
 ;:
-;: The owned `String` API is the v1 surface. Borrowed `str` variants should use
-;: the same byte/char order after the owned/borrowed string split lands.
-(define (hash-string [value : String]) : i64
+;: Hash values are bucket hints only; key users must still compare candidate keys
+;: with the matching equality predicate because different keys can collide.
+(define (hash-string [key : (& key str)]) : i64
   (let
-    [n : i64 (string-length value)]
+    [n : i64 (string-length key)]
     [i : i64 0]
     [hash : i64 0]
     (begin
       (while (< i n)
         (begin
-          (set! hash (hash-combine hash (hash-char (string-ref value i))))
+          (set! hash (hash-combine hash (hash-char (string-ref key i))))
           (set! i (+ i 1))))
       hash)))
 
-;: Return true when two `String` keys are equal by current String equality.
-(define (hash-key-string-eq? [a : String] [b : String]) : bool
+;: Return true when two borrowed string keys are equal.
+(define (hash-key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
   (string-eq a b))

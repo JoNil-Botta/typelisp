@@ -45,15 +45,21 @@
 ;: Backend runtime hook used by `windows-setup-instances`.
 (extern tl_windows_setup_instances : (-> ResultWindowsSetupInstances))
 
+;: Copy a borrowed setup string into an owned active-arena `String`.
+(define (windows-setup-copy-string [value : (& value str)]) : String
+  (let
+    [empty : String ""]
+    (string-append value (& empty))))
+
 ;: Return an empty package/component identifier list.
 (define (windows-setup-string-list-empty) : WindowsSetupStringList
   (WindowsSetupStringNil))
 
 ;: Prepend a package/component identifier to a list.
 (define (windows-setup-string-list-cons
-  [value : String]
+  [value : (& value str)]
   [rest : WindowsSetupStringList]) : WindowsSetupStringList
-  (WindowsSetupStringCons value rest))
+  (WindowsSetupStringCons (windows-setup-copy-string value) rest))
 
 ;: Return the number of strings in `items`.
 (define (windows-setup-string-list-count [items : WindowsSetupStringList]) : i64
@@ -65,13 +71,13 @@
 ;: Return true when `items` contains `value`.
 (define (windows-setup-string-list-contains?
   [items : WindowsSetupStringList]
-  [value : String]) : bool
+  [package-id : (& package-id str)]) : bool
   (match items
     [(WindowsSetupStringNil) false]
     [(WindowsSetupStringCons head rest)
-      (if (string-eq head value)
+      (if (string-eq head package-id)
         true
-        (windows-setup-string-list-contains? rest value))]))
+        (windows-setup-string-list-contains? rest package-id))]))
 
 ;: Return an empty Visual Studio instance list.
 (define (windows-setup-instance-list-empty) : WindowsSetupInstanceList
@@ -116,7 +122,7 @@
 ;: Return true when `instance` reports `package-id`.
 (define (windows-setup-instance-has-package?
   [instance : WindowsSetupInstance]
-  [package-id : String]) : bool
+  [package-id : (& package-id str)]) : bool
   (windows-setup-string-list-contains?
     (windows-setup-instance-package-ids instance)
     package-id))

@@ -585,6 +585,13 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
+    [(AstDeclUnsafe inner)
+      (lower-name-env-add-decl-in-module
+        names
+        entry-path
+        decl-path
+        module
+        inner)]
     [_ names]))
 
 (define (lower-name-env-add-decl
@@ -682,6 +689,15 @@
         alias
         module
         template
+        path-aware)]
+    [(AstDeclUnsafe inner)
+      (lower-name-env-add-decl-alias-in-module
+        names
+        entry-path
+        decl-path
+        alias
+        module
+        inner
         path-aware)]
     [_ names]))
 
@@ -857,6 +873,7 @@
         name
         (lower-current-decl-logical-name names module name)
         names)]
+    [(AstDeclUnsafe inner) (lower-name-env-add-local-decl names module inner)]
     [_ names]))
 
 (define (lower-module-local-type-env-bind-qualified
@@ -909,6 +926,8 @@
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclComptimeDecl template)
       (lower-module-local-type-env-add-decl top-env env module template)]
+    [(AstDeclUnsafe inner)
+      (lower-module-local-type-env-add-decl top-env env module inner)]
     [_ (OkTcEnv env)]))
 
 (define (lower-module-local-envs-list
@@ -1375,6 +1394,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+        [(AstDeclUnsafe (AstDeclDefFn _ _ _ _))
+          (+ 1 (lower-function-decl-count rest))]
         [_ (lower-function-decl-count rest)])]))
 
 (define (lower-function-body-index-add
@@ -1427,6 +1448,16 @@
               next-module
               index)]
           [(AstDeclDefFn name _ _ body)
+            (lower-function-body-index-from-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              (lower-function-body-index-add
+                index
+                (lower-decl-logical-name entry-path decl-path module name)
+                body))]
+          [(AstDeclUnsafe (AstDeclDefFn name _ _ body))
             (lower-function-body-index-from-decls-in-module
               rest
               rest-paths
@@ -5410,6 +5441,8 @@
     [(string-eq name "fs-read-dir-status") true]
     [(string-eq name "fs-read-dir") true]
     [(string-eq name "fs-file-kind-status") true]
+    [(string-eq name "fs-file-size-status") true]
+    [(string-eq name "fs-file-size") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "fs-current-dir-status") true]
     [(string-eq name "fs-current-dir") true]
@@ -9217,6 +9250,28 @@
         type-env
         name
         ".L_tl_fs_file_kind_status"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-file-size-status")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_file_size_status"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-file-size")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_file_size"
         args
         result-ty
         origin)]
@@ -14174,7 +14229,8 @@
     [scratch : i64 (arena-make)]
     (begin
       (unsafe
-        (arena-set! scratch))
+        (begin
+          (arena-set! scratch)))
       (match (lower-function
         ctx
         top-env
@@ -14191,7 +14247,8 @@
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (arena-set! enclosing))
+                (begin
+                  (arena-set! enclosing)))
               (let
                 [escaped-fns : CompilerIrFunctionList
                   (compiler-ir-clone-function-list fns)]
@@ -14199,19 +14256,22 @@
                   (lower-record-function-span spans logical-name body)]
                 (begin
                   (unsafe
-                    (arena-destroy scratch-head))
+                    (begin
+                      (arena-destroy scratch-head)))
                   (OkLowerFunction escaped-fns escaped-spans)))))]
         [(ErrLowerFunction message)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (arena-set! enclosing))
+                (begin
+                  (arena-set! enclosing)))
               (let
                 [escaped-message : CompilerDiagnostic (clone message)]
                 (begin
                   (unsafe
-                    (arena-destroy scratch-head))
+                    (begin
+                      (arena-destroy scratch-head)))
                   (ErrLowerFunction escaped-message)))))]))))
 
 (define (lower-decls
@@ -14262,6 +14322,21 @@
         spans)]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclUnsafe inner)
+          (lower-decls-in-module
+            ctx
+            top-env
+            local-top-env
+            (AstDeclCons inner rest)
+            globals
+            functions
+            externs
+            spans
+            names
+            name-cache
+            type-cache
+            mode
+            module)]
         [(AstDeclDef name _ expr)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
@@ -15204,7 +15279,9 @@
                   \"target/typelisp-fs/to name\")
                 (+ (fs-read-dir-status \"target/typelisp-fs\")
                   (+ (string-length (fs-read-dir \"target/typelisp-fs\"))
-                    (fs-file-kind-status \"target/typelisp-fs\")))))))))))")
+                    (+ (fs-file-kind-status \"target/typelisp-fs\")
+                      (+ (fs-file-size-status \"target/typelisp-fs\")
+                        (fs-file-size \"target/typelisp-fs\")))))))))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -18385,6 +18462,18 @@
               (if (=
                 (lower-test-functions-call-count
                   functions
+                  ".L_tl_fs_file_size_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions ".L_tl_fs_file_size")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
                   ".L_tl_fs_process_id")
                 1)
                 unit
@@ -18425,6 +18514,18 @@
                 (lower-test-functions-call-count
                   functions
                   "fs-file-kind-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-file-size-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "fs-file-size")
                 0)
                 unit
                 (set! ok false))

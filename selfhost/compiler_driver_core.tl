@@ -348,7 +348,9 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (begin
+          (arena-set! scratch)))
       (match (compiler-load-file-with-paths-and-roots-cfg
         input-path
         (sym-i64-empty)
@@ -367,13 +369,17 @@
                 (let
                   [scratch-head : i64 (arena-current)]
                   (begin
-                    (unsafe (arena-set! enclosing))
+                    (unsafe
+                      (begin
+                        (arena-set! enclosing)))
                     (let
                       [escaped-program : CompilerIrProgram
                         (compiler-ir-clone-program program)]
                       [escaped-spans : CompilerSourceSpans (clone spans)]
                       (begin
-                        (unsafe (arena-destroy scratch-head))
+                        (unsafe
+                          (begin
+                            (arena-destroy scratch-head)))
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase "lower"))
@@ -382,11 +388,15 @@
                 (let
                   [scratch-head : i64 (arena-current)]
                   (begin
-                    (unsafe (arena-set! enclosing))
+                    (unsafe
+                      (begin
+                        (arena-set! enclosing)))
                     (let
                       [escaped-diag : CompilerDiagnostic (clone diag)]
                       (begin
-                        (unsafe (arena-destroy scratch-head))
+                        (unsafe
+                          (begin
+                            (arena-destroy scratch-head)))
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase "lower"))
@@ -395,11 +405,15 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (begin
+                  (arena-set! enclosing)))
               (let
                 [escaped-diag : CompilerDiagnostic (clone diag)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (begin
+                      (arena-destroy scratch-head)))
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "load"))

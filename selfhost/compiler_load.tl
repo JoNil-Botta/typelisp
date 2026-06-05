@@ -681,19 +681,27 @@
   (match result
     [(OkAstProgramDiagnostic program)
       (begin
-        (unsafe (arena-set! enclosing))
+        (unsafe
+          (begin
+            (arena-set! enclosing)))
         (let
           [escaped-program : AstProgram (clone program)]
           (begin
-            (unsafe (arena-destroy parse-head))
+            (unsafe
+              (begin
+                (arena-destroy parse-head)))
             (OkAstProgramDiagnostic escaped-program))))]
     [(ErrAstProgramDiagnostic diag)
       (begin
-        (unsafe (arena-set! enclosing))
+        (unsafe
+          (begin
+            (arena-set! enclosing)))
         (let
           [escaped-diag : CompilerDiagnostic (clone diag)]
           (begin
-            (unsafe (arena-destroy parse-head))
+            (unsafe
+              (begin
+                (arena-destroy parse-head)))
             (ErrAstProgramDiagnostic escaped-diag))))]))
 
 (define (compiler-load-parse-source-diagnostic-escaping
@@ -704,7 +712,9 @@
     [enclosing : i64 (arena-current)]
     [parse-arena : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! parse-arena))
+      (unsafe
+        (begin
+          (arena-set! parse-arena)))
       (compiler-load-parse-result-escape
         enclosing
         (arena-current)
@@ -717,7 +727,9 @@
     [enclosing : i64 (arena-current)]
     [parse-arena : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! parse-arena))
+      (unsafe
+        (begin
+          (arena-set! parse-arena)))
       (compiler-load-parse-result-escape
         enclosing
         (arena-current)
@@ -996,6 +1008,15 @@
           ret))]
     [(AstDeclDefStruct _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDeclModule _) (CompilerLoadSomeDecl decl)]
+    [(AstDeclUnsafe inner)
+      (match (compiler-load-package-transform-decl
+        entry-path
+        decl-path
+        module
+        inner)
+        [(CompilerLoadSomeDecl transformed)
+          (CompilerLoadSomeDecl (AstDeclUnsafe transformed))]
+        [(CompilerLoadNoDecl) (CompilerLoadNoDecl)])]
     [(AstDeclComptimeDecl template)
       (match (compiler-load-package-transform-decl
         entry-path

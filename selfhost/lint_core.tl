@@ -965,7 +965,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (lint-walk-decl inner threshold acc))]
-    [(AstDeclComptimeDecl inner-box)
+    [(AstDeclComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (lint-walk-decl inner threshold acc))]

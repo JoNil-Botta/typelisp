@@ -697,7 +697,7 @@
         names)]
     [(AstDeclExtern name _ _)
       (LowerNameBind (compiler-symbol-module-key alias name) name names)]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (lower-name-env-add-decl-alias-in-module
@@ -957,7 +957,7 @@
       (lower-module-local-type-env-add-variants top-env env module variants)]
     [(AstDeclDefStruct name _ _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (lower-module-local-type-env-add-decl top-env env module template))]
@@ -1563,7 +1563,7 @@
                 names
                 (lower-reach-expr all-functions names state expr)
                 rest))]
-          [(AstDeclComptimeDecl inner-box)
+          [(AstDeclComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (lower-reach-global-decls
@@ -16322,7 +16322,7 @@
               type-cache
               mode
               module)]
-          [(AstDeclComptimeDecl _)
+          [(AstDeclComptimeDecl _ _)
             (lower-decls-in-module
               ctx
               top-env

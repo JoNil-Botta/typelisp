@@ -321,6 +321,10 @@
   (AstExportItemNil)
   (AstExportItemCons AstExportItem (Box AstExportItemList)))
 
+(defenum AstGeneratedDeclMeta
+  (AstNoGeneratedDeclMeta)
+  (AstSomeGeneratedDeclMeta String String AstExprList))
+
 (defenum AstDecl
   (AstDeclModule String)
   (AstDeclDef String AstMaybeType (Box AstExpr))
@@ -341,7 +345,7 @@
   (AstDeclExport AstExportItemList)
   (AstDeclTest String (Box AstExpr) AstSourceSpan)
   (AstDeclUnsafe (Box AstDecl))
-  (AstDeclComptimeDecl (Box AstDecl)))
+  (AstDeclComptimeDecl AstGeneratedDeclMeta (Box AstDecl)))
 
 (defenum AstDeclList
   (AstDeclNil)
@@ -648,7 +652,12 @@
   (AstDeclUnsafe (box inner)))
 
 (define (ast-decl-comptime-decl [inner : AstDecl]) : AstDecl
-  (AstDeclComptimeDecl (box inner)))
+  (AstDeclComptimeDecl AstNoGeneratedDeclMeta (box inner)))
+
+(define (ast-decl-comptime-decl-with-meta
+  [meta : AstGeneratedDeclMeta]
+  [inner : AstDecl]) : AstDecl
+  (AstDeclComptimeDecl meta (box inner)))
 
 (define (ast-decl-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
   (AstDeclPathCons head (box rest)))
@@ -777,7 +786,7 @@
     [(AstDeclDefStruct _ _ _ _) 5]
     [(AstDeclImport _) 6]
     [(AstDeclTest _ _ _) 7]
-    [(AstDeclComptimeDecl _) 8]
+    [(AstDeclComptimeDecl _ _) 8]
     [(AstDeclModule _) 9]
     [(AstDeclExport _) 11]
     [(AstDeclIncludeStr _ _) 12]
@@ -1058,7 +1067,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (compiler-ast-decl-def-lit-ok? template "generated" 7))]

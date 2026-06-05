@@ -1080,7 +1080,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (front-cat3 "UnsafeDecl { inner: " (front-decl-render inner) " }"))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (front-cat3

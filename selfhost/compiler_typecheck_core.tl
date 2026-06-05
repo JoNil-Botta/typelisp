@@ -235,7 +235,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-decl-diag inner message))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-decl-diag template message))]
@@ -1654,7 +1654,7 @@
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
@@ -1816,7 +1816,7 @@
             (if (string-eq name (compiler-symbol-module-key module decl-name))
               (OkTcLifetimeList lifetimes)
               (tc-nominal-lifetimes-list rest name module))]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
@@ -2621,7 +2621,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-source-decl-policy-ok ctx inner))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-source-decl-policy-ok ctx template))]))
@@ -3568,7 +3568,7 @@
                       fields)
                     (AstTyStructArgs scoped-name lifetimes)))
                 module))]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
@@ -3746,7 +3746,7 @@
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes))))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-bind-import-alias-decl-in-module ctx env alias module template))]
@@ -3973,7 +3973,7 @@
           (ast-ty-func
             (tc-field-type-list ctx fields)
             (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes))))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-module-local-env-add-decl ctx env module template))]
@@ -7582,7 +7582,7 @@
               (string-eq (compiler-symbol-module-key module name) enum-name))
               (OkAstVariantDefList variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
@@ -8570,7 +8570,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
@@ -8846,7 +8846,7 @@
             (tc-variant-owner-name-list rest target index next-module)]
           [(AstDeclTest _ _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (if (= target index)
@@ -12181,7 +12181,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-from-decl inner))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (macro-decl-from-decl template))]
@@ -13310,7 +13310,7 @@
         (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
       [(AstDeclDefStructLifetimes name _ repr cleanup fields)
         (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
-      [(AstDeclComptimeDecl template-box)
+      [(AstDeclComptimeDecl _ template-box)
         (let
           [template : AstDecl (box-get template-box)]
           (tc-check-decl ctx top-env template))]

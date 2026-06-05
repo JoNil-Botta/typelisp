@@ -1098,7 +1098,7 @@
           [(CompilerLoadSomeDecl transformed)
             (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
           [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match (compiler-load-package-transform-decl

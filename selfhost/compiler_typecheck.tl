@@ -585,6 +585,21 @@
       [(Some n) (+ (struct-get p x) n)]
       [None 0])))")
 
+(define (compiler-typecheck-generated-decl-source) : String
+  "(comptime-decl (:generated point-family Point \"i64\")
+  (defstruct Point (x i64)))
+(comptime-decl (:generated make-point-family make-point \"i64\")
+  (define (make-point [x : i64]) : Point (Point x)))
+(define (main) : i64
+  (struct-get (make-point 7) x))")
+
+(define (compiler-typecheck-generated-decl-duplicate-visible-source) : String
+  "(comptime-decl (:generated point-family Point \"left\")
+  (defstruct Point (x i64)))
+(comptime-decl (:generated point-family Point \"right\")
+  (defstruct Point (x i64)))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (main [m : Maybe]) : i64
@@ -1281,7 +1296,7 @@
   (AstTyI64))
 (defenum AstTypeList
   (AstTypeNil)
-  (AstTypeCons AstType (Box AstTypeList)))
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
@@ -1320,6 +1335,45 @@
               (compiler-typecheck-inline-layout-ok?
                 src
                 "CtfeReflectVariantList"))))))))
+
+(define (compiler-typecheck-inline-boxed-ast-list-source) : String
+  "(defenum AstType
+  (AstTyI64)
+  (AstTyFunc AstTypeList (Box AstType))
+  (AstTyTuple AstTypeList)
+  (AstTyBox (Box AstType)))
+(defenum AstTypeList
+  (AstTypeNil)
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
+(defenum AstPattern
+  (AstPatWildcard)
+  (AstPatTuple (Box AstPatternList)))
+(defenum AstPatternList
+  (AstPatternNil)
+  (AstPatternCons (Box AstPattern) (Box AstPatternList)))
+(defenum AstExpr
+  (AstExprLiteral i64)
+  (AstExprCall (Box AstExpr) AstExprList)
+  (AstExprTuple AstExprList)
+  (AstExprMatch (Box AstExpr) AstPatternList))
+(defenum AstExprList
+  (AstExprNil)
+  (AstExprCons (Box AstExpr) (Box AstExprList)))")
+
+(define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-ast-list-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "AstType")
+      (and
+        (compiler-typecheck-inline-layout-ok? src "AstTypeList")
+        (and
+          (compiler-typecheck-inline-layout-ok? src "AstPattern")
+          (and
+            (compiler-typecheck-inline-layout-ok? src "AstPatternList")
+            (and
+              (compiler-typecheck-inline-layout-ok? src "AstExpr")
+              (compiler-typecheck-inline-layout-ok? src "AstExprList"))))))))
 
 (define (compiler-typecheck-inline-boxed-formatter-source) : String
   "(defenum FormatToken
@@ -1417,6 +1471,9 @@
       (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
         unit
         (set! ok false))
+      (if (compiler-typecheck-inline-ast-list-layout-ok?)
+        unit
+        (set! ok false))
       (if (compiler-typecheck-inline-formatter-layout-ok?)
         unit
         (set! ok false))
@@ -1468,6 +1525,14 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-generated-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-generated-decl-duplicate-visible-source)
+        "symbols: duplicate type declaration Point")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

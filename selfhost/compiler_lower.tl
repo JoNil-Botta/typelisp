@@ -1318,6 +1318,7 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (lower-clone-root-add-type-list
           ctx
@@ -1463,6 +1464,7 @@
     [(AstExprNil) state]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (lower-reach-expr-list
           all-functions
@@ -1546,6 +1548,7 @@
     [(AstExprNil) roots]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (lower-clone-roots-expr-list
           ctx
@@ -1680,6 +1683,7 @@
           (match args
             [(AstExprCons arg rest)
               (let
+                [arg : AstExpr (box-get arg)]
                 [rest : AstExprList (box-get rest)]
                 (match rest
                   [(AstExprNil)
@@ -3543,6 +3547,7 @@
     [(AstTypeNil) cursor]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -3932,6 +3937,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (and
           (lower-supported-reference-type? ctx head)
@@ -4275,6 +4281,7 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let
+            [ty : AstType (box-get ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -4399,6 +4406,7 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let
+            [ty : AstType (box-get ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -4551,10 +4559,12 @@
             (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]
     [(AstPatternCons pattern rest-patterns)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest-patterns : AstPatternList (box-get rest-patterns)]
         (match types
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [default-offset : i64
@@ -4777,6 +4787,7 @@
     [(AstPatternNil) false]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (if (lower-pattern-refutable? pattern)
           true
@@ -5180,6 +5191,7 @@
     [(AstTypeNil) (OkLowerState state)]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -5992,24 +6004,36 @@
         (match ty
           [(AstTyTuple types)
             (match types
-              [(AstTypeCons (AstTyVar hidden-name) type-rest)
+              [(AstTypeCons hidden-ty type-rest)
                 (let
+                  [hidden-ty : AstType (box-get hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
-                  (match type-rest
-                    [(AstTypeCons (AstTyVar cleanup-name) end)
-                      (let
-                        [end : AstTypeList (box-get end)]
-                        (match end
-                          [(AstTypeNil)
-                            (match (lower-emit-cleanup-call
-                              state
-                              env
-                              hidden-name
-                              cleanup-name)
-                              [(OkLowerState next-state)
-                                (lower-emit-active-exits next-state env rest)]
-                              [(ErrLowerState message) (ErrLowerState message)])]
-                          [_ (lower-emit-active-exits state env rest)]))]
+                  (match hidden-ty
+                    [(AstTyVar hidden-name)
+                      (match type-rest
+                        [(AstTypeCons cleanup-ty end)
+                          (let
+                            [cleanup-ty : AstType (box-get cleanup-ty)]
+                            [end : AstTypeList (box-get end)]
+                            (match cleanup-ty
+                              [(AstTyVar cleanup-name)
+                                (match end
+                                  [(AstTypeNil)
+                                    (match (lower-emit-cleanup-call
+                                      state
+                                      env
+                                      hidden-name
+                                      cleanup-name)
+                                      [(OkLowerState next-state)
+                                        (lower-emit-active-exits
+                                          next-state
+                                          env
+                                          rest)]
+                                      [(ErrLowerState message)
+                                        (ErrLowerState message)])]
+                                  [_ (lower-emit-active-exits state env rest)])]
+                              [_ (lower-emit-active-exits state env rest)]))]
+                        [_ (lower-emit-active-exits state env rest)])]
                     [_ (lower-emit-active-exits state env rest)]))]
               [_ (lower-emit-active-exits state env rest)])]
           [_ (lower-emit-active-exits state env rest)])
@@ -6035,24 +6059,37 @@
         (match ty
           [(AstTyTuple types)
             (match types
-              [(AstTypeCons (AstTyVar hidden-name) type-rest)
+              [(AstTypeCons hidden-ty type-rest)
                 (let
+                  [hidden-ty : AstType (box-get hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
-                  (match type-rest
-                    [(AstTypeCons (AstTyVar cleanup-name) end)
-                      (let
-                        [end : AstTypeList (box-get end)]
-                        (match end
-                          [(AstTypeNil)
-                            (match (lower-emit-cleanup-call
-                              state
-                              env
-                              hidden-name
-                              cleanup-name)
-                              [(OkLowerState next-state)
-                                (lower-emit-active-cleanups next-state env rest)]
-                              [(ErrLowerState message) (ErrLowerState message)])]
-                          [_ (lower-emit-active-cleanups state env rest)]))]
+                  (match hidden-ty
+                    [(AstTyVar hidden-name)
+                      (match type-rest
+                        [(AstTypeCons cleanup-ty end)
+                          (let
+                            [cleanup-ty : AstType (box-get cleanup-ty)]
+                            [end : AstTypeList (box-get end)]
+                            (match cleanup-ty
+                              [(AstTyVar cleanup-name)
+                                (match end
+                                  [(AstTypeNil)
+                                    (match (lower-emit-cleanup-call
+                                      state
+                                      env
+                                      hidden-name
+                                      cleanup-name)
+                                      [(OkLowerState next-state)
+                                        (lower-emit-active-cleanups
+                                          next-state
+                                          env
+                                          rest)]
+                                      [(ErrLowerState message)
+                                        (ErrLowerState message)])]
+                                  [_
+                                    (lower-emit-active-cleanups state env rest)])]
+                              [_ (lower-emit-active-cleanups state env rest)]))]
+                        [_ (lower-emit-active-cleanups state env rest)])]
                     [_ (lower-emit-active-cleanups state env rest)]))]
               [_ (lower-emit-active-cleanups state env rest)])]
           [_ (lower-emit-active-cleanups state env rest)])
@@ -6358,6 +6395,7 @@
     (match args
       [(AstExprCons arg tail)
         (let
+          [arg : AstExpr (box-get arg)]
           [tail : AstExprList (box-get tail)]
           (match tail
             [(AstExprNil)
@@ -6442,6 +6480,7 @@
     [(AstTypeNil) (OkLowerState state)]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -6950,13 +6989,6 @@
     [(string-eq name "env-var-value") true]
     [else (string-eq name "env-path-separator")]))
 
-(define (lower-stdio-runtime-name [name : String]) : String
-  (cond
-    [(string-eq name "read-stdin-line") ".L_tl_read_stdin_line"]
-    [(string-eq name "read-stdin-bytes") ".L_tl_read_stdin_bytes"]
-    [(string-eq name "stdin-eof?") ".L_tl_stdin_eof"]
-    [else ".L_tl_flush_stdout"]))
-
 (define (lower-env-runtime-name [name : String]) : String
   (cond
     [(string-eq name "env-var-exists?") "tl_env_var_exists"]
@@ -6984,6 +7016,7 @@
     (match args
       [(AstExprCons arg tail)
         (let
+          [arg : AstExpr (box-get arg)]
           [tail : AstExprList (box-get tail)]
           (match tail
             [(AstExprNil)
@@ -7010,36 +7043,6 @@
                 origin)]))]
       [_ (lower-direct-call ctx state env type-env name args result-ty origin)])))
 
-(define (lower-stdio-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (if (string-eq name "read-stdin-bytes")
-    (lower-one-arg-runtime-call
-      ctx
-      state
-      env
-      type-env
-      args
-      name
-      (lower-stdio-runtime-name name)
-      (AstTyI64)
-      result-ty
-      origin)
-    (match args
-      [(AstExprNil)
-        (lower-runtime-call-values
-          state
-          (lower-stdio-runtime-name name)
-          IrValueNil
-          result-ty)]
-      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])))
-
 (define (lower-args-as
   [ctx : TcContext]
   [state : LowerState]
@@ -7055,10 +7058,12 @@
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match types
           [(AstTypeCons expected rest-types)
             (let
+              [expected : AstType (box-get expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -7385,6 +7390,7 @@
                 (match args
                   [(AstExprCons arg tail)
                     (let
+                      [arg : AstExpr (box-get arg)]
                       [tail : AstExprList (box-get tail)]
                       (match tail
                         [(AstExprNil)
@@ -7452,6 +7458,7 @@
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -7466,6 +7473,7 @@
     [(AstPatternNil) env]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (lower-pattern-list-bind-local-names
           (lower-pattern-bind-local-names env pattern)
@@ -8918,6 +8926,7 @@
         (lower-diagnostic "lower: tuple-ref index out of range"))]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -8947,12 +8956,14 @@
     [(AstExprNil) (OkLowerState state)]
     [(AstExprCons value rest-values)
       (let
+        [value : AstExpr (box-get value)]
         [rest-values : AstExprList (box-get rest-values)]
         (match types
           [(AstTypeNil)
             (ErrLowerState (lower-diagnostic "lower: tuple arity mismatch"))]
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [offset : i64
@@ -9033,6 +9044,7 @@
     [(AstExprNil) (OkLowerState state)]
     [(AstExprCons value rest-values)
       (let
+        [value : AstExpr (box-get value)]
         [rest-values : AstExprList (box-get rest-values)]
         (match (lower-expr ctx state env type-env value)
           [(OkLowerExpr lowered)
@@ -9606,10 +9618,12 @@
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match types
           [(AstTypeCons expected rest-types)
             (let
+              [expected : AstType (box-get expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -9865,14 +9879,17 @@
   (match args
     [(AstExprCons str tail)
       (let
+        [str : AstExpr (box-get str)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons start rest1)
             (let
+              [start : AstExpr (box-get start)]
               [rest1 : AstExprList (box-get rest1)]
               (match rest1
                 [(AstExprCons len rest2)
                   (let
+                    [len : AstExpr (box-get len)]
                     [rest2 : AstExprList (box-get rest2)]
                     (match rest2
                       [(AstExprNil)
@@ -9921,10 +9938,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -9997,6 +10016,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10143,6 +10163,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10187,6 +10208,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10227,1042 +10249,6 @@
         result-ty
         origin)]))
 
-(define (lower-read-file-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              ".L_tl_read_file"
-              result-ty
-              "lower: read-file requires String")]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "read-file"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "read-file"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-read-file-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              ".L_tl_read_file_status"
-              result-ty
-              "lower: read-file-status requires String")]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "read-file-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "read-file-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-exists-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              ".L_tl_file_exists"
-              result-ty
-              "lower: file-exists? requires String")]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-exists?"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-exists?"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-exists-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              ".L_tl_file_exists_status"
-              result-ty
-              "lower: file-exists-status requires String")]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-exists-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-exists-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-fs-path-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [runtime-name : String]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              runtime-name
-              result-ty
-              (string-append (string-append "lower: " name) " requires String"))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
-
-(define (lower-fs-rename-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons source tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons destination rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (lower-two-string-runtime-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    source
-                    destination
-                    ".L_tl_fs_rename_status"
-                    result-ty
-                    "lower: fs-rename-status requires String")]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "fs-rename-status"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "fs-rename-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "fs-rename-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-fs-process-id-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprNil)
-      (lower-runtime-call-values
-        state
-        ".L_tl_fs_process_id"
-        IrValueNil
-        result-ty)]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "fs-process-id"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-fs-current-dir-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprNil)
-      (lower-runtime-call-values
-        state
-        "tl_fs_current_dir_status"
-        IrValueNil
-        result-ty)]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "fs-current-dir-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-fs-current-dir-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprNil)
-      (lower-runtime-call-values state "tl_fs_current_dir" IrValueNil result-ty)]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "fs-current-dir"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-open-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons path tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons mode rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (match (lower-expr ctx state env type-env path)
-                    [(OkLowerExpr lowered-path)
-                      (match lowered-path
-                        [(LowerExpr path-state path-value _)
-                          (match (lower-expr ctx path-state env type-env mode)
-                            [(OkLowerExpr lowered-mode)
-                              (match lowered-mode
-                                [(LowerExpr mode-state mode-value mode-ty)
-                                  (match (lower-cast-value
-                                    mode-state
-                                    mode-value
-                                    mode-ty
-                                    (AstTyI64))
-                                    [(LowerExpr cast-state cast-value _)
-                                      (match (lower-string-fields
-                                        cast-state
-                                        path-value)
-                                        [(LowerStringFields
-                                            fields-state
-                                            ptr
-                                            len)
-                                          (lower-runtime-call-values
-                                            fields-state
-                                            ".L_tl_file_open_status"
-                                            (compiler-ir-value-cons
-                                              ptr
-                                              (compiler-ir-value-cons
-                                                len
-                                                (compiler-ir-value-cons
-                                                  cast-value
-                                                  IrValueNil)))
-                                            result-ty)])])])]
-                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "file-open-status"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-open-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-open-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-close-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons handle tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (match (lower-expr ctx state env type-env handle)
-              [(OkLowerExpr lowered-handle)
-                (match lowered-handle
-                  [(LowerExpr handle-state handle-value handle-ty)
-                    (match (lower-cast-value
-                      handle-state
-                      handle-value
-                      handle-ty
-                      (AstTyI64))
-                      [(LowerExpr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          ".L_tl_file_close_status"
-                          (compiler-ir-value-cons cast-value IrValueNil)
-                          result-ty)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-close-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-close-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-read-chunk-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons handle tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons count rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (match (lower-expr ctx state env type-env handle)
-                    [(OkLowerExpr lowered-handle)
-                      (match lowered-handle
-                        [(LowerExpr handle-state handle-value handle-ty)
-                          (match (lower-cast-value
-                            handle-state
-                            handle-value
-                            handle-ty
-                            (AstTyI64))
-                            [(LowerExpr handle-cast-state handle-cast-value _)
-                              (match (lower-expr
-                                ctx
-                                handle-cast-state
-                                env
-                                type-env
-                                count)
-                                [(OkLowerExpr lowered-count)
-                                  (match lowered-count
-                                    [(LowerExpr
-                                        count-state
-                                        count-value
-                                        count-ty)
-                                      (match (lower-cast-value
-                                        count-state
-                                        count-value
-                                        count-ty
-                                        (AstTyI64))
-                                        [(LowerExpr
-                                            cast-state
-                                            count-cast-value
-                                            _)
-                                          (lower-runtime-call-values
-                                            cast-state
-                                            ".L_tl_file_read_chunk_status"
-                                            (compiler-ir-value-cons
-                                              handle-cast-value
-                                              (compiler-ir-value-cons
-                                                count-cast-value
-                                                IrValueNil))
-                                            result-ty)])])]
-                                [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "file-read-chunk-status"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-read-chunk-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-read-chunk-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-write-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons handle tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons contents rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (match (lower-expr ctx state env type-env handle)
-                    [(OkLowerExpr lowered-handle)
-                      (match lowered-handle
-                        [(LowerExpr handle-state handle-value handle-ty)
-                          (match (lower-cast-value
-                            handle-state
-                            handle-value
-                            handle-ty
-                            (AstTyI64))
-                            [(LowerExpr handle-cast-state handle-cast-value _)
-                              (match (lower-expr
-                                ctx
-                                handle-cast-state
-                                env
-                                type-env
-                                contents)
-                                [(OkLowerExpr lowered-contents)
-                                  (match lowered-contents
-                                    [(LowerExpr contents-state contents-value _)
-                                      (match (lower-string-fields
-                                        contents-state
-                                        contents-value)
-                                        [(LowerStringFields
-                                            fields-state
-                                            ptr
-                                            len)
-                                          (lower-runtime-call-values
-                                            fields-state
-                                            ".L_tl_file_write_status"
-                                            (compiler-ir-value-cons
-                                              handle-cast-value
-                                              (compiler-ir-value-cons
-                                                ptr
-                                                (compiler-ir-value-cons
-                                                  len
-                                                  IrValueNil)))
-                                            result-ty)])])]
-                                [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "file-write-status"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-write-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-write-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-flush-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons handle tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (match (lower-expr ctx state env type-env handle)
-              [(OkLowerExpr lowered-handle)
-                (match lowered-handle
-                  [(LowerExpr handle-state handle-value handle-ty)
-                    (match (lower-cast-value
-                      handle-state
-                      handle-value
-                      handle-ty
-                      (AstTyI64))
-                      [(LowerExpr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          ".L_tl_file_flush_status"
-                          (compiler-ir-value-cons cast-value IrValueNil)
-                          result-ty)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "file-flush-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "file-flush-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-file-read-chunk-field-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [fallback-name : String]
-  [runtime-name : String]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons handle tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (match (lower-expr ctx state env type-env handle)
-              [(OkLowerExpr lowered-handle)
-                (match lowered-handle
-                  [(LowerExpr handle-state handle-value handle-ty)
-                    (match (lower-cast-value
-                      handle-state
-                      handle-value
-                      handle-ty
-                      (AstTyI64))
-                      [(LowerExpr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          runtime-name
-                          (compiler-ir-value-cons cast-value IrValueNil)
-                          result-ty)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              fallback-name
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        fallback-name
-        args
-        result-ty
-        origin)]))
-
-(define (lower-write-file-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons path tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons contents rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (match (lower-expr ctx state env type-env path)
-                    [(OkLowerExpr lowered-path)
-                      (match lowered-path
-                        [(LowerExpr path-state path-value _)
-                          (match (lower-expr
-                            ctx
-                            path-state
-                            env
-                            type-env
-                            contents)
-                            [(OkLowerExpr lowered-contents)
-                              (match lowered-contents
-                                [(LowerExpr contents-state contents-value _)
-                                  (match (lower-string-fields
-                                    contents-state
-                                    path-value)
-                                    [(LowerStringFields
-                                        path-fields-state
-                                        path-ptr
-                                        path-len)
-                                      (match (lower-string-fields
-                                        path-fields-state
-                                        contents-value)
-                                        [(LowerStringFields
-                                            done-fields-state
-                                            contents-ptr
-                                            contents-len)
-                                          (lower-runtime-call-values
-                                            done-fields-state
-                                            ".L_tl_write_file"
-                                            (compiler-ir-value-cons
-                                              path-ptr
-                                              (compiler-ir-value-cons
-                                                path-len
-                                                (compiler-ir-value-cons
-                                                  contents-ptr
-                                                  (compiler-ir-value-cons
-                                                    contents-len
-                                                    IrValueNil))))
-                                            result-ty)])])])]
-                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "write-file"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "write-file"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "write-file"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-write-file-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons path tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons contents rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (match (lower-expr ctx state env type-env path)
-                    [(OkLowerExpr lowered-path)
-                      (match lowered-path
-                        [(LowerExpr path-state path-value _)
-                          (match (lower-expr
-                            ctx
-                            path-state
-                            env
-                            type-env
-                            contents)
-                            [(OkLowerExpr lowered-contents)
-                              (match lowered-contents
-                                [(LowerExpr contents-state contents-value _)
-                                  (match (lower-string-fields
-                                    contents-state
-                                    path-value)
-                                    [(LowerStringFields
-                                        path-fields-state
-                                        path-ptr
-                                        path-len)
-                                      (match (lower-string-fields
-                                        path-fields-state
-                                        contents-value)
-                                        [(LowerStringFields
-                                            done-fields-state
-                                            contents-ptr
-                                            contents-len)
-                                          (lower-runtime-call-values
-                                            done-fields-state
-                                            ".L_tl_write_file_status"
-                                            (compiler-ir-value-cons
-                                              path-ptr
-                                              (compiler-ir-value-cons
-                                                path-len
-                                                (compiler-ir-value-cons
-                                                  contents-ptr
-                                                  (compiler-ir-value-cons
-                                                    contents-len
-                                                    IrValueNil))))
-                                            result-ty)])])])]
-                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "write-file-status"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "write-file-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "write-file-status"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-append-file-status-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons path tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprCons contents rest)
-            (let
-              [rest : AstExprList (box-get rest)]
-              (match rest
-                [(AstExprNil)
-                  (match (lower-expr ctx state env type-env path)
-                    [(OkLowerExpr lowered-path)
-                      (match lowered-path
-                        [(LowerExpr path-state path-value _)
-                          (match (lower-expr
-                            ctx
-                            path-state
-                            env
-                            type-env
-                            contents)
-                            [(OkLowerExpr lowered-contents)
-                              (match lowered-contents
-                                [(LowerExpr contents-state contents-value _)
-                                  (match (lower-string-fields
-                                    contents-state
-                                    path-value)
-                                    [(LowerStringFields
-                                        path-fields-state
-                                        path-ptr
-                                        path-len)
-                                      (match (lower-string-fields
-                                        path-fields-state
-                                        contents-value)
-                                        [(LowerStringFields
-                                            done-fields-state
-                                            contents-ptr
-                                            contents-len)
-                                          (lower-runtime-call-values
-                                            done-fields-state
-                                            ".L_tl_append_file_status"
-                                            (compiler-ir-value-cons
-                                              path-ptr
-                                              (compiler-ir-value-cons
-                                                path-len
-                                                (compiler-ir-value-cons
-                                                  contents-ptr
-                                                  (compiler-ir-value-cons
-                                                    contents-len
-                                                    IrValueNil))))
-                                            result-ty)])])])]
-                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [_
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    "append-file-status"
-                    args
-                    result-ty
-                    origin)]))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "append-file-status"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "append-file-status"
-        args
-        result-ty
-        origin)]))
-
 (define (lower-string-eq-call
   [ctx : TcContext]
   [state : LowerState]
@@ -11274,10 +10260,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11389,10 +10377,12 @@
   (match args
     [(AstExprCons str tail)
       (let
+        [str : AstExpr (box-get str)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons index rest)
             (let
+              [index : AstExpr (box-get index)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11629,6 +10619,7 @@
               (match args
                 [(AstExprCons arg tail)
                   (let
+                    [arg : AstExpr (box-get arg)]
                     [tail : AstExprList (box-get tail)]
                     (match tail
                       [(AstExprNil)
@@ -11711,6 +10702,7 @@
   (match args
     [(AstExprCons arr tail)
       (let
+        [arr : AstExpr (box-get arr)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -12038,10 +11030,12 @@
   (match args
     [(AstExprCons leaf tail)
       (let
+        [leaf : AstExpr (box-get leaf)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons subleaf rest)
             (let
+              [subleaf : AstExpr (box-get subleaf)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -12103,6 +11097,7 @@
   (match args
     [(AstExprCons index tail)
       (let
+        [index : AstExpr (box-get index)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil) (lower-xgetbv ctx state env type-env index)]
@@ -12903,6 +11898,7 @@
     [(AstExprNil) (OkLowerArgs state IrValueNil)]
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match (lower-expr ctx state env type-env arg)
           [(OkLowerExpr lowered)
@@ -13081,6 +12077,7 @@
     [(AstExprNil) (OkLowerExpr (LowerExpr state IrValueUnit (AstTyUnit)))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lower-expr ctx state env type-env expr)]
@@ -15852,6 +14849,7 @@
     [(AstExprNil) false]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lower-tail-expr-candidate? state env expr)]
@@ -15982,6 +14980,7 @@
           (IrInstrReturn (lower-return-maybe IrValueUnit ret-ty))))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lower-tail-expr ctx state env type-env expr ret-ty)]
@@ -16406,6 +15405,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (or
           (lower-type-contains-inline-aggregate? ctx ty)
@@ -16638,6 +15638,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (tc-type-without-regions ty)
@@ -16656,6 +15657,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam
@@ -18876,8 +17878,10 @@
           "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))
 
 (define (compiler-lower-comptime-decl-source) : String
-  "(comptime-decl (defstruct Point (x i64) (y i64)))
-(comptime-decl (defenum Shape (Nothing) (Circle i64) (Pair Point)))
+  "(comptime-decl (:generated point-family Point \"i64-i64\")
+  (defstruct Point (x i64) (y i64)))
+(comptime-decl (:generated shape-family Shape \"point\")
+  (defenum Shape (Nothing) (Circle i64) (Pair Point)))
 (define (make-point [x : i64] [y : i64]) : Point
   (Point x y))
 (define (get-y [p : Point]) : i64

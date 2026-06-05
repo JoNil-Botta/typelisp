@@ -25,9 +25,8 @@ tl_current_arena:
 
 .text
 .globl _start
-#t _tl_f0 _tl_helper
-.globl _tl_f0
-_tl_f0:
+.globl _tl_helper_u2etl_colon_colonhelper
+_tl_helper_u2etl_colon_colonhelper:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
@@ -46,7 +45,7 @@ main:
     movq %rsp, %rbp
     subq $16, %rsp
 .Lf1_entry:
-    call _tl_f0
+    call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax
     movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx

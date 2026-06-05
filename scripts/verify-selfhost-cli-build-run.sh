@@ -84,6 +84,27 @@ assert_contains() {
     fi
 }
 
+assert_occurrences() {
+    label=$1
+    file=$2
+    text=$3
+    expected=$4
+    count=$(grep -F -- "$text" "$file" | wc -l | tr -d ' ')
+    if [ "$count" -ne "$expected" ]; then
+        echo "file contents:" >&2
+        sed 's/^/  /' "$file" >&2 || true
+        fail "$label expected $expected occurrence(s) of '$text', got $count"
+    fi
+}
+
+generated_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 assert_file_exists() {
     label=$1
     file=$2
@@ -578,6 +599,238 @@ assert_status root-package-help "$status" 0
 assert_empty root-package-help "$WORKDIR/root-package-help.out"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "Usage:"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp build [--manifest-path <typelisp.pkg>]"
+
+CHAIN_DIR="$WORKDIR/package-graph-chain"
+CHAIN_ROOT="$CHAIN_DIR/root"
+CHAIN_MID="$CHAIN_DIR/mid"
+CHAIN_LEAF="$CHAIN_DIR/leaf"
+mkdir -p "$CHAIN_ROOT/src" "$CHAIN_MID/src" "$CHAIN_LEAF/src"
+cat > "$CHAIN_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "chain_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (mid "../mid")))
+EOF
+cat > "$CHAIN_ROOT/src/main.tl" <<'EOF'
+(import "pkg:mid/src/lib.tl")
+(define (main) : i64 (mid-answer))
+EOF
+cat > "$CHAIN_MID/typelisp.pkg" <<'EOF'
+(package
+  (name "chain_mid")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (leaf "../leaf")))
+EOF
+cat > "$CHAIN_MID/src/lib.tl" <<'EOF'
+(import "pkg:leaf/src/lib.tl")
+(define (mid-answer) : i64 (leaf-answer))
+EOF
+cat > "$CHAIN_LEAF/typelisp.pkg" <<'EOF'
+(package
+  (name "chain_leaf")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$CHAIN_LEAF/src/lib.tl" <<'EOF'
+(define (leaf-answer) : i64 42)
+EOF
+CHAIN_EXE="$CHAIN_ROOT/target/typelisp/release/chain_root/chain_root"
+CHAIN_MID_ARCHIVE="$CHAIN_MID/target/typelisp/release/chain_mid/libchain_mid.a"
+CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/typelisp/release/chain_leaf/libchain_leaf.a"
+if [ "$HOST_OS" = windows ]; then
+    CHAIN_EXE="$CHAIN_EXE.exe"
+    CHAIN_MID_ARCHIVE="$CHAIN_MID/target/typelisp/release/chain_mid/chain_mid.lib"
+    CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/typelisp/release/chain_leaf/chain_leaf.lib"
+fi
+
+set +e
+"$COMPILER" build --manifest-path "$CHAIN_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-chain.out" 2> "$WORKDIR/package-graph-chain.err"
+status=$?
+set -e
+assert_status package-graph-chain "$status" 0
+assert_empty package-graph-chain "$WORKDIR/package-graph-chain.err"
+assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Generated: $(generated_path "$CHAIN_LEAF_ARCHIVE")"
+assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Generated: $(generated_path "$CHAIN_MID_ARCHIVE")"
+assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Generated: $(generated_path "$CHAIN_EXE")"
+
+set +e
+"$CHAIN_EXE" > "$WORKDIR/package-graph-chain-program.out" 2> "$WORKDIR/package-graph-chain-program.err"
+status=$?
+set -e
+assert_status package-graph-chain-program "$status" 42
+assert_empty package-graph-chain-program "$WORKDIR/package-graph-chain-program.out"
+assert_empty package-graph-chain-program "$WORKDIR/package-graph-chain-program.err"
+
+DIAMOND_DIR="$WORKDIR/package-graph-diamond"
+DIAMOND_ROOT="$DIAMOND_DIR/root"
+DIAMOND_LEFT="$DIAMOND_DIR/left"
+DIAMOND_RIGHT="$DIAMOND_DIR/right"
+DIAMOND_SHARED="$DIAMOND_DIR/shared"
+mkdir -p "$DIAMOND_ROOT/src" "$DIAMOND_LEFT/src" "$DIAMOND_RIGHT/src" "$DIAMOND_SHARED/src"
+cat > "$DIAMOND_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "diamond_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (left "../left")
+    (right "../right")))
+EOF
+cat > "$DIAMOND_ROOT/src/main.tl" <<'EOF'
+(import "pkg:left/src/lib.tl")
+(import "pkg:right/src/lib.tl")
+(define (main) : i64 (+ (left-answer) (right-answer)))
+EOF
+cat > "$DIAMOND_LEFT/typelisp.pkg" <<'EOF'
+(package
+  (name "diamond_left")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (shared "../shared")))
+EOF
+cat > "$DIAMOND_LEFT/src/lib.tl" <<'EOF'
+(import "pkg:shared/src/lib.tl")
+(define (left-answer) : i64 (shared-answer))
+EOF
+cat > "$DIAMOND_RIGHT/typelisp.pkg" <<'EOF'
+(package
+  (name "diamond_right")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (shared "../shared")))
+EOF
+cat > "$DIAMOND_RIGHT/src/lib.tl" <<'EOF'
+(import "pkg:shared/src/lib.tl")
+(define (right-answer) : i64 (shared-answer))
+EOF
+cat > "$DIAMOND_SHARED/typelisp.pkg" <<'EOF'
+(package
+  (name "diamond_shared")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$DIAMOND_SHARED/src/lib.tl" <<'EOF'
+(define (shared-answer) : i64 21)
+EOF
+DIAMOND_EXE="$DIAMOND_ROOT/target/typelisp/release/diamond_root/diamond_root"
+DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/typelisp/release/diamond_shared/libdiamond_shared.a"
+DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/typelisp/release/diamond_left/libdiamond_left.a"
+DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/typelisp/release/diamond_right/libdiamond_right.a"
+if [ "$HOST_OS" = windows ]; then
+    DIAMOND_EXE="$DIAMOND_EXE.exe"
+    DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/typelisp/release/diamond_shared/diamond_shared.lib"
+    DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/typelisp/release/diamond_left/diamond_left.lib"
+    DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/typelisp/release/diamond_right/diamond_right.lib"
+fi
+
+set +e
+"$COMPILER" build --manifest-path "$DIAMOND_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-diamond.out" 2> "$WORKDIR/package-graph-diamond.err"
+status=$?
+set -e
+assert_status package-graph-diamond "$status" 0
+assert_empty package-graph-diamond "$WORKDIR/package-graph-diamond.err"
+assert_occurrences package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_SHARED_ARCHIVE")" 1
+assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_LEFT_ARCHIVE")"
+assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_RIGHT_ARCHIVE")"
+assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_EXE")"
+
+set +e
+"$DIAMOND_EXE" > "$WORKDIR/package-graph-diamond-program.out" 2> "$WORKDIR/package-graph-diamond-program.err"
+status=$?
+set -e
+assert_status package-graph-diamond-program "$status" 42
+assert_empty package-graph-diamond-program "$WORKDIR/package-graph-diamond-program.out"
+assert_empty package-graph-diamond-program "$WORKDIR/package-graph-diamond-program.err"
+
+CYCLE_DIR="$WORKDIR/package-graph-cycle"
+CYCLE_ROOT="$CYCLE_DIR/root"
+CYCLE_A="$CYCLE_DIR/cycle_a"
+CYCLE_B="$CYCLE_DIR/cycle_b"
+mkdir -p "$CYCLE_ROOT/src" "$CYCLE_A/src" "$CYCLE_B/src"
+cat > "$CYCLE_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "cycle_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (a "../cycle_a")))
+EOF
+cat > "$CYCLE_ROOT/src/main.tl" <<'EOF'
+(import "pkg:a/src/lib.tl")
+(define (main) : i64 (a-answer))
+EOF
+cat > "$CYCLE_A/typelisp.pkg" <<'EOF'
+(package
+  (name "cycle_a")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (b "../cycle_b")))
+EOF
+cat > "$CYCLE_A/src/lib.tl" <<'EOF'
+(define (a-answer) : i64 1)
+EOF
+cat > "$CYCLE_B/typelisp.pkg" <<'EOF'
+(package
+  (name "cycle_b")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (a "../cycle_a")))
+EOF
+cat > "$CYCLE_B/src/lib.tl" <<'EOF'
+(define (b-answer) : i64 2)
+EOF
+
+set +e
+"$COMPILER" build --manifest-path "$CYCLE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" > "$WORKDIR/package-graph-cycle.out" 2> "$WORKDIR/package-graph-cycle.err"
+status=$?
+set -e
+assert_status package-graph-cycle "$status" 1
+assert_empty package-graph-cycle "$WORKDIR/package-graph-cycle.out"
+assert_contains package-graph-cycle "$WORKDIR/package-graph-cycle.err" "build: dependency cycle:"
+assert_contains package-graph-cycle "$WORKDIR/package-graph-cycle.err" "cycle_a"
+assert_contains package-graph-cycle "$WORKDIR/package-graph-cycle.err" "cycle_b"
+
+BADKIND_DIR="$WORKDIR/package-graph-bad-kind"
+BADKIND_ROOT="$BADKIND_DIR/root"
+BADKIND_DEP="$BADKIND_DIR/dep_bin"
+mkdir -p "$BADKIND_ROOT/src" "$BADKIND_DEP/src"
+cat > "$BADKIND_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "bad_kind_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (dep "../dep_bin")))
+EOF
+cat > "$BADKIND_ROOT/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+cat > "$BADKIND_DEP/typelisp.pkg" <<'EOF'
+(package
+  (name "dep_bin")
+  (version "0.1.0")
+  (kind bin))
+EOF
+cat > "$BADKIND_DEP/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+
+set +e
+"$COMPILER" build --manifest-path "$BADKIND_ROOT/typelisp.pkg" --target "$BUILD_TARGET" > "$WORKDIR/package-graph-bad-kind.out" 2> "$WORKDIR/package-graph-bad-kind.err"
+status=$?
+set -e
+assert_status package-graph-bad-kind "$status" 1
+assert_empty package-graph-bad-kind "$WORKDIR/package-graph-bad-kind.out"
+assert_contains package-graph-bad-kind "$WORKDIR/package-graph-bad-kind.err" 'build: dependency `dep`'
+assert_contains package-graph-bad-kind "$WORKDIR/package-graph-bad-kind.err" "must be a staticlib package"
 
 STATICLIB_DIR="$WORKDIR/staticlib-package-build"
 mkdir -p "$STATICLIB_DIR/src"

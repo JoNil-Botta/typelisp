@@ -263,6 +263,12 @@ the unified selfhost CLI from `selfhost/cli.tl` and writes
 uses `scripts/build-stage0.sh`, which compiles `selfhost/cli.tl` directly until
 the remaining standalone-driver cleanup tracked by #1574 lands.
 
+Package builds load local dependency manifests into a normalized serial DAG
+keyed by manifest path before code generation. Transitive dependencies are built
+once per package build invocation, diamond graphs share the common archive
+build, binaries link the transitive static archives in dependency-aware order,
+and dependency cycles fail with a `build: dependency cycle:` path diagnostic.
+Dependency packages must be `staticlib`/`lib` packages.
 Inside a package build, imports of the form `(import
 "pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
 `math`; ordinary string imports remain relative to the importing file, and

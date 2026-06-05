@@ -199,6 +199,50 @@
     [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
     [(ErrCompilerCheck _) false]))
 
+(define (compiler-check-inline-layout-name-ok?
+  [ctx : TcContext]
+  [name : String]) : bool
+  (match (tc-inline-aggregate-layout-finite-ok ctx name)
+    [(OkTcUnit) true]
+    [(ErrTcUnit _) false]))
+
+(define (compiler-check-virtual-import-inline-layout-ok?) : bool
+  (match (compiler-load-source-with-paths
+    "selfhost/virtual_entry.tl"
+    (compiler-check-virtual-import-source)
+    (sym-i64-empty))
+    [(OkCompilerLoadWithPaths decls _ _ _)
+      (let
+        [program : AstProgram (ast-program decls)]
+        (match (build-compiler-symbols program)
+          [(OkCompilerSymbols symbols)
+            (match (build-compiler-registries program)
+              [(OkCompilerRegistries registries)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (and
+                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
+                    (and
+                      (compiler-check-inline-layout-name-ok? ctx "AstExprList")
+                      (and
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstPatternList")
+                        (and
+                          (compiler-check-inline-layout-name-ok?
+                            ctx
+                            "AstDeclList")
+                          (and
+                            (compiler-check-inline-layout-name-ok?
+                              ctx
+                              "AstParamList")
+                            (compiler-check-inline-layout-name-ok?
+                              ctx
+                              "AstVariantDefList")))))))]
+              [(ErrCompilerRegistries _) false])]
+          [(ErrCompilerSymbols _) false]))]
+    [(ErrCompilerLoadWithPaths _) false]))
+
 (define (compiler-check-export-ok?) : bool
   (match (compiler-check-source
     "selfhost/export_entry.tl"
@@ -313,6 +357,12 @@
       (return
         (begin
           (panic "compiler-check: virtual import smoke mismatch")
+          0)))
+    (unless
+      (compiler-check-virtual-import-inline-layout-ok?)
+      (return
+        (begin
+          (panic "compiler-check: virtual import inline layout smoke mismatch")
           0)))
     (unless
       (compiler-check-export-ok?)

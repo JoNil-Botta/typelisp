@@ -122,6 +122,30 @@
   (OkSpecSubMatchArmList AstMatchArmList)
   (ErrSpecSubMatchArmList CompilerDiagnostic))
 
+(defenum GenRegistry
+  (GenRegistryNil)
+  (GenRegistryCons String AstDecl (Box GenRegistry)))
+
+(defenum GenMaybeEntry
+  (GenNoEntry)
+  (GenSomeEntry AstDecl))
+
+(defenum ResultGenKey
+  (OkGenKey String i64)
+  (ErrGenKey CompilerDiagnostic))
+
+(defenum ResultGenDecl
+  (OkGenDecl SpecMaybeDecl GenRegistry String)
+  (ErrGenDecl CompilerDiagnostic))
+
+(defenum ResultGenDecls
+  (OkGenDecls AstDeclList GenRegistry String)
+  (ErrGenDecls CompilerDiagnostic))
+
+(defenum ResultGenProgram
+  (OkGenProgram AstProgram)
+  (ErrGenProgram CompilerDiagnostic))
+
 (define (spec-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -233,6 +257,7 @@
     [(AstPatternNil) templates]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (spec-template-list-remove-pattern-list
           (spec-template-list-remove-pattern templates pattern)
@@ -318,6 +343,7 @@
     [(AstTypeNil) "nil"]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (spec-type-key head)
@@ -440,6 +466,394 @@
     "__tl_specialized_"
     (string-append name (string-append "_" (spec-values-key values)))))
 
+(define (gen-registry-cons [key : String] [decl : AstDecl] [rest : GenRegistry]) : GenRegistry
+  (GenRegistryCons key decl (box rest)))
+
+(define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
+  (match registry
+    [(GenRegistryNil) (GenNoEntry)]
+    [(GenRegistryCons cached-key decl rest)
+      (if (string-eq cached-key key)
+        (GenSomeEntry decl)
+        (gen-registry-lookup (box-get rest) key))]))
+
+(define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
+  (match decl
+    [(AstDeclDef name _ _) (SpecSomeString name)]
+    [(AstDeclDefFn name _ _ _) (SpecSomeString name)]
+    [(AstDeclDefEnum name _) (SpecSomeString name)]
+    [(AstDeclDefEnumLifetimes name _ _) (SpecSomeString name)]
+    [(AstDeclDefStruct name _ _ _) (SpecSomeString name)]
+    [(AstDeclDefStructLifetimes name _ _ _ _) (SpecSomeString name)]
+    [(AstDeclComptimeDecl _ inner-box)
+      (gen-decl-visible-name (box-get inner-box))]
+    [_ (SpecNoString)]))
+
+(define (gen-maybe-type-eq? [a : AstMaybeType] [b : AstMaybeType]) : bool
+  (match a
+    [(AstNoType)
+      (match b
+        [(AstNoType) true]
+        [_ false])]
+    [(AstSomeType a-ty)
+      (match b
+        [(AstSomeType b-ty) (ctfe-type-eq a-ty b-ty)]
+        [_ false])]))
+
+(define (gen-expr-eq? [a : AstExpr] [b : AstExpr]) : bool
+  (ctfe-expr-eq (ast-expr-unspan a) (ast-expr-unspan b)))
+
+(define (gen-param-eq? [a : AstParam] [b : AstParam]) : bool
+  (match a
+    [(AstParam a-name a-ty a-comptime)
+      (match b
+        [(AstParam b-name b-ty b-comptime)
+          (and
+            (string-eq a-name b-name)
+            (and (ctfe-type-eq a-ty b-ty) (= a-comptime b-comptime)))])]))
+
+(define (gen-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
+  (match a
+    [(AstParamNil)
+      (match b
+        [(AstParamNil) true]
+        [_ false])]
+    [(AstParamCons a-head a-rest)
+      (let
+        [a-rest : AstParamList (box-get a-rest)]
+        (match b
+          [(AstParamCons b-head b-rest)
+            (let
+              [b-rest : AstParamList (box-get b-rest)]
+              (and
+                (gen-param-eq? a-head b-head)
+                (gen-param-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
+(define (gen-field-cleanup-eq? [a : AstFieldCleanup] [b : AstFieldCleanup]) : bool
+  (match a
+    [(AstFieldNoCleanup)
+      (match b
+        [(AstFieldNoCleanup) true]
+        [_ false])]
+    [(AstFieldCleanupFn a-name)
+      (match b
+        [(AstFieldCleanupFn b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstFieldOwnedCleanup)
+      (match b
+        [(AstFieldOwnedCleanup) true]
+        [_ false])]))
+
+(define (gen-field-def-eq? [a : AstFieldDef] [b : AstFieldDef]) : bool
+  (match a
+    [(AstFieldDef a-name a-ty a-cleanup)
+      (match b
+        [(AstFieldDef b-name b-ty b-cleanup)
+          (and
+            (string-eq a-name b-name)
+            (and
+              (ctfe-type-eq a-ty b-ty)
+              (gen-field-cleanup-eq? a-cleanup b-cleanup)))])]))
+
+(define (gen-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
+  (match a
+    [(AstFieldDefNil)
+      (match b
+        [(AstFieldDefNil) true]
+        [_ false])]
+    [(AstFieldDefCons a-head a-rest)
+      (let
+        [a-rest : AstFieldDefList (box-get a-rest)]
+        (match b
+          [(AstFieldDefCons b-head b-rest)
+            (let
+              [b-rest : AstFieldDefList (box-get b-rest)]
+              (and
+                (gen-field-def-eq? a-head b-head)
+                (gen-field-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
+(define (gen-struct-repr-eq? [a : AstStructRepr] [b : AstStructRepr]) : bool
+  (match a
+    [(AstStructReprDefault)
+      (match b
+        [(AstStructReprDefault) true]
+        [_ false])]
+    [(AstStructReprC)
+      (match b
+        [(AstStructReprC) true]
+        [_ false])]))
+
+(define (gen-struct-cleanup-eq? [a : AstStructCleanup] [b : AstStructCleanup]) : bool
+  (match a
+    [(AstStructNoCleanup)
+      (match b
+        [(AstStructNoCleanup) true]
+        [_ false])]
+    [(AstStructCleanupFn a-name)
+      (match b
+        [(AstStructCleanupFn b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (gen-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
+  (match a
+    [(AstVariantDef a-name a-payloads)
+      (match b
+        [(AstVariantDef b-name b-payloads)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-type-list-eq a-payloads b-payloads))])]))
+
+(define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
+  (match a
+    [(AstVariantDefNil)
+      (match b
+        [(AstVariantDefNil) true]
+        [_ false])]
+    [(AstVariantDefCons a-head a-rest)
+      (let
+        [a-rest : AstVariantDefList (box-get a-rest)]
+        (match b
+          [(AstVariantDefCons b-head b-rest)
+            (let
+              [b-rest : AstVariantDefList (box-get b-rest)]
+              (and
+                (gen-variant-def-eq? a-head b-head)
+                (gen-variant-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
+(define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
+  (match a
+    [(AstDeclDef a-name a-ty a-value-box)
+      (let
+        [a-value : AstExpr (box-get a-value-box)]
+        (match b
+          [(AstDeclDef b-name b-ty b-value-box)
+            (let
+              [b-value : AstExpr (box-get b-value-box)]
+              (and
+                (string-eq a-name b-name)
+                (and
+                  (gen-maybe-type-eq? a-ty b-ty)
+                  (gen-expr-eq? a-value b-value))))]
+          [_ false]))]
+    [(AstDeclDefFn a-name a-params a-ret a-body-box)
+      (let
+        [a-body : AstExpr (box-get a-body-box)]
+        (match b
+          [(AstDeclDefFn b-name b-params b-ret b-body-box)
+            (let
+              [b-body : AstExpr (box-get b-body-box)]
+              (and
+                (string-eq a-name b-name)
+                (and
+                  (gen-param-list-eq? a-params b-params)
+                  (and (ctfe-type-eq a-ret b-ret) (gen-expr-eq? a-body b-body)))))]
+          [_ false]))]
+    [(AstDeclDefEnum a-name a-variants)
+      (match b
+        [(AstDeclDefEnum b-name b-variants)
+          (and
+            (string-eq a-name b-name)
+            (gen-variant-list-eq? a-variants b-variants))]
+        [_ false])]
+    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-variants)
+      (match b
+        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-variants)
+          (and
+            (string-eq a-name b-name)
+            (and
+              (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+              (gen-variant-list-eq? a-variants b-variants)))]
+        [_ false])]
+    [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
+      (match b
+        [(AstDeclDefStruct b-name b-repr b-cleanup b-fields)
+          (and
+            (string-eq a-name b-name)
+            (and
+              (gen-struct-repr-eq? a-repr b-repr)
+              (and
+                (gen-struct-cleanup-eq? a-cleanup b-cleanup)
+                (gen-field-list-eq? a-fields b-fields))))]
+        [_ false])]
+    [(AstDeclDefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
+      (match b
+        [(AstDeclDefStructLifetimes
+            b-name
+            b-lifetimes
+            b-repr
+            b-cleanup
+            b-fields)
+          (and
+            (string-eq a-name b-name)
+            (and
+              (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+              (and
+                (gen-struct-repr-eq? a-repr b-repr)
+                (and
+                  (gen-struct-cleanup-eq? a-cleanup b-cleanup)
+                  (gen-field-list-eq? a-fields b-fields)))))]
+        [_ false])]
+    [(AstDeclComptimeDecl _ a-inner-box)
+      (let
+        [a-inner : AstDecl (box-get a-inner-box)]
+        (match b
+          [(AstDeclComptimeDecl _ b-inner-box)
+            (gen-decl-eq? a-inner (box-get b-inner-box))]
+          [_ (gen-decl-eq? a-inner b)]))]
+    [_ false]))
+
+(define (gen-key-exprs [exprs : AstExprList] [env : CtfeEnv] [fuel : i64]) : ResultGenKey
+  (match exprs
+    [(AstExprNil) (OkGenKey "none" fuel)]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (box-get head)]
+        (match (compiler-ctfe-eval head-expr env fuel)
+          [(OkCtfe value head-fuel)
+            (match value
+              [(CtfeString text)
+                (match (gen-key-exprs (box-get rest) env head-fuel)
+                  [(OkGenKey tail tail-fuel)
+                    (OkGenKey
+                      (string-append
+                        (spec-string-key text)
+                        (string-append "_" tail))
+                      tail-fuel)]
+                  [(ErrGenKey diag) (ErrGenKey diag)])]
+              [_
+                (ErrGenKey
+                  (spec-diagnostic-at-expr
+                    head-expr
+                    "generated-decl: key expression must evaluate to String"))])]
+          [(ErrCtfe diag) (ErrGenKey diag)]))]))
+
+(define (gen-full-key
+  [module : String]
+  [generator : String]
+  [item : String]
+  [arg-key : String]) : String
+  (string-append
+    "generated:"
+    (string-append
+      (spec-string-key module)
+      (string-append
+        ":"
+        (string-append
+          (spec-string-key generator)
+          (string-append
+            ":"
+            (string-append (spec-string-key item) (string-append ":" arg-key))))))))
+
+(define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start
+    ""
+    (string-append
+      "generated-decl: metadata item "
+      (string-append expected (string-append " does not match payload " actual)))))
+
+(define (gen-incompatible-diag [item : String] [key : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start
+    ""
+    (string-append
+      "generated-decl: duplicate generated key for "
+      (string-append item (string-append " has incompatible payload: " key)))))
+
+(define (gen-rewrite-decl
+  [decl : AstDecl]
+  [module : String]
+  [registry : GenRegistry]
+  [env : CtfeEnv]) : ResultGenDecl
+  (match decl
+    [(AstDeclModule name) (OkGenDecl (SpecSomeDecl decl) registry name)]
+    [(AstDeclComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match meta
+          [(AstNoGeneratedDeclMeta)
+            (OkGenDecl (SpecSomeDecl decl) registry module)]
+          [(AstSomeGeneratedDeclMeta generator item args)
+            (match (gen-decl-visible-name template)
+              [(SpecNoString)
+                (ErrGenDecl
+                  (compiler-diagnostic-at-start
+                    ""
+                    "generated-decl: generated payload must declare a visible item"))]
+              [(SpecSomeString actual)
+                (if (not (string-eq item actual))
+                  (ErrGenDecl (gen-item-mismatch-diag item actual))
+                  (match (gen-key-exprs args env (ctfe-fuel-limit))
+                    [(OkGenKey arg-key _)
+                      (let
+                        [key : String
+                          (gen-full-key module generator item arg-key)]
+                        (match (gen-registry-lookup registry key)
+                          [(GenNoEntry)
+                            (OkGenDecl
+                              (SpecSomeDecl template)
+                              (gen-registry-cons key template registry)
+                              module)]
+                          [(GenSomeEntry existing)
+                            (if (gen-decl-eq? existing template)
+                              (OkGenDecl SpecNoDecl registry module)
+                              (ErrGenDecl (gen-incompatible-diag item key)))]))]
+                    [(ErrGenKey diag) (ErrGenDecl diag)]))])]))]
+    [_ (OkGenDecl (SpecSomeDecl decl) registry module)]))
+
+(define (gen-rewrite-decls
+  [decls : AstDeclList]
+  [module : String]
+  [registry : GenRegistry]
+  [env : CtfeEnv]) : ResultGenDecls
+  (match decls
+    [(AstDeclNil) (OkGenDecls AstDeclNil registry module)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match (gen-rewrite-decl decl module registry env)
+          [(OkGenDecl maybe-decl decl-registry decl-module)
+            (match (gen-rewrite-decls rest decl-module decl-registry env)
+              [(OkGenDecls rewritten-rest rest-registry rest-module)
+                (match maybe-decl
+                  [(SpecNoDecl)
+                    (OkGenDecls rewritten-rest rest-registry rest-module)]
+                  [(SpecSomeDecl rewritten-decl)
+                    (OkGenDecls
+                      (ast-decl-cons rewritten-decl rewritten-rest)
+                      rest-registry
+                      rest-module)])]
+              [(ErrGenDecls diag) (ErrGenDecls diag)])]
+          [(ErrGenDecl diag) (ErrGenDecls diag)]))]))
+
+(define (gen-normalize-program [program : AstProgram]) : ResultGenProgram
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [env : CtfeEnv
+          (ctfe-env-with-reflections (ctfe-reflections-from-program program))]
+        (match (gen-rewrite-decls decls "" GenRegistryNil env)
+          [(OkGenDecls rewritten _ _) (OkGenProgram (ast-program rewritten))]
+          [(ErrGenDecls diag) (ErrGenProgram diag)]))]))
+
+(define (gen-decl-needs-normalize? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta _)
+      (match meta
+        [(AstSomeGeneratedDeclMeta _ _ _) true]
+        [(AstNoGeneratedDeclMeta) false])]
+    [_ false]))
+
+(define (gen-decls-needed? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (if (gen-decl-needs-normalize? decl)
+        true
+        (gen-decls-needed? (box-get rest)))]))
+
 (define (spec-value-runtime-type-matches?
   [value : CompilerCtfeValue]
   [ty : AstType]) : bool
@@ -557,6 +971,7 @@
     [(AstPatternNil) subs]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (spec-value-subst-remove-pattern-list
           (spec-value-subst-remove-pattern subs pattern)
@@ -623,6 +1038,7 @@
     [(AstPatternNil) subs]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (spec-type-subst-remove-pattern-list
           (spec-type-subst-remove-pattern subs pattern)
@@ -666,6 +1082,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (spec-substitute-type head subs)
@@ -732,6 +1149,7 @@
     [(AstExprNil) (OkSpecExprList AstExprNil state)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-rewrite-expr head templates state)
           [(OkSpecExpr rewritten-head head-state)
@@ -841,6 +1259,7 @@
         (match args
           [(AstExprCons arg rest-args)
             (let
+              [arg : AstExpr (box-get arg)]
               [rest-args : AstExprList (box-get rest-args)]
               (match param
                 [(AstParam param-name param-ty is-comptime)
@@ -2106,6 +2525,7 @@
     [(AstExprNil) (OkSpecSubExprList AstExprNil)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-substitute-values-expr head subs)
           [(OkSpecSubExpr rewritten-head)
@@ -2696,6 +3116,7 @@
     [(AstExprNil) (OkSpecSubExprList AstExprNil)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-substitute-types-expr head subs)
           [(OkSpecSubExpr rewritten-head)
@@ -2831,37 +3252,43 @@
           [(ErrSpecDecl diag) (ErrSpecDecls diag)]))]))
 
 (define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [templates : SpecTemplateList (spec-collect-templates decls)]
-        (match templates
-          [(SpecTemplateNil) (OkSpecProgram program)]
-          [_
-            (match (spec-rewrite-decls
-              decls
-              templates
-              (SpecState
-                AstDeclNil
-                SpecCacheNil
-                (ctfe-env-with-reflections
-                  (ctfe-reflections-from-program program))))
-              [(OkSpecDecls rewritten state)
-                (match state
-                  [(SpecState generated _ _)
-                    (OkSpecProgram
-                      (ast-program (spec-decl-list-append rewritten generated)))])]
-              [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))]))
+  (match (gen-normalize-program program)
+    [(OkGenProgram normalized)
+      (match normalized
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [templates : SpecTemplateList (spec-collect-templates decls)]
+            (match templates
+              [(SpecTemplateNil) (OkSpecProgram normalized)]
+              [_
+                (match (spec-rewrite-decls
+                  decls
+                  templates
+                  (SpecState
+                    AstDeclNil
+                    SpecCacheNil
+                    (ctfe-env-with-reflections
+                      (ctfe-reflections-from-program normalized))))
+                  [(OkSpecDecls rewritten state)
+                    (match state
+                      [(SpecState generated _ _)
+                        (OkSpecProgram
+                          (ast-program
+                            (spec-decl-list-append rewritten generated)))])]
+                  [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))])]
+    [(ErrGenProgram diag) (ErrSpecProgram diag)]))
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match (spec-collect-templates decls)
-          [(SpecTemplateNil) false]
-          [_ true]))]))
+        (if (gen-decls-needed? decls)
+          true
+          (match (spec-collect-templates decls)
+            [(SpecTemplateNil) false]
+            [_ true])))]))
 
 (define (compiler-specialize-decl-list-defines?
   [decls : AstDeclList]
@@ -3038,6 +3465,23 @@
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
           [_ (compiler-specialize-decl-list-count-defs rest name)]))]))
+
+(define (compiler-specialize-decl-list-count-visible
+  [decls : AstDeclList]
+  [name : String]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [tail-count : i64
+          (compiler-specialize-decl-list-count-visible rest name)]
+        (match (gen-decl-visible-name decl)
+          [(SpecSomeString found)
+            (if (string-eq found name)
+              (+ 1 tail-count)
+              tail-count)]
+          [(SpecNoString) tail-count]))]))
 
 ;: Two call sites that request the SAME specialization (`alloc` at `type i64`)
 ;: must share one generated decl via the specialization cache, not emit two.
@@ -3232,6 +3676,115 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-decl-reuse-source) : String
+  "(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))")
+
+(define (compiler-generated-decl-function-reuse-source) : String
+  "(comptime-decl (:generated function-family make-option-string \"String\")
+  (define (make-option-string [value : String]) : String value))
+(comptime-decl (:generated function-family make-option-string \"String\")
+  (define (make-option-string [value : String]) : String value))")
+
+(define (compiler-generated-decl-incompatible-source) : String
+  "(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value i64)))")
+
+(define (compiler-generated-decl-item-mismatch-source) : String
+  "(comptime-decl (:generated option-family Expected \"String\")
+  (defstruct Actual (value String)))")
+
+(define (compiler-generated-decl-non-string-key-source) : String
+  "(comptime-decl (:generated option-family Option_String 7)
+  (defstruct Option_String (value String)))")
+
+(define (compiler-generated-decl-duplicate-visible-source) : String
+  "(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))
+(comptime-decl (:generated option-family Option_String \"Bytes\")
+  (defstruct Option_String (value String)))")
+
+(define (compiler-generated-decl-reuse-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-reuse-source))
+    [(OkAstProgram program)
+      (and
+        (compiler-specialize-needed? program)
+        (match (compiler-specialize-program program)
+          [(OkSpecProgram normalized)
+            (match normalized
+              [(AstProgram decls-box)
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  (=
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "Option_String")
+                    1))])]
+          [(ErrSpecProgram _) false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-function-reuse-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-function-reuse-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram normalized)
+          (match normalized
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (=
+                  (compiler-specialize-decl-list-count-defs
+                    decls
+                    "make-option-string")
+                  1))])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-incompatible-rejected?) : bool
+  (match (parse-ast-source (compiler-generated-decl-incompatible-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram _) true])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-item-mismatch-rejected?) : bool
+  (match (parse-ast-source (compiler-generated-decl-item-mismatch-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram _) true])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-non-string-key-rejected?) : bool
+  (match (parse-ast-source (compiler-generated-decl-non-string-key-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram _) true])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-duplicate-visible-left-for-symbols?) : bool
+  (match (parse-ast-source (compiler-generated-decl-duplicate-visible-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram normalized)
+          (match normalized
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (=
+                  (compiler-specialize-decl-list-count-visible
+                    decls
+                    "Option_String")
+                  2))])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (unless (compiler-specialize-type-param-ok?) (return 0))
@@ -3245,4 +3798,12 @@
     (unless (compiler-specialize-value-subst-ok?) (return 0))
     (unless (compiler-specialize-boxed-tails-ok?) (return 0))
     (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
+    (unless (compiler-generated-decl-reuse-ok?) (return 0))
+    (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
+    (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
+    (unless (compiler-generated-decl-item-mismatch-rejected?) (return 0))
+    (unless (compiler-generated-decl-non-string-key-rejected?) (return 0))
+    (unless
+      (compiler-generated-decl-duplicate-visible-left-for-symbols?)
+      (return 0))
     1))

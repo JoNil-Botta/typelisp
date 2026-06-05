@@ -1833,12 +1833,28 @@
           (set! i (+ i 1))))
       (substring name start (- n start)))))
 
+(define (compiler-backend-public-function-symbol? [name : String]) : bool
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (if (= (string-ref name i) #:')
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
     (> (string-length name) 16)
     (and
       (not (string-eq name "main"))
-      (not (compiler-backend-string-prefix-at? name "__global_init_" 0)))))
+      (and
+        (not (compiler-backend-string-prefix-at? name "__global_init_" 0))
+        (not (compiler-backend-public-function-symbol? name))))))
 
 (define (compiler-backend-function-symbol-index
   [index : CompilerBackendProgramIndex]
@@ -4599,6 +4615,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam (string-append "arg" (int->string idx)) ty idx)
@@ -4876,6 +4893,7 @@
     [(AstTypeNil) count]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [is-float : bool (compiler-backend-float-type? ty)]
         [next-float : i64
@@ -4904,6 +4922,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [tail : String
           (compiler-backend-windows-vararg-dup-asm
@@ -4986,7 +5005,7 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) ty]
+          [(AstTypeCons ty _) (box-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -5161,7 +5180,7 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) ty]
+          [(AstTypeCons ty _) (box-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -20571,22 +20590,16 @@ tl_windows_sdk_registry_install:
     (compiler-backend-module-symbol-program))
     [(OkCompilerBackend asm)
       (and
-        (or
+        (compiler-backend-string-contains?
+          asm
+          ".globl _tl_lib_u2etl_colon_colonhelper")
+        (and
           (compiler-backend-string-contains?
             asm
-            ".globl _tl_lib_u2etl_colon_colonhelper")
-          (compiler-backend-string-contains? asm ".globl _tl_f"))
-        (and
-          (or
-            (compiler-backend-string-contains?
-              asm
-              "_tl_lib_u2etl_colon_colonhelper")
-            (compiler-backend-string-contains? asm "_tl_f"))
-          (or
-            (compiler-backend-string-contains?
-              asm
-              "    call _tl_lib_u2etl_colon_colonhelper")
-            (compiler-backend-string-contains? asm "    call _tl_f"))))]
+            "_tl_lib_u2etl_colon_colonhelper")
+          (compiler-backend-string-contains?
+            asm
+            "    call _tl_lib_u2etl_colon_colonhelper")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String

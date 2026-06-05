@@ -47,6 +47,50 @@
           "process spawn failed message"))]
     [(OkProcessOutput _) (panic "process missing executable should fail")]))
 
+(define (assert-process-child-result [result : ResultProcessChild]) : ProcessChild
+  (match result
+    [(OkProcessChild child) child]
+    [(ErrProcessChild error) (panic (process-error-message error))]))
+
+(define (assert-process-child-spawn-failed [result : ResultProcessChild]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (assert-true
+          (process-error-spawn-failed? error)
+          "process async missing executable spawn failed")
+        (assert-owned-string-eq
+          (process-error-message error)
+          "process: spawn failed"
+          "process async spawn failed message"))]
+    [(OkProcessChild _) (panic "process async missing executable should fail")]))
+
+(define (assert-process-child-unsupported [result : ResultProcessChild]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (assert-true
+          (process-error-unsupported? error)
+          "process async unsupported")
+        (assert-owned-string-eq
+          (process-error-message error)
+          "process: async child handles are not supported by this runtime"
+          "process async unsupported message"))]
+    [(OkProcessChild _) (panic "process async should be unsupported")]))
+
+(define (assert-process-output-unsupported [result : ResultProcessOutput]) : unit
+  (match result
+    [(ErrProcessOutput error)
+      (begin
+        (assert-true
+          (process-error-unsupported? error)
+          "process async wait unsupported")
+        (assert-owned-string-eq
+          (process-error-message error)
+          "process: async child handles are not supported by this runtime"
+          "process async wait unsupported message"))]
+    [(OkProcessOutput _) (panic "process async wait should be unsupported")]))
+
 (define (windows-process-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\cmd.exe"
@@ -64,6 +108,9 @@
 (define (linux-process-command) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single "stdout=ok")))
 
+(define (linux-async-process-command [text : String]) : ProcessCommand
+  (process-command "/usr/bin/printf" (process-args-single text)))
+
 (define (linux-missing-command) : ProcessCommand
   (process-command "/definitely-missing-typelisp" (process-args-empty)))
 
@@ -76,6 +123,9 @@
         "stdout=ok\r\n"
         "stderr=err\r\n")
       (assert-process-spawn-failed (process-output (windows-missing-command)))
+      (assert-process-child-unsupported
+        (process-start (windows-process-command)))
+      (assert-process-output-unsupported (process-wait (ProcessChild 1 2 3)))
       42)
     (begin
       (assert-process-output-result
@@ -84,4 +134,19 @@
         "stdout=ok"
         "")
       (assert-process-spawn-failed (process-output (linux-missing-command)))
+      (let
+        [first : ProcessChild
+          (assert-process-child-result
+            (process-start (linux-async-process-command "async-one")))]
+        [second : ProcessChild
+          (assert-process-child-result
+            (process-start (linux-async-process-command "async-two")))]
+        (begin
+          (assert-process-output-result (process-wait second) 0 "async-two" "")
+          (assert-process-output-result (process-wait first) 0 "async-one" "")))
+      (assert-process-child-spawn-failed
+        (process-start
+          (process-command
+            "/definitely-missing-typelisp-async"
+            (process-args-empty))))
       42)))

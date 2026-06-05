@@ -18,8 +18,9 @@ The corpus emphasizes the cases where SIMD bugs hide:
   vector width 4/8): forces a masked/scalar tail. Exit 247.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32
   width 8/16): all-tail, a different element width. Exit 91.
-- `../integration/spmd_foreach.tl` — `foreach` add over a full 64-element
-  array for i64 and i32, self-checked against a scalar loop. Exit 42.
+- `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
+  f32 arrays, self-checked against scalar loops across empty, sub-lane,
+  exact-lane, and tail lengths. Exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64 across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
 

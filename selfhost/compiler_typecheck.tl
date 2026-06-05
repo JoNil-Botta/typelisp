@@ -372,6 +372,17 @@
         [sum : i64 (+ (array-ref a i) (array-ref b i))]
         (array-set! out i sum)))))")
 
+(define (compiler-typecheck-foreach-spmd-f32-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let
+    [a : (Array f32) (make-array f32 n)]
+    [b : (Array f32) (make-array f32 n)]
+    [out : (Array f32) (make-array f32 n)]
+    (foreach ([i : i64 0 n])
+      (let
+        [sum : f32 (+ (array-ref a i) (array-ref b i))]
+        (array-set! out i sum)))))")
+
 (define (compiler-typecheck-foreach-varying-if-source) : String
   "(define (main [xs : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
@@ -464,26 +475,28 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-foreach-varying-if-source)
-        "typecheck: foreach if condition must be uniform")
+      (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-foreach-varying-while-source)
-          "typecheck: foreach while condition must be uniform")
+          (compiler-typecheck-foreach-varying-if-source)
+          "typecheck: foreach if condition must be uniform")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-foreach-varying-call-source)
-            "typecheck: foreach calls with varying arguments are not supported")
+            (compiler-typecheck-foreach-varying-while-source)
+            "typecheck: foreach while condition must be uniform")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-foreach-outer-set-source)
-              "typecheck: foreach cannot set binding declared outside foreach")
+              (compiler-typecheck-foreach-varying-call-source)
+              "typecheck: foreach calls with varying arguments are not supported")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-foreach-unsupported-lane-source)
-                "typecheck: foreach varying array lane type is not supported: String")
-              (compiler-typecheck-foreach-control-flow-tests-ok?))))))))
+                (compiler-typecheck-foreach-outer-set-source)
+                "typecheck: foreach cannot set binding declared outside foreach")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-foreach-unsupported-lane-source)
+                  "typecheck: foreach varying array lane type is not supported: String")
+                (compiler-typecheck-foreach-control-flow-tests-ok?)))))))))
 
 (define (compiler-typecheck-return-tests-ok?) : bool
   (and
@@ -1052,6 +1065,24 @@
   (SymI64Nil)
   (SymI64Bind String i64 (Box SymI64Env)))")
 
+(define (compiler-typecheck-inline-boxed-loader-helper-source) : String
+  "(defenum CompilerLoadRootList
+  (CompilerLoadRootNil)
+  (CompilerLoadRootCons String (Box CompilerLoadRootList)))
+(defstruct CompilerPkgDep
+  (alias String)
+  (path String))
+(defenum CompilerPkgDepList
+  (CompilerPkgDepNil)
+  (CompilerPkgDepCons CompilerPkgDep (Box CompilerPkgDepList)))")
+
+(define (compiler-typecheck-inline-loader-helper-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-loader-helper-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "CompilerLoadRootList")
+      (compiler-typecheck-inline-layout-ok? src "CompilerPkgDepList"))))
+
 (define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
   (CtfeUnit))
@@ -1202,6 +1233,9 @@
       (if (compiler-typecheck-inline-layout-ok?
         (compiler-typecheck-inline-boxed-sym-i64-env-source)
         "SymI64Env")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-loader-helper-layout-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)

@@ -25,6 +25,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "stdlib/hashmap.tl")
+
 (defenum ResultCompilerOptimizeLevel
   (OkCompilerOptimizeLevel i64)
   (ErrCompilerOptimizeLevel))
@@ -104,6 +106,60 @@
 
 (define compiler-optimize-level-default : i64
   1)
+
+(cfg
+  compile-profile
+  (define compiler-opt-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-opt-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-opt-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-start) : unit
+    (begin
+      (set! compiler-opt-profile-start-ms (profile-now-ms))
+      (set! compiler-opt-profile-start-total (profile-alloc-total))
+      (set! compiler-opt-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile-alloc-peak) compiler-opt-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|optimize."
+          (string-append
+            phase
+            (string-append
+              (compiler-opt-profile-field
+                (- end-ms compiler-opt-profile-start-ms))
+              (string-append
+                (compiler-opt-profile-field
+                  (- end-total compiler-opt-profile-start-total))
+                (string-append
+                  (compiler-opt-profile-field
+                    (- end-live compiler-opt-profile-start-live))
+                  (string-append (compiler-opt-profile-field peak-delta) "\n"))))))))))
 
 (define (compiler-optimize-default-level) : i64
   compiler-optimize-level-default)
@@ -1083,6 +1139,263 @@
       (compiler-ir-block-cons
         (opt-dce-block set block)
         (opt-dce-block-list set (box-get rest)))]))
+
+(define (opt-used-array-fill
+  [items : (Array bool)]
+  [index : i64]
+  [value : bool]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index value)
+      (opt-used-array-fill items (+ index 1) value))))
+
+(define (opt-used-array-new [count : i64]) : (Array bool)
+  (let
+    [items : (Array bool) (make-array bool count)]
+    (begin
+      (opt-used-array-fill items 0 false)
+      items)))
+
+(define (opt-used-array-add [items : (Array bool)] [var : i64]) : unit
+  (if (< var 0)
+    unit
+    (if (>= var (array-length items))
+      unit
+      (begin
+        (array-set! items var true)
+        unit))))
+
+(define (opt-used-array-contains [items : (Array bool)] [var : i64]) : bool
+  (if (< var 0)
+    false
+    (if (>= var (array-length items))
+      false
+      (array-ref items var))))
+
+(define (opt-collect-value-uses-array
+  [items : (Array bool)]
+  [value : CompilerIrValue]) : unit
+  (match value
+    [(IrValueVar id) (opt-used-array-add items id)]
+    [_ unit]))
+
+(define (opt-collect-value-list-uses-array
+  [items : (Array bool)]
+  [values : CompilerIrValueList]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (opt-collect-value-uses-array items value)
+        (opt-collect-value-list-uses-array items (box-get rest)))]))
+
+(define (opt-collect-call-args-array-uses-array
+  [items : (Array bool)]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length values))
+    unit
+    (begin
+      (opt-collect-value-uses-array items (array-ref values index))
+      (opt-collect-call-args-array-uses-array items values (+ index 1)))))
+
+(define (opt-collect-call-args-uses-array
+  [items : (Array bool)]
+  [args : CompilerIrCallArgs]) : unit
+  (match args
+    [(IrCallArgsNil) unit]
+    [(IrCallArgsOne value) (opt-collect-value-uses-array items value)]
+    [(IrCallArgsTwo a b)
+      (begin
+        (opt-collect-value-uses-array items a)
+        (opt-collect-value-uses-array items b))]
+    [(IrCallArgsArray values)
+      (opt-collect-call-args-array-uses-array items values 0)]))
+
+(define (opt-collect-phi-uses-array
+  [items : (Array bool)]
+  [inputs : CompilerIrPhiInputList]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons value _ rest)
+      (begin
+        (opt-collect-value-uses-array items value)
+        (opt-collect-phi-uses-array items (box-get rest)))]))
+
+(define (opt-collect-instr-uses-array
+  [items : (Array bool)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(IrInstrMov _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrBinOp _ _ l r _)
+      (begin
+        (opt-collect-value-uses-array items l)
+        (opt-collect-value-uses-array items r))]
+    [(IrInstrUnOp _ _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrCall _ _ args _) (opt-collect-call-args-uses-array items args)]
+    [(IrInstrCallIndirect _ func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrTailCall _ args _) (opt-collect-call-args-uses-array items args)]
+    [(IrInstrStore _ value _) (opt-collect-value-uses-array items value)]
+    [(IrInstrAddrOf _ src) (opt-used-array-add items src)]
+    [(IrInstrGep _ base offset _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items offset))]
+    [(IrInstrLoad _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrStorePtr ptr value _)
+      (begin
+        (opt-collect-value-uses-array items ptr)
+        (opt-collect-value-uses-array items value))]
+    [(IrInstrBoundsCheck index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(IrInstrCast _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrSplat _ value _ _) (opt-collect-value-uses-array items value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrMaskNot _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (begin
+        (opt-collect-value-uses-array items mask)
+        (opt-collect-value-uses-array items on-true)
+        (opt-collect-value-uses-array items on-false))]
+    [(IrInstrVectorLoad _ base index _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index))]
+    [(IrInstrVectorStore base index value _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items value))]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items value)
+        (opt-collect-value-uses-array items mask))]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items mask))]
+    [(IrInstrTailMask _ index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(IrInstrEntryArgc _) unit]
+    [(IrInstrEntryArgv _) unit]
+    [(IrInstrEntryEnvp _) unit]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (begin
+        (opt-collect-value-uses-array items leaf)
+        (opt-collect-value-uses-array items subleaf))]
+    [(IrInstrXgetbv _ index) (opt-collect-value-uses-array items index)]
+    [(IrInstrBranch cond _ _) (opt-collect-value-uses-array items cond)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue value) (opt-collect-value-uses-array items value)]
+        [(IrNoValue) unit])]
+    [(IrInstrPhi _ inputs _) (opt-collect-phi-uses-array items inputs)]
+    [_ unit]))
+
+(define (opt-collect-instrs-uses-array
+  [items : (Array bool)]
+  [instrs : CompilerIrInstrList]) : unit
+  (match instrs
+    [(IrInstrNil) unit]
+    [(IrInstrCons instr rest)
+      (begin
+        (opt-collect-instr-uses-array items instr)
+        (opt-collect-instrs-uses-array items (box-get rest)))]))
+
+(define (opt-collect-blocks-uses-array-into
+  [items : (Array bool)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (opt-collect-instrs-uses-array items instrs)
+            (opt-collect-blocks-uses-array-into items (box-get rest)))])]))
+
+(define (opt-collect-blocks-uses-array
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : (Array bool)
+  (let
+    [items : (Array bool) (opt-used-array-new vars)]
+    (begin
+      (opt-collect-blocks-uses-array-into items blocks)
+      items)))
+
+(define (opt-instr-dead-array? [items : (Array bool)] [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrBinOp dst op _ _ _)
+      (and
+        (not (opt-binop-traps? op))
+        (not (opt-used-array-contains items dst)))]
+    [(IrInstrUnOp dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrPhi dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrLaneId dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSplat dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskNot dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskReduce dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrTailMask dst _ _ _) (not (opt-used-array-contains items dst))]
+    [_ false]))
+
+(define (opt-dce-instrs-array
+  [items : (Array bool)]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (if (opt-instr-dead-array? items instr)
+        (opt-dce-instrs-array items (box-get rest))
+        (compiler-ir-instr-cons
+          instr
+          (opt-dce-instrs-array items (box-get rest))))]))
+
+(define (opt-dce-block-array [items : (Array bool)] [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs) (IrBlock label (opt-dce-instrs-array items instrs))]))
+
+(define (opt-dce-block-list-array
+  [items : (Array bool)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-dce-block-array items block)
+        (opt-dce-block-list-array items (box-get rest)))]))
 
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;
@@ -6558,14 +6871,14 @@
                       (IrFunction name params ret-ty promoted-frame licm-blocks))]
                   [global-blocks : CompilerIrBlockList
                     (opt-function-blocks global)]
-                  [used : OptUsedSet
-                    (opt-collect-blocks-uses (OptUsedNil) global-blocks)]
+                  [used : (Array bool)
+                    (opt-collect-blocks-uses-array promoted-frame global-blocks)]
                   (IrFunction
                     name
                     params
                     ret-ty
                     promoted-frame
-                    (opt-dce-block-list used global-blocks)))])]))]))
+                    (opt-dce-block-list-array used global-blocks)))])]))]))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
@@ -6583,13 +6896,14 @@
             (let
               [cfg : CompilerIrBlockList
                 (opt-cfg-simplify-blocks promoted-blocks)]
-              [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+              [used : (Array bool)
+                (opt-collect-blocks-uses-array promoted-frame cfg)]
               (IrFunction
                 name
                 params
                 ret-ty
                 promoted-frame
-                (opt-dce-block-list used cfg)))]))]))
+                (opt-dce-block-list-array used cfg)))]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -6597,8 +6911,13 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
         [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-        (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))]))
+        [used : (Array bool) (opt-collect-blocks-uses-array frame cfg)]
+        (IrFunction
+          name
+          params
+          ret-ty
+          frame
+          (opt-dce-block-list-array used cfg)))]))
 
 (define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (let
@@ -6698,8 +7017,61 @@
   (OptNoFunction)
   (OptSomeFunction CompilerIrFunction))
 
+(defstruct OptFunctionIndex
+  (ids StringI64Map)
+  (values (Array CompilerIrFunction)))
+
 (defenum OptReachState
-  (OptReachState OptStringSet OptStringSet))
+  (OptReachState StringI64Map OptStringSet))
+
+(define (opt-function-index-capacity [count : i64]) : i64
+  (if (< count 4)
+    8
+    (* count 2)))
+
+(define (opt-function-list-count [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons _ rest) (+ 1 (opt-function-list-count (box-get rest)))]))
+
+(define (opt-function-index-fill
+  [functions : CompilerIrFunctionList]
+  [ids : StringI64Map]
+  [values : (Array CompilerIrFunction)]
+  [index : i64]) : StringI64Map
+  (match functions
+    [(IrFunctionNil) ids]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (begin
+            (array-set! values index func)
+            (opt-function-index-fill
+              (box-get rest)
+              (string-i64-map-put ids name index)
+              values
+              (+ index 1)))])]))
+
+(define (opt-function-index-build [functions : CompilerIrFunctionList]) : OptFunctionIndex
+  (let
+    [count : i64 (opt-function-list-count functions)]
+    [values : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    [ids : StringI64Map
+      (opt-function-index-fill
+        functions
+        (string-i64-map-with-capacity (opt-function-index-capacity count))
+        values
+        0)]
+    (OptFunctionIndex ids values)))
+
+(define (opt-function-index-defines? [index : OptFunctionIndex] [name : String]) : bool
+  (string-i64-map-contains? (struct-get index ids) name))
+
+(define (opt-function-index-find [index : OptFunctionIndex] [name : String]) : OptMaybeFunction
+  (match (string-i64-map-get (struct-get index ids) name)
+    [(StringI64MapFound slot)
+      (OptSomeFunction (array-ref (struct-get index values) slot))]
+    [(StringI64MapMissing) (OptNoFunction)]))
 
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
@@ -6736,190 +7108,174 @@
             (opt-function-list-find (box-get rest) name))])]))
 
 (define (opt-reach-add-function
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [name : String]) : OptReachState
   (match state
     [(OptReachState reachable worklist)
-      (if (opt-function-list-defines? functions name)
-        (if (opt-string-set-contains? reachable name)
+      (if (opt-function-index-defines? index name)
+        (if (string-i64-map-contains? reachable name)
           state
           (OptReachState
-            (OptStringCons name (box reachable))
+            (string-i64-map-put reachable name 1)
             (OptStringCons name (box worklist))))
         state)]))
 
 (define (opt-reach-value
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [value : CompilerIrValue]) : OptReachState
   (match value
-    [(IrValueGlobal name) (opt-reach-add-function functions state name)]
-    [(IrValueGlobalAddr name) (opt-reach-add-function functions state name)]
-    [(IrValueFunction name) (opt-reach-add-function functions state name)]
+    [(IrValueGlobal name) (opt-reach-add-function index state name)]
+    [(IrValueGlobalAddr name) (opt-reach-add-function index state name)]
+    [(IrValueFunction name) (opt-reach-add-function index state name)]
     [_ state]))
 
 (define (opt-reach-value-list
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [values : CompilerIrValueList]) : OptReachState
   (match values
     [(IrValueNil) state]
     [(IrValueCons value rest)
       (opt-reach-value-list
-        functions
-        (opt-reach-value functions state value)
+        index
+        (opt-reach-value index state value)
         (box-get rest))]))
 
 (define (opt-reach-call-args-array
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [values : (Array CompilerIrValue)]
-  [index : i64]) : OptReachState
-  (if (>= index (array-length values))
+  [arg-index : i64]) : OptReachState
+  (if (>= arg-index (array-length values))
     state
     (opt-reach-call-args-array
-      functions
-      (opt-reach-value functions state (array-ref values index))
+      index
+      (opt-reach-value index state (array-ref values arg-index))
       values
-      (+ index 1))))
+      (+ arg-index 1))))
 
 (define (opt-reach-call-args
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [args : CompilerIrCallArgs]) : OptReachState
   (match args
     [(IrCallArgsNil) state]
-    [(IrCallArgsOne value) (opt-reach-value functions state value)]
+    [(IrCallArgsOne value) (opt-reach-value index state value)]
     [(IrCallArgsTwo a b)
-      (opt-reach-value functions (opt-reach-value functions state a) b)]
-    [(IrCallArgsArray values)
-      (opt-reach-call-args-array functions state values 0)]))
+      (opt-reach-value index (opt-reach-value index state a) b)]
+    [(IrCallArgsArray values) (opt-reach-call-args-array index state values 0)]))
 
 (define (opt-reach-maybe-value
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [maybe : CompilerIrMaybeValue]) : OptReachState
   (match maybe
     [(IrNoValue) state]
-    [(IrSomeValue value) (opt-reach-value functions state value)]))
+    [(IrSomeValue value) (opt-reach-value index state value)]))
 
 (define (opt-reach-phi-inputs
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [inputs : CompilerIrPhiInputList]) : OptReachState
   (match inputs
     [(IrPhiInputNil) state]
     [(IrPhiInputCons value _ rest)
       (opt-reach-phi-inputs
-        functions
-        (opt-reach-value functions state value)
+        index
+        (opt-reach-value index state value)
         (box-get rest))]))
 
 (define (opt-reach-instr
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [instr : CompilerIrInstr]) : OptReachState
   (match instr
-    [(IrInstrMov _ src _) (opt-reach-value functions state src)]
+    [(IrInstrMov _ src _) (opt-reach-value index state src)]
     [(IrInstrAlloc _ _) state]
     [(IrInstrAddrOf _ _) state]
     [(IrInstrGep _ base offset _)
-      (opt-reach-value functions (opt-reach-value functions state base) offset)]
-    [(IrInstrLoad _ src _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state base) offset)]
+    [(IrInstrLoad _ src _) (opt-reach-value index state src)]
     [(IrInstrStorePtr dst src _)
-      (opt-reach-value functions (opt-reach-value functions state dst) src)]
-    [(IrInstrBoundsCheck index length _)
-      (opt-reach-value functions (opt-reach-value functions state index) length)]
-    [(IrInstrCast _ src _ _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state dst) src)]
+    [(IrInstrBoundsCheck idx length _)
+      (opt-reach-value index (opt-reach-value index state idx) length)]
+    [(IrInstrCast _ src _ _) (opt-reach-value index state src)]
     [(IrInstrBinOp _ _ lhs rhs _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
-    [(IrInstrUnOp _ _ src _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrUnOp _ _ src _) (opt-reach-value index state src)]
     [(IrInstrLaneId _ _ _) state]
-    [(IrInstrSplat _ value _ _) (opt-reach-value functions state value)]
+    [(IrInstrSplat _ value _ _) (opt-reach-value index state value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
-    [(IrInstrVectorReduce _ _ src _ _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-reach-value index state src)]
     [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
-    [(IrInstrMaskNot _ src _) (opt-reach-value functions state src)]
-    [(IrInstrMaskReduce _ _ src _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrMaskNot _ src _) (opt-reach-value index state src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-reach-value index state src)]
     [(IrInstrSelect _ mask on-true on-false _ _)
       (opt-reach-value
-        functions
-        (opt-reach-value
-          functions
-          (opt-reach-value functions state mask)
-          on-true)
+        index
+        (opt-reach-value index (opt-reach-value index state mask) on-true)
         on-false)]
-    [(IrInstrVectorLoad _ base index _ _)
-      (opt-reach-value functions (opt-reach-value functions state base) index)]
-    [(IrInstrVectorStore base index value _ _)
+    [(IrInstrVectorLoad _ base idx _ _)
+      (opt-reach-value index (opt-reach-value index state base) idx)]
+    [(IrInstrVectorStore base idx value _ _)
       (opt-reach-value
-        functions
-        (opt-reach-value functions (opt-reach-value functions state base) index)
+        index
+        (opt-reach-value index (opt-reach-value index state base) idx)
         value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
+    [(IrInstrPredicatedStore base idx value mask _ _)
       (opt-reach-value
-        functions
+        index
         (opt-reach-value
-          functions
-          (opt-reach-value
-            functions
-            (opt-reach-value functions state base)
-            index)
+          index
+          (opt-reach-value index (opt-reach-value index state base) idx)
           value)
         mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
+    [(IrInstrPredicatedLoad _ base idx mask _ _)
       (opt-reach-value
-        functions
-        (opt-reach-value functions (opt-reach-value functions state base) index)
+        index
+        (opt-reach-value index (opt-reach-value index state base) idx)
         mask)]
-    [(IrInstrTailMask _ index length _)
-      (opt-reach-value functions (opt-reach-value functions state index) length)]
+    [(IrInstrTailMask _ idx length _)
+      (opt-reach-value index (opt-reach-value index state idx) length)]
     [(IrInstrEntryArgc _) state]
     [(IrInstrEntryArgv _) state]
     [(IrInstrEntryEnvp _) state]
     [(IrInstrCpuId _ leaf subleaf _)
-      (opt-reach-value functions (opt-reach-value functions state leaf) subleaf)]
-    [(IrInstrXgetbv _ index) (opt-reach-value functions state index)]
+      (opt-reach-value index (opt-reach-value index state leaf) subleaf)]
+    [(IrInstrXgetbv _ idx) (opt-reach-value index state idx)]
     [(IrInstrCall _ name args _)
-      (opt-reach-add-function
-        functions
-        (opt-reach-call-args functions state args)
-        name)]
+      (opt-reach-add-function index (opt-reach-call-args index state args) name)]
     [(IrInstrCallIndirect _ func args _)
-      (opt-reach-call-args
-        functions
-        (opt-reach-value functions state func)
-        args)]
+      (opt-reach-call-args index (opt-reach-value index state func) args)]
     [(IrInstrTailCall name args _)
-      (opt-reach-add-function
-        functions
-        (opt-reach-call-args functions state args)
-        name)]
-    [(IrInstrStore _ value _) (opt-reach-value functions state value)]
+      (opt-reach-add-function index (opt-reach-call-args index state args) name)]
+    [(IrInstrStore _ value _) (opt-reach-value index state value)]
     [(IrInstrJump _) state]
-    [(IrInstrBranch cond _ _) (opt-reach-value functions state cond)]
-    [(IrInstrReturn maybe) (opt-reach-maybe-value functions state maybe)]
-    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs functions state inputs)]))
+    [(IrInstrBranch cond _ _) (opt-reach-value index state cond)]
+    [(IrInstrReturn maybe) (opt-reach-maybe-value index state maybe)]
+    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]))
 
 (define (opt-reach-instrs
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [instrs : CompilerIrInstrList]) : OptReachState
   (match instrs
     [(IrInstrNil) state]
     [(IrInstrCons instr rest)
       (opt-reach-instrs
-        functions
-        (opt-reach-instr functions state instr)
+        index
+        (opt-reach-instr index state instr)
         (box-get rest))]))
 
 (define (opt-reach-blocks
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [blocks : CompilerIrBlockList]) : OptReachState
   (match blocks
@@ -6928,20 +7284,18 @@
       (match block
         [(IrBlock _ instrs)
           (opt-reach-blocks
-            functions
-            (opt-reach-instrs functions state instrs)
+            index
+            (opt-reach-instrs index state instrs)
             (box-get rest))])]))
 
 (define (opt-reach-function
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [func : CompilerIrFunction]) : OptReachState
   (match func
-    [(IrFunction _ _ _ _ blocks) (opt-reach-blocks functions state blocks)]))
+    [(IrFunction _ _ _ _ blocks) (opt-reach-blocks index state blocks)]))
 
-(define (opt-reach-process
-  [functions : CompilerIrFunctionList]
-  [state : OptReachState]) : OptReachState
+(define (opt-reach-process [index : OptFunctionIndex] [state : OptReachState]) : OptReachState
   (match state
     [(OptReachState reachable worklist)
       (match worklist
@@ -6949,41 +7303,39 @@
         [(OptStringCons name rest)
           (let
             [popped : OptReachState (OptReachState reachable (box-get rest))]
-            (match (opt-function-list-find functions name)
+            (match (opt-function-index-find index name)
               [(OptSomeFunction func)
-                (opt-reach-process
-                  functions
-                  (opt-reach-function functions popped func))]
-              [(OptNoFunction) (opt-reach-process functions popped)]))])]))
+                (opt-reach-process index (opt-reach-function index popped func))]
+              [(OptNoFunction) (opt-reach-process index popped)]))])]))
 
 (define (opt-reach-global
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [global : CompilerIrGlobal]) : OptReachState
   (match global
-    [(IrGlobal _ _ value) (opt-reach-value functions state value)]))
+    [(IrGlobal _ _ value) (opt-reach-value index state value)]))
 
 (define (opt-reach-globals
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [globals : CompilerIrGlobalList]) : OptReachState
   (match globals
     [(IrGlobalNil) state]
     [(IrGlobalCons global rest)
       (opt-reach-globals
-        functions
-        (opt-reach-global functions state global)
+        index
+        (opt-reach-global index state global)
         (box-get rest))]))
 
 (define (opt-filter-reachable-functions
   [functions : CompilerIrFunctionList]
-  [reachable : OptStringSet]) : CompilerIrFunctionList
+  [reachable : StringI64Map]) : CompilerIrFunctionList
   (match functions
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction name _ _ _ _)
-          (if (opt-string-set-contains? reachable name)
+          (if (string-i64-map-contains? reachable name)
             (compiler-ir-function-cons
               func
               (opt-filter-reachable-functions (box-get rest) reachable))
@@ -6993,17 +7345,22 @@
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (if (opt-function-list-defines? functions "main")
-    (match (opt-reach-process
-      functions
-      (opt-reach-globals
-        functions
-        (opt-reach-add-function
-          functions
-          (OptReachState (OptStringNil) (OptStringNil))
-          "main")
-        globals))
-      [(OptReachState reachable _)
-        (opt-filter-reachable-functions functions reachable)])
+    (let
+      [index : OptFunctionIndex (opt-function-index-build functions)]
+      [reachable : StringI64Map
+        (string-i64-map-with-capacity
+          (opt-function-index-capacity (opt-function-list-count functions)))]
+      (match (opt-reach-process
+        index
+        (opt-reach-globals
+          index
+          (opt-reach-add-function
+            index
+            (OptReachState reachable (OptStringNil))
+            "main")
+          globals))
+        [(OptReachState reachable-out _)
+          (opt-filter-reachable-functions functions reachable-out)]))
     functions))
 
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
@@ -7017,19 +7374,41 @@
       (if (= level 0)
         program
         (if (= level 1)
-          (IrProgram
-            globals
-            (optimize-function-list-with-level functions level)
-            externs)
-          (let
-            [reachable-functions : CompilerIrFunctionList
-              (opt-prune-unreachable-functions globals functions)]
-            [optimized-functions : CompilerIrFunctionList
-              (optimize-function-list-with-level reachable-functions level)]
-            (IrProgram
-              globals
-              (opt-prune-unreachable-functions globals optimized-functions)
-              externs))))]))
+          (begin
+            (cfg compile-profile (compiler-opt-profile-start))
+            (let
+              [optimized-functions : CompilerIrFunctionList
+                (optimize-function-list-with-level functions level)]
+              (begin
+                (cfg compile-profile (compiler-opt-profile-finish "functions"))
+                (IrProgram globals optimized-functions externs))))
+          (begin
+            (cfg compile-profile (compiler-opt-profile-start))
+            (let
+              [reachable-functions : CompilerIrFunctionList functions]
+              (begin
+                (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
+                (cfg compile-profile (compiler-opt-profile-start))
+                (let
+                  [optimized-functions : CompilerIrFunctionList
+                    (optimize-function-list-with-level
+                      reachable-functions
+                      level)]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-finish "functions"))
+                    (cfg compile-profile (compiler-opt-profile-start))
+                    (let
+                      [final-functions : CompilerIrFunctionList
+                        (opt-prune-unreachable-functions
+                          globals
+                          optimized-functions)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-finish "post_prune"))
+                        (IrProgram globals final-functions externs))))))))))]))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -7259,7 +7638,7 @@
   [source-spans : CompilerSourceSpans]
   [program : CompilerIrProgram]) : CompilerSourceSpans
   (if (opt-remap-spans-fast-path? source-spans)
-    source-spans
+    (compiler-source-spans-clear-instrs source-spans)
     (match program
       [(IrProgram _ functions _)
         (opt-remap-spans-functions

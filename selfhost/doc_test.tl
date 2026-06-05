@@ -1993,7 +1993,7 @@
 ")
 
 (define (doc-test-run-smoke-stdlib-roots) : CompilerLoadRootList
-  (CompilerLoadRootCons "stdlib" CompilerLoadRootNil))
+  (CompilerLoadRootCons "stdlib" (box CompilerLoadRootNil)))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
   ";# ```typelisp run

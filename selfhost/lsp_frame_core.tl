@@ -780,7 +780,7 @@
       (if (< (+ idx 1) count)
         (CompilerLoadRootCons
           (arg (+ idx 1))
-          (lsp-stdlib-roots-from (+ idx 2) count))
+          (box (lsp-stdlib-roots-from (+ idx 2) count)))
         CompilerLoadRootNil)
       (lsp-stdlib-roots-from (+ idx 1) count))))
 

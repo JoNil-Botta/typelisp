@@ -26,9 +26,12 @@
   [roots : CompilerLoadRootList]
   [root : String]) : CompilerLoadRootList
   (match roots
-    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootNil)
+      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
     [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons head (selfhost-lint-root-list-append rest root))]))
+      (CompilerLoadRootCons
+        head
+        (box (selfhost-lint-root-list-append (box-get rest) root)))]))
 
 (define (selfhost-lint-parse-options
   [idx : i64]

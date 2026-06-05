@@ -91,9 +91,12 @@
   [roots : CompilerLoadRootList]
   [root : String]) : CompilerLoadRootList
   (match roots
-    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootNil)
+      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
     [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons head (source-tool-root-list-append rest root))]))
+      (CompilerLoadRootCons
+        head
+        (box (source-tool-root-list-append (box-get rest) root)))]))
 
 (define (source-tool-args-append [args : ProcessStringList] [value : String]) : ProcessStringList
   (process-args-append args (process-args-single value)))

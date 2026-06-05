@@ -1296,7 +1296,7 @@
   (AstTyI64))
 (defenum AstTypeList
   (AstTypeNil)
-  (AstTypeCons AstType (Box AstTypeList)))
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
@@ -1335,6 +1335,45 @@
               (compiler-typecheck-inline-layout-ok?
                 src
                 "CtfeReflectVariantList"))))))))
+
+(define (compiler-typecheck-inline-boxed-ast-list-source) : String
+  "(defenum AstType
+  (AstTyI64)
+  (AstTyFunc AstTypeList (Box AstType))
+  (AstTyTuple AstTypeList)
+  (AstTyBox (Box AstType)))
+(defenum AstTypeList
+  (AstTypeNil)
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
+(defenum AstPattern
+  (AstPatWildcard)
+  (AstPatTuple (Box AstPatternList)))
+(defenum AstPatternList
+  (AstPatternNil)
+  (AstPatternCons (Box AstPattern) (Box AstPatternList)))
+(defenum AstExpr
+  (AstExprLiteral i64)
+  (AstExprCall (Box AstExpr) AstExprList)
+  (AstExprTuple AstExprList)
+  (AstExprMatch (Box AstExpr) AstPatternList))
+(defenum AstExprList
+  (AstExprNil)
+  (AstExprCons (Box AstExpr) (Box AstExprList)))")
+
+(define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-ast-list-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "AstType")
+      (and
+        (compiler-typecheck-inline-layout-ok? src "AstTypeList")
+        (and
+          (compiler-typecheck-inline-layout-ok? src "AstPattern")
+          (and
+            (compiler-typecheck-inline-layout-ok? src "AstPatternList")
+            (and
+              (compiler-typecheck-inline-layout-ok? src "AstExpr")
+              (compiler-typecheck-inline-layout-ok? src "AstExprList"))))))))
 
 (define (compiler-typecheck-inline-boxed-formatter-source) : String
   "(defenum FormatToken
@@ -1430,6 +1469,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-ast-list-layout-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-formatter-layout-ok?)
@@ -5132,20 +5174,63 @@
   "(define (branch-move [flag : bool] [s : String]) : String
   (begin (if flag (let [t : String s] t) (let [u : String s] u)) s))")
 
+(define (compiler-typecheck-move-branch-arm-isolated-source) : String
+  "(define (branch-arm-isolated [flag : bool] [s : String]) : String
+  (if flag (let [t : String s] t) s))")
+
+(define (compiler-typecheck-move-lambda-body-discard-source) : String
+  "(define (lambda-body-discard [s : String]) : String
+  (begin (lambda () : unit (let [t : String s] unit)) s))")
+
+(define (compiler-typecheck-move-while-body-discard-source) : String
+  "(define (while-body-discard [flag : bool] [s : String]) : String
+  (begin (while flag (let [t : String s] unit)) s))")
+
+(define (compiler-typecheck-moved-set-metrics-ok?) : bool
+  (let
+    [empty : TcMovedSet (tc-moved-empty)]
+    [one : TcMovedSet (tc-moved-add empty "alpha")]
+    [dupe : TcMovedSet (tc-moved-add (tc-moved-clone one) "alpha")]
+    [two : TcMovedSet (tc-moved-add (tc-moved-clone dupe) "beta")]
+    [removed : TcMovedSet (tc-moved-remove (tc-moved-clone two) "alpha")]
+    (and
+      (= (tc-moved-len (tc-moved-empty)) 0)
+      (and
+        (= (tc-moved-len dupe) 1)
+        (and
+          (= (tc-moved-len two) 2)
+          (and
+            (>= (tc-moved-capacity two) 8)
+            (and
+              (not (tc-moved-contains? removed "alpha"))
+              (tc-moved-contains? removed "beta"))))))))
+
 ;; Returns true when use-after-move is rejected (straight-line and after a
-;; branch that moves on every arm), while a single move and copyable reuse pass.
+;; branch that moves on every arm), while a single move, copyable reuse, and
+;; branch/deferred-body isolation pass.
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-move-use-after-move-source)
-      "typecheck: use of moved value `s`")
+    (compiler-typecheck-moved-set-metrics-ok?)
     (and
-      (compiler-typecheck-ok? (compiler-typecheck-move-single-move-source))
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-use-after-move-source)
+        "typecheck: use of moved value `s`")
       (and
-        (compiler-typecheck-ok? (compiler-typecheck-move-copyable-source))
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-move-branch-source)
-          "typecheck: use of moved value `s`")))))
+        (compiler-typecheck-ok? (compiler-typecheck-move-single-move-source))
+        (and
+          (compiler-typecheck-ok? (compiler-typecheck-move-copyable-source))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-move-branch-source)
+              "typecheck: use of moved value `s`")
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-move-branch-arm-isolated-source))
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-move-lambda-body-discard-source))
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-move-while-body-discard-source))))))))))
 
 ;; --- defdispatch frontend model (#1908) ------------------------------------
 (define (compiler-typecheck-defdispatch-full-source) : String

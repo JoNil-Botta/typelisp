@@ -889,6 +889,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (tc-type-render head)
@@ -1474,6 +1475,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (ast-type-cons
           (tc-type-without-regions head)
@@ -1509,6 +1511,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (or
           (tc-type-contains-region head region)
@@ -1548,6 +1551,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (or
           (tc-type-contains-any-region head)
@@ -1578,6 +1582,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (or
           (tc-type-contains-reference? head)
@@ -1610,6 +1615,7 @@
     [(AstTypeNil) out]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (tc-type-list-collect-reference-lifetimes
           tail
@@ -1716,6 +1722,7 @@
     [(AstTypeNil) out]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (tc-type-list-collect-regions
           tail
@@ -1884,6 +1891,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (ast-type-cons
           (tc-resolve-type ctx head)
@@ -2438,6 +2446,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (match (tc-source-type-policy-ok ctx head)
           [(OkTcUnit) (tc-source-type-list-policy-ok ctx tail)]
@@ -2609,6 +2618,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (match (tc-source-type-policy-ok ctx head)
           [(OkTcUnit)
@@ -2642,6 +2652,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (or
           (tc-type-mentions-enum? ctx head enum-name)
@@ -2689,6 +2700,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons field rest)
       (let
+        [field : AstType (box-get field)]
         [rest : AstTypeList (box-get rest)]
         (if (tc-type-mentions-enum-indirectly? ctx field enum-name)
           (ErrTcUnit (tc-recursive-enum-inline-message enum-name variant-name))
@@ -2725,6 +2737,7 @@
     [(AstPatternNil) OkTcUnit]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (match (tc-source-pattern-policy-ok ctx pattern)
           [(OkTcUnit) (tc-source-pattern-list-policy-ok ctx rest)]
@@ -2807,6 +2820,7 @@
     [(AstExprNil) OkTcUnit]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match (tc-source-expr-policy-ok ctx expr)
           [(OkTcUnit) (tc-source-expr-list-policy-ok ctx rest)]
@@ -3225,10 +3239,12 @@
         [_ false])]
     [(AstTypeCons ah at)
       (let
+        [ah : AstType (box-get ah)]
         [at : AstTypeList (box-get at)]
         (match b
           [(AstTypeCons bh bt)
             (let
+              [bh : AstType (box-get bh)]
               [bt : AstTypeList (box-get bt)]
               (and (tc-type-eq ah bh) (tc-type-list-eq at bt)))]
           [_ false]))]))
@@ -3817,6 +3833,7 @@
       [(AstTypeNil) (ErrTcType "typecheck: tuple index out of bounds")]
       [(AstTypeCons ty rest)
         (let
+          [ty : AstType (box-get ty)]
           [rest : AstTypeList (box-get rest)]
           (if (= index 0)
             (OkTcType ty)
@@ -3838,6 +3855,7 @@
     [(AstExprNil) (OkTcTypeList AstTypeNil)]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match (tc-expr ctx env expr)
           [(OkTcType ty)
@@ -3856,6 +3874,7 @@
     [(AstExprNil) OkTcUnit]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match (tc-expr-with-expected-or-actual ctx env expr elem-ty)
           [(OkTcType ty)
@@ -4147,6 +4166,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (ast-type-cons
           (tc-tag-region region head)
@@ -4867,6 +4887,7 @@
     [(AstExprNil) OkTcUnit]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match (tc-expr-with-expected-or-actual ctx env expr elem-ty)
           [(OkTcType got)
@@ -4949,10 +4970,12 @@
         [_ (ErrTcTypeList "typecheck: tuple element type mismatch")])]
     [(AstExprCons expr rest-exprs)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest-exprs : AstExprList (box-get rest-exprs)]
         (match types
           [(AstTypeCons want rest-types)
             (let
+              [want : AstType (box-get want)]
               [rest-types : AstTypeList (box-get rest-types)]
               (match (tc-expr-with-expected-or-actual ctx env expr want)
                 [(OkTcType got)
@@ -5007,6 +5030,7 @@
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (tc-expr-with-expected-or-actual ctx env expr expected)]
@@ -5279,6 +5303,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (ast-type-cons
           (tc-lifetime-subst-type subst head)
@@ -5485,10 +5510,12 @@
         [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
     [(AstTypeCons formal-head formal-rest)
       (let
+        [formal-head : AstType (box-get formal-head)]
         [formal-rest : AstTypeList (box-get formal-rest)]
         (match actual
           [(AstTypeCons actual-head actual-rest)
             (let
+              [actual-head : AstType (box-get actual-head)]
               [actual-rest : AstTypeList (box-get actual-rest)]
               (match (tc-infer-lifetime-subst-from-type
                 ctx
@@ -5520,10 +5547,12 @@
         [_ (ErrTcLifetimeSubst "typecheck: arity mismatch")])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match params
           [(AstTypeCons want rest-params)
             (let
+              [want : AstType (box-get want)]
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr ctx env arg)
                 [(OkTcType got)
@@ -5632,10 +5661,12 @@
         [_ (ErrTcUnit "typecheck: arity mismatch")])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match params
           [(AstTypeCons want rest-params)
             (let
+              [want : AstType (box-get want)]
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr-with-expected-or-actual ctx env arg want)
                 [(OkTcType got)
@@ -5696,10 +5727,12 @@
         [_ (ErrTcUnit "typecheck: arity mismatch")])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match params
           [(AstTypeCons want rest-params)
             (let
+              [want : AstType (box-get want)]
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr-with-expected-or-actual ctx env arg want)
                 [(OkTcType got)
@@ -5815,6 +5848,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -5836,10 +5870,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -5869,14 +5905,17 @@
   (match args
     [(AstExprCons text tail)
       (let
+        [text : AstExpr (box-get text)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons start rest1)
             (let
+              [start : AstExpr (box-get start)]
               [rest1 : AstExprList (box-get rest1)]
               (match rest1
                 [(AstExprCons len rest2)
                   (let
+                    [len : AstExpr (box-get len)]
                     [rest2 : AstExprList (box-get rest2)]
                     (match rest2
                       [(AstExprNil)
@@ -5917,10 +5956,12 @@
   (match args
     [(AstExprCons text tail)
       (let
+        [text : AstExpr (box-get text)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons value rest)
             (let
+              [value : AstExpr (box-get value)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -5951,10 +5992,12 @@
   (match args
     [(AstExprCons value tail)
       (let
+        [value : AstExpr (box-get value)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons text rest)
             (let
+              [text : AstExpr (box-get text)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -6016,10 +6059,12 @@
   (match args
     [(AstExprCons str tail)
       (let
+        [str : AstExpr (box-get str)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons index rest)
             (let
+              [index : AstExpr (box-get index)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -6091,6 +6136,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -6206,6 +6252,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -6382,6 +6429,7 @@
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (tc-expr ctx env expr)]
@@ -6445,6 +6493,7 @@
       (OkTcSpmdExprListInfo (TcSpmdExprListInfo TcSpmdUniform spmd-env))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match (tc-spmd-expr ctx env spmd-env expr)
           [(OkTcSpmdExprInfo info)
@@ -6472,6 +6521,7 @@
       (OkTcSpmdExprInfo (TcSpmdExprInfo (AstTyUnit) TcSpmdUniform spmd-env))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (tc-spmd-expr ctx env spmd-env expr)]
@@ -7240,6 +7290,7 @@
     [(AstPatternNil) bound]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (tc-pattern-list-add-bound-names
           rest
@@ -7281,6 +7332,7 @@
     [(AstExprNil) false]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (or
           (tc-expr-uses-free-name? expr name bound)
@@ -7660,6 +7712,7 @@
     [(AstExprNil) false]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (or
           (tc-expr-sets-free-name? expr name bound)
@@ -8041,6 +8094,7 @@
     [(AstExprNil) false]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (tc-expr-result-uses-cleanup-owner? expr owners bound)]
@@ -8054,6 +8108,7 @@
     [(AstExprNil) false]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (or
           (tc-expr-result-uses-cleanup-owner? expr owners bound)
@@ -8592,6 +8647,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-finite-ok ctx head stack)
           [(OkTcUnit) (tc-inline-aggregate-type-list-finite-ok ctx rest stack)]
@@ -8718,6 +8774,7 @@
       (OkTcLayoutInfo (tc-inline-aggregate-finish-layout cursor max-align))]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
           [(OkTcLayoutInfo info)
@@ -8800,6 +8857,7 @@
             (TcInlinePayloadFieldsLayout size align TcInlinePayloadLayoutNil))])]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         (match (tc-inline-aggregate-type-layout-with-stack ctx resolved stack)
@@ -9416,6 +9474,7 @@
   (match fields
     [(AstTypeCons field tail)
       (let
+        [field : AstType (box-get field)]
         [tail : AstTypeList (box-get tail)]
         (match tail
           [(AstTypeNil) (OkTcType (tc-resolve-type ctx field))]
@@ -9895,10 +9954,12 @@
         [_ (ErrTcEnv "typecheck: pattern arity mismatch")])]
     [(AstPatternCons pattern rest-patterns)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest-patterns : AstPatternList (box-get rest-patterns)]
         (match types
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               (match (tc-bind-sub-pattern ctx env pattern ty)
                 [(OkTcEnv next-env)
@@ -10282,10 +10343,12 @@
         [_ false])]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (match types
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               (if (tc-sub-pattern-irrefutable? ctx pattern ty)
                 (tc-pattern-list-irrefutable? ctx rest rest-types)
@@ -10841,6 +10904,7 @@
     [(AstExprNil) OkTcUnit]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (tc-quasiquote-template-ok ctx env head)
           [(OkTcUnit) (tc-quasiquote-template-list-ok ctx env rest)]
@@ -11092,6 +11156,7 @@
               (ErrTcType "typecheck: cannot infer type of empty array")]
             [(AstExprCons first rest)
               (let
+                [first : AstExpr (box-get first)]
                 [rest : AstExprList (box-get rest)]
                 (match (tc-expr ctx env first)
                   [(OkTcType first-ty)
@@ -11722,6 +11787,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (if (tc-extern-abi-value-type-ok? head)
           (tc-check-extern-arg-abi rest)
@@ -11841,9 +11907,8 @@
 ;; union (a place moved on any arm is moved afterward); loops and lambdas discard
 ;; their body's moves for the post-state because they may run zero times or be
 ;; deferred. Reassigning a slot with `set!` clears its moved mark.
-(defenum TcMovedSet
-  (TcMovedNil)
-  (TcMovedCons String TcMovedSet))
+(defstruct TcMovedSet
+  (map StringI64Map))
 
 (defenum TcMoveResult
   (OkTcMove TcMovedSet)
@@ -11853,31 +11918,54 @@
   (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet)
   (ErrTcMoveBindings String))
 
+(define (tc-moved-empty) : TcMovedSet
+  (TcMovedSet (string-i64-map-with-capacity 8)))
+
+(define (tc-moved-map [set : TcMovedSet]) : StringI64Map
+  (struct-get set map))
+
+(define (tc-moved-len [set : TcMovedSet]) : i64
+  (string-i64-map-len (tc-moved-map set)))
+
+(define (tc-moved-capacity [set : TcMovedSet]) : i64
+  (string-i64-map-capacity (tc-moved-map set)))
+
+(define (tc-moved-clone [set : TcMovedSet]) : TcMovedSet
+  (let
+    [map : StringI64Map (tc-moved-map set)]
+    (TcMovedSet (string-i64-map-resized map (string-i64-map-capacity map)))))
+
 (define (tc-moved-contains? [set : TcMovedSet] [name : String]) : bool
-  (match set
-    [(TcMovedNil) false]
-    [(TcMovedCons n rest)
-      (if (string-eq n name)
-        true
-        (tc-moved-contains? rest name))]))
+  (string-i64-map-contains? (tc-moved-map set) name))
 
 (define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
-  (if (tc-moved-contains? set name)
-    set
-    (TcMovedCons name set)))
+  (TcMovedSet (string-i64-map-put (tc-moved-map set) name 1)))
 
 (define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
-  (match set
-    [(TcMovedNil) (TcMovedNil)]
-    [(TcMovedCons n rest)
-      (if (string-eq n name)
-        (tc-moved-remove rest name)
-        (TcMovedCons n (tc-moved-remove rest name)))]))
+  (match (string-i64-map-remove (tc-moved-map set) name)
+    [(StringI64MapRemoveOk map) (TcMovedSet map)]
+    [(StringI64MapRemoveMissing map) (TcMovedSet map)]))
+
+(define (tc-moved-union-loop
+  [a : StringI64Map]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (string-i64-map-capacity a))
+    out
+    (match (string-i64-map-entry-at a index)
+      [(StringI64MapEntrySome key _)
+        (tc-moved-union-loop
+          a
+          (string-i64-map-next-occupied a (+ index 1))
+          (tc-moved-add out key))]
+      [(StringI64MapEntryNone)
+        (tc-moved-union-loop a (string-i64-map-next-occupied a (+ index 1)) out)])))
 
 (define (tc-moved-union [a : TcMovedSet] [b : TcMovedSet]) : TcMovedSet
-  (match a
-    [(TcMovedNil) b]
-    [(TcMovedCons n rest) (tc-moved-union rest (tc-moved-add b n))]))
+  (tc-moved-union-loop
+    (tc-moved-map a)
+    (string-i64-map-next-occupied (tc-moved-map a) 0)
+    b))
 
 (define (tc-move-var-move-only? [env : TcTypeEnv] [name : String]) : bool
   (match (tc-lookup env name)
@@ -11948,6 +12036,7 @@
     [(AstExprNil) (OkTcMove moved)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (tc-move-check-expr ctx env locals moved head)
           [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 rest)]
@@ -12000,9 +12089,19 @@
           [(AstMatchArm _ body-box)
             (let
               [body : AstExpr (box-get body-box)]
-              (match (tc-move-check-expr ctx env locals moved body)
+              (match (tc-move-check-expr
+                ctx
+                env
+                (tc-moved-clone locals)
+                (tc-moved-clone moved)
+                body)
                 [(OkTcMove arm-moved)
-                  (match (tc-move-check-arms ctx env locals moved rest)
+                  (match (tc-move-check-arms
+                    ctx
+                    env
+                    (tc-moved-clone locals)
+                    (tc-moved-clone moved)
+                    rest)
                     [(OkTcMove rest-moved)
                       (OkTcMove (tc-moved-union arm-moved rest-moved))]
                     [(ErrTcMove message) (ErrTcMove message)])]
@@ -12051,9 +12150,19 @@
         [else-branch : AstExpr (box-get else-branch-box)]
         (match (tc-move-check-expr ctx env locals moved cond)
           [(OkTcMove movedc)
-            (match (tc-move-check-expr ctx env locals movedc then-branch)
+            (match (tc-move-check-expr
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone movedc)
+              then-branch)
               [(OkTcMove movedt)
-                (match (tc-move-check-expr ctx env locals movedc else-branch)
+                (match (tc-move-check-expr
+                  ctx
+                  env
+                  (tc-moved-clone locals)
+                  (tc-moved-clone movedc)
+                  else-branch)
                   [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
                   [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)])]
@@ -12061,14 +12170,24 @@
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (match (tc-move-check-let-bindings ctx env locals moved bindings)
+        (match (tc-move-check-let-bindings
+          ctx
+          env
+          (tc-moved-clone locals)
+          moved
+          bindings)
           [(OkTcMoveBindings env2 moved2 locals2)
             (tc-move-check-expr ctx env2 locals2 moved2 body)]
           [(ErrTcMoveBindings message) (ErrTcMove message)]))]
     [(AstExprLambda _ _ body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (match (tc-move-check-expr ctx env locals moved body)
+        (match (tc-move-check-expr
+          ctx
+          env
+          (tc-moved-clone locals)
+          (tc-moved-clone moved)
+          body)
           [(OkTcMove _) (OkTcMove moved)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprTuple exprs) (tc-move-check-exprs ctx env locals moved exprs)]
@@ -12120,7 +12239,12 @@
         [body : AstExpr (box-get body-box)]
         (match (tc-move-check-expr ctx env locals moved cond)
           [(OkTcMove movedc)
-            (match (tc-move-check-expr ctx env locals movedc body)
+            (match (tc-move-check-expr
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone movedc)
+              body)
               [(OkTcMove _) (OkTcMove movedc)]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -12164,8 +12288,8 @@
                 (match (tc-move-check-expr
                   ctx
                   (tc-bind env index (tc-resolve-type ctx index-ty))
-                  (tc-moved-add locals index)
-                  moved2
+                  (tc-moved-add (tc-moved-clone locals) index)
+                  (tc-moved-clone moved2)
                   body)
                   [(OkTcMove _) (OkTcMove moved2)]
                   [(ErrTcMove message) (ErrTcMove message)])]
@@ -12319,8 +12443,8 @@
   (match (tc-move-check-expr
     ctx
     env
-    (tc-move-params-locals params (TcMovedNil))
-    (TcMovedNil)
+    (tc-move-params-locals params (tc-moved-empty))
+    (tc-moved-empty)
     body)
     [(OkTcMove _) OkTcUnit]
     [(ErrTcMove message) (ErrTcUnit message)]))
@@ -12461,6 +12585,7 @@
     [(AstExprNil) AstExprNil]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (ast-expr-cons
           (macro-hygiene-expr head env macro-name depth)
@@ -12495,6 +12620,7 @@
     [(AstPatternNil) (MacroHygienePatternList AstPatternNil env)]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (match (macro-hygiene-pattern pattern env macro-name depth)
           [(MacroHygienePattern npattern next-env)
@@ -13181,6 +13307,7 @@
     [(AstExprNil) OkMacroCheck]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-check-operand ctx env expected head)
           [(OkMacroCheck) (macro-check-variadic-operands ctx env expected rest)]
@@ -13222,6 +13349,7 @@
                       "macro call has too few arguments"))]
                 [(AstExprCons arg rest-args)
                   (let
+                    [arg : AstExpr (box-get arg)]
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (macro-check-operand ctx type-env pty arg)
                       [(OkMacroCheck)
@@ -13301,6 +13429,7 @@
     [(AstExprNil) (OkMacroExprList (AstExprNil))]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-expand-expr ctx env decls depth head)
           [(OkMacroExpr nhead)
@@ -13395,6 +13524,7 @@
     [(AstExprNil) (ast-expr-cons (macro-compat-unit-expr) AstExprNil)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (ast-expr-cons head (macro-compat-append-unit rest)))]))
 
@@ -13442,6 +13572,7 @@
   (match args
     [(AstExprCons cond body)
       (let
+        [cond : AstExpr (box-get cond)]
         [body : AstExprList (box-get body)]
         (match body
           [(AstExprNil)

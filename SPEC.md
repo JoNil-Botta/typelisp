@@ -3539,6 +3539,20 @@ but it is larger than the immediate need for long-running tools.
 The first reclamation mechanism is explicit region reset at tool-owned phase
 boundaries (#418, #419). TypeLisp provides two surfaces for this:
 
+The standard scratch workflows are:
+
+- **Temporary scratch only:** use `(with-arena scratch ...)` for phase-local
+  allocation and return only scalars or values allocated outside the scoped
+  arena. This is the default safe choice.
+- **Clone one result out:** allocate a reusable first-class scratch arena with
+  `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
+  The result is cloned into the enclosing active arena before the scratch arena
+  is rewound.
+- **Manual unsafe arena:** use `arena-set!`, `arena-rewind`, or
+  `arena-destroy` only inside `(unsafe ...)` when the caller can prove all
+  invalidated heap handles are dead. This is for compiler/tool internals that
+  cannot express the workflow with the two safe forms.
+
 #### Source-level scoped region (v1) — `with-arena`
 
 The `(with-arena ident body ...)` form (§5.16) gives programs a lexically
@@ -3647,7 +3661,7 @@ a first-class scratch arena with `arena-make`, switch to it for transient work,
 and then keep only a deep-cloned result. The safe source form for this pattern
 is:
 
-```lisp test=ignore name=with-escape-example reason="depends on first-class arena runtime support"
+```lisp test=check name=with-escape-example
 (import "stdlib/arena.tl")
 
 (define (build-message) : String
@@ -3693,12 +3707,14 @@ first-class arena helpers:
 
 (define (main) : unit
   (let
-    [arena : i64 (arena-current)]
-    [mark : i64 (arena-mark)]
+    [home : i64 (arena-current)]
+    [scratch : i64 (arena-make)]
     (unsafe
-      (arena-rewind mark)
-      (arena-set! arena)
-      (arena-destroy arena))))
+      (begin
+        (arena-set! scratch)
+        (arena-rewind (arena-mark))
+        (arena-set! home)
+        (arena-destroy scratch)))))
 ```
 
 `arena-make`, `arena-current`, and `arena-mark` are safe: they create an arena

@@ -127,6 +127,20 @@ or the innermost scoped arena inside `(with-arena ...)`. The arena model uses
 the term "scoped arena" for this behavior. Stdlib policy tests use
 `(with-arena ...)` as the executable witness for active-arena semantics.
 
+Use three standard scratch patterns:
+
+- **Temporary scratch only:** put phase-local work in `(with-arena scratch ...)`
+  and return only scalars or values allocated outside the scoped arena. This is
+  the preferred safe path and uses no `stdlib/arena.tl` unsafe helpers.
+- **Clone one result out:** allocate a reusable first-class arena with
+  `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
+  Supported body results are cloned into the enclosing active arena before the
+  scratch arena is rewound.
+- **Manual unsafe arena:** import `stdlib/arena.tl` and call `arena-set!`,
+  `arena-rewind`, or `arena-destroy` only inside `(unsafe ...)` when the caller
+  can prove every invalidated heap handle is dead. Prefer the two safe patterns
+  above for normal tool code.
+
 Written reference and arena lifetime syntax exists, and stdlib APIs migrate
 non-consuming text inputs to borrowed `(& lifetime str)` signatures as the
 borrowed `str` frontend and string API work lands (#1453/#1454/#1082). The checker

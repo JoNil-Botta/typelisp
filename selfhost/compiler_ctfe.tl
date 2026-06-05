@@ -860,6 +860,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (ctfe-reflect-resolve-type infos head)
@@ -913,6 +914,7 @@
     [(AstTypeNil) "nil"]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (ctfe-type-key-with-reflections infos head)
@@ -1224,6 +1226,7 @@
       [(AstTypeNil) (ErrCtfeTypeLookup "index out of range")]
       [(AstTypeCons head rest)
         (let
+          [head : AstType (box-get head)]
           [rest : AstTypeList (box-get rest)]
           (if (= index 0)
             (OkCtfeTypeLookup (ctfe-reflect-resolve-type infos head))
@@ -1451,6 +1454,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -1568,10 +1572,12 @@
   (match args
     [(AstExprCons type-arg tail)
       (let
+        [type-arg : AstExpr (box-get type-arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons field-arg rest)
             (let
+              [field-arg : AstExpr (box-get field-arg)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -1624,6 +1630,7 @@
   (match args
     [(AstExprCons type-arg rest)
       (let
+        [type-arg : AstExpr (box-get type-arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -1847,10 +1854,12 @@
   (match args
     [(AstExprCons type-arg tail)
       (let
+        [type-arg : AstExpr (box-get type-arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons index-arg rest)
             (let
+              [index-arg : AstExpr (box-get index-arg)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -1936,10 +1945,12 @@
   (match args
     [(AstExprCons type-arg tail)
       (let
+        [type-arg : AstExpr (box-get type-arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons index-arg rest)
             (let
+              [index-arg : AstExpr (box-get index-arg)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -2030,47 +2041,52 @@
   (match args
     [(AstExprCons type-arg tail)
       (let
+        [type-arg : AstExpr (box-get type-arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons variant-arg rest1)
             (let
+              [variant-arg : AstExpr (box-get variant-arg)]
               [rest1 : AstExprList (box-get rest1)]
               (match rest1
                 [(AstExprCons payload-arg rest2)
-                  (match (box-get rest2)
-                    [(AstExprNil)
-                      (match (ctfe-eval-type-arg
-                        type-arg
-                        expr
-                        env
-                        fuel
-                        "enum-variant-payload-type")
-                        [(ErrCtfeTypeArg d) (ErrCtfe d)]
-                        [(OkCtfeTypeArg ty type-fuel)
-                          (match (ctfe-eval-i64-arg
-                            variant-arg
-                            expr
-                            env
-                            type-fuel
-                            "enum-variant-payload-type")
-                            [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                            [(OkCtfeI64Arg variant-index variant-fuel)
-                              (match (ctfe-eval-i64-arg
-                                payload-arg
-                                expr
-                                env
-                                variant-fuel
-                                "enum-variant-payload-type")
-                                [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                                [(OkCtfeI64Arg payload-index payload-fuel)
-                                  (ctfe-eval-enum-payload-type-from-type
-                                    ty
-                                    variant-index
-                                    payload-index
-                                    expr
-                                    env
-                                    payload-fuel)])])])]
-                    [_ (ctfe-enum-payload-type-arity-error expr)])]
+                  (let
+                    [payload-arg : AstExpr (box-get payload-arg)]
+                    [rest2 : AstExprList (box-get rest2)]
+                    (match rest2
+                      [(AstExprNil)
+                        (match (ctfe-eval-type-arg
+                          type-arg
+                          expr
+                          env
+                          fuel
+                          "enum-variant-payload-type")
+                          [(ErrCtfeTypeArg d) (ErrCtfe d)]
+                          [(OkCtfeTypeArg ty type-fuel)
+                            (match (ctfe-eval-i64-arg
+                              variant-arg
+                              expr
+                              env
+                              type-fuel
+                              "enum-variant-payload-type")
+                              [(ErrCtfeI64Arg d) (ErrCtfe d)]
+                              [(OkCtfeI64Arg variant-index variant-fuel)
+                                (match (ctfe-eval-i64-arg
+                                  payload-arg
+                                  expr
+                                  env
+                                  variant-fuel
+                                  "enum-variant-payload-type")
+                                  [(ErrCtfeI64Arg d) (ErrCtfe d)]
+                                  [(OkCtfeI64Arg payload-index payload-fuel)
+                                    (ctfe-eval-enum-payload-type-from-type
+                                      ty
+                                      variant-index
+                                      payload-index
+                                      expr
+                                      env
+                                      payload-fuel)])])])]
+                      [_ (ctfe-enum-payload-type-arity-error expr)]))]
                 [_ (ctfe-enum-payload-type-arity-error expr)]))]
           [_ (ctfe-enum-payload-type-arity-error expr)]))]
     [_ (ctfe-enum-payload-type-arity-error expr)]))
@@ -2083,10 +2099,12 @@
   (match args
     [(AstExprCons type-arg tail)
       (let
+        [type-arg : AstExpr (box-get type-arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons index-arg rest)
             (let
+              [index-arg : AstExpr (box-get index-arg)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -2194,10 +2212,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -2232,10 +2252,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -2272,6 +2294,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -2294,6 +2317,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -2317,6 +2341,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -2346,6 +2371,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -2386,6 +2412,7 @@
   (match args
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -2452,76 +2479,81 @@
   (match args
     [(AstExprCons cond-arg tail1)
       (let
+        [cond-arg : AstExpr (box-get cond-arg)]
         [tail1 : AstExprList (box-get tail1)]
         (match tail1
           [(AstExprCons then-arg tail2)
             (let
+              [then-arg : AstExpr (box-get then-arg)]
               [tail2 : AstExprList (box-get tail2)]
               (match tail2
                 [(AstExprCons else-arg rest)
-                  (match (box-get rest)
-                    [(AstExprNil)
-                      (match (compiler-ctfe-eval cond-arg env fuel)
-                        [(OkCtfe cond-val cond-fuel)
-                          (match cond-val
-                            [(CtfeExpr cond-node cond-ty)
-                              (if (ctfe-type-eq cond-ty (AstTyBool))
-                                (match (compiler-ctfe-eval
-                                  then-arg
-                                  env
-                                  cond-fuel)
-                                  [(OkCtfe then-val then-fuel)
-                                    (match then-val
-                                      [(CtfeExpr then-node then-ty)
-                                        (match (compiler-ctfe-eval
-                                          else-arg
-                                          env
-                                          then-fuel)
-                                          [(OkCtfe else-val else-fuel)
-                                            (match else-val
-                                              [(CtfeExpr else-node else-ty)
-                                                (if (ctfe-type-eq
-                                                  then-ty
-                                                  else-ty)
-                                                  (OkCtfe
-                                                    (CtfeExpr
-                                                      (ast-expr-if
-                                                        cond-node
-                                                        then-node
-                                                        else-node)
-                                                      then-ty)
-                                                    else-fuel)
+                  (let
+                    [else-arg : AstExpr (box-get else-arg)]
+                    [rest : AstExprList (box-get rest)]
+                    (match rest
+                      [(AstExprNil)
+                        (match (compiler-ctfe-eval cond-arg env fuel)
+                          [(OkCtfe cond-val cond-fuel)
+                            (match cond-val
+                              [(CtfeExpr cond-node cond-ty)
+                                (if (ctfe-type-eq cond-ty (AstTyBool))
+                                  (match (compiler-ctfe-eval
+                                    then-arg
+                                    env
+                                    cond-fuel)
+                                    [(OkCtfe then-val then-fuel)
+                                      (match then-val
+                                        [(CtfeExpr then-node then-ty)
+                                          (match (compiler-ctfe-eval
+                                            else-arg
+                                            env
+                                            then-fuel)
+                                            [(OkCtfe else-val else-fuel)
+                                              (match else-val
+                                                [(CtfeExpr else-node else-ty)
+                                                  (if (ctfe-type-eq
+                                                    then-ty
+                                                    else-ty)
+                                                    (OkCtfe
+                                                      (CtfeExpr
+                                                        (ast-expr-if
+                                                          cond-node
+                                                          then-node
+                                                          else-node)
+                                                        then-ty)
+                                                      else-fuel)
+                                                    (ErrCtfe
+                                                      (ctfe-diagnostic-at-expr
+                                                        expr
+                                                        "expr-if branch types must match")))]
+                                                [_
                                                   (ErrCtfe
                                                     (ctfe-diagnostic-at-expr
                                                       expr
-                                                      "expr-if branch types must match")))]
-                                              [_
-                                                (ErrCtfe
-                                                  (ctfe-diagnostic-at-expr
-                                                    expr
-                                                    "expr-if else branch expects Expr"))])]
-                                          [(ErrCtfe diag) (ErrCtfe diag)])]
-                                      [_
-                                        (ErrCtfe
-                                          (ctfe-diagnostic-at-expr
-                                            expr
-                                            "expr-if then branch expects Expr"))])]
-                                  [(ErrCtfe diag) (ErrCtfe diag)])
+                                                      "expr-if else branch expects Expr"))])]
+                                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                                        [_
+                                          (ErrCtfe
+                                            (ctfe-diagnostic-at-expr
+                                              expr
+                                              "expr-if then branch expects Expr"))])]
+                                    [(ErrCtfe diag) (ErrCtfe diag)])
+                                  (ErrCtfe
+                                    (ctfe-diagnostic-at-expr
+                                      expr
+                                      "expr-if condition must produce bool")))]
+                              [_
                                 (ErrCtfe
                                   (ctfe-diagnostic-at-expr
                                     expr
-                                    "expr-if condition must produce bool")))]
-                            [_
-                              (ErrCtfe
-                                (ctfe-diagnostic-at-expr
-                                  expr
-                                  "expr-if condition expects Expr"))])]
-                        [(ErrCtfe diag) (ErrCtfe diag)])]
-                    [_
-                      (ErrCtfe
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "expr-if expects exactly three args"))])]
+                                    "expr-if condition expects Expr"))])]
+                          [(ErrCtfe diag) (ErrCtfe diag)])]
+                      [_
+                        (ErrCtfe
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-if expects exactly three args"))]))]
                 [_
                   (ErrCtfe
                     (ctfe-diagnostic-at-expr
@@ -2679,6 +2711,7 @@
     [(AstExprNil) (OkCtfe (CtfeUnit) fuel)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (compiler-ctfe-eval head env fuel)
           [(OkCtfe value head-fuel)
@@ -2702,6 +2735,7 @@
     [(AstExprNil) right]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (ast-expr-cons head (ctfe-expr-list-append rest right)))]))
 
@@ -2750,6 +2784,7 @@
     [(AstExprNil) (OkCtfeQuoteExprList AstExprNil fuel)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (ast-expr-unspan head)
           [(AstExprUnquoteSplicing inner-box)
@@ -2806,6 +2841,7 @@
     [(AstPatternNil) AstPatternNil]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (ast-pattern-cons
           (ctfe-quote-pattern pattern env)
@@ -3887,10 +3923,12 @@
         [_ false])]
     [(AstExprCons a-head a-tail)
       (let
+        [a-head : AstExpr (box-get a-head)]
         [a-tail : AstExprList (box-get a-tail)]
         (match b
           [(AstExprCons b-head b-tail)
             (let
+              [b-head : AstExpr (box-get b-head)]
               [b-tail : AstExprList (box-get b-tail)]
               (and
                 (ctfe-expr-eq a-head b-head)
@@ -4119,7 +4157,7 @@
 
 (define (ctfe-expr-list-head [lst : AstExprList]) : AstExpr
   (match lst
-    [(AstExprCons head _) head]
+    [(AstExprCons head _) (box-get head)]
     [_ (AstExprLiteral (AstLitUnit))]))
 
 (define (ctfe-expr-list-tail [lst : AstExprList]) : AstExprList
@@ -4154,10 +4192,12 @@
         [_ false])]
     [(AstTypeCons ah at)
       (let
+        [ah : AstType (box-get ah)]
         [at : AstTypeList (box-get at)]
         (match b
           [(AstTypeCons bh bt)
             (let
+              [bh : AstType (box-get bh)]
               [bt : AstTypeList (box-get bt)]
               (and (ctfe-type-eq ah bh) (ctfe-type-list-eq at bt)))]
           [_ false]))]))

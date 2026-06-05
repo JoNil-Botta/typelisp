@@ -235,6 +235,7 @@
     [(AstExprNil) false]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (if (lint-return-expr? head)
           true
@@ -267,6 +268,7 @@
     [(AstExprNil) false]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (if (lint-side-effect-branch? head)
           true
@@ -319,6 +321,7 @@
     [(AstExprNil) acc]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (lint-walk-expr-list rest threshold (lint-walk-expr head threshold acc)))]))
 
@@ -615,6 +618,7 @@
     [(AstExprNil) acc]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lint-walk-tail-expr head threshold acc)]

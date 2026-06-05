@@ -22,6 +22,7 @@
     String
     bool
     String
+    BuildProfile
     bool
     i64
     CompilerLoadRootList))
@@ -58,6 +59,14 @@
   (OkBuildLibs ProcessStringList)
   (ErrBuildLibs String))
 
+(defenum BuildProfile
+  (BuildProfileDev)
+  (BuildProfileRelease))
+
+(defenum ResultBuildProfile
+  (OkBuildProfile BuildProfile)
+  (ErrBuildProfile String))
+
 (define build-default-opt-level : i64
   2)
 
@@ -78,6 +87,28 @@
 
 (define (build-unknown-opt-level [value : String]) : String
   (build-cat3 "build: unknown opt level '" value "'; expected 0, 1, 2, or 3"))
+
+(define (build-unknown-profile [value : String]) : String
+  (build-cat3 "build: unknown profile '" value "'; expected dev or release"))
+
+(define (build-default-profile) : BuildProfile
+  (BuildProfileRelease))
+
+(define (build-profile-name [profile : BuildProfile]) : String
+  (match profile
+    [(BuildProfileDev) "dev"]
+    [(BuildProfileRelease) "release"]))
+
+(define (build-profile-default-opt-level [profile : BuildProfile]) : i64
+  (match profile
+    [(BuildProfileDev) 0]
+    [(BuildProfileRelease) build-default-opt-level]))
+
+(define (build-parse-profile [value : String]) : ResultBuildProfile
+  (cond
+    [(string-eq value "dev") (OkBuildProfile (BuildProfileDev))]
+    [(string-eq value "release") (OkBuildProfile (BuildProfileRelease))]
+    [else (ErrBuildProfile (build-unknown-profile value))]))
 
 (define (build-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
@@ -120,6 +151,8 @@
   [target : String]
   [has-target : bool]
   [mode : String]
+  [profile : BuildProfile]
+  [has-profile : bool]
   [opt-level : i64]
   [has-opt-level : bool]
   [stdlib-lines : String]
@@ -157,8 +190,11 @@
               target
               has-target
               mode
+              profile
               has-opt-level
-              opt-level
+              (if has-opt-level
+                opt-level
+                (build-profile-default-opt-level profile))
               stdlib-roots)))))
     (let
       [current : String (arg idx)]
@@ -180,6 +216,8 @@
                 target
                 has-target
                 mode
+                profile
+                has-profile
                 opt-level
                 has-opt-level
                 stdlib-lines
@@ -202,6 +240,8 @@
                 target
                 has-target
                 mode
+                profile
+                has-profile
                 opt-level
                 has-opt-level
                 stdlib-lines
@@ -221,6 +261,8 @@
               target
               has-target
               mode
+              profile
+              has-profile
               opt-level
               has-opt-level
               (build-append-stdlib stdlib-lines (arg (+ idx 1)))
@@ -243,6 +285,8 @@
                   value
                   true
                   mode
+                  profile
+                  has-profile
                   opt-level
                   has-opt-level
                   stdlib-lines
@@ -266,11 +310,60 @@
                   target
                   has-target
                   value
+                  profile
+                  has-profile
                   opt-level
                   has-opt-level
                   stdlib-lines
                   stdlib-roots)
                 (ErrBuildConfig (build-unknown-mode value)))))]
+        [(string-eq current "--profile")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --profile requires a value")
+            (if has-profile
+              (ErrBuildConfig "build: profile was provided more than once")
+              (match (build-parse-profile (arg (+ idx 1)))
+                [(ErrBuildProfile message) (ErrBuildConfig message)]
+                [(OkBuildProfile parsed-profile)
+                  (build-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    output
+                    has-output
+                    manifest
+                    has-manifest
+                    target
+                    has-target
+                    mode
+                    parsed-profile
+                    true
+                    opt-level
+                    has-opt-level
+                    stdlib-lines
+                    stdlib-roots)])))]
+        [(string-eq current "--release")
+          (if has-profile
+            (ErrBuildConfig "build: profile was provided more than once")
+            (build-parse-options
+              (+ idx 1)
+              count
+              source
+              has-source
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              (BuildProfileRelease)
+              true
+              opt-level
+              has-opt-level
+              stdlib-lines
+              stdlib-roots))]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrBuildConfig "build: --opt-level requires a value")
@@ -293,6 +386,8 @@
                     target
                     has-target
                     mode
+                    profile
+                    has-profile
                     parsed
                     true
                     stdlib-lines
@@ -313,6 +408,8 @@
             target
             has-target
             mode
+            profile
+            has-profile
             opt-level
             has-opt-level
             stdlib-lines
@@ -334,6 +431,8 @@
     (host-plan-default-target)
     false
     "scalar"
+    (build-default-profile)
+    false
     build-default-opt-level
     false
     ""
@@ -394,23 +493,48 @@
       (build-cat3 "cannot read package manifest '" manifest-path "'"))))
 
 (define (build-package-output-dir [manifest-dir : String] [name : String]) : String
+  (build-package-output-dir-profile manifest-dir name (build-default-profile)))
+
+(define (build-package-output-dir-profile
+  [manifest-dir : String]
+  [name : String]
+  [profile : BuildProfile]) : String
   (compiler-load-join-root-path
     (compiler-load-join-root-path
-      (compiler-load-join-root-path manifest-dir "target")
-      "typelisp")
+      (compiler-load-join-root-path
+        (compiler-load-join-root-path manifest-dir "target")
+        "typelisp")
+      (build-profile-name profile))
     name))
 
 (define (build-package-asm-path [manifest-dir : String] [name : String]) : String
+  (build-package-asm-path-profile manifest-dir name (build-default-profile)))
+
+(define (build-package-asm-path-profile
+  [manifest-dir : String]
+  [name : String]
+  [profile : BuildProfile]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir manifest-dir name)
+    (build-package-output-dir-profile manifest-dir name profile)
     (string-append name ".s")))
 
 (define (build-package-obj-path
   [manifest-dir : String]
   [name : String]
   [target : CompilerBackendTarget]) : String
+  (build-package-obj-path-profile
+    manifest-dir
+    name
+    (build-default-profile)
+    target))
+
+(define (build-package-obj-path-profile
+  [manifest-dir : String]
+  [name : String]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir manifest-dir name)
+    (build-package-output-dir-profile manifest-dir name profile)
     (string-append
       name
       (string-append "." (source-tool-object-extension target)))))
@@ -419,16 +543,38 @@
   [manifest-dir : String]
   [name : String]
   [target : CompilerBackendTarget]) : String
+  (build-package-bin-path-profile
+    manifest-dir
+    name
+    (build-default-profile)
+    target))
+
+(define (build-package-bin-path-profile
+  [manifest-dir : String]
+  [name : String]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir manifest-dir name)
+    (build-package-output-dir-profile manifest-dir name profile)
     (string-append name (source-tool-executable-extension target))))
 
 (define (build-package-lib-path
   [manifest-dir : String]
   [name : String]
   [target : CompilerBackendTarget]) : String
+  (build-package-lib-path-profile
+    manifest-dir
+    name
+    (build-default-profile)
+    target))
+
+(define (build-package-lib-path-profile
+  [manifest-dir : String]
+  [name : String]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir manifest-dir name)
+    (build-package-output-dir-profile manifest-dir name profile)
     (source-tool-static-library-filename name target)))
 
 (define (build-package-artifact-path
@@ -436,9 +582,24 @@
   [name : String]
   [kind : CompilerPkgKind]
   [target : CompilerBackendTarget]) : String
+  (build-package-artifact-path-profile
+    manifest-dir
+    name
+    kind
+    (build-default-profile)
+    target))
+
+(define (build-package-artifact-path-profile
+  [manifest-dir : String]
+  [name : String]
+  [kind : CompilerPkgKind]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
   (match kind
-    [(CompilerPkgKindBin) (build-package-bin-path manifest-dir name target)]
-    [(CompilerPkgKindLib) (build-package-lib-path manifest-dir name target)]))
+    [(CompilerPkgKindBin)
+      (build-package-bin-path-profile manifest-dir name profile target)]
+    [(CompilerPkgKindLib)
+      (build-package-lib-path-profile manifest-dir name profile target)]))
 
 (define (build-package-kind-lib? [kind : CompilerPkgKind]) : bool
   (match kind
@@ -468,6 +629,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [fuel : i64]) : ResultBuildLibs
@@ -505,10 +667,11 @@
                   [dep-dir : String (compiler-load-dirname dep-manifest-path)]
                   [dep-name : String (struct-get dep-manifest name)]
                   [dep-artifact : String
-                    (build-package-artifact-path
+                    (build-package-artifact-path-profile
                       dep-dir
                       dep-name
                       dep-kind
+                      profile
                       target)]
                   [dep-status : i64
                     (build-package-emit-with-fuel
@@ -517,6 +680,7 @@
                       target-text
                       has-target
                       opt-level
+                      profile
                       mode
                       stdlib-roots
                       (- fuel 1))]
@@ -534,6 +698,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [fuel : i64]) : ResultBuildLibs
@@ -547,6 +712,7 @@
         target-text
         has-target
         opt-level
+        profile
         mode
         stdlib-roots
         fuel)
@@ -559,6 +725,7 @@
             target-text
             has-target
             opt-level
+            profile
             mode
             stdlib-roots
             fuel)
@@ -573,14 +740,19 @@
 
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
-  [name : String]) : bool
+  [name : String]
+  [profile : BuildProfile]) : bool
   (let
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
     [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
-    [package-dir : String (compiler-load-join-root-path typelisp-dir name)]
+    [profile-dir : String
+      (compiler-load-join-root-path typelisp-dir (build-profile-name profile))]
+    [package-dir : String (compiler-load-join-root-path profile-dir name)]
     (and
       (build-mkdir-ok? target-dir)
-      (and (build-mkdir-ok? typelisp-dir) (build-mkdir-ok? package-dir)))))
+      (and
+        (build-mkdir-ok? typelisp-dir)
+        (and (build-mkdir-ok? profile-dir) (build-mkdir-ok? package-dir))))))
 
 (define (build-package-artifact-status
   [kind : CompilerPkgKind]
@@ -606,6 +778,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [fuel : i64]) : i64
@@ -623,16 +796,23 @@
             (struct-get manifest entry))]
         [name : String (struct-get manifest name)]
         [kind : CompilerPkgKind (struct-get manifest kind)]
-        [asm-path : String (build-package-asm-path manifest-dir name)]
-        [obj-path : String (build-package-obj-path manifest-dir name target)]
+        [asm-path : String
+          (build-package-asm-path-profile manifest-dir name profile)]
+        [obj-path : String
+          (build-package-obj-path-profile manifest-dir name profile target)]
         [artifact-path : String
-          (build-package-artifact-path manifest-dir name kind target)]
-        (if (not (build-ensure-package-output-dirs manifest-dir name))
+          (build-package-artifact-path-profile
+            manifest-dir
+            name
+            kind
+            profile
+            target)]
+        (if (not (build-ensure-package-output-dirs manifest-dir name profile))
           (begin
             (print-error
               (string-append
                 "build: failed to create package output directory "
-                (build-package-output-dir manifest-dir name)))
+                (build-package-output-dir-profile manifest-dir name profile)))
             1)
           (match (build-package-deps-artifacts
             manifest-dir
@@ -641,6 +821,7 @@
             target-text
             has-target
             opt-level
+            profile
             mode
             stdlib-roots
             fuel)
@@ -704,6 +885,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]) : i64
   (build-package-emit-with-fuel
@@ -712,6 +894,7 @@
     target-text
     has-target
     opt-level
+    profile
     mode
     stdlib-roots
     64))
@@ -722,6 +905,7 @@
   [has-target : bool]
   [mode : String]
   [opt-level : i64]
+  [profile : BuildProfile]
   [stdlib-roots : CompilerLoadRootList]) : i64
   (match (source-tool-backend-mode "build" mode)
     [(ErrSourceToolBackendMode message)
@@ -741,6 +925,7 @@
             target-text
             has-target
             opt-level
+            profile
             backend-mode
             stdlib-roots)])]))
 
@@ -752,6 +937,7 @@
         target-text
         has-target
         mode
+        profile
         _
         opt-level
         stdlib-roots)
@@ -773,6 +959,7 @@
               has-target
               mode
               opt-level
+              profile
               stdlib-roots)]))]
     [_ 1]))
 
@@ -784,7 +971,7 @@
           (begin
             (print-string (build-source-plan-render config))
             0)]
-        [(BuildPackageConfig _ _ _ _ _ _ _ _) (build-package config)])]
+        [(BuildPackageConfig _ _ _ _ _ _ _ _ _) (build-package config)])]
     [(ErrBuildConfig message)
       (begin
         (print-error message)
@@ -809,6 +996,8 @@
   (BuildCliOptionTarget)
   (BuildCliOptionBackendMode)
   (BuildCliOptionOptLevel)
+  (BuildCliOptionProfile)
+  (BuildCliOptionRelease)
   (BuildCliOptionLinkLib)
   (BuildCliOptionLinkSearch)
   (BuildCliOptionLinkArg)
@@ -833,14 +1022,24 @@
     (build-cli-option-rest5 current)))
 
 (define (build-cli-option-rest3 [current : String]) : BuildCliOption
+  (if (string-eq current "--release")
+    (BuildCliOptionRelease)
+    (build-cli-option-rest4 current)))
+
+(define (build-cli-option-rest-profile [current : String]) : BuildCliOption
+  (if (string-eq current "--profile")
+    (BuildCliOptionProfile)
+    (build-cli-option-rest3 current)))
+
+(define (build-cli-option-rest-opt [current : String]) : BuildCliOption
   (if (string-eq current "--opt-level")
     (BuildCliOptionOptLevel)
-    (build-cli-option-rest4 current)))
+    (build-cli-option-rest-profile current)))
 
 (define (build-cli-option-rest2 [current : String]) : BuildCliOption
   (if (string-eq current "--backend-mode")
     (BuildCliOptionBackendMode)
-    (build-cli-option-rest3 current)))
+    (build-cli-option-rest-opt current)))
 
 (define (build-cli-option-rest1 [current : String]) : BuildCliOption
   (if (string-eq current "--target")
@@ -867,6 +1066,7 @@
           (if (source-tool-flag? current)
             (build-args-have-source? (+ idx 1) count)
             true)]
+        [(BuildCliOptionRelease) (build-args-have-source? (+ idx 1) count)]
         [_ (build-args-have-source? (+ idx 2) count)]))))
 
 (define (build-cli-parse-options
@@ -992,6 +1192,12 @@
                   (string->int value)
                   link-inputs)
                 (ErrBuildCliConfig (build-cli-unknown-opt-level value)))))]
+        [(BuildCliOptionProfile)
+          (ErrBuildCliConfig
+            "build: --profile is only valid for package builds")]
+        [(BuildCliOptionRelease)
+          (ErrBuildCliConfig
+            "build: --release is only valid for package builds")]
         [(BuildCliOptionLinkLib)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --link-lib requires a value")

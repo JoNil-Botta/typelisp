@@ -911,7 +911,7 @@ else
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Generated:"
-    BUILD_MATRIX_ASM="$BUILD_MATRIX/target/typelisp/backend_mode_build/backend_mode_build.s"
+    BUILD_MATRIX_ASM="$BUILD_MATRIX/target/typelisp/release/backend_mode_build/backend_mode_build.s"
     if [ "$HOST_OS" = linux ]; then
         [ -f "$BUILD_MATRIX_ASM" ] || fail "package --backend-mode avx512 did not keep assembly"
         assert_contains "$BUILD_MATRIX_ASM" "%zmm"
@@ -1164,7 +1164,7 @@ EOF
     run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
-    SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/typelisp/selfhost_pkg"
+    SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/typelisp/release/selfhost_pkg"
     SELFHOST_PKG_BIN="$SELFHOST_PKG_OUT_DIR/selfhost_pkg$HOST_EXE_SUFFIX"
     SELFHOST_PKG_ASM="$SELFHOST_PKG_OUT_DIR/selfhost_pkg.s"
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package build did not write executable"
@@ -1202,7 +1202,7 @@ EOF
     run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
-    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/selfhost_lib/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
+    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/release/selfhost_lib/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
     [ -s "$SELFHOST_LIB_ARCHIVE" ] || fail "selfhost package lib build did not write archive"
     assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_LIB_ARCHIVE")"
 
@@ -1285,12 +1285,9 @@ EOF
     assert_stdout_empty
     assert_contains "$err" "build: unknown opt level '9'; expected 0, 1, 2, or 3"
 
-    # Opt-level forwarding is observable in the emitted package assembly: a
-    # constant-foldable multiply `(* 6 7)` folds to a constant at the default
-    # opt level (no `imul`), while `--opt-level 0` skips the optimizer so the
-    # multiply survives as `imul`. `--opt-level 2` optimizes like the default,
-    # and `--opt-level` with no value is rejected. Mirrors the package_build.rs
-    # opt-level-zero / explicit-default / missing-value coverage.
+    # Profile and opt-level forwarding are observable in the emitted package
+    # assembly: release defaults to optimized code, dev defaults to opt level 0,
+    # and an explicit --opt-level overrides the profile default.
     SELFHOST_OPTPKG="$SELFHOST_PLANNER_DIR/optpkg"
     mkdir -p "$SELFHOST_OPTPKG/src"
     cat > "$SELFHOST_OPTPKG/typelisp.pkg" <<'EOF'
@@ -1304,28 +1301,54 @@ EOF
     cat > "$SELFHOST_OPTPKG/src/main.tl" <<'EOF'
 (define (main) : i64 (* 6 7))
 EOF
-    SELFHOST_OPT_ASM="$SELFHOST_OPTPKG/target/typelisp/selfhost_opt_pkg/selfhost_opt_pkg.s"
+    SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/typelisp/release/selfhost_opt_pkg/selfhost_opt_pkg.s"
+    SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/typelisp/dev/selfhost_opt_pkg/selfhost_opt_pkg.s"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
-    [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package default build did not keep assembly"
-    assert_not_contains "$SELFHOST_OPT_ASM" "imul"
+    [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-profile-dev "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
+    assert_contains "$SELFHOST_OPT_DEV_ASM" "imul"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
-    [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep assembly"
-    assert_contains "$SELFHOST_OPT_ASM" "imul"
+    [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
-    [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep assembly"
-    assert_not_contains "$SELFHOST_OPT_ASM" "imul"
+    [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-profile-release-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-profile-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: unknown profile 'fast'; expected dev or release"
+
+    run_cmd selfhost-build-package-profile-duplicate "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --release
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: profile was provided more than once"
 
     run_cmd selfhost-build-package-opt-missing "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
     assert_failure
@@ -1831,7 +1854,7 @@ maybe_strip_manifest_kind "$PKG/vendor/math/typelisp.pkg"
 run_cmd package-build "$COMPILER" build --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
-PKG_ASM="$PKG/target/typelisp/public_tool_pkg/public_tool_pkg.s"
+PKG_ASM="$PKG/target/typelisp/release/public_tool_pkg/public_tool_pkg.s"
 [ -f "$PKG_ASM" ] || fail "package build did not write deterministic assembly"
 assert_contains "$out" "Generated:"
 assert_contains "$PKG_ASM" "main:"
@@ -1843,7 +1866,7 @@ else
     assert_contains "$PKG_ASM" "add_one"
 fi
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
-PKG_OUT_DIR="$PKG/target/typelisp/public_tool_pkg"
+PKG_OUT_DIR="$PKG/target/typelisp/release/public_tool_pkg"
 run_cmd package-clean-dry-run "$COMPILER" clean --dry-run --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
@@ -1916,7 +1939,7 @@ EOF
 run_cmd_cwd package-discover-upward "$WALK_PKG/src/nested/deeper" "$COMPILER" build
 assert_success
 assert_stderr_empty
-WALK_ASM="$WALK_PKG/target/typelisp/walk_pkg/walk_pkg.s"
+WALK_ASM="$WALK_PKG/target/typelisp/release/walk_pkg/walk_pkg.s"
 [ -f "$WALK_ASM" ] || fail "package discover-upward did not write assembly"
 assert_contains "$out" "Generated:"
 assert_contains "$WALK_ASM" "main:"

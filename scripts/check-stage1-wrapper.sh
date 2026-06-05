@@ -291,10 +291,14 @@ EOF
     cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
-    PKG_OUT_DIR="$PKG/target/typelisp/stage1_pkg"
+    PKG_OUT_DIR="$PKG/target/typelisp/release/stage1_pkg"
     PKG_BIN="$PKG_OUT_DIR/stage1_pkg"
     PKG_ASM="$PKG_OUT_DIR/stage1_pkg.s"
-    MATH_ARCHIVE="$PKG/vendor/math/target/typelisp/stage1_math/libstage1_math.a"
+    MATH_ARCHIVE="$PKG/vendor/math/target/typelisp/release/stage1_math/libstage1_math.a"
+    PKG_DEV_OUT_DIR="$PKG/target/typelisp/dev/stage1_pkg"
+    PKG_DEV_BIN="$PKG_DEV_OUT_DIR/stage1_pkg"
+    PKG_DEV_ASM="$PKG_DEV_OUT_DIR/stage1_pkg.s"
+    MATH_DEV_ARCHIVE="$PKG/vendor/math/target/typelisp/dev/stage1_math/libstage1_math.a"
     run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
     [ -x "$PKG_BIN" ] || {
         echo "package build did not write executable $PKG_BIN" >&2
@@ -323,6 +327,23 @@ EOF
     fi
 
     rm -rf "$PKG/target"
+    run_capture build-package-dev "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --profile dev
+    [ -x "$PKG_DEV_BIN" ] || {
+        echo "package dev profile build did not write executable $PKG_DEV_BIN" >&2
+        exit 1
+    }
+    [ -f "$PKG_DEV_ASM" ] || {
+        echo "package dev profile build did not keep assembly side artifact $PKG_DEV_ASM" >&2
+        exit 1
+    }
+    [ -s "$MATH_DEV_ARCHIVE" ] || {
+        echo "package dev profile build did not write dependency archive $MATH_DEV_ARCHIVE" >&2
+        exit 1
+    }
+    assert_contains "$WORKDIR/build-package-dev.stdout" "Generated: $MATH_DEV_ARCHIVE"
+    assert_contains "$WORKDIR/build-package-dev.stdout" "Generated: $PKG_DEV_BIN"
+
+    rm -rf "$PKG/target"
     run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
     [ -x "$PKG_BIN" ] || {
         echo "package discovery did not write executable $PKG_BIN" >&2
@@ -332,7 +353,7 @@ EOF
         echo "package discovery did not keep assembly side artifact $PKG_ASM" >&2
         exit 1
     }
-    assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/stage1_pkg/stage1_pkg"
+    assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/release/stage1_pkg/stage1_pkg"
 
     LIBPKG="$WORKDIR/libpkg"
     mkdir -p "$LIBPKG/src"
@@ -346,7 +367,7 @@ EOF
     cat > "$LIBPKG/src/lib.tl" <<'EOF'
 (define (add-two [x : i64]) : i64 (+ x 2))
 EOF
-    LIB_ARCHIVE="$LIBPKG/target/typelisp/stage1_lib/libstage1_lib.a"
+    LIB_ARCHIVE="$LIBPKG/target/typelisp/release/stage1_lib/libstage1_lib.a"
     run_capture build-package-lib "$COMPILER" build --manifest-path "$LIBPKG/typelisp.pkg"
     [ -s "$LIB_ARCHIVE" ] || {
         echo "package lib build did not write static archive $LIB_ARCHIVE" >&2

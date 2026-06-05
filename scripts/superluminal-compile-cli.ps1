@@ -40,6 +40,37 @@ function Resolve-Tool([string]$Name, [string]$FallbackPath) {
     throw "missing required tool: $Name"
 }
 
+function Resolve-Clang {
+    $command = Get-Command "clang.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    $fallbacks = @(
+        "C:\Program Files\LLVM\bin\clang.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin\clang.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin\clang.exe"
+    )
+    foreach ($fallback in $fallbacks) {
+        if (Test-Path -LiteralPath $fallback -PathType Leaf) {
+            return $fallback
+        }
+    }
+    throw "missing required tool: clang.exe"
+}
+
+function Resolve-Xperf {
+    $command = Get-Command "xperf.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    $fallback = "C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\xperf.exe"
+    if (Test-Path -LiteralPath $fallback -PathType Leaf) {
+        return $fallback
+    }
+    return ""
+}
+
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -103,21 +134,78 @@ function Invoke-Benchmark {
     }
 }
 
-function Write-SymbolMap {
+function Convert-ProfileSymbolName {
+    param(
+        [string]$CompactSymbol,
+        [string]$SemanticSymbol
+    )
+
+    $compact = $CompactSymbol
+    if ($compact.StartsWith("_tl_")) {
+        $compact = $compact.Substring(4)
+    }
+
+    $semantic = $SemanticSymbol
+    if ($semantic.StartsWith("_tl_")) {
+        $semantic = $semantic.Substring(4)
+    }
+    $semantic = [regex]::Replace($semantic, "[^A-Za-z0-9_]", "_")
+
+    return "_tlp_${compact}_${semantic}"
+}
+
+function Write-SemanticProfileAssembly {
     param(
         [string]$AsmPath,
+        [string]$ProfileAsmPath,
         [string]$MapPath
     )
 
     $rows = New-Object System.Collections.Generic.List[string]
-    $rows.Add("symbol`tfunction")
+    $rows.Add("symbol`tprofile_symbol`tfunction")
+    $out = New-Object System.Collections.Generic.List[string]
+    $pendingCompact = ""
+    $pendingSemantic = ""
+
     foreach ($line in [System.IO.File]::ReadLines($AsmPath)) {
         if ($line -match '^#t\s+(\S+)\s+(.+)$') {
-            $rows.Add("$($Matches[1])`t$($Matches[2])")
+            $pendingCompact = $Matches[1]
+            $pendingSemantic = $Matches[2]
+            $out.Add($line)
+        } elseif (($pendingCompact.Length -gt 0) -and ($line -eq ".globl $pendingCompact")) {
+            $profileSymbol = Convert-ProfileSymbolName $pendingCompact $pendingSemantic
+            $rows.Add("$pendingCompact`t$profileSymbol`t$pendingSemantic")
+            $out.Add(".globl $profileSymbol")
+            $out.Add("${profileSymbol}:")
+            $pendingCompact = ""
+            $pendingSemantic = ""
+        } else {
+            $out.Add($line)
+            if ($pendingCompact.Length -gt 0) {
+                $pendingCompact = ""
+                $pendingSemantic = ""
+            }
         }
     }
+
+    [System.IO.File]::WriteAllLines($ProfileAsmPath, $out, [System.Text.Encoding]::ASCII)
     [System.IO.File]::WriteAllLines($MapPath, $rows, [System.Text.Encoding]::ASCII)
+    Write-Host "[superluminal] wrote semantic profile assembly: $ProfileAsmPath"
     Write-Host "[superluminal] wrote symbol map: $MapPath ($($rows.Count - 1) functions)"
+}
+
+function Invoke-ProfileAssemble {
+    param(
+        [string]$AsmPath,
+        [string]$ObjPath
+    )
+
+    $clang = Resolve-Clang
+    Write-Host "[superluminal] assembling semantic-symbol stage2 with clang"
+    & $clang --target=x86_64-pc-windows-msvc -c $AsmPath -o $ObjPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "semantic-symbol assembly failed with exit code $LASTEXITCODE"
+    }
 }
 
 function Invoke-DebugRelink {
@@ -253,6 +341,151 @@ function Invoke-ElevatedCapture {
     }
 }
 
+function Read-ProfileSymbolMap {
+    param(
+        [string]$MapPath
+    )
+
+    $map = @{}
+    if (-not (Test-Path -LiteralPath $MapPath -PathType Leaf)) {
+        return $map
+    }
+
+    foreach ($line in [System.IO.File]::ReadLines($MapPath)) {
+        if ($line -eq "symbol`tprofile_symbol`tfunction") {
+            continue
+        }
+        $parts = $line -split "`t", 3
+        if ($parts.Count -eq 3) {
+            $map[$parts[1]] = $parts[2]
+        }
+    }
+
+    return $map
+}
+
+function Write-HotFunctionReport {
+    param(
+        [string]$DetailCsvPath,
+        [string]$MapPath,
+        [string]$ReportPath
+    )
+
+    $symbolMap = Read-ProfileSymbolMap $MapPath
+    $weights = @{}
+    [int64]$stage2Weight = 0
+    [int64]$stage2CodeWeight = 0
+
+    foreach ($line in [System.IO.File]::ReadLines($DetailCsvPath)) {
+        if ($line -match '^\s*stage2-profile\.exe\s+\(\s*\d+\),\s*([0-9]+),\s*[0-9.]+,\s*(.+)$') {
+            $weight = [int64]$Matches[1]
+            $moduleFunc = $Matches[2].Trim()
+            $stage2Weight += $weight
+            if ($moduleFunc -match '^stage2-profile\.exe!(_tlp_.+)$') {
+                $profileSymbol = $Matches[1]
+                $stage2CodeWeight += $weight
+                if ($weights.ContainsKey($profileSymbol)) {
+                    $weights[$profileSymbol] = [int64]$weights[$profileSymbol] + $weight
+                } else {
+                    $weights[$profileSymbol] = $weight
+                }
+            }
+        }
+    }
+
+    $rows = New-Object System.Collections.Generic.List[string]
+    $rows.Add("weight`tpercent_user_code`tprofile_symbol`tfunction")
+
+    $sorted = foreach ($key in $weights.Keys) {
+        [pscustomobject]@{
+            Symbol = $key
+            Weight = [int64]$weights[$key]
+        }
+    }
+    $sorted = $sorted | Sort-Object Weight -Descending
+
+    foreach ($row in $sorted) {
+        $percent = if ($stage2CodeWeight -gt 0) {
+            "{0:N2}" -f (($row.Weight * 100.0) / $stage2CodeWeight)
+        } else {
+            "0.00"
+        }
+        $function = $row.Symbol
+        if ($symbolMap.ContainsKey($row.Symbol)) {
+            $function = $symbolMap[$row.Symbol]
+        }
+        $rows.Add("$($row.Weight)`t$percent`t$($row.Symbol)`t$function")
+    }
+
+    $rows.Add("")
+    $rows.Add("stage2_total_weight`t$stage2Weight")
+    $rows.Add("stage2_user_code_weight`t$stage2CodeWeight")
+    [System.IO.File]::WriteAllLines($ReportPath, $rows, [System.Text.Encoding]::ASCII)
+    Write-Host "[superluminal] wrote hot function report: $ReportPath"
+}
+
+function Invoke-XperfProfileExport {
+    param(
+        [string]$OutDir,
+        [string]$MapPath
+    )
+
+    $xperf = Resolve-Xperf
+    if ($xperf.Length -eq 0) {
+        Write-Warning "xperf.exe was not found; skipping symbolized WPT profile export"
+        return
+    }
+
+    $etl = Join-Path $OutDir "stage2-profile.etl"
+    $detail = Join-Path $OutDir "stage2-profile.xperf-detail.csv"
+    $hot = Join-Path $OutDir "stage2-profile.hot-functions.tsv"
+    $log = Join-Path $OutDir "stage2-profile.xperf.log"
+    $symcache = Join-Path $OutDir "xperf-symcache"
+    Require-File $etl "Superluminal ETL capture"
+    New-Item -ItemType Directory -Force -Path $symcache | Out-Null
+
+    $oldSymbolPath = ${env:_NT_SYMBOL_PATH}
+    $oldSymcachePath = ${env:_NT_SYMCACHE_PATH}
+    try {
+        $env:_NT_SYMBOL_PATH = $OutDir
+        $env:_NT_SYMCACHE_PATH = $symcache
+        Write-Host "[superluminal] exporting symbolized sample detail with xperf"
+        $oldErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $output = & $xperf -i $etl -symbols verbose -o $detail -a profile -detail 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldErrorActionPreference
+        }
+        $outputLines = foreach ($item in $output) {
+            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                $item.Exception.Message
+            } else {
+                [string]$item
+            }
+        }
+        $outputLines = $outputLines | Where-Object { $_.Length -gt 0 }
+        [System.IO.File]::WriteAllLines($log, [string[]]$outputLines, [System.Text.Encoding]::ASCII)
+        if (($exitCode -ne 0) -and (-not (Test-Path -LiteralPath $detail -PathType Leaf))) {
+            throw "xperf profile export failed with exit code $exitCode"
+        }
+    } finally {
+        if ($null -eq $oldSymbolPath) {
+            Remove-Item Env:_NT_SYMBOL_PATH -ErrorAction SilentlyContinue
+        } else {
+            $env:_NT_SYMBOL_PATH = $oldSymbolPath
+        }
+        if ($null -eq $oldSymcachePath) {
+            Remove-Item Env:_NT_SYMCACHE_PATH -ErrorAction SilentlyContinue
+        } else {
+            $env:_NT_SYMCACHE_PATH = $oldSymcachePath
+        }
+    }
+
+    Write-HotFunctionReport $detail $MapPath $hot
+}
+
 function Assert-ProfileOutputMatchesBenchmark {
     param(
         [string]$Stage2Asm,
@@ -275,8 +508,9 @@ $OutDir = Resolve-FullPath $OutDir
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-$stage2Obj = Join-Path $BenchmarkDir "stage2.obj"
 $stage2Asm = Join-Path $BenchmarkDir "stage2.s"
+$profileAsm = Join-Path $OutDir "stage2-profile.s"
+$profileObj = Join-Path $OutDir "stage2-profile.obj"
 $stage2Exe = Join-Path $OutDir "stage2-profile.exe"
 $stage2Pdb = Join-Path $OutDir "stage2-profile.pdb"
 $symbolMap = Join-Path $OutDir "stage2-symbol-map.tsv"
@@ -293,14 +527,15 @@ if (-not $SkipBenchmark) {
     Invoke-Benchmark
 }
 
-Require-File $stage2Obj "benchmark stage2 object"
 Require-File $stage2Asm "benchmark stage2 assembly"
-Invoke-DebugRelink $stage2Obj $stage2Exe $stage2Pdb
-Write-SymbolMap $stage2Asm $symbolMap
+Write-SemanticProfileAssembly $stage2Asm $profileAsm $symbolMap
+Invoke-ProfileAssemble $profileAsm $profileObj
+Invoke-DebugRelink $profileObj $stage2Exe $stage2Pdb
 
 if (-not $SkipCapture) {
     Invoke-ElevatedCapture $BenchmarkDir $OutDir $FrequencyHz
     Assert-ProfileOutputMatchesBenchmark $stage2Asm $capturedStage3
+    Invoke-XperfProfileExport $OutDir $symbolMap
 }
 
 Write-Host "[superluminal] outputs:"
@@ -308,3 +543,4 @@ Write-Host "  session:    $(Join-Path $OutDir "stage2-profile")"
 Write-Host "  etl:        $(Join-Path $OutDir "stage2-profile.etl")"
 Write-Host "  pdb:        $stage2Pdb"
 Write-Host "  symbol map: $symbolMap"
+Write-Host "  hot funcs:  $(Join-Path $OutDir "stage2-profile.hot-functions.tsv")"

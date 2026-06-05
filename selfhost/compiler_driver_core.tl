@@ -164,15 +164,15 @@
     [(BackendModeAvx2)
       (match target
         [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
-        [(BackendTargetWindows) (CompilerLowerAvx2)])]
+        [(BackendTargetWindows) (CompilerLowerWindowsAvx2)])]
     [(BackendModeAvx512)
       (match target
         [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
-        [(BackendTargetWindows) (CompilerLowerAvx512)])]
+        [(BackendTargetWindows) (CompilerLowerWindowsAvx512)])]
     [_
       (match target
         [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
-        [(BackendTargetWindows) (CompilerLowerScalar)])]))
+        [(BackendTargetWindows) (CompilerLowerWindowsScalar)])]))
 
 (define (compiler-driver-enable-linux-cfgs [cfgs : SymI64Env]) : SymI64Env
   (compiler-cfg-enable

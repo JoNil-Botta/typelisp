@@ -4,6 +4,7 @@
 # extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
+c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-

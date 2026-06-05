@@ -18814,15 +18814,15 @@ tl_windows_sdk_registry_install:
     [(BackendModeAvx2)
       (match target
         [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
-        [(BackendTargetWindows) (CompilerLowerAvx2)])]
+        [(BackendTargetWindows) (CompilerLowerWindowsAvx2)])]
     [(BackendModeAvx512)
       (match target
         [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
-        [(BackendTargetWindows) (CompilerLowerAvx512)])]
+        [(BackendTargetWindows) (CompilerLowerWindowsAvx512)])]
     [_
       (match target
         [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
-        [(BackendTargetWindows) (CompilerLowerScalar)])]))
+        [(BackendTargetWindows) (CompilerLowerWindowsScalar)])]))
 
 (define (compiler-backend-lower-source-for-target
   [src : String]

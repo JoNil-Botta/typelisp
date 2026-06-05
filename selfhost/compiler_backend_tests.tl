@@ -565,7 +565,7 @@
       (if (= sum 36) 42 2)
       1)))")
 
-(define (compiler-backend-c-abi-aggregate-ok?) : bool
+(define (compiler-backend-c-abi-aggregate-linux-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-aggregate-source)
     (BackendTargetLinux))
@@ -583,6 +583,30 @@
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-c-abi-aggregate-windows-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-aggregate-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_cabi_color_make\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_color_use\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_color_make\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movq $4, %rcx\n    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+        (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-c-abi-aggregate-ok?) : bool
+  (and
+    (compiler-backend-c-abi-aggregate-linux-ok?)
+    (compiler-backend-c-abi-aggregate-windows-ok?)))
 
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and

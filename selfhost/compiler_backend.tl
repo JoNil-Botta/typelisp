@@ -17139,6 +17139,7 @@ tl_process_output:
     je .L_tl_process_start_count_args_done
     incq %r13
     movq 16(%r12), %r12
+    movq 0(%r12), %r12
     jmp .L_tl_process_start_count_args
 .L_tl_process_start_count_args_done:
     movq %r13, -24(%rbp)
@@ -17160,6 +17161,7 @@ tl_process_output:
     movq %rax, (%r14,%r15,8)
     incq %r15
     movq 16(%r12), %r12
+    movq 0(%r12), %r12
     jmp .L_tl_process_start_fill_argv
 .L_tl_process_start_fill_argv_done:
     movq $0, (%r14,%r15,8)

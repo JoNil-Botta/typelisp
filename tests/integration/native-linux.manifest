@@ -105,7 +105,8 @@ unit_main|tests/integration/unit_main.tl|0|-|-|-
 valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
 with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|-
 with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|-
-with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:with-escape
+with_arena_mark_stress|tests/integration/with_arena_mark_stress.tl|42|-|-|-
+with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:with-escape,_tl_clone_u24EscapeOutcome
 compiler_ast_types_smoke|selfhost/compiler_ast_types_smoke.tl|42|-|-|compiler_ast_types.tl
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl

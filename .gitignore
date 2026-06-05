@@ -39,5 +39,10 @@ selfhost/compiler_backend_runtime_fixture
 # Downloaded stage0 compiler cache
 /tools/stage0/
 
+# VS Code extension Node build artifacts
+/tools/vs-code-extension/node_modules/
+/tools/vs-code-extension/out/
+/tools/vs-code-extension/dist/
+
 # Claude Code agent workspace
 .claude/

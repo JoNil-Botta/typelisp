@@ -1,16 +1,36 @@
 {
   "name": "typelisp",
   "displayName": "TypeLisp",
-  "description": "Syntax highlighting and (forthcoming) LSP client for the TypeLisp language.",
+  "description": "Syntax highlighting and LSP client for the TypeLisp language.",
   "version": "0.0.1",
   "publisher": "typelisp",
-  "license": "SEE LICENSE IN ../../LICENSE",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JoNil-Botta/typelisp.git",
+    "directory": "tools/vs-code-extension"
+  },
+  "main": "./out/extension.js",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": [
     "Programming Languages"
   ],
+  "activationEvents": [
+    "onLanguage:typelisp",
+    "workspaceContains:**/*.tl",
+    "onCommand:typelisp.restartLanguageServer"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p .",
+    "check": "tsc -p . --noEmit",
+    "lint": "npm run check",
+    "package": "npm run package:smoke",
+    "package:smoke": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/typelisp-0.0.1.vsix",
+    "smoke": "npm run compile && npm run package:smoke"
+  },
   "contributes": {
     "languages": [
       {
@@ -32,6 +52,12 @@
         "path": "./syntaxes/typelisp.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "typelisp.restartLanguageServer",
+        "title": "TypeLisp: Restart Language Server"
+      }
+    ],
     "configuration": {
       "title": "TypeLisp",
       "properties": {
@@ -46,14 +72,22 @@
             "type": "string"
           },
           "default": [],
-          "description": "Extra `--stdlib-root` directories passed to the TypeLisp tooling."
+          "description": "Extra `--stdlib-root` directories passed to `typelisp lsp`, in order."
         },
         "typelisp.enableLanguageServer": {
           "type": "boolean",
           "default": true,
-          "description": "Connect to the TypeLisp LSP server (`typelisp lsp`) for diagnostics and editor features once the LSP client glue lands."
+          "description": "Connect to the TypeLisp LSP server (`typelisp lsp`) for diagnostics and editor features."
         }
       }
     }
+  },
+  "dependencies": {
+    "vscode-languageclient": "8.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.75.1",
+    "@vscode/vsce": "2.32.0",
+    "typescript": "5.9.3"
   }
 }

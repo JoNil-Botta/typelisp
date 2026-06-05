@@ -9,6 +9,8 @@
 ; reads the clone after later scratch cycles. RSS/peak-memory assertion is left
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
+(import "stdlib/arena.tl")
+
 (extern tl_alloc : (-> u64 u64))
 
 (defenum StressList

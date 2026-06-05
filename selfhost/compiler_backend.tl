@@ -1,6 +1,8 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_lower.tl")
 
 (import "compiler_diagnostic.tl")

@@ -1,3 +1,5 @@
+(import "stdlib/arena.tl")
+
 (extern tl_arena_poison_enable : (-> unit))
 
 (defstruct PoisonPayload

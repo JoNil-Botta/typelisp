@@ -1,6 +1,8 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_symbols.tl")
 
 (import "compiler_diagnostic.tl")
@@ -435,33 +437,9 @@
     [(AstTyStruct name) name]
     [(AstTyVar name) name]))
 
-;; First-class arena primitives (#1633). The opaque `arena` handle is an i64
-;; pointer. `clone` is registered separately (it is type-directed: its result is
-;; its argument's type) in the call typechecker, not here.
-(define (tc-arena-builtins-env [env : TcTypeEnv]) : TcTypeEnv
-  (let
-    [out : TcTypeEnv env]
-    (begin
-      (set! out (tc-bind out "arena-make" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-destroy" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      (set! out (tc-bind out "arena-current" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-set!" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      (set! out (tc-bind out "arena-mark" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-rewind" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      out)))
-
 (define (tc-default-env) : TcTypeEnv
   (tc-profile-builtins-env
-    (tc-bind
-      (tc-arena-builtins-env (tc-default-env-base))
-      (tc-default-boundary-name)
-      (AstTyUnit))))
+    (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-profile-builtins-env [env : TcTypeEnv]) : TcTypeEnv
   (let

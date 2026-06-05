@@ -86,36 +86,38 @@
 
 (define (doc-site-stdlib-modules) : DocSiteModuleList
   (DocSiteModuleCons
-    (DocSiteModule "stdlib/env.tl" "stdlib-env.html")
+    (DocSiteModule "stdlib/arena.tl" "stdlib-arena.html")
     (DocSiteModuleCons
-      (DocSiteModule "stdlib/fs.tl" "stdlib-fs.html")
+      (DocSiteModule "stdlib/env.tl" "stdlib-env.html")
       (DocSiteModuleCons
-        (DocSiteModule "stdlib/hash.tl" "stdlib-hash.html")
+        (DocSiteModule "stdlib/fs.tl" "stdlib-fs.html")
         (DocSiteModuleCons
-          (DocSiteModule "stdlib/io.tl" "stdlib-io.html")
+          (DocSiteModule "stdlib/hash.tl" "stdlib-hash.html")
           (DocSiteModuleCons
-            (DocSiteModule "stdlib/json.tl" "stdlib-json.html")
+            (DocSiteModule "stdlib/io.tl" "stdlib-io.html")
             (DocSiteModuleCons
-              (DocSiteModule "stdlib/process.tl" "stdlib-process.html")
+              (DocSiteModule "stdlib/json.tl" "stdlib-json.html")
               (DocSiteModuleCons
-                (DocSiteModule "stdlib/random.tl" "stdlib-random.html")
+                (DocSiteModule "stdlib/process.tl" "stdlib-process.html")
                 (DocSiteModuleCons
-                  (DocSiteModule "stdlib/string.tl" "stdlib-string.html")
+                  (DocSiteModule "stdlib/random.tl" "stdlib-random.html")
                   (DocSiteModuleCons
-                    (DocSiteModule "stdlib/test.tl" "stdlib-test.html")
+                    (DocSiteModule "stdlib/string.tl" "stdlib-string.html")
                     (DocSiteModuleCons
-                      (DocSiteModule
-                        "stdlib/text_buf.tl"
-                        "stdlib-text-buf.html")
+                      (DocSiteModule "stdlib/test.tl" "stdlib-test.html")
                       (DocSiteModuleCons
                         (DocSiteModule
-                          "stdlib/windows_registry.tl"
-                          "stdlib-windows-registry.html")
+                          "stdlib/text_buf.tl"
+                          "stdlib-text-buf.html")
                         (DocSiteModuleCons
                           (DocSiteModule
-                            "stdlib/windows_sdk.tl"
-                            "stdlib-windows-sdk.html")
-                          DocSiteModuleNil)))))))))))))
+                            "stdlib/windows_registry.tl"
+                            "stdlib-windows-registry.html")
+                          (DocSiteModuleCons
+                            (DocSiteModule
+                              "stdlib/windows_sdk.tl"
+                              "stdlib-windows-sdk.html")
+                            DocSiteModuleNil))))))))))))))
 
 (define (doc-site-language-guides) : DocSiteGuidePageList
   (DocSiteGuidePageCons

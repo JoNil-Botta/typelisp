@@ -174,7 +174,8 @@
 
 (defstruct CompilerBackendRuntimeTailPlan
   (fs-current-dir bool)
-  (profile bool))
+  (profile bool)
+  (hash-string bool))
 
 (defenum ResultCompilerBackendBuffer
   (OkCompilerBackendBuffer TextBuf)
@@ -245,6 +246,10 @@
 (define (compiler-backend-runtime-tail-profile?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail profile))
+
+(define (compiler-backend-runtime-tail-hash-string?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail hash-string))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -10994,7 +10999,11 @@
                             name
                             (compiler-backend-runtime-tail-profile?
                               provides-tail))
-                          false))))))))))]))
+                          (compiler-backend-provides-runtime-name?
+                            name
+                            "tl_hash_string"
+                            (compiler-backend-runtime-tail-hash-string?
+                              provides-tail))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -11018,6 +11027,8 @@
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [defines-string-to-int : bool
       (compiler-backend-runtime-index-defines? index "tl_string_to_int")]
+    [defines-hash-string : bool
+      (compiler-backend-runtime-index-defines? index "tl_hash_string")]
     [defines-int-to-string : bool
       (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
     [defines-print-err : bool
@@ -11083,6 +11094,8 @@
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
+    [extern-hash-string : bool
+      (compiler-backend-runtime-index-extern? index "tl_hash_string")]
     [extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
@@ -11232,6 +11245,8 @@
       (compiler-backend-runtime-index-calls? index "tl_string_eq")]
     [calls-string-to-int : bool
       (compiler-backend-runtime-index-calls? index "tl_string_to_int")]
+    [calls-hash-string : bool
+      (compiler-backend-runtime-index-calls? index "tl_hash_string")]
     [calls-int-to-string : bool
       (compiler-backend-runtime-index-calls? index "tl_int_to_string")]
     [calls-abort : bool
@@ -11374,6 +11389,10 @@
       (and
         (not defines-string-to-int)
         (or extern-string-to-int calls-string-to-int))]
+    [needs-hash-string : bool
+      (and
+        (not defines-hash-string)
+        (or extern-hash-string calls-hash-string))]
     [needs-int-to-string : bool
       (and
         (not defines-int-to-string)
@@ -11586,7 +11605,10 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        (CompilerBackendRuntimeTailPlan needs-fs-current-dir needs-profile)))))
+        (CompilerBackendRuntimeTailPlan
+          needs-fs-current-dir
+          needs-profile
+          needs-hash-string)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -16158,6 +16180,33 @@ tl_string_eq:
 
 ")
 
+(define (compiler-backend-runtime-hash-string-functions) : String
+  "    .globl tl_hash_string
+tl_hash_string:
+    xorq %rax, %rax
+    testq %rsi, %rsi
+    jz .L_tl_hash_string_done
+.L_tl_hash_string_loop:
+    imulq $131, %rax, %rax
+    movzbq (%rdi), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    sarq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep
+    subq $2147483647, %rax
+.L_tl_hash_string_keep:
+    incq %rdi
+    decq %rsi
+    jne .L_tl_hash_string_loop
+.L_tl_hash_string_done:
+    ret
+
+")
+
 (define (compiler-backend-runtime-string-to-int-functions) : String
   "    .globl tl_string_to_int
 tl_string_to_int:
@@ -16241,6 +16290,35 @@ tl_string_eq:
     ret
 .L_tl_string_eq_false:
     xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-hash-string-functions) : String
+  "    .globl tl_hash_string
+tl_hash_string:
+    movq %rcx, %r10
+    movq %rdx, %r11
+    xorq %rax, %rax
+    testq %r11, %r11
+    jz .L_tl_hash_string_done
+.L_tl_hash_string_loop:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    sarq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep
+    subq $2147483647, %rax
+.L_tl_hash_string_keep:
+    incq %r10
+    decq %r11
+    jne .L_tl_hash_string_loop
+.L_tl_hash_string_done:
     ret
 
 ")
@@ -19268,6 +19346,8 @@ tl_windows_sdk_registry_install:
         [fs-current-dir : bool
           (compiler-backend-runtime-tail-fs-current-dir? tail-plan)]
         [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
+        [hash-string : bool
+          (compiler-backend-runtime-tail-hash-string? tail-plan)]
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
@@ -19309,6 +19389,12 @@ tl_windows_sdk_registry_install:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-string-eq-functions)
               (compiler-backend-runtime-string-eq-functions))
+            "")]
+        [hash-string-asm : String
+          (if hash-string
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-hash-string-functions)
+              (compiler-backend-runtime-hash-string-functions))
             "")]
         [string-to-int-asm : String
           (if string-to-int
@@ -19500,8 +19586,10 @@ tl_windows_sdk_registry_install:
               substring-asm
               concat-asm
               string-eq-asm
-              string-to-int-asm)
-            (string-append int-to-string-asm abort-asm))]
+              hash-string-asm)
+            (string-append
+              string-to-int-asm
+              (string-append int-to-string-asm abort-asm)))]
         [runtime-io-asm : String
           (string-append
             (backend-cat5
@@ -19807,7 +19895,9 @@ tl_windows_sdk_registry_install:
             shift-abort
             (or
               (compiler-backend-runtime-tail-fs-current-dir? tail-plan)
-              (compiler-backend-runtime-tail-profile? tail-plan)))]
+              (or
+                (compiler-backend-runtime-tail-profile? tail-plan)
+                (compiler-backend-runtime-tail-hash-string? tail-plan))))]
         (not
           (or
             front-runtime

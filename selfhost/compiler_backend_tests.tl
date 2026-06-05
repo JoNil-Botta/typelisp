@@ -2547,7 +2547,7 @@
       false
       false
       false
-      (CompilerBackendRuntimeTailPlan false false))
+      (CompilerBackendRuntimeTailPlan false false false))
     IrFunctionNil
     IrExternNil
     (compiler-backend-program-index-build IrFunctionNil IrExternNil)

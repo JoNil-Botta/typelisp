@@ -16028,6 +16028,81 @@
       (lower-supported-function-return-type? ctx (box-get inner))]
     [_ true]))
 
+(define (lower-stdlib-hash-string-logical-name? [logical-name : String]) : bool
+  (let
+    [suffix : String "stdlib/hash.tl::hash-string"]
+    [name-len : i64 (string-length logical-name)]
+    [suffix-len : i64 (string-length suffix)]
+    (and
+      (>= name-len suffix-len)
+      (string-eq
+        (substring logical-name (- name-len suffix-len) suffix-len)
+        suffix))))
+
+(define (lower-stdlib-hash-string-param? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyRef _ inner)
+      (match (tc-type-strip-region (tc-resolve-type ctx (box-get inner)))
+        [(AstTyStr) true]
+        [_ false])]
+    [_ false]))
+
+(define (lower-stdlib-hash-string-signature?
+  [ctx : TcContext]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret-ty : AstType]) : bool
+  (and
+    (lower-stdlib-hash-string-logical-name? logical-name)
+    (and
+      (tc-type-eq ret-ty (AstTyI64))
+      (match params
+        [(AstParamCons param rest)
+          (let
+            [rest : AstParamList (box-get rest)]
+            (match rest
+              [(AstParamNil)
+                (match param
+                  [(AstParam _ ty _)
+                    (lower-stdlib-hash-string-param? ctx ty)])]
+              [_ false]))]
+        [_ false]))))
+
+(define (lower-stdlib-hash-string-function
+  [ctx : TcContext]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret-ty : AstType]
+  [state : LowerState]) : ResultLowerFunction
+  (match (lower-string-fields state (IrValueVar 0))
+    [(LowerStringFields fields-state ptr len)
+      (match (lower-runtime-call-values
+        fields-state
+        "tl_hash_string"
+        (compiler-ir-value-cons
+          ptr
+          (compiler-ir-value-cons len IrValueNil))
+        ret-ty)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr call-state value _)
+              (let
+                [return-state : LowerState
+                  (lower-state-emit
+                    call-state
+                    (IrInstrReturn (IrSomeValue value)))]
+                (OkLowerFunction
+                  (compiler-ir-function-cons
+                    (IrFunction
+                      logical-name
+                      (lower-param-list ctx params 0)
+                      ret-ty
+                      (lower-state-next-var return-state)
+                      (lower-state-build-blocks return-state))
+                    (lower-state-functions return-state))
+                  (lower-state-spans return-state)))])]
+        [(ErrLowerExpr message) (ErrLowerFunction message)])]))
+
 (define (lower-function
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -16068,33 +16143,44 @@
           mode)]
       [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       (if (lower-supported-function-return-type? ctx ret-ty)
-        (match (lower-copy-inline-aggregate-params
+        (if (lower-stdlib-hash-string-signature?
           ctx
-          state
-          env
-          type-env
-          params)
-          [(OkLowerEnv abi-state abi-env abi-type-env)
-            (match (lower-tail-expr
-              ctx
-              abi-state
-              abi-env
-              abi-type-env
-              body
-              ret-ty)
-              [(OkLowerState final-state)
-                (OkLowerFunction
-                  (compiler-ir-function-cons
-                    (IrFunction
-                      logical-name
-                      (lower-param-list ctx params 0)
-                      ret-ty
-                      (lower-state-next-var final-state)
-                      (lower-state-build-blocks final-state))
-                    (lower-state-functions final-state))
-                  (lower-state-spans final-state))]
-              [(ErrLowerState message) (ErrLowerFunction message)])]
-          [(ErrLowerEnv message) (ErrLowerFunction message)])
+          logical-name
+          params
+          ret-ty)
+          (lower-stdlib-hash-string-function
+            ctx
+            logical-name
+            params
+            ret-ty
+            state)
+          (match (lower-copy-inline-aggregate-params
+            ctx
+            state
+            env
+            type-env
+            params)
+            [(OkLowerEnv abi-state abi-env abi-type-env)
+              (match (lower-tail-expr
+                ctx
+                abi-state
+                abi-env
+                abi-type-env
+                body
+                ret-ty)
+                [(OkLowerState final-state)
+                  (OkLowerFunction
+                    (compiler-ir-function-cons
+                      (IrFunction
+                        logical-name
+                        (lower-param-list ctx params 0)
+                        ret-ty
+                        (lower-state-next-var final-state)
+                        (lower-state-build-blocks final-state))
+                      (lower-state-functions final-state))
+                    (lower-state-spans final-state))]
+                [(ErrLowerState message) (ErrLowerFunction message)])]
+            [(ErrLowerEnv message) (ErrLowerFunction message)]))
         (ErrLowerFunction
           (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 
@@ -18043,6 +18129,35 @@
   (string-length path))
 (define (main [path : String]) : i64
   (borrowed-score (& path)))")
+
+(define (compiler-lower-stdlib-hash-string-source) : String
+  "(define (hash-string [key : (& key str)]) : i64
+  (let
+    [n : i64 (string-length key)]
+    [i : i64 0]
+    [hash : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [next : i64
+            (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
+          [reduced : i64
+            (+ (bit-and next 2147483647) (shr next 31))]
+          (begin
+            (set!
+              hash
+              (if (>= reduced 2147483647)
+                (- reduced 2147483647)
+                reduced))
+            (set! i (+ i 1)))))
+      hash)))
+(define (main [key : String]) : i64
+  (+ (hash-string (& key)) 0))")
+
+(define (compiler-lower-stdlib-hash-string-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/hash.tl"
+    (ast-decl-path-cons "app.tl" AstDeclPathNil)))
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string-length [s : String]) : i64 40)
@@ -21160,6 +21275,37 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-stdlib-hash-string-shape-ok?) : bool
+  (match (parse-ast-source (compiler-lower-stdlib-hash-string-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-stdlib-hash-string-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (let
+                [name : String "stdlib/hash.tl::hash-string"]
+                [ok : bool true]
+                (begin
+                  (if (= (lower-test-function-call-count
+                    functions
+                    name
+                    "tl_hash_string")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (= (lower-test-function-bounds-count functions name) 0)
+                    unit
+                    (set! ok false))
+                  (if (= (lower-test-function-call-count functions "main" name) 1)
+                    unit
+                    (set! ok false))
+                  ok))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-lower-reference-values-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-reference-return-source))
     [(OkCompilerLower program _)
@@ -22678,6 +22824,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-borrowed-str-param-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-hash-string-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-string-shadow-shape-ok?

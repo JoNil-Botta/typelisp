@@ -1005,7 +1005,11 @@
     (string-eq name "tl_string_eq")
     (or
       (string-eq name "tl_string_to_int")
-      (or (string-eq name "tl_region_mark") (string-eq name ".L_tl_stdin_eof")))))
+      (or
+        (string-eq name "tl_hash_string")
+        (or
+          (string-eq name "tl_region_mark")
+          (string-eq name ".L_tl_stdin_eof"))))))
 
 (define (compiler-ir-runtime-memory-write? [name : String]) : bool
   (or

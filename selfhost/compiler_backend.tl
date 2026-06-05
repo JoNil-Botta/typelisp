@@ -234,6 +234,57 @@
   [rest : BackendStringList]) : BackendStringList
   (BackendStringCons head (box rest)))
 
+(defstruct BackendStringSet
+  (seen StringI64Map)
+  (items BackendStringList))
+
+(defstruct CompilerBackendProgramCollections
+  (functions BackendStringSet)
+  (strings BackendStringSet)
+  (floats BackendStringSet))
+
+(define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
+  (BackendStringSet (string-i64-map-with-capacity capacity) BackendStringNil))
+
+(define (compiler-backend-string-set-add
+  [set : BackendStringSet]
+  [text : String]) : BackendStringSet
+  (if (string-i64-map-contains? (struct-get set seen) text)
+    set
+    (BackendStringSet
+      (string-i64-map-put (struct-get set seen) text 1)
+      (compiler-backend-string-cons text (struct-get set items)))))
+
+(define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (compiler-backend-string-set-new 256)
+    (compiler-backend-string-set-new 256)
+    (compiler-backend-string-set-new 256)))
+
+(define (compiler-backend-program-collections-add-function
+  [collections : CompilerBackendProgramCollections]
+  [name : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (compiler-backend-string-set-add (struct-get collections functions) name)
+    (struct-get collections strings)
+    (struct-get collections floats)))
+
+(define (compiler-backend-program-collections-add-string
+  [collections : CompilerBackendProgramCollections]
+  [text : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (compiler-backend-string-set-add (struct-get collections strings) text)
+    (struct-get collections floats)))
+
+(define (compiler-backend-program-collections-add-float
+  [collections : CompilerBackendProgramCollections]
+  [text : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (compiler-backend-string-set-add (struct-get collections floats) text)))
+
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
@@ -9039,16 +9090,6 @@
     program-index
     (text-buf-empty)))
 
-(define (compiler-backend-string-list-contains?
-  [strings : BackendStringList]
-  [text : String]) : bool
-  (match strings
-    [(BackendStringNil) false]
-    [(BackendStringCons head rest)
-      (if (string-eq head text)
-        true
-        (compiler-backend-string-list-contains? (box-get rest) text))]))
-
 (define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
   [out : BackendStringList]) : BackendStringList
@@ -9062,646 +9103,252 @@
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringNil))
 
-(define (compiler-backend-string-list-add
-  [strings : BackendStringList]
-  [text : String]) : BackendStringList
-  (if (compiler-backend-string-list-contains? strings text)
-    strings
-    (compiler-backend-string-cons text strings)))
+(define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringList
+  (compiler-backend-string-list-reverse (struct-get set items)))
 
-(define (compiler-backend-collect-value-function
-  [functions : BackendStringList]
-  [value : CompilerIrValue]) : BackendStringList
+(define (compiler-backend-program-collections-functions
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections functions)))
+
+(define (compiler-backend-program-collections-strings
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections strings)))
+
+(define (compiler-backend-program-collections-floats
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections floats)))
+
+(define (compiler-backend-collect-value-collections
+  [collections : CompilerBackendProgramCollections]
+  [value : CompilerIrValue]) : CompilerBackendProgramCollections
   (match value
-    [(IrValueFunction name) (compiler-backend-string-list-add functions name)]
-    [_ functions]))
+    [(IrValueFunction name)
+      (compiler-backend-program-collections-add-function collections name)]
+    [(IrValueString text)
+      (compiler-backend-program-collections-add-string collections text)]
+    [(IrValueF64 text)
+      (compiler-backend-program-collections-add-float collections text)]
+    [_ collections]))
 
-(define (compiler-backend-collect-value-list-functions
-  [functions : BackendStringList]
-  [values : CompilerIrValueList]) : BackendStringList
+(define (compiler-backend-collect-maybe-value-collections
+  [collections : CompilerBackendProgramCollections]
+  [value : CompilerIrMaybeValue]) : CompilerBackendProgramCollections
+  (match value
+    [(IrNoValue) collections]
+    [(IrSomeValue inner)
+      (compiler-backend-collect-value-collections collections inner)]))
+
+(define (compiler-backend-collect-value-list-collections
+  [collections : CompilerBackendProgramCollections]
+  [values : CompilerIrValueList]) : CompilerBackendProgramCollections
   (match values
-    [(IrValueNil) functions]
+    [(IrValueNil) collections]
     [(IrValueCons value rest)
-      (compiler-backend-collect-value-list-functions
-        (compiler-backend-collect-value-function functions value)
+      (compiler-backend-collect-value-list-collections
+        (compiler-backend-collect-value-collections collections value)
         (box-get rest))]))
 
-(define (compiler-backend-collect-call-args-array-functions
-  [functions : BackendStringList]
+(define (compiler-backend-collect-call-args-array-collections
+  [collections : CompilerBackendProgramCollections]
   [values : (Array CompilerIrValue)]
-  [index : i64]) : BackendStringList
+  [index : i64]) : CompilerBackendProgramCollections
   (if (>= index (array-length values))
-    functions
-    (compiler-backend-collect-call-args-array-functions
-      (compiler-backend-collect-value-function
-        functions
+    collections
+    (compiler-backend-collect-call-args-array-collections
+      (compiler-backend-collect-value-collections
+        collections
         (array-ref values index))
       values
       (+ index 1))))
 
-(define (compiler-backend-collect-call-args-functions
-  [functions : BackendStringList]
-  [args : CompilerIrCallArgs]) : BackendStringList
+(define (compiler-backend-collect-call-args-collections
+  [collections : CompilerBackendProgramCollections]
+  [args : CompilerIrCallArgs]) : CompilerBackendProgramCollections
   (match args
-    [(IrCallArgsNil) functions]
+    [(IrCallArgsNil) collections]
     [(IrCallArgsOne value)
-      (compiler-backend-collect-value-function functions value)]
+      (compiler-backend-collect-value-collections collections value)]
     [(IrCallArgsTwo a b)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions a)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections a)
         b)]
     [(IrCallArgsArray values)
-      (compiler-backend-collect-call-args-array-functions functions values 0)]))
+      (compiler-backend-collect-call-args-array-collections
+        collections
+        values
+        0)]))
 
-(define (compiler-backend-collect-phi-functions
-  [functions : BackendStringList]
-  [inputs : CompilerIrPhiInputList]) : BackendStringList
+(define (compiler-backend-collect-phi-collections
+  [collections : CompilerBackendProgramCollections]
+  [inputs : CompilerIrPhiInputList]) : CompilerBackendProgramCollections
   (match inputs
-    [(IrPhiInputNil) functions]
+    [(IrPhiInputNil) collections]
     [(IrPhiInputCons value _ rest)
-      (compiler-backend-collect-phi-functions
-        (compiler-backend-collect-value-function functions value)
+      (compiler-backend-collect-phi-collections
+        (compiler-backend-collect-value-collections collections value)
         (box-get rest))]))
 
-(define (compiler-backend-collect-instr-functions
-  [functions : BackendStringList]
-  [instr : CompilerIrInstr]) : BackendStringList
+(define (compiler-backend-collect-instr-collections
+  [collections : CompilerBackendProgramCollections]
+  [instr : CompilerIrInstr]) : CompilerBackendProgramCollections
   (match instr
     [(IrInstrMov _ src _)
-      (compiler-backend-collect-value-function functions src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrUnOp _ _ src _)
-      (compiler-backend-collect-value-function functions src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-call-args-functions functions args)]
+      (compiler-backend-collect-call-args-collections collections args)]
     [(IrInstrCallIndirect _ func args _)
-      (compiler-backend-collect-call-args-functions
-        (compiler-backend-collect-value-function functions func)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections collections func)
         args)]
     [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-call-args-functions functions args)]
+      (compiler-backend-collect-call-args-collections collections args)]
+    [(IrInstrStore _ value _)
+      (compiler-backend-collect-value-collections collections value)]
     [(IrInstrBranch cond _ _)
-      (compiler-backend-collect-value-function functions cond)]
+      (compiler-backend-collect-value-collections collections cond)]
     [(IrInstrReturn maybe)
-      (match maybe
-        [(IrNoValue) functions]
-        [(IrSomeValue value)
-          (compiler-backend-collect-value-function functions value)])]
+      (compiler-backend-collect-maybe-value-collections collections maybe)]
     [(IrInstrPhi _ inputs _)
-      (compiler-backend-collect-phi-functions functions inputs)]
+      (compiler-backend-collect-phi-collections collections inputs)]
     [(IrInstrGep _ base offset _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections base)
         offset)]
     [(IrInstrLoad _ src _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrStore _ src _)
-      (compiler-backend-collect-value-function functions src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrStorePtr dst src _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions dst)
-        src)]
-    [(IrInstrCast _ src _ _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrBoundsCheck index len _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions index)
-        len)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
-        rhs)]
-    [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
-        rhs)]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
-        rhs)]
-    [(IrInstrMaskNot _ src _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrMaskReduce _ _ src _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function functions mask)
-          on-true)
-        on-false)]
-    [(IrInstrVectorLoad _ base index _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions base)
-        index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function functions base)
-          index)
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function
-            (compiler-backend-collect-value-function functions base)
-            index)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function functions base)
-          index)
-        mask)]
-    [(IrInstrTailMask _ index len _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions index)
-        len)]
-    [(IrInstrEntryArgc _) functions]
-    [(IrInstrEntryArgv _) functions]
-    [(IrInstrEntryEnvp _) functions]
-    [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions leaf)
-        subleaf)]
-    [(IrInstrXgetbv _ index)
-      (compiler-backend-collect-value-function functions index)]
-    [_ functions]))
-
-(define (compiler-backend-collect-instr-list-functions
-  [functions : BackendStringList]
-  [instrs : CompilerIrInstrList]) : BackendStringList
-  (match instrs
-    [(IrInstrNil) functions]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-functions
-        (compiler-backend-collect-instr-functions functions instr)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-block-functions
-  [functions : BackendStringList]
-  [blocks : CompilerIrBlockList]) : BackendStringList
-  (match blocks
-    [(IrBlockNil) functions]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-block-functions
-            (compiler-backend-collect-instr-list-functions functions instrs)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-function-functions
-  [names : BackendStringList]
-  [functions : CompilerIrFunctionList]) : BackendStringList
-  (match functions
-    [(IrFunctionNil) names]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-functions
-            (compiler-backend-collect-block-functions names blocks)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-global-functions
-  [names : BackendStringList]
-  [globals : CompilerIrGlobalList]) : BackendStringList
-  (match globals
-    [(IrGlobalNil) names]
-    [(IrGlobalCons global rest)
-      (match global
-        [(IrGlobal _ _ value)
-          (compiler-backend-collect-global-functions
-            (compiler-backend-collect-value-function names value)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-program-functions
-  [program : CompilerIrProgram]) : BackendStringList
-  (match program
-    [(IrProgram globals functions _)
-      (compiler-backend-string-list-reverse
-        (compiler-backend-collect-function-functions
-          (compiler-backend-collect-global-functions BackendStringNil globals)
-          functions))]))
-
-(define (compiler-backend-collect-value-string
-  [strings : BackendStringList]
-  [value : CompilerIrValue]) : BackendStringList
-  (match value
-    [(IrValueString text) (compiler-backend-string-list-add strings text)]
-    [_ strings]))
-
-(define (compiler-backend-collect-value-list-strings
-  [strings : BackendStringList]
-  [values : CompilerIrValueList]) : BackendStringList
-  (match values
-    [(IrValueNil) strings]
-    [(IrValueCons value rest)
-      (compiler-backend-collect-value-list-strings
-        (compiler-backend-collect-value-string strings value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-call-args-array-strings
-  [strings : BackendStringList]
-  [values : (Array CompilerIrValue)]
-  [index : i64]) : BackendStringList
-  (if (>= index (array-length values))
-    strings
-    (compiler-backend-collect-call-args-array-strings
-      (compiler-backend-collect-value-string strings (array-ref values index))
-      values
-      (+ index 1))))
-
-(define (compiler-backend-collect-call-args-strings
-  [strings : BackendStringList]
-  [args : CompilerIrCallArgs]) : BackendStringList
-  (match args
-    [(IrCallArgsNil) strings]
-    [(IrCallArgsOne value)
-      (compiler-backend-collect-value-string strings value)]
-    [(IrCallArgsTwo a b)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings a)
-        b)]
-    [(IrCallArgsArray values)
-      (compiler-backend-collect-call-args-array-strings strings values 0)]))
-
-(define (compiler-backend-collect-phi-strings
-  [strings : BackendStringList]
-  [inputs : CompilerIrPhiInputList]) : BackendStringList
-  (match inputs
-    [(IrPhiInputNil) strings]
-    [(IrPhiInputCons value _ rest)
-      (compiler-backend-collect-phi-strings
-        (compiler-backend-collect-value-string strings value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-instr-strings
-  [strings : BackendStringList]
-  [instr : CompilerIrInstr]) : BackendStringList
-  (match instr
-    [(IrInstrMov _ src _) (compiler-backend-collect-value-string strings src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
-        rhs)]
-    [(IrInstrUnOp _ _ src _)
-      (compiler-backend-collect-value-string strings src)]
-    [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-call-args-strings strings args)]
-    [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-call-args-strings strings args)]
-    [(IrInstrStore _ value _)
-      (compiler-backend-collect-value-string strings value)]
-    [(IrInstrBranch cond _ _)
-      (compiler-backend-collect-value-string strings cond)]
-    [(IrInstrReturn maybe)
-      (match maybe
-        [(IrNoValue) strings]
-        [(IrSomeValue value)
-          (compiler-backend-collect-value-string strings value)])]
-    [(IrInstrPhi _ inputs _)
-      (compiler-backend-collect-phi-strings strings inputs)]
-    [(IrInstrGep _ base offset _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings base)
-        offset)]
-    [(IrInstrLoad _ src _) (compiler-backend-collect-value-string strings src)]
-    [(IrInstrStorePtr dst src _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings dst)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections dst)
         src)]
     [(IrInstrBoundsCheck index length _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings index)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections index)
         length)]
     [(IrInstrCast _ src _ _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrSplat _ value _ _)
-      (compiler-backend-collect-value-string strings value)]
+      (compiler-backend-collect-value-collections collections value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrMaskNot _ src _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrMaskReduce _ _ src _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string strings mask)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections mask)
           on-true)
         on-false)]
     [(IrInstrVectorLoad _ base index _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections base)
         index)]
     [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
           index)
         value)]
     [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string
-            (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections base)
             index)
           value)
         mask)]
     [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
           index)
         mask)]
     [(IrInstrTailMask _ index length _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings index)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections index)
         length)]
-    [(IrInstrEntryArgc _) strings]
-    [(IrInstrEntryArgv _) strings]
-    [(IrInstrEntryEnvp _) strings]
     [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings leaf)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections leaf)
         subleaf)]
     [(IrInstrXgetbv _ index)
-      (compiler-backend-collect-value-string strings index)]
-    [_ strings]))
+      (compiler-backend-collect-value-collections collections index)]
+    [_ collections]))
 
-(define (compiler-backend-collect-instr-list-strings
-  [strings : BackendStringList]
-  [instrs : CompilerIrInstrList]) : BackendStringList
+(define (compiler-backend-collect-instr-list-collections
+  [collections : CompilerBackendProgramCollections]
+  [instrs : CompilerIrInstrList]) : CompilerBackendProgramCollections
   (match instrs
-    [(IrInstrNil) strings]
+    [(IrInstrNil) collections]
     [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-strings
-        (compiler-backend-collect-instr-strings strings instr)
+      (compiler-backend-collect-instr-list-collections
+        (compiler-backend-collect-instr-collections collections instr)
         (box-get rest))]))
 
-(define (compiler-backend-collect-block-strings
-  [strings : BackendStringList]
-  [blocks : CompilerIrBlockList]) : BackendStringList
+(define (compiler-backend-collect-block-collections
+  [collections : CompilerBackendProgramCollections]
+  [blocks : CompilerIrBlockList]) : CompilerBackendProgramCollections
   (match blocks
-    [(IrBlockNil) strings]
+    [(IrBlockNil) collections]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (compiler-backend-collect-block-strings
-            (compiler-backend-collect-instr-list-strings strings instrs)
+          (compiler-backend-collect-block-collections
+            (compiler-backend-collect-instr-list-collections collections instrs)
             (box-get rest))])]))
 
-(define (compiler-backend-collect-function-strings
-  [strings : BackendStringList]
-  [functions : CompilerIrFunctionList]) : BackendStringList
+(define (compiler-backend-collect-function-collections
+  [collections : CompilerBackendProgramCollections]
+  [functions : CompilerIrFunctionList]) : CompilerBackendProgramCollections
   (match functions
-    [(IrFunctionNil) strings]
+    [(IrFunctionNil) collections]
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-strings
-            (compiler-backend-collect-block-strings strings blocks)
+          (compiler-backend-collect-function-collections
+            (compiler-backend-collect-block-collections collections blocks)
             (box-get rest))])]))
 
-(define (compiler-backend-collect-global-strings
-  [strings : BackendStringList]
-  [globals : CompilerIrGlobalList]) : BackendStringList
+(define (compiler-backend-collect-global-collections
+  [collections : CompilerBackendProgramCollections]
+  [globals : CompilerIrGlobalList]) : CompilerBackendProgramCollections
   (match globals
-    [(IrGlobalNil) strings]
+    [(IrGlobalNil) collections]
     [(IrGlobalCons global rest)
       (match global
         [(IrGlobal _ _ value)
-          (compiler-backend-collect-global-strings
-            (compiler-backend-collect-value-string strings value)
+          (compiler-backend-collect-global-collections
+            (compiler-backend-collect-value-collections collections value)
             (box-get rest))])]))
 
-(define (compiler-backend-collect-program-strings [program : CompilerIrProgram]) : BackendStringList
+(define (compiler-backend-collect-program-collections
+  [program : CompilerIrProgram]) : CompilerBackendProgramCollections
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-string-list-reverse
-        (compiler-backend-collect-function-strings
-          (compiler-backend-collect-global-strings BackendStringNil globals)
-          functions))]))
-
-(define (compiler-backend-collect-value-f64
-  [floats : BackendStringList]
-  [value : CompilerIrValue]) : BackendStringList
-  (match value
-    [(IrValueF64 text) (compiler-backend-string-list-add floats text)]
-    [_ floats]))
-
-(define (compiler-backend-collect-value-list-f64s
-  [floats : BackendStringList]
-  [values : CompilerIrValueList]) : BackendStringList
-  (match values
-    [(IrValueNil) floats]
-    [(IrValueCons value rest)
-      (compiler-backend-collect-value-list-f64s
-        (compiler-backend-collect-value-f64 floats value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-call-args-array-f64s
-  [floats : BackendStringList]
-  [values : (Array CompilerIrValue)]
-  [index : i64]) : BackendStringList
-  (if (>= index (array-length values))
-    floats
-    (compiler-backend-collect-call-args-array-f64s
-      (compiler-backend-collect-value-f64 floats (array-ref values index))
-      values
-      (+ index 1))))
-
-(define (compiler-backend-collect-call-args-f64s
-  [floats : BackendStringList]
-  [args : CompilerIrCallArgs]) : BackendStringList
-  (match args
-    [(IrCallArgsNil) floats]
-    [(IrCallArgsOne value) (compiler-backend-collect-value-f64 floats value)]
-    [(IrCallArgsTwo a b)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats a)
-        b)]
-    [(IrCallArgsArray values)
-      (compiler-backend-collect-call-args-array-f64s floats values 0)]))
-
-(define (compiler-backend-collect-phi-f64s
-  [floats : BackendStringList]
-  [inputs : CompilerIrPhiInputList]) : BackendStringList
-  (match inputs
-    [(IrPhiInputNil) floats]
-    [(IrPhiInputCons value _ rest)
-      (compiler-backend-collect-phi-f64s
-        (compiler-backend-collect-value-f64 floats value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-instr-f64s
-  [floats : BackendStringList]
-  [instr : CompilerIrInstr]) : BackendStringList
-  (match instr
-    [(IrInstrMov _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrUnOp _ _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-call-args-f64s floats args)]
-    [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-call-args-f64s floats args)]
-    [(IrInstrStore _ value _) (compiler-backend-collect-value-f64 floats value)]
-    [(IrInstrBranch cond _ _) (compiler-backend-collect-value-f64 floats cond)]
-    [(IrInstrReturn maybe)
-      (match maybe
-        [(IrNoValue) floats]
-        [(IrSomeValue value) (compiler-backend-collect-value-f64 floats value)])]
-    [(IrInstrPhi _ inputs _) (compiler-backend-collect-phi-f64s floats inputs)]
-    [(IrInstrGep _ base offset _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats base)
-        offset)]
-    [(IrInstrLoad _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrStorePtr dst src _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats dst)
-        src)]
-    [(IrInstrBoundsCheck index length _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats index)
-        length)]
-    [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrSplat _ value _ _)
-      (compiler-backend-collect-value-f64 floats value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrMaskNot _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrMaskReduce _ _ src _)
-      (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64 floats mask)
-          on-true)
-        on-false)]
-    [(IrInstrVectorLoad _ base index _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats base)
-        index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64 floats base)
-          index)
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64
-            (compiler-backend-collect-value-f64 floats base)
-            index)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64 floats base)
-          index)
-        mask)]
-    [(IrInstrTailMask _ index length _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats index)
-        length)]
-    [(IrInstrEntryArgc _) floats]
-    [(IrInstrEntryArgv _) floats]
-    [(IrInstrEntryEnvp _) floats]
-    [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats leaf)
-        subleaf)]
-    [(IrInstrXgetbv _ index) (compiler-backend-collect-value-f64 floats index)]
-    [_ floats]))
-
-(define (compiler-backend-collect-instr-list-f64s
-  [floats : BackendStringList]
-  [instrs : CompilerIrInstrList]) : BackendStringList
-  (match instrs
-    [(IrInstrNil) floats]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-f64s
-        (compiler-backend-collect-instr-f64s floats instr)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-block-f64s
-  [floats : BackendStringList]
-  [blocks : CompilerIrBlockList]) : BackendStringList
-  (match blocks
-    [(IrBlockNil) floats]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-block-f64s
-            (compiler-backend-collect-instr-list-f64s floats instrs)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-function-f64s
-  [floats : BackendStringList]
-  [functions : CompilerIrFunctionList]) : BackendStringList
-  (match functions
-    [(IrFunctionNil) floats]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-f64s
-            (compiler-backend-collect-block-f64s floats blocks)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-global-f64s
-  [floats : BackendStringList]
-  [globals : CompilerIrGlobalList]) : BackendStringList
-  (match globals
-    [(IrGlobalNil) floats]
-    [(IrGlobalCons global rest)
-      (match global
-        [(IrGlobal _ _ value)
-          (compiler-backend-collect-global-f64s
-            (compiler-backend-collect-value-f64 floats value)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-program-f64s [program : CompilerIrProgram]) : BackendStringList
-  (match program
-    [(IrProgram globals functions _)
-      (compiler-backend-string-list-reverse
-        (compiler-backend-collect-function-f64s
-          (compiler-backend-collect-global-f64s BackendStringNil globals)
-          functions))]))
+      (compiler-backend-collect-function-collections
+        (compiler-backend-collect-global-collections
+          (compiler-backend-program-collections-new)
+          globals)
+        functions)]))
 
 (define (compiler-backend-emit-string-entry [text : String]) : String
   (backend-cat5
@@ -19286,9 +18933,12 @@ tl_windows_sdk_registry_install:
                             compile-profile
                             (compiler-backend-profile-finish "functions"))
                           (let
-                            [closure-names : BackendStringList
-                              (compiler-backend-collect-program-functions
+                            [collections : CompilerBackendProgramCollections
+                              (compiler-backend-collect-program-collections
                                 program)]
+                            [closure-names : BackendStringList
+                              (compiler-backend-program-collections-functions
+                                collections)]
                             (match (compiler-backend-emit-closure-entry-adapters
                               target
                               closure-names
@@ -19299,11 +18949,11 @@ tl_windows_sdk_registry_install:
                               [(OkCompilerBackend closure-adapters-asm)
                                 (let
                                   [strings : BackendStringList
-                                    (compiler-backend-collect-program-strings
-                                      program)]
+                                    (compiler-backend-program-collections-strings
+                                      collections)]
                                   [floats : BackendStringList
-                                    (compiler-backend-collect-program-f64s
-                                      program)]
+                                    (compiler-backend-program-collections-floats
+                                      collections)]
                                   [prefix-buf : TextBuf
                                 (text-buf-append
                                   (text-buf-append

@@ -6942,12 +6942,14 @@
       (let
         [mark : i64 (arena-mark)]
         [raw : CompilerIrFunction (optimize-function-with-level func level)]
+        [unchanged : bool (opt-function-eq func raw)]
         [scratch-head : i64 (arena-current)]
         (begin
           (unsafe
             (arena-set! enclosing))
           (let
-            [escaped : CompilerIrFunction (compiler-ir-clone-function raw)]
+            [escaped : CompilerIrFunction
+              (if unchanged func (compiler-ir-clone-function raw))]
             [new-enclosing : i64 (arena-current)]
             (begin
               (unsafe

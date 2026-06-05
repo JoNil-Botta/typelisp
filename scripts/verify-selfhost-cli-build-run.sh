@@ -614,7 +614,8 @@ cat > "$CHAIN_ROOT/typelisp.pkg" <<'EOF'
     (mid "../mid")))
 EOF
 cat > "$CHAIN_ROOT/src/main.tl" <<'EOF'
-(define (main) : i64 42)
+(import "pkg:mid/src/lib.tl")
+(define (main) : i64 (mid-answer))
 EOF
 cat > "$CHAIN_MID/typelisp.pkg" <<'EOF'
 (package
@@ -625,7 +626,8 @@ cat > "$CHAIN_MID/typelisp.pkg" <<'EOF'
     (leaf "../leaf")))
 EOF
 cat > "$CHAIN_MID/src/lib.tl" <<'EOF'
-(define (mid-unused) : i64 1)
+(import "pkg:leaf/src/lib.tl")
+(define (mid-answer) : i64 (leaf-answer))
 EOF
 cat > "$CHAIN_LEAF/typelisp.pkg" <<'EOF'
 (package
@@ -634,7 +636,7 @@ cat > "$CHAIN_LEAF/typelisp.pkg" <<'EOF'
   (kind staticlib))
 EOF
 cat > "$CHAIN_LEAF/src/lib.tl" <<'EOF'
-(define (leaf-unused) : i64 1)
+(define (leaf-answer) : i64 42)
 EOF
 CHAIN_EXE="$CHAIN_ROOT/target/typelisp/release/chain_root/chain_root"
 CHAIN_MID_ARCHIVE="$CHAIN_MID/target/typelisp/release/chain_mid/libchain_mid.a"
@@ -679,7 +681,9 @@ cat > "$DIAMOND_ROOT/typelisp.pkg" <<'EOF'
     (right "../right")))
 EOF
 cat > "$DIAMOND_ROOT/src/main.tl" <<'EOF'
-(define (main) : i64 42)
+(import "pkg:left/src/lib.tl")
+(import "pkg:right/src/lib.tl")
+(define (main) : i64 (+ (left-answer) (right-answer)))
 EOF
 cat > "$DIAMOND_LEFT/typelisp.pkg" <<'EOF'
 (package
@@ -690,7 +694,8 @@ cat > "$DIAMOND_LEFT/typelisp.pkg" <<'EOF'
     (shared "../shared")))
 EOF
 cat > "$DIAMOND_LEFT/src/lib.tl" <<'EOF'
-(define (left-unused) : i64 1)
+(import "pkg:shared/src/lib.tl")
+(define (left-answer) : i64 (shared-answer))
 EOF
 cat > "$DIAMOND_RIGHT/typelisp.pkg" <<'EOF'
 (package
@@ -701,7 +706,8 @@ cat > "$DIAMOND_RIGHT/typelisp.pkg" <<'EOF'
     (shared "../shared")))
 EOF
 cat > "$DIAMOND_RIGHT/src/lib.tl" <<'EOF'
-(define (right-unused) : i64 1)
+(import "pkg:shared/src/lib.tl")
+(define (right-answer) : i64 (shared-answer))
 EOF
 cat > "$DIAMOND_SHARED/typelisp.pkg" <<'EOF'
 (package
@@ -710,7 +716,7 @@ cat > "$DIAMOND_SHARED/typelisp.pkg" <<'EOF'
   (kind staticlib))
 EOF
 cat > "$DIAMOND_SHARED/src/lib.tl" <<'EOF'
-(define (shared-unused) : i64 1)
+(define (shared-answer) : i64 21)
 EOF
 DIAMOND_EXE="$DIAMOND_ROOT/target/typelisp/release/diamond_root/diamond_root"
 DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/typelisp/release/diamond_shared/libdiamond_shared.a"

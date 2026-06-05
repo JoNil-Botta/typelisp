@@ -1725,6 +1725,18 @@
                           intervals
                           types)])])])])])))
 
+;; Fast scalar backend plan: keep type discovery for emission decisions, but
+;; leave values in their stack slots instead of spending compile time on liveness
+;; and register assignment. AVX/vector backend modes still use full regalloc.
+(define (compiler-reg-plan-function-stack-only [func : CompilerIrFunction]) : CompilerRegPlan
+  (let
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    (CompilerRegPlan
+      CompilerRegAssignmentNil
+      (compiler-live-set-empty)
+      CompilerRegIntervalNil
+      (compiler-reg-var-types-list type-info))))
+
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
     [(CompilerRegPlan assignments _ _ _) assignments]))

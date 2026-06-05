@@ -216,6 +216,11 @@
   (BackendModeAvx2)
   (BackendModeAvx512))
 
+(define (compiler-backend-mode-scalar? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(BackendModeScalar) true]
+    [_ false]))
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -8492,7 +8497,10 @@
       (let
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index span-index name "")]
-        [reg-plan : CompilerRegPlan (compiler-reg-plan-function func)]
+        [reg-plan : CompilerRegPlan
+          (if (compiler-backend-mode-scalar? mode)
+            (compiler-reg-plan-function-stack-only func)
+            (compiler-reg-plan-function func))]
         [raw-assignments : CompilerRegAssignmentList
           (compiler-reg-plan-assignments reg-plan)]
         [assignments : CompilerRegAssignmentList raw-assignments]

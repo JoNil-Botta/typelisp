@@ -1019,57 +1019,35 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+;; Scalar backend emission intentionally uses the stack-only plan by default for
+;; cold compile speed; allocator behavior is still covered in compiler_regalloc.tl
+;; and by AVX/vector backend smoke paths.
 (define (compiler-backend-regalloc-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-regalloc-source))
     [(OkCompilerBackend asm)
-      (and
+      (backend-and8
         (compiler-backend-string-contains? asm "_tl_f")
-        (and
-          (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
-          (and
-            (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
-            (and
-              (compiler-backend-string-contains? asm "    movq %r12, -")
-              (and
-                (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    movq %r12, %rax\n")
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq %rdi, %r12\n"))
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq %rsi, %r12\n")))))))))]
+        (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq -24(%rbp), %rax\n")
+        (compiler-backend-string-contains? asm "    imulq %rbx, %rax\n")
+        (not (compiler-backend-string-contains? asm "%r12"))
+        true
+        true)]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-regalloc-f64-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
     [(OkCompilerBackend asm)
-      (and
+      (backend-and8
         (compiler-backend-string-contains? asm "main:\n")
-        (and
-          (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm2\n")
-          (and
-            (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm3\n")
-            (and
-              (compiler-backend-string-contains? asm "    movsd %xmm2, %xmm0\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    movsd %xmm3, %xmm1\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    addsd %xmm1, %xmm0\n")
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      "    movsd %xmm0, -8(%rbp)\n"))))))))]
+        (compiler-backend-string-contains? asm "    movsd %xmm0, -8(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm0\n")
+        (compiler-backend-string-contains? asm "    movsd -32(%rbp), %xmm1\n")
+        (compiler-backend-string-contains? asm "    addsd %xmm1, %xmm0\n")
+        (not (compiler-backend-string-contains? asm "%xmm2"))
+        (not (compiler-backend-string-contains? asm "%xmm3"))
+        true)]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
@@ -1668,8 +1646,8 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %r12, -")
-        (compiler-backend-string-contains? asm ", %r12\n"))]
+        (not (compiler-backend-string-contains? asm "    movq %r12, -"))
+        (not (compiler-backend-string-contains? asm ", %r12\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-target-windows-runtime-ok?) : bool

@@ -2824,16 +2824,270 @@
 (define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".L_tl_append_file_status:\n")
+        (not
+          (compiler-backend-string-contains? asm ".L_tl_append_file_status:\n"))
         (and
           (compiler-backend-string-contains?
             asm
             "    call tl_append_file_status\n")
-          (not
-            (compiler-backend-string-contains?
-              asm
-              ".extern tl_append_file_status\n"))))]
+          (compiler-backend-string-contains?
+            asm
+            ".extern tl_append_file_status\n")))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-no-public-runtime-symbol?
+  [asm : String]
+  [name : String]) : bool
+  (and
+    (not
+      (compiler-backend-string-contains? asm (backend-cat3 ".globl " name "\n")))
+    (not (compiler-backend-string-contains? asm (backend-cat3 "\n" name ":\n")))))
+
+(define (compiler-backend-no-public-io-fs-runtime-symbols? [asm : String]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-no-public-runtime-symbol? asm "tl_read_file")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_write_file")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_file_exists")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_read_file_status")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_write_file_status")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_append_file_status")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_file_exists_status")
+      (compiler-backend-no-public-runtime-symbol? asm "tl_file_open_status"))
+    (and
+      (backend-and8
+        (compiler-backend-no-public-runtime-symbol? asm "tl_file_close_status")
+        (compiler-backend-no-public-runtime-symbol? asm "tl_file_write_status")
+        (compiler-backend-no-public-runtime-symbol? asm "tl_file_flush_status")
+        (compiler-backend-no-public-runtime-symbol?
+          asm
+          "tl_file_read_chunk_status")
+        (compiler-backend-no-public-runtime-symbol?
+          asm
+          "tl_file_read_chunk_bytes")
+        (compiler-backend-no-public-runtime-symbol?
+          asm
+          "tl_file_read_chunk_eof")
+        (compiler-backend-no-public-runtime-symbol? asm "tl_fs_mkdir_status")
+        (compiler-backend-no-public-runtime-symbol?
+          asm
+          "tl_fs_remove_file_status"))
+      (and
+        (backend-and8
+          (compiler-backend-no-public-runtime-symbol?
+            asm
+            "tl_fs_remove_dir_status")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_fs_rename_status")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_fs_process_id")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_read_stdin_line")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_read_stdin_bytes")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_stdin_eof")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_flush_stdout")
+          true)
+        true))))
+
+(define (compiler-backend-private-io-fs-runtime-source) : String
+  "(extern runtime-read-file (:symbol \".L_tl_read_file\") : (->
+  (Ptr u8)
+  i64
+  String))
+(extern runtime-write-file (:symbol \".L_tl_write_file\") : (->
+  (Ptr u8)
+  i64
+  (Ptr u8)
+  i64
+  unit))
+(extern runtime-file-exists? (:symbol \".L_tl_file_exists\") : (->
+  (Ptr u8)
+  i64
+  bool))
+(extern runtime-read-file-status (:symbol \".L_tl_read_file_status\") : (->
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-write-file-status (:symbol \".L_tl_write_file_status\") : (->
+  (Ptr u8)
+  i64
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-append-file-status (:symbol \".L_tl_append_file_status\") : (->
+  (Ptr u8)
+  i64
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-file-exists-status (:symbol \".L_tl_file_exists_status\") : (->
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-file-open-status (:symbol \".L_tl_file_open_status\") : (->
+  (Ptr u8)
+  i64
+  i64
+  i64))
+(extern runtime-file-close-status (:symbol \".L_tl_file_close_status\") : (->
+  i64
+  i64))
+(extern runtime-file-write-status (:symbol \".L_tl_file_write_status\") : (->
+  i64
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-file-flush-status (:symbol \".L_tl_file_flush_status\") : (->
+  i64
+  i64))
+(extern runtime-file-read-chunk-status
+  (:symbol \".L_tl_file_read_chunk_status\") : (->
+    i64
+    i64
+    i64))
+(extern runtime-file-read-chunk-bytes
+  (:symbol \".L_tl_file_read_chunk_bytes\") : (-> i64 String))
+(extern runtime-file-read-chunk-eof
+  (:symbol \".L_tl_file_read_chunk_eof\") : (-> i64 bool))
+(extern runtime-fs-mkdir-status (:symbol \".L_tl_fs_mkdir_status\") : (->
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-fs-remove-file-status
+  (:symbol \".L_tl_fs_remove_file_status\") : (->
+    (Ptr u8)
+    i64
+    i64))
+(extern runtime-fs-remove-dir-status
+  (:symbol \".L_tl_fs_remove_dir_status\") : (->
+    (Ptr u8)
+    i64
+    i64))
+(extern runtime-fs-rename-status (:symbol \".L_tl_fs_rename_status\") : (->
+  (Ptr u8)
+  i64
+  (Ptr u8)
+  i64
+  i64))
+(extern runtime-fs-process-id (:symbol \".L_tl_fs_process_id\") : (-> i64))
+(extern runtime-read-stdin-line (:symbol \".L_tl_read_stdin_line\") : (->
+  String))
+(extern runtime-read-stdin-bytes (:symbol \".L_tl_read_stdin_bytes\") : (->
+  i64
+  String))
+(extern runtime-stdin-eof (:symbol \".L_tl_stdin_eof\") : (-> bool))
+(extern runtime-flush-stdout (:symbol \".L_tl_flush_stdout\") : (-> unit))
+(define (main) : i64
+  (let
+    [path : String \"target/private-runtime.txt\"]
+    [data : String \"x\"]
+    (begin
+      (runtime-read-file (unsafe (string-data path)) (string-length path))
+      (runtime-write-file
+        (unsafe (string-data path))
+        (string-length path)
+        (unsafe (string-data data))
+        (string-length data))
+      (runtime-file-exists? (unsafe (string-data path)) (string-length path))
+      (runtime-read-file-status
+        (unsafe (string-data path))
+        (string-length path))
+      (runtime-write-file-status
+        (unsafe (string-data path))
+        (string-length path)
+        (unsafe (string-data data))
+        (string-length data))
+      (runtime-append-file-status
+        (unsafe (string-data path))
+        (string-length path)
+        (unsafe (string-data data))
+        (string-length data))
+      (runtime-file-exists-status
+        (unsafe (string-data path))
+        (string-length path))
+      (runtime-file-open-status
+        (unsafe (string-data path))
+        (string-length path)
+        0)
+      (runtime-file-close-status 1)
+      (runtime-file-write-status
+        1
+        (unsafe (string-data data))
+        (string-length data))
+      (runtime-file-flush-status 1)
+      (runtime-file-read-chunk-status 1 8)
+      (runtime-file-read-chunk-bytes 1)
+      (runtime-file-read-chunk-eof 1)
+      (runtime-fs-mkdir-status
+        (unsafe (string-data path))
+        (string-length path))
+      (runtime-fs-remove-file-status
+        (unsafe (string-data path))
+        (string-length path))
+      (runtime-fs-remove-dir-status
+        (unsafe (string-data path))
+        (string-length path))
+      (runtime-fs-rename-status
+        (unsafe (string-data path))
+        (string-length path)
+        (unsafe (string-data data))
+        (string-length data))
+      (runtime-fs-process-id)
+      (runtime-read-stdin-line)
+      (runtime-read-stdin-bytes 1)
+      (runtime-stdin-eof)
+      (runtime-flush-stdout)
+      0)))")
+
+(define (compiler-backend-private-io-fs-runtime-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-private-io-fs-runtime-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_write_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n")
+          (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))
+        (compiler-backend-no-public-io-fs-runtime-symbols? asm))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-private-io-fs-runtime-labels-ok?) : bool
+  (and
+    (compiler-backend-private-io-fs-runtime-target-ok? (BackendTargetLinux))
+    (compiler-backend-private-io-fs-runtime-target-ok? (BackendTargetWindows))))
+
+(define (compiler-backend-public-fs-externs? [asm : String]) : bool
+  (and
+    (backend-and4
+      (compiler-backend-string-contains? asm ".extern tl_fs_process_id\n")
+      (compiler-backend-string-contains? asm ".extern tl_fs_mkdir_status\n")
+      (compiler-backend-string-contains?
+        asm
+        ".extern tl_fs_remove_file_status\n")
+      (compiler-backend-string-contains?
+        asm
+        ".extern tl_fs_remove_dir_status\n"))
+    (compiler-backend-string-contains? asm ".extern tl_fs_rename_status\n")))
+
+(define (compiler-backend-no-private-fs-runtime? [asm : String]) : bool
+  (and
+    (backend-and8
+      (not (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
+      (not
+        (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n"))
+      (not
+        (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n"))
+      (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))
+      (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
+      (not (compiler-backend-string-contains? asm "    movq $39, %rax\n"))
+      (not (compiler-backend-string-contains? asm "    movq $83, %rax\n"))
+      (not (compiler-backend-string-contains? asm "    call _mkdir\n")))
+    (not
+      (compiler-backend-string-contains? asm "    call GetCurrentProcessId\n"))))
 
 (define (compiler-backend-fs-runtime-source) : String
   "(extern fs-process-id (:symbol \"tl_fs_process_id\") : (-> i64))
@@ -2866,25 +3120,8 @@
   (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
     [(OkCompilerBackend asm)
       (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_fs_remove_file_status:\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_fs_remove_dir_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
-          (compiler-backend-string-contains? asm "    movq $39, %rax\n")
-          (compiler-backend-string-contains? asm "    movq $83, %rax\n")
-          (not
-            (compiler-backend-string-contains?
-              asm
-              ".extern tl_fs_rename_status\n")))
-        (and
-          (not (compiler-backend-string-contains? asm ".extern mkdir\n"))
-          (not (compiler-backend-string-contains? asm ".extern rename\n"))))]
+        (compiler-backend-public-fs-externs? asm)
+        (compiler-backend-no-private-fs-runtime? asm))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool
@@ -2893,26 +3130,8 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_fs_remove_file_status:\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_fs_remove_dir_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
-          (compiler-backend-string-contains? asm "    call _mkdir\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call GetCurrentProcessId\n")
-          (not (compiler-backend-string-contains? asm "    syscall")))
-        (and
-          (compiler-backend-string-contains? asm ".extern _mkdir\n")
-          (compiler-backend-string-contains?
-            asm
-            ".extern GetCurrentProcessId\n")))]
+        (compiler-backend-public-fs-externs? asm)
+        (compiler-backend-no-private-fs-runtime? asm))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-read-dir-runtime-source) : String
@@ -4119,7 +4338,9 @@
           (compiler-backend-region-ok?)
           (compiler-backend-process-output-ok?)
           (compiler-backend-windows-process-output-ok?)
-          (compiler-backend-append-file-status-ok?))
+          (and
+            (compiler-backend-append-file-status-ok?)
+            (compiler-backend-private-io-fs-runtime-labels-ok?)))
         (and
           (compiler-backend-fs-runtime-ok?)
           (and

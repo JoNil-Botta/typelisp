@@ -6178,16 +6178,6 @@
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrPhi _ _ _) (OkCompilerBackend "")])))
 
-(define (compiler-backend-use-counts-fill
-  [counts : (Array i64)]
-  [index : i64]
-  [value : i64]) : unit
-  (if (>= index (array-length counts))
-    unit
-    (begin
-      (array-set! counts index value)
-      (compiler-backend-use-counts-fill counts (+ index 1) value))))
-
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
@@ -6367,7 +6357,6 @@
   (let
     [counts : (Array i64) (make-array i64 vars)]
     (begin
-      (compiler-backend-use-counts-fill counts 0 0)
       (compiler-backend-count-block-uses counts blocks)
       counts)))
 

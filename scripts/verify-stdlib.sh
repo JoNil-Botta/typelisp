@@ -238,6 +238,7 @@ EOF
 stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_api.tl|42|-|-
+stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-

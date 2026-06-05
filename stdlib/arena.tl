@@ -6,6 +6,49 @@
 ;#
 ;# Usage: `(import "stdlib/arena.tl")`
 ;#
+;# Temporary scratch work should usually use lexical `with-arena`; values
+;# allocated inside the scoped arena cannot escape:
+;#
+;# ```typelisp
+;# (import "stdlib/arena.tl")
+;#
+;# (define (scratch-score [n : i64]) : i64
+;#   (with-arena scratch
+;#     (let
+;#       [text : String (string-append "phase:" (int->string n))]
+;#       (string-length (& text)))))
+;# ```
+;#
+;# To keep one result from repeated scratch work, allocate a first-class arena
+;# with `arena-make` and use `with-escape`; the form clones supported results
+;# back into the enclosing active arena:
+;#
+;# ```typelisp
+;# (import "stdlib/arena.tl")
+;#
+;# (define (build-message [scratch : i64] [n : i64]) : String
+;#   (with-escape scratch
+;#     (string-append "kept:" (int->string n))))
+;# ```
+;#
+;# Manual arena switching, rewinding, and destruction remain explicit unsafe
+;# operations for code that can prove all invalidated handles are dead:
+;#
+;# ```typelisp
+;# (import "stdlib/arena.tl")
+;#
+;# (define (manual-step) : unit
+;#   (let
+;#     [home : i64 (arena-current)]
+;#     [scratch : i64 (arena-make)]
+;#     (unsafe
+;#       (begin
+;#         (arena-set! scratch)
+;#         (arena-rewind (arena-mark))
+;#         (arena-set! home)
+;#         (arena-destroy scratch)))))
+;# ```
+;#
 ;# `ArenaHandle`/`ArenaMark` are temporary `i64` aliases until opaque public
 ;# handle types land (#182/#1632). The public helpers are wrappers over raw
 ;# runtime externs so this module stays formatter-stable until extern metadata
@@ -32,6 +75,9 @@
   (extern tl_region_reset : (-> i64 unit)))
 
 ;: Create a fresh independent arena and return its handle without switching to it.
+;:
+;: Prefer passing the handle to `with-escape` for safe scratch-work clone-out.
+;: Direct switching or destruction of the handle remains unsafe.
 (define (arena-make) : i64
   (tl_arena_make))
 
@@ -40,6 +86,8 @@
   (tl_arena_current))
 
 ;: Return a rewind mark for the current active arena.
+;:
+;: Rewinding to the mark is unsafe because it invalidates later allocations.
 (define (arena-mark) : i64
   (tl_region_mark))
 

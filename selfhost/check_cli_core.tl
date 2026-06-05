@@ -20,9 +20,12 @@
   [roots : CompilerLoadRootList]
   [root : String]) : CompilerLoadRootList
   (match roots
-    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootNil)
+      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
     [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons head (selfhost-check-root-list-append rest root))]))
+      (CompilerLoadRootCons
+        head
+        (box (selfhost-check-root-list-append (box-get rest) root)))]))
 
 (define (selfhost-check-parse-options
   [idx : i64]

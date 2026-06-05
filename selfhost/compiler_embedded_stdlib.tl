@@ -47,6 +47,8 @@
 
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf "stdlib/tests/arena_policy_escape_text_buf.tl")
 
+(include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed "stdlib/tests/arena_policy_escape_text_buf_borrowed.tl")
+
 (include-str compiler-embedded-stdlib-tests-borrowed-str-gate "stdlib/tests/borrowed_str_gate.tl")
 
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
@@ -99,6 +101,8 @@
 
 (include-str compiler-embedded-stdlib-tests-text-buf-api "stdlib/tests/text_buf_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-text-buf-borrowed-check "stdlib/tests/text_buf_borrowed_check.tl")
+
 (include-str compiler-embedded-stdlib-tests-vector-api "stdlib/tests/vector_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-visual-studio-api "stdlib/tests/visual_studio_api.tl")
@@ -108,6 +112,8 @@
 (include-str compiler-embedded-stdlib-tests-windows-sdk-api "stdlib/tests/windows_sdk_api.tl")
 
 (include-str compiler-embedded-stdlib-text-buf "stdlib/text_buf.tl")
+
+(include-str compiler-embedded-stdlib-text-buf-borrowed "stdlib/text_buf_borrowed.tl")
 
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
 
@@ -167,6 +173,9 @@
     [(string-eq suffix "tests/arena_policy_escape_text_buf.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-arena-policy-escape-text-buf)]
+    [(string-eq suffix "tests/arena_policy_escape_text_buf_borrowed.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed)]
     [(string-eq suffix "tests/borrowed_str_gate.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-borrowed-str-gate)]
@@ -237,6 +246,9 @@
     [(string-eq suffix "tests/text_buf_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-text-buf-api)]
+    [(string-eq suffix "tests/text_buf_borrowed_check.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-text-buf-borrowed-check)]
     [(string-eq suffix "tests/vector_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-vector-api)]
@@ -251,6 +263,9 @@
         compiler-embedded-stdlib-tests-windows-sdk-api)]
     [(string-eq suffix "text_buf.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)]
+    [(string-eq suffix "text_buf_borrowed.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-text-buf-borrowed)]
     [(string-eq suffix "vector.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
     [(string-eq suffix "windows_registry.tl")

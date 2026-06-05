@@ -372,6 +372,17 @@
         [sum : i64 (+ (array-ref a i) (array-ref b i))]
         (array-set! out i sum)))))")
 
+(define (compiler-typecheck-foreach-spmd-f32-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let
+    [a : (Array f32) (make-array f32 n)]
+    [b : (Array f32) (make-array f32 n)]
+    [out : (Array f32) (make-array f32 n)]
+    (foreach ([i : i64 0 n])
+      (let
+        [sum : f32 (+ (array-ref a i) (array-ref b i))]
+        (array-set! out i sum)))))")
+
 (define (compiler-typecheck-foreach-varying-if-source) : String
   "(define (main [xs : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
@@ -464,26 +475,28 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-foreach-varying-if-source)
-        "typecheck: foreach if condition must be uniform")
+      (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-foreach-varying-while-source)
-          "typecheck: foreach while condition must be uniform")
+          (compiler-typecheck-foreach-varying-if-source)
+          "typecheck: foreach if condition must be uniform")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-foreach-varying-call-source)
-            "typecheck: foreach calls with varying arguments are not supported")
+            (compiler-typecheck-foreach-varying-while-source)
+            "typecheck: foreach while condition must be uniform")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-foreach-outer-set-source)
-              "typecheck: foreach cannot set binding declared outside foreach")
+              (compiler-typecheck-foreach-varying-call-source)
+              "typecheck: foreach calls with varying arguments are not supported")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-foreach-unsupported-lane-source)
-                "typecheck: foreach varying array lane type is not supported: String")
-              (compiler-typecheck-foreach-control-flow-tests-ok?))))))))
+                (compiler-typecheck-foreach-outer-set-source)
+                "typecheck: foreach cannot set binding declared outside foreach")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-foreach-unsupported-lane-source)
+                  "typecheck: foreach varying array lane type is not supported: String")
+                (compiler-typecheck-foreach-control-flow-tests-ok?)))))))))
 
 (define (compiler-typecheck-return-tests-ok?) : bool
   (and
@@ -1052,6 +1065,24 @@
   (SymI64Nil)
   (SymI64Bind String i64 (Box SymI64Env)))")
 
+(define (compiler-typecheck-inline-boxed-loader-helper-source) : String
+  "(defenum CompilerLoadRootList
+  (CompilerLoadRootNil)
+  (CompilerLoadRootCons String (Box CompilerLoadRootList)))
+(defstruct CompilerPkgDep
+  (alias String)
+  (path String))
+(defenum CompilerPkgDepList
+  (CompilerPkgDepNil)
+  (CompilerPkgDepCons CompilerPkgDep (Box CompilerPkgDepList)))")
+
+(define (compiler-typecheck-inline-loader-helper-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-loader-helper-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "CompilerLoadRootList")
+      (compiler-typecheck-inline-layout-ok? src "CompilerPkgDepList"))))
+
 (define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
   (CtfeUnit))
@@ -1114,6 +1145,38 @@
                 src
                 "CtfeReflectVariantList"))))))))
 
+(define (compiler-typecheck-inline-boxed-formatter-source) : String
+  "(defenum FormatToken
+  (FmtSymbol String)
+  (FmtColon))
+(defenum FormatCst
+  (FmtCstAtom FormatToken)
+  (FmtCstComment String)
+  (FmtCstPrefix FormatToken (Box FormatCst))
+  (FmtCstList (Box FormatCstList))
+  (FmtCstBracketList (Box FormatCstList))
+  (FmtCstForms (Box FormatCstList)))
+(defenum FormatCstList
+  (FmtCstNil)
+  (FmtCstCons FormatCst (Box FormatCstList)))
+(defenum Doc
+  (DEmpty)
+  (DText String)
+  (DSoftLine)
+  (DHardLine)
+  (DConcat (Box Doc) (Box Doc))
+  (DNest i64 (Box Doc))
+  (DGroup (Box Doc)))")
+
+(define (compiler-typecheck-inline-formatter-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-formatter-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "FormatCst")
+      (and
+        (compiler-typecheck-inline-layout-ok? src "FormatCstList")
+        (compiler-typecheck-inline-layout-ok? src "Doc")))))
+
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
   (name String)
@@ -1147,56 +1210,79 @@
   (next (in phase BadRegion)))")
 
 (define (compiler-typecheck-inline-layout-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      (tc-cat3
-        (compiler-typecheck-inline-unboxed-list-source)
-        "\n"
-        "(define (main [x : BadList]) : i64 0)"))
-    (and
-      (compiler-typecheck-inline-layout-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (tc-cat3
+          (compiler-typecheck-inline-unboxed-list-source)
+          "\n"
+          "(define (main [x : BadList]) : i64 0)"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
         (compiler-typecheck-inline-boxed-list-source)
         "ListI64")
-      (and
-        (compiler-typecheck-inline-layout-ok?
-          (compiler-typecheck-inline-boxed-tree-source)
-          "Tree")
-        (and
-          (compiler-typecheck-inline-layout-ok?
-            (compiler-typecheck-inline-boxed-sym-i64-env-source)
-            "SymI64Env")
-          (and
-            (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
-            (and
-              (compiler-typecheck-inline-layout-ok?
-                (compiler-typecheck-inline-pointer-boundaries-source)
-                "Node")
-              (and
-                (compiler-typecheck-inline-layout-query-ok?)
-                (and
-                  (compiler-typecheck-inline-layout-error-ok?
-                    (compiler-typecheck-inline-unboxed-list-source)
-                    "BadList"
-                    "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
-                  (and
-                    (compiler-typecheck-inline-layout-error-ok?
-                      (compiler-typecheck-inline-mutual-struct-source)
-                      "A"
-                      "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
-                    (and
-                      (compiler-typecheck-inline-layout-error-ok?
-                        (compiler-typecheck-inline-fixed-array-source)
-                        "BadFixed"
-                        "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
-                      (and
-                        (compiler-typecheck-inline-layout-error-ok?
-                          (compiler-typecheck-inline-tuple-source)
-                          "BadTuple"
-                          "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
-                        (compiler-typecheck-inline-layout-error-ok?
-                          (compiler-typecheck-inline-region-wrapper-source)
-                          "BadRegion"
-                          "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")))))))))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-boxed-tree-source)
+        "Tree")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-boxed-sym-i64-env-source)
+        "SymI64Env")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-loader-helper-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-formatter-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-pointer-boundaries-source)
+        "Node")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-query-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-unboxed-list-source)
+        "BadList"
+        "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-mutual-struct-source)
+        "A"
+        "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-fixed-array-source)
+        "BadFixed"
+        "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-tuple-source)
+        "BadTuple"
+        "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-region-wrapper-source)
+        "BadRegion"
+        "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (let
@@ -4125,6 +4211,26 @@
       (if (compiler-typecheck-error-ok?
         "(define (f) : String (read-stdin-line))"
         "typecheck: unbound name read-stdin-line")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : String (read-file p))"
+        "typecheck: unbound name read-file")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : i64 (file-open-status p 0))"
+        "typecheck: unbound name file-open-status")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (fs-process-id))"
+        "typecheck: unbound name fs-process-id")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : unit (flush-stdout))"
+        "typecheck: unbound name flush-stdout")
         unit
         (set! ok false))
       ok)))

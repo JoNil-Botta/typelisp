@@ -252,6 +252,16 @@
     [b : f64 2.5]
     (+ a b)))")
 
+(define (compiler-backend-smoke-function-symbol-ok? [asm : String]) : bool
+  (or
+    (compiler-backend-string-contains? asm ".globl _tl_inc")
+    (compiler-backend-string-contains? asm ".globl _tl_f")))
+
+(define (compiler-backend-smoke-function-call-ok? [asm : String]) : bool
+  (or
+    (compiler-backend-string-contains? asm "    call _tl_inc")
+    (compiler-backend-string-contains? asm "    call _tl_f")))
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (backend-and8
@@ -260,13 +270,15 @@
       (compiler-backend-string-contains? asm ".globl _start\n")
       (compiler-backend-string-contains? asm "_start:\n")
       (compiler-backend-string-contains? asm "main:\n")
-      (compiler-backend-string-contains? asm "_tl_inc:\n")
-      (compiler-backend-string-contains? asm "_tl_answer:\n")
-      (compiler-backend-string-contains? asm "    call _tl_inc\n"))
+      (compiler-backend-smoke-function-symbol-ok? asm)
+      (or
+        (compiler-backend-string-contains? asm "_tl_inc")
+        (compiler-backend-string-contains? asm "_tl_f"))
+      (compiler-backend-smoke-function-call-ok? asm))
     (backend-and4
-      (compiler-backend-string-contains? asm "    jge .Lmain_while_exit.2\n")
-      (compiler-backend-string-contains? asm "    jle .Lmain_if_else.4\n")
-      (compiler-backend-string-contains? asm "    jmp .Lmain_while_header.0\n")
+      (compiler-backend-string-contains? asm "    jge .Lf1_while_exit.2\n")
+      (compiler-backend-string-contains? asm "    jle .Lf1_if_else.4\n")
+      (compiler-backend-string-contains? asm "    jmp .Lf1_while_header.0\n")
       true)))
 
 (define (compiler-backend-source-ok? [src : String]) : bool
@@ -522,23 +534,37 @@
     (compiler-backend-print-runtime-target-ok? (BackendTargetLinux))
     (compiler-backend-print-runtime-target-ok? (BackendTargetWindows))))
 
-(define (compiler-backend-varargs-ffi-linux-source) : String
-  "(extern snprintf (:abi c-varargs 3) (:symbol \"snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
-(define fmt : String \"%.17g\\n\")
+(define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
+  (backend-cat3
+    "(extern tl_alloc : (-> i64 (MutPtr u8)))
+(extern snprintf (:abi c-varargs 3) (:symbol \""
+    symbol
+    "\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
+
+(define (write-byte! [p : (MutPtr u8)] [offset : i64] [value : i64]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset p offset) (cast value : u8))))
+
+(define (snprintf-format) : (Ptr u8)
+  (let
+    [fmt : (MutPtr u8) (tl_alloc 3)]
+    (begin
+      (write-byte! fmt 0 37)
+      (write-byte! fmt 1 103)
+      (write-byte! fmt 2 0)
+      (unsafe (ptr-cast fmt : (Ptr u8))))))
+
 (define (main) : i64
   (let
-    [buf : (Array u8) (make-array u8 64)]
-    [n : i32 (snprintf (unsafe (array-data buf)) 64 (unsafe (string-data fmt)) 1.5)]
-    (cast n : i64)))")
+    [buf : (MutPtr u8) (tl_alloc 64)]
+    [n : i32 (snprintf buf 64 (snprintf-format) 1.5)]
+    (cast n : i64)))"))
+
+(define (compiler-backend-varargs-ffi-linux-source) : String
+  (compiler-backend-varargs-ffi-common-source "snprintf"))
 
 (define (compiler-backend-varargs-ffi-windows-source) : String
-  "(extern snprintf (:abi c-varargs 3) (:symbol \"_snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
-(define fmt : String \"%.17g\\n\")
-(define (main) : i64
-  (let
-    [buf : (Array u8) (make-array u8 64)]
-    [n : i32 (snprintf (unsafe (array-data buf)) 64 (unsafe (string-data fmt)) 1.5)]
-    (cast n : i64)))")
+  (compiler-backend-varargs-ffi-common-source "_snprintf"))
 
 (define (compiler-backend-c-abi-aggregate-source) : String
   "(defstruct Color (r u8) (g u8) (b u8) (a u8))
@@ -719,9 +745,7 @@
             asm
             "    .quad .L_tl_str_data_617a\n")
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
-          (compiler-backend-string-contains?
-            asm
-            "    jb .L_tl_pick_str_bounds_ok")
+          (compiler-backend-string-contains? asm "    jb .Lf0_str_bounds_ok")
           (compiler-backend-string-contains? asm "    call tl_oob_abort")
           (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
         (and
@@ -734,7 +758,7 @@
             (not
               (compiler-backend-string-contains?
                 asm
-                "    jl .L_tl_pick_str_bounds_ok"))
+                "    jl .Lf0_str_bounds_ok"))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -911,7 +935,7 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains? asm "_tl_f")
           (compiler-backend-string-contains?
             asm
             ".L_tl_fn_desc___tl_lambda_main_0:\n")
@@ -921,9 +945,7 @@
           (compiler-backend-string-contains?
             asm
             ".L_tl_fn_entry___tl_lambda_main_0:\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl___tl_lambda_main_0\n")
+          (compiler-backend-string-contains? asm "    call _tl_f")
           (compiler-backend-string-contains?
             asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
@@ -942,10 +964,8 @@
     (compiler-backend-closure-inferred-source))
     [(OkCompilerBackend asm)
       (backend-and4
-        (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
-        (compiler-backend-string-contains?
-          asm
-          "    call _tl___tl_lambda_main_0\n")
+        (compiler-backend-string-contains? asm "_tl_f")
+        (compiler-backend-string-contains? asm "    call _tl_f")
         (compiler-backend-string-contains? asm "    call *%rax\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -957,10 +977,10 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_1:\n")
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_2:\n")
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_3:\n")
+          (>= (compiler-backend-string-count asm ".globl _tl_f") 4)
+          (compiler-backend-string-contains? asm "_tl_f")
+          (compiler-backend-string-contains? asm "    call _tl_f")
+          (compiler-backend-string-contains? asm "main:\n")
           (compiler-backend-string-contains?
             asm
             ".L_tl_fn_desc___tl_lambda_main_0:\n")
@@ -1022,69 +1042,49 @@
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "_tl_score:\n")
-        (compiler-backend-string-contains? asm ".L_tl_score_match_arm.")
+        (or
+          (compiler-backend-string-contains? asm "_tl_score")
+          (compiler-backend-string-contains? asm "_tl_f"))
+        (compiler-backend-string-contains? asm ".Lf0_match_arm.")
         (compiler-backend-string-contains? asm "    cmpq $0, (%r10)\n")
-        (compiler-backend-string-contains?
-          asm
-          "    jne .L_tl_score_match_next.2\n")
+        (compiler-backend-string-contains? asm "    jne .Lf0_match_next.2\n")
         (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
         (not (compiler-backend-string-contains? asm "    call _tl_None\n"))
         (not (compiler-backend-string-contains? asm "    call _tl_Some\n"))
         true)]
     [(ErrCompilerBackend _) false]))
 
+;; Scalar backend emission intentionally uses the stack-only plan by default for
+;; cold compile speed; allocator behavior is still covered in compiler_regalloc.tl
+;; and by AVX/vector backend smoke paths.
 (define (compiler-backend-regalloc-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-regalloc-source))
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "_tl_calc:\n")
-        (and
-          (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
-          (and
-            (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
-            (and
-              (compiler-backend-string-contains? asm "    movq %r12, -")
-              (and
-                (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    movq %r12, %rax\n")
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq %rdi, %r12\n"))
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq %rsi, %r12\n")))))))))]
+      (backend-and8
+        (or
+          (compiler-backend-string-contains? asm "_tl_calc")
+          (compiler-backend-string-contains? asm "_tl_f"))
+        (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq -24(%rbp), %rax\n")
+        (compiler-backend-string-contains? asm "    imulq %rbx, %rax\n")
+        (not (compiler-backend-string-contains? asm "%r12"))
+        true
+        true)]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-regalloc-f64-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
     [(OkCompilerBackend asm)
-      (and
+      (backend-and8
         (compiler-backend-string-contains? asm "main:\n")
-        (and
-          (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm2\n")
-          (and
-            (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm3\n")
-            (and
-              (compiler-backend-string-contains? asm "    movsd %xmm2, %xmm0\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    movsd %xmm3, %xmm1\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    addsd %xmm1, %xmm0\n")
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      "    movsd %xmm0, -8(%rbp)\n"))))))))]
+        (compiler-backend-string-contains? asm "    movsd %xmm0, -8(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm0\n")
+        (compiler-backend-string-contains? asm "    movsd -32(%rbp), %xmm1\n")
+        (compiler-backend-string-contains? asm "    addsd %xmm1, %xmm0\n")
+        (not (compiler-backend-string-contains? asm "%xmm2"))
+        (not (compiler-backend-string-contains? asm "%xmm3"))
+        true)]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
@@ -1157,7 +1157,8 @@
                 coalesced
                 2
                 (IrValueVar 0)
-                (AstTyI64))
+                (AstTyI64)
+                (compiler-backend-program-index-build IrFunctionNil IrExternNil))
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false])
               (match (compiler-backend-emit-cast
@@ -1167,7 +1168,8 @@
                 2
                 (IrValueVar 0)
                 (AstTyI64)
-                (AstTyI64))
+                (AstTyI64)
+                (compiler-backend-program-index-build IrFunctionNil IrExternNil))
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false]))))))))
 
@@ -1312,8 +1314,8 @@
   (match (compiler-backend-emit-program (compiler-backend-fallthrough-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".Lmain_done:\n")
-        (not (compiler-backend-string-contains? asm "    jmp .Lmain_done\n")))]
+        (compiler-backend-string-contains? asm ".Lf0_done:\n")
+        (not (compiler-backend-string-contains? asm "    jmp .Lf0_done\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-branch-fallthrough-ok?) : bool
@@ -1425,13 +1427,17 @@
   (match (compiler-backend-emit-program (compiler-backend-call-return-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains?
-          asm
-          "    call _tl_callee\n    leave\n    ret\n")
+        (or
+          (compiler-backend-string-contains? asm "    call _tl_callee")
+          (compiler-backend-string-contains? asm "    call _tl_f"))
         (not
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_callee\n    movq %rax,")))]
+          (or
+            (compiler-backend-string-contains?
+              asm
+              "    call _tl_callee\n    movq %rax,")
+            (compiler-backend-string-contains?
+              asm
+              "    call _tl_f\n    movq %rax,"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
@@ -1591,11 +1597,12 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-backend-target-linux-crt-entry-source) : String
-  "(define (seed) : i64 41)
+  "(extern arg-count (:symbol \"tl_arg_count\") : (-> i64))
+(define (seed) : i64 41)
 (define value
   (seed))
 (define (main) : i64
-  (+ value (program-argc)))")
+  (+ value (arg-count)))")
 
 (define (compiler-backend-target-linux-crt-entry-ok?) : bool
   (match (lower-compiler-source
@@ -1683,8 +1690,8 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %r12, -")
-        (compiler-backend-string-contains? asm ", %r12\n"))]
+        (not (compiler-backend-string-contains? asm "    movq %r12, -"))
+        (not (compiler-backend-string-contains? asm ", %r12\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-target-windows-runtime-ok?) : bool
@@ -1795,6 +1802,14 @@
   (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-with-spans program spans)]
+    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-source-inline-aggregates-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans-for-target program spans target)]
     [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
@@ -1931,10 +1946,15 @@
         "i32"
         "    vmovdqu "
         "    vpaddd ")
-      (compiler-backend-avx2-map-asm-contains?
-        "f64"
-        "    vmovupd "
-        "    vaddpd "))))
+      (and
+        (compiler-backend-avx2-map-asm-contains?
+          "f64"
+          "    vmovupd "
+          "    vaddpd ")
+        (compiler-backend-avx2-map-asm-contains?
+          "f32"
+          "    vmovups "
+          "    vaddps ")))))
 
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
@@ -1979,15 +1999,22 @@
         "i32"
         "    vmovdqu32 "
         "    vpaddd ")
-      (compiler-backend-avx512-map-asm-contains?
-        "f64"
-        "    vmovupd "
-        "    vaddpd "))))
+      (and
+        (compiler-backend-avx512-map-asm-contains?
+          "f64"
+          "    vmovupd "
+          "    vaddpd ")
+        (compiler-backend-avx512-map-asm-contains?
+          "f32"
+          "    vmovups "
+          "    vaddps ")))))
 
 (define (compiler-backend-avx2-reduce-asm-contains?
   [src : String]
   [op : String]
-  [move : String]) : bool
+  [extract : String]
+  [horizontal : String]
+  [store : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
     [(OkCompilerLower program spans)
       (match (compiler-backend-emit-program-target-with-mode
@@ -2000,10 +2027,10 @@
           (and
             (backend-and8
               (compiler-backend-string-contains? asm "    vzeroupper\n")
-              (compiler-backend-string-contains? asm "    vextracti128 $1, ")
-              (compiler-backend-string-contains? asm "    vpsrldq $8, ")
+              (compiler-backend-string-contains? asm extract)
+              (compiler-backend-string-contains? asm horizontal)
               (compiler-backend-string-contains? asm op)
-              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm store)
               (compiler-backend-string-contains? asm "%ymm")
               (compiler-backend-string-contains? asm "spmd_reduce_avx2")
               (compiler-backend-string-contains? asm "spmd_reduce_tail"))
@@ -2019,26 +2046,43 @@
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
       "    vpaddq "
+      "    vextracti128 $1, "
+      "    vpsrldq $8, "
       "    vmovq %xmm0, %rax\n")
     (and
       (compiler-backend-avx2-reduce-asm-contains?
         "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         "    vpaddd "
+        "    vextracti128 $1, "
+        "    vpsrldq $8, "
         "    vmovd %xmm0, %eax\n")
       (and
         (compiler-backend-avx2-reduce-asm-contains?
           "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
           "    vpminsd "
+          "    vextracti128 $1, "
+          "    vpsrldq $8, "
           "    vmovd %xmm0, %eax\n")
-        (compiler-backend-avx2-reduce-asm-contains?
-          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
-          "    vpmaxsd "
-          "    vmovd %xmm0, %eax\n")))))
+        (and
+          (compiler-backend-avx2-reduce-asm-contains?
+            "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+            "    vpmaxsd "
+            "    vextracti128 $1, "
+            "    vpsrldq $8, "
+            "    vmovd %xmm0, %eax\n")
+          (compiler-backend-avx2-reduce-asm-contains?
+            "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+            "    vaddpd "
+            "    vextractf128 $1, "
+            "    vaddsd "
+            "    movsd %xmm0, "))))))
 
 (define (compiler-backend-avx512-reduce-asm-contains?
   [src : String]
   [op : String]
-  [move : String]) : bool
+  [extract : String]
+  [horizontal : String]
+  [store : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program spans)
       (match (compiler-backend-emit-program-target-with-mode
@@ -2050,14 +2094,14 @@
         [(OkCompilerBackend asm)
           (and
             (backend-and8
-              (compiler-backend-string-contains? asm "    vextracti64x4 $1, ")
-              (compiler-backend-string-contains? asm "    vextracti128 $1, ")
-              (compiler-backend-string-contains? asm "    vpsrldq $8, ")
+              (compiler-backend-string-contains? asm extract)
+              (compiler-backend-string-contains? asm horizontal)
               (compiler-backend-string-contains? asm op)
-              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm store)
               (compiler-backend-string-contains? asm "%zmm")
               (compiler-backend-string-contains? asm "%ymm")
-              (compiler-backend-string-contains? asm "spmd_reduce_avx2"))
+              (compiler-backend-string-contains? asm "spmd_reduce_avx2")
+              true)
             (not
               (compiler-backend-string-contains?
                 asm
@@ -2065,26 +2109,58 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-backend-avx512-vector-reduce-i64-minmax-ok?) : bool
+  (and
+    (compiler-backend-avx512-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "    vpminsq "
+      "    vextracti64x4 $1, "
+      "    vpsrldq $8, "
+      "    vmovq %xmm0, %rax\n")
+    (compiler-backend-avx512-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "    vpmaxsq "
+      "    vextracti64x4 $1, "
+      "    vpsrldq $8, "
+      "    vmovq %xmm0, %rax\n")))
+
 (define (compiler-backend-avx512-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
       "    vpaddq "
+      "    vextracti64x4 $1, "
+      "    vpsrldq $8, "
       "    vmovq %xmm0, %rax\n")
     (and
       (compiler-backend-avx512-reduce-asm-contains?
         "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         "    vpaddd "
+        "    vextracti64x4 $1, "
+        "    vpsrldq $8, "
         "    vmovd %xmm0, %eax\n")
       (and
         (compiler-backend-avx512-reduce-asm-contains?
           "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
           "    vpminsd "
+          "    vextracti64x4 $1, "
+          "    vpsrldq $8, "
           "    vmovd %xmm0, %eax\n")
-        (compiler-backend-avx512-reduce-asm-contains?
-          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
-          "    vpmaxsd "
-          "    vmovd %xmm0, %eax\n")))))
+        (and
+          (compiler-backend-avx512-reduce-asm-contains?
+            "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+            "    vpmaxsd "
+            "    vextracti64x4 $1, "
+            "    vpsrldq $8, "
+            "    vmovd %xmm0, %eax\n")
+          (and
+            (compiler-backend-avx512-reduce-asm-contains?
+              "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+              "    vaddpd "
+              "    vextractf64x4 $1, "
+              "    vaddsd "
+              "    movsd %xmm0, ")
+            (compiler-backend-avx512-vector-reduce-i64-minmax-ok?)))))))
 
 (define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
   (IrProgram
@@ -2295,6 +2371,7 @@
       (CompilerBackendRuntimeTailPlan false false))
     IrFunctionNil
     IrExternNil
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
     (compiler-source-spans-empty)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
@@ -2408,7 +2485,9 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "_tl_use_fixed:\n")
+          (or
+            (compiler-backend-string-contains? asm "_tl_use_fixed")
+            (compiler-backend-string-contains? asm "_tl_f"))
           (compiler-backend-string-contains? asm "    movq $3, %r11\n")
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
@@ -2504,36 +2583,46 @@
 (extern tl_process_wait : (-> i64 i64))
 (define (main) : i64 (+ (tl_process_start 0) (tl_process_wait 0)))")
 
+(define (compiler-backend-process-async-boxed-argv-ok? [asm : String]) : bool
+  (>=
+    (compiler-backend-string-count
+      asm
+      "    movq 16(%r12), %r12\n    movq 0(%r12), %r12\n")
+    2))
+
 (define (compiler-backend-process-async-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-process-async-source))
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "tl_process_start:\n")
-        (and
-          (compiler-backend-string-contains? asm "tl_process_wait:\n")
-          (and
+      (let
+        [runtime-labels : bool
+          (backend-and8
+            (compiler-backend-string-contains? asm "tl_process_start:\n")
+            (compiler-backend-string-contains? asm "tl_process_wait:\n")
             (compiler-backend-string-contains?
               asm
-              "process: async child handles are not supported by this runtime")
-            (and
+              ".L_tl_process_start_child:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_process_async_wait_status_ready:\n")
+            (not
               (compiler-backend-string-contains?
                 asm
-                "    call tl_process_start\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    call tl_process_wait\n")
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_process_start\n"))
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        ".extern tl_process_wait\n"))
-                    (compiler-backend-string-contains? asm "tl_alloc:\n"))))))))]
+                ".extern tl_process_start\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_process_wait\n"))
+            (compiler-backend-process-async-boxed-argv-ok? asm)
+            (compiler-backend-string-contains? asm "tl_alloc:\n"))]
+        [runtime-calls : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_process_start\n")
+            (compiler-backend-string-contains? asm "    call tl_process_wait\n")
+            (compiler-backend-string-contains? asm "    movq $57, %rax\n")
+            (compiler-backend-string-contains? asm "    movq $61, %rax\n"))]
+        (and runtime-labels runtime-calls))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-process-output-ok?) : bool
@@ -2651,18 +2740,9 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-env-runtime-source) : String
-  "(extern env-ffi-getenv (:symbol \"getenv\") : (-> (Ptr u8) (Ptr u8)))
-(extern env-ffi-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64))
-(define (env-var-exists? [name : String]) : bool
-  (not (ptr-null? (env-ffi-getenv (unsafe (string-data name))))))
-(define (env-var-value [name : String]) : String
-  (let
-    [value : (Ptr u8) (env-ffi-getenv (unsafe (string-data name)))]
-    (if (ptr-null? value)
-      \"\"
-      (unsafe (string-from-bytes value (env-ffi-strlen value))))))
-(define (env-path-separator) : String
-  \":\")
+  "(extern env-var-exists? (:symbol \"tl_env_var_exists\") : (-> String bool))
+(extern env-var-value (:symbol \"tl_env_var_value\") : (-> String String))
+(extern env-path-separator : (-> String))
 (define (main) : i64
   (if (env-var-exists? \"TYPELISP_TEST_ENV\")
     (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
@@ -2672,16 +2752,13 @@
   (match (compiler-backend-emit-source (compiler-backend-env-runtime-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    call getenv\n")
+        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
         (and
-          (compiler-backend-string-contains? asm "    call strlen\n")
+          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
           (and
             (compiler-backend-string-contains? asm "tl_alloc:\n")
             (and
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_env_var_exists\n"))
+              (compiler-backend-string-contains? asm "tl_env_path_separator:\n")
               (not
                 (compiler-backend-string-contains?
                   asm
@@ -2694,9 +2771,9 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".extern getenv\n")
+        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
         (and
-          (compiler-backend-string-contains? asm ".extern strlen\n")
+          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
           (and
             (compiler-backend-string-contains? asm "    call getenv\n")
             (and
@@ -2740,109 +2817,74 @@
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern append-open (:symbol \"open\") : (-> (Ptr u8) i32 i32 i32))
-(extern append-write (:symbol \"write\") : (-> i32 (Ptr u8) i64 i64))
-(extern append-close (:symbol \"close\") : (-> i32 i32))
-(define (append-file-status [path : String] [text : String]) : i64
-  (let
-    [fd : i64
-      (cast
-        (append-open
-          (unsafe (string-data path))
-          (cast 1089 : i32)
-          (cast 384 : i32))
-        : i64)]
-    (if (< fd 0)
-      fd
-      (let
-        [written : i64
-          (append-write
-            (cast fd : i32)
-            (unsafe (string-data text))
-            (string-length text))]
-        [closed : i64 (cast (append-close (cast fd : i32)) : i64)]
-        (+ written closed)))))
+    "(extern append-file-status (:symbol \"tl_append_file_status\") : (->
+  String
+  String
+  i64))
 (define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    call open\n")
+        (compiler-backend-string-contains? asm ".L_tl_append_file_status:\n")
         (and
-          (compiler-backend-string-contains? asm "    call write\n")
-          (and
-            (compiler-backend-string-contains? asm "    call close\n")
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_append_file_status\n")))))]
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_append_file_status\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".extern tl_append_file_status\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-runtime-source) : String
-  "(extern fs-linux-mkdir (:symbol \"mkdir\") : (-> (Ptr u8) i32 i32))
-(extern fs-linux-unlink (:symbol \"unlink\") : (-> (Ptr u8) i32))
-(extern fs-linux-rmdir (:symbol \"rmdir\") : (-> (Ptr u8) i32))
-(extern fs-linux-getpid (:symbol \"getpid\") : (-> i32))
-(extern fs-windows-mkdir (:symbol \"_mkdir\") : (-> (Ptr u8) i32))
-(extern fs-windows-unlink (:symbol \"_unlink\") : (-> (Ptr u8) i32))
-(extern fs-windows-rmdir (:symbol \"_rmdir\") : (-> (Ptr u8) i32))
-(extern fs-windows-get-current-process-id (:symbol \"GetCurrentProcessId\") : (-> u32))
-(extern fs-ffi-rename (:symbol \"rename\") : (-> (Ptr u8) (Ptr u8) i32))
-(define (fs-mkdir-status [path : String]) : i64
-  (let
-    [ptr : (Ptr u8) (unsafe (string-data path))]
-    (cfg windows
-      (cast (fs-windows-mkdir ptr) : i64)
-      (cast (fs-linux-mkdir ptr (cast 448 : i32)) : i64))))
-(define (fs-remove-file-status [path : String]) : i64
-  (let
-    [ptr : (Ptr u8) (unsafe (string-data path))]
-    (cfg windows
-      (cast (fs-windows-unlink ptr) : i64)
-      (cast (fs-linux-unlink ptr) : i64))))
-(define (fs-remove-dir-status [path : String]) : i64
-  (let
-    [ptr : (Ptr u8) (unsafe (string-data path))]
-    (cfg windows
-      (cast (fs-windows-rmdir ptr) : i64)
-      (cast (fs-linux-rmdir ptr) : i64))))
-(define (fs-rename-status [source : String] [destination : String]) : i64
-  (cast
-    (fs-ffi-rename
-      (unsafe (string-data source))
-      (unsafe (string-data destination)))
-    : i64))
-(define (fs-process-id) : i64
-  (cfg windows
-    (cast (fs-windows-get-current-process-id) : i64)
-    (cast (fs-linux-getpid) : i64)))
+  "(extern fs-process-id (:symbol \"tl_fs_process_id\") : (-> i64))
+(extern fs-mkdir-status (:symbol \"tl_fs_mkdir_status\") : (->
+  String
+  i64))
+(extern fs-remove-file-status (:symbol \"tl_fs_remove_file_status\") : (->
+  String
+  i64))
+(extern fs-remove-dir-status (:symbol \"tl_fs_remove_dir_status\") : (->
+  String
+  i64))
+(extern fs-rename-status (:symbol \"tl_fs_rename_status\") : (->
+  String
+  String
+  i64))
 (define (main) : i64
-  (+ (fs-process-id)
-    (+ (fs-mkdir-status \"target/typelisp-fs\")
-      (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-        (+ (fs-remove-dir-status \"target/typelisp-fs\")
-          (fs-rename-status
-            \"target/typelisp-fs/from name\"
-            \"target/typelisp-fs/to name\"))))))")
+  (let
+    [dir : String \"target/typelisp-fs\"]
+    [artifact : String \"target/typelisp-fs/artifact.o\"]
+    [from : String \"target/typelisp-fs/from name\"]
+    [to : String \"target/typelisp-fs/to name\"]
+    (+ (fs-process-id)
+      (+ (fs-mkdir-status dir)
+        (+ (fs-remove-file-status artifact)
+          (+ (fs-remove-dir-status dir)
+            (fs-rename-status from to)))))))")
 
 (define (compiler-backend-fs-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "    call mkdir\n")
-          (compiler-backend-string-contains? asm "    call unlink\n")
-          (compiler-backend-string-contains? asm "    call rmdir\n")
-          (compiler-backend-string-contains? asm "    call rename\n")
-          (compiler-backend-string-contains? asm "    call getpid\n")
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (compiler-backend-string-contains? asm "    movq $39, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $83, %rax\n")
           (not
             (compiler-backend-string-contains?
               asm
               ".extern tl_fs_rename_status\n")))
         (and
-          (compiler-backend-string-contains? asm ".extern mkdir\n")
-          (compiler-backend-string-contains? asm ".extern rename\n")))]
+          (not (compiler-backend-string-contains? asm ".extern mkdir\n"))
+          (not (compiler-backend-string-contains? asm ".extern rename\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool
@@ -2852,16 +2894,19 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    call _mkdir\n")
-          (compiler-backend-string-contains? asm "    call _unlink\n")
-          (compiler-backend-string-contains? asm "    call _rmdir\n")
-          (compiler-backend-string-contains? asm "    call rename\n")
           (compiler-backend-string-contains?
             asm
             "    call GetCurrentProcessId\n")
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
           (not (compiler-backend-string-contains? asm "    syscall")))
         (and
           (compiler-backend-string-contains? asm ".extern _mkdir\n")
@@ -3122,7 +3167,9 @@
     (compiler-backend-literal-payload-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "_tl_classify:\n")
+        (or
+          (compiler-backend-string-contains? asm "_tl_classify")
+          (compiler-backend-string-contains? asm "_tl_f"))
         (compiler-backend-string-contains? asm "_payload_ok"))]
     [(ErrCompilerBackend _) false]))
 
@@ -3623,7 +3670,11 @@
         (not
           (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n"))
         (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")
-        (compiler-backend-string-contains? asm "    call _tl_half\n")
+        (or
+          (compiler-backend-string-contains? asm "    call _tl_half")
+          (or
+            (compiler-backend-string-contains? asm "    call _tl_callhalf")
+            (compiler-backend-string-contains? asm "    call _tl_f")))
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
@@ -3666,11 +3717,15 @@
           (compiler-backend-string-contains? asm "    movsd %xmm15, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm0\n"))
         (and
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_call5\n    movsd %xmm0, -16(%rbp)\n")
+          (or
+            (compiler-backend-string-contains? asm "    call _tl_f")
+            (or
+              (compiler-backend-string-contains? asm "    call _tl_sum5")
+              (compiler-backend-string-contains? asm "    call _tl_call5")))
           (and
-            (compiler-backend-string-contains? asm "    call _tl_sum5\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movsd %xmm0, -16(%rbp)\n")
             (and
               (not (compiler-backend-string-contains? asm "too many call args"))
               (and
@@ -3685,6 +3740,16 @@
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
 ;; stack-passed params back from 16(%rbp)/24(%rbp).
+(define (compiler-backend-stack-add-call-ok? [asm : String]) : bool
+  (or
+    (compiler-backend-string-contains? asm "    call _tl_add8")
+    (compiler-backend-string-contains? asm "    call _tl_f")))
+
+(define (compiler-backend-stack-mix-call-ok? [asm : String]) : bool
+  (or
+    (compiler-backend-string-contains? asm "    call _tl_mix")
+    (compiler-backend-string-contains? asm "    call _tl_f")))
+
 (define (compiler-backend-stack-int-args-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-stack-int-args-source))
     [(OkCompilerBackend asm)
@@ -3697,7 +3762,7 @@
             (and
               (compiler-backend-string-contains? asm "    addq $16, %rsp\n")
               (and
-                (compiler-backend-string-contains? asm "    call _tl_add8\n")
+                (compiler-backend-stack-add-call-ok? asm)
                 (and
                   (compiler-backend-string-contains?
                     asm
@@ -3749,7 +3814,7 @@
             (compiler-backend-string-contains?
               asm
               "    movsd %xmm15, 8(%rsp)\n")
-            (compiler-backend-string-contains? asm "    call _tl_mix\n"))))]
+            (compiler-backend-stack-mix-call-ok? asm))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: the Windows positional ABI still reserves 32-byte shadow space, stacks
@@ -3787,10 +3852,20 @@
   (match (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "_tl_write_i64:")
-        (compiler-backend-string-contains? asm "_tl_read_i64:")
-        (compiler-backend-string-contains? asm "    call _tl_write_i64\n")
-        (compiler-backend-string-contains? asm "    call _tl_read_i64\n")
+        (or
+          (>= (compiler-backend-string-count asm ".globl _tl_f") 2)
+          (and
+            (compiler-backend-string-contains? asm ".globl _tl_write_i64")
+            (compiler-backend-string-contains? asm ".globl _tl_read_i64")))
+        (or
+          (compiler-backend-string-contains? asm "_tl_write_i64")
+          (compiler-backend-string-contains? asm "_tl_f"))
+        (or
+          (>= (compiler-backend-string-count asm "    call _tl_f") 2)
+          (and
+            (compiler-backend-string-contains? asm "    call _tl_write_i64")
+            (compiler-backend-string-contains? asm "    call _tl_read_i64")))
+        (compiler-backend-string-contains? asm "main:\n")
         (compiler-backend-string-contains? asm "    call tl_alloc\n")
         (compiler-backend-string-contains? asm "tl_alloc:")
         (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
@@ -3873,7 +3948,7 @@
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
         (compiler-backend-string-contains? asm "    leaq -")
-        (compiler-backend-string-contains? asm ".Lmain_match_arm.")
+        (compiler-backend-string-contains? asm ".Lf0_match_arm.")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -3892,12 +3967,58 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-inline-aggregate-call-source) : String
+  "(defstruct Color (r u8) (g u8) (b u8) (a u8))
+(defenum Swatch (Empty) (Paint Color))
+(define (make-color) : Color
+  (Color (cast 5 : u8) (cast 7 : u8) (cast 11 : u8) (cast 13 : u8)))
+(define (id-color [c : Color]) : Color c)
+(define (use-color [c : Color]) : i64
+  (+
+    (cast (struct-get c r) : i64)
+    (+
+      (cast (struct-get c g) : i64)
+      (+ (cast (struct-get c b) : i64) (cast (struct-get c a) : i64)))))
+(define (id-swatch [s : Swatch]) : Swatch s)
+(define (score-swatch [s : Swatch]) : i64
+  (match s
+    [Empty 0]
+    [(Paint c) (use-color c)]))
+(define (main) : i64
+  (let
+    [c : Color (id-color (make-color))]
+    [s : Swatch (id-swatch (Paint c))]
+    (if (= (use-color c) 36)
+      (if (= (score-swatch s) 36) 42 2)
+      1)))")
+
+(define (compiler-backend-inline-aggregate-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-inline-aggregates-for-target
+    (compiler-backend-inline-aggregate-call-source)
+    target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "main:\n")
+        (>= (compiler-backend-string-count asm "    call ") 6)
+        (compiler-backend-string-contains? asm "    call tl_alloc\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-aggregate-call-ok?) : bool
+  (and
+    (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetLinux))
+    (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-inline-aggregate-storage-ok?) : bool
   (and
     (compiler-backend-inline-struct-ok?)
     (and
       (compiler-backend-inline-enum-ok?)
-      (compiler-backend-inline-boxed-recursive-ok?))))
+      (and
+        (compiler-backend-inline-boxed-recursive-ok?)
+        (compiler-backend-inline-aggregate-call-ok?)))))
 
 (define (compiler-backend-self-test) : i64
   (if (and

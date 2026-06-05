@@ -53,6 +53,11 @@
   (CompilerRegNoType)
   (CompilerRegSomeType AstType))
 
+(defstruct CompilerRegVarTypes
+  (entries CompilerRegVarTypeList)
+  (present (Array i64))
+  (items (Array AstType)))
+
 (defenum CompilerRegActive
   (CompilerRegActive i64 i64 String))
 
@@ -68,7 +73,8 @@
   (CompilerRegPlan
     CompilerRegAssignmentList
     CompilerLiveI64Set
-    CompilerRegIntervalList))
+    CompilerRegIntervalList
+    CompilerRegVarTypeList))
 
 (defenum CompilerRegAssignState
   (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentList))
@@ -395,6 +401,21 @@
               CompilerRegNoType
               (compiler-reg-var-type-lookup (box-get rest) var)))])]))
 
+(define (compiler-reg-var-types-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
+  (struct-get types entries))
+
+(define (compiler-reg-var-types-lookup
+  [types : CompilerRegVarTypes]
+  [var : i64]) : CompilerRegMaybeType
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [items : (Array AstType) (struct-get types items)]
+    (if (or (< var 0) (>= var (array-length present)))
+      CompilerRegNoType
+      (if (= (array-ref present var) 0)
+        CompilerRegNoType
+        (CompilerRegSomeType (array-ref items var))))))
+
 (define (compiler-reg-param-types
   [params : CompilerIrParamList]
   [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
@@ -460,12 +481,114 @@
             (box-get rest)
             (compiler-reg-instr-list-types instrs types))])]))
 
-(define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypeList
+(define (compiler-reg-var-type-array-set!
+  [present : (Array i64)]
+  [types : (Array AstType)]
+  [var : i64]
+  [ty : AstType]) : unit
+  (if (or (< var 0) (>= var (array-length present)))
+    unit
+    (begin
+      (array-set! present var 1)
+      (array-set! types var ty))))
+
+(define (compiler-reg-param-types-array!
+  [params : CompilerIrParamList]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match params
+    [(IrParamNil) unit]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ ty id)
+          (begin
+            (compiler-reg-var-type-array-set! present types id ty)
+            (compiler-reg-param-types-array! (box-get rest) present types))])]))
+
+(define (compiler-reg-instr-def-type-array!
+  [instr : CompilerIrInstr]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match instr
+    [(IrInstrMov dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrLoad dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrCast dst _ _ to-ty)
+      (compiler-reg-var-type-array-set! present types dst to-ty)]
+    [(IrInstrBinOp dst _ _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrUnOp dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrVectorReduce dst _ _ _ elem-ty)
+      (compiler-reg-var-type-array-set! present types dst elem-ty)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (compiler-reg-var-type-array-set! present types dst (AstTyBool))]
+    [(IrInstrCall dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrPhi dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [_ unit]))
+
+(define (compiler-reg-instr-list-types-array!
+  [instrs : CompilerIrInstrList]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match instrs
+    [(IrInstrNil) unit]
+    [(IrInstrCons instr rest)
+      (begin
+        (compiler-reg-instr-def-type-array! instr present types)
+        (compiler-reg-instr-list-types-array! (box-get rest) present types))]))
+
+(define (compiler-reg-block-list-types-array!
+  [blocks : CompilerIrBlockList]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-reg-instr-list-types-array! instrs present types)
+            (compiler-reg-block-list-types-array! (box-get rest) present types))])]))
+
+(define (compiler-reg-var-type-arrays-to-list
+  [present : (Array i64)]
+  [types : (Array AstType)]
+  [index : i64]
+  [acc : CompilerRegVarTypeList]) : CompilerRegVarTypeList
+  (if (< index 0)
+    acc
+    (compiler-reg-var-type-arrays-to-list
+      present
+      types
+      (- index 1)
+      (if (= (array-ref present index) 0)
+        acc
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType index (array-ref types index))
+          acc)))))
+
+(define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypes
   (match func
-    [(IrFunction _ params _ _ blocks)
-      (compiler-reg-block-list-types
-        blocks
-        (compiler-reg-param-types params CompilerRegVarTypeNil))]))
+    [(IrFunction _ params _ vars blocks)
+      (let
+        [present : (Array i64) (make-array i64 vars)]
+        [types : (Array AstType) (make-array AstType vars)]
+        (begin
+          (compiler-reg-fill-i64-array present 0)
+          (compiler-reg-param-types-array! params present types)
+          (compiler-reg-block-list-types-array! blocks present types)
+          (CompilerRegVarTypes
+            (compiler-reg-var-type-arrays-to-list
+              present
+              types
+              (- vars 1)
+              CompilerRegVarTypeNil)
+            present
+            types)))]))
 
 (define (compiler-reg-move-list-contains?
   [moves : CompilerRegMoveList]
@@ -579,6 +702,35 @@
                 unit)))
           unit)))))
 
+(define (compiler-reg-low-bit-index [bits : i64]) : i64
+  (let
+    [value : i64 bits]
+    [offset : i64 0]
+    (begin
+      (if (= (bit-and value 65535) 0)
+        (begin
+          (set! value (shr value 16))
+          (set! offset (+ offset 16)))
+        unit)
+      (if (= (bit-and value 255) 0)
+        (begin
+          (set! value (shr value 8))
+          (set! offset (+ offset 8)))
+        unit)
+      (if (= (bit-and value 15) 0)
+        (begin
+          (set! value (shr value 4))
+          (set! offset (+ offset 4)))
+        unit)
+      (if (= (bit-and value 3) 0)
+        (begin
+          (set! value (shr value 2))
+          (set! offset (+ offset 2)))
+        unit)
+      (if (= (bit-and value 1) 0)
+        (+ offset 1)
+        offset))))
+
 (define (compiler-reg-extend-set
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -595,7 +747,6 @@
           (*
             (compiler-live-set-chunk-word-index chunk)
             (compiler-live-set-word-bits))
-          0
           point)
         (compiler-reg-extend-set starts ends rest point))]))
 
@@ -603,16 +754,20 @@
   [starts : (Array i64)]
   [ends : (Array i64)]
   [bits : i64]
-  [base : i64]
-  [bit : i64]
+  [var : i64]
   [point : i64]) : unit
-  (if (>= bit (compiler-live-set-word-bits))
+  (if (= bits 0)
     unit
-    (begin
-      (if (= (bit-and bits (shl 1 bit)) 0)
-        unit
-        (compiler-reg-extend-interval starts ends (+ base bit) point))
-      (compiler-reg-extend-set-word-bits starts ends bits base (+ bit 1) point))))
+    (let
+      [index : i64 (compiler-reg-low-bit-index bits)]
+      (begin
+        (compiler-reg-extend-interval starts ends (+ var index) point)
+        (compiler-reg-extend-set-word-bits
+          starts
+          ends
+          (bit-and bits (- bits 1))
+          var
+          point)))))
 
 (define (compiler-reg-extend-instr
   [starts : (Array i64)]
@@ -659,9 +814,40 @@
               starts
               ends))])]))
 
-(define (compiler-reg-live-intervals-blocks
+(define (compiler-reg-live-intervals-find-afters
+  [live-blocks : CompilerLiveBlockList]
+  [label : String]) : CompilerLiveInstrSetList
+  (match (compiler-live-find-block live-blocks label)
+    [(CompilerLiveSomeBlock live-block)
+      (compiler-live-block-instr-after live-block)]
+    [(CompilerLiveNoBlock) CompilerLiveInstrSetNil]))
+
+(define (compiler-reg-live-intervals-head-afters
+  [live-blocks : CompilerLiveBlockList]
+  [all-live-blocks : CompilerLiveBlockList]
+  [label : String]) : CompilerLiveInstrSetList
+  (match live-blocks
+    [(CompilerLiveBlockNil)
+      (compiler-reg-live-intervals-find-afters all-live-blocks label)]
+    [(CompilerLiveBlockCons live-block _)
+      (if (string-eq (compiler-live-block-label live-block) label)
+        (compiler-live-block-instr-after live-block)
+        (compiler-reg-live-intervals-find-afters all-live-blocks label))]))
+
+(define (compiler-reg-live-intervals-next-live-blocks
+  [live-blocks : CompilerLiveBlockList]
+  [label : String]) : CompilerLiveBlockList
+  (match live-blocks
+    [(CompilerLiveBlockNil) CompilerLiveBlockNil]
+    [(CompilerLiveBlockCons live-block rest)
+      (if (string-eq (compiler-live-block-label live-block) label)
+        (box-get rest)
+        live-blocks)]))
+
+(define (compiler-reg-live-intervals-blocks-with-live
   [blocks : CompilerIrBlockList]
-  [liveness : CompilerFunctionLiveness]
+  [live-blocks : CompilerLiveBlockList]
+  [all-live-blocks : CompilerLiveBlockList]
   [point : i64]
   [starts : (Array i64)]
   [ends : (Array i64)]) : i64
@@ -672,15 +858,14 @@
         [(IrBlock label instrs)
           (let
             [live-afters : CompilerLiveInstrSetList
-              (match (compiler-live-find-block
-                (compiler-live-function-blocks liveness)
-                label)
-                [(CompilerLiveSomeBlock live-block)
-                  (compiler-live-block-instr-after live-block)]
-                [(CompilerLiveNoBlock) CompilerLiveInstrSetNil])]
-            (compiler-reg-live-intervals-blocks
+              (compiler-reg-live-intervals-head-afters
+                live-blocks
+                all-live-blocks
+                label)]
+            (compiler-reg-live-intervals-blocks-with-live
               (box-get rest)
-              liveness
+              (compiler-reg-live-intervals-next-live-blocks live-blocks label)
+              all-live-blocks
               (compiler-reg-live-intervals-instrs
                 instrs
                 live-afters
@@ -689,6 +874,23 @@
                 ends)
               starts
               ends))])]))
+
+(define (compiler-reg-live-intervals-blocks
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : i64
+  (let
+    [live-blocks : CompilerLiveBlockList
+      (compiler-live-function-blocks liveness)]
+    (compiler-reg-live-intervals-blocks-with-live
+      blocks
+      live-blocks
+      live-blocks
+      point
+      starts
+      ends)))
 
 (define (compiler-reg-interval-arrays-to-list
   [starts : (Array i64)]
@@ -904,7 +1106,7 @@
 
 (define (compiler-reg-candidates
   [intervals : CompilerRegIntervalList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [ineligible : CompilerLiveI64Set]
   [want-float : bool]) : CompilerRegIntervalList
   (match intervals
@@ -921,7 +1123,7 @@
                 want-float)]
             (if (compiler-live-set-contains? ineligible var)
               tail
-              (match (compiler-reg-var-type-lookup types var)
+              (match (compiler-reg-var-types-lookup types var)
                 [(CompilerRegSomeType ty)
                   (if (if want-float
                     (compiler-reg-float-type? ty)
@@ -1188,12 +1390,12 @@
       [(CompilerRegNoInterval) true])))
 
 (define (compiler-reg-compatible-types?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [left : i64]
   [right : i64]) : bool
-  (match (compiler-reg-var-type-lookup types left)
+  (match (compiler-reg-var-types-lookup types left)
     [(CompilerRegSomeType left-ty)
-      (match (compiler-reg-var-type-lookup types right)
+      (match (compiler-reg-var-types-lookup types right)
         [(CompilerRegSomeType right-ty)
           (and
             (compiler-reg-scalar-type? left-ty)
@@ -1235,7 +1437,7 @@
 (define (compiler-reg-coalesce-location-from-var
   [assignments : CompilerRegAssignmentList]
   [intervals : CompilerRegIntervalList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [var : i64]
   [other : i64]) : CompilerRegMaybeLocation
   (if (or
@@ -1260,7 +1462,7 @@
   [moves : CompilerRegMoveList]
   [assignments : CompilerRegAssignmentList]
   [intervals : CompilerRegIntervalList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [var : i64]) : CompilerRegMaybeLocation
   (match moves
     [(CompilerRegMoveNil) CompilerRegNoLocation]
@@ -1368,7 +1570,7 @@
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerRegMoveList]
   [intervals : CompilerRegIntervalList]
-  [types : CompilerRegVarTypeList]) : CompilerRegAssignState
+  [types : CompilerRegVarTypes]) : CompilerRegAssignState
   (match candidates
     [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
     [(CompilerRegIntervalCons interval rest)
@@ -1476,30 +1678,32 @@
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
   (let
     [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
-    [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [intervals : CompilerRegIntervalList
       (compiler-reg-live-intervals func liveness)]
     [ineligible : CompilerLiveI64Set
       (compiler-reg-ineligible-vars func liveness types)]
+    [moves : CompilerRegMoveList (compiler-reg-function-moves func)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     (match (compiler-reg-assign-candidates
-      (compiler-reg-candidates intervals types ineligible false)
+      (compiler-reg-candidates intervals type-info ineligible false)
       (compiler-reg-sysv-integer-registers)
       CompilerRegActiveNil
       CompilerRegAssignmentNil
-      (compiler-reg-function-moves func)
+      moves
       intervals
-      types)
+      type-info)
       [(CompilerRegAssignState _ integer-assignments)
         (match (compiler-reg-assign-candidates
-          (compiler-reg-candidates intervals types ineligible true)
+          (compiler-reg-candidates intervals type-info ineligible true)
           (compiler-reg-xmm-registers)
           CompilerRegActiveNil
           integer-assignments
-          (compiler-reg-function-moves func)
+          moves
           intervals
-          types)
+          type-info)
           [(CompilerRegAssignState _ scalar-assignments)
             (match vector-mask-defs
               [(CompilerLiveUseDef vector-vars mask-vars)
@@ -1521,19 +1725,35 @@
                       CompilerRegActiveNil
                       vector-assignments)
                       [(CompilerRegAssignState _ assignments)
-                        (CompilerRegPlan assignments ineligible intervals)])])])])])))
+                        (CompilerRegPlan assignments ineligible intervals types)])])])])])))
+
+;; Fast scalar backend plan: keep type discovery for emission decisions, but
+;; leave values in their stack slots instead of spending compile time on liveness
+;; and register assignment. AVX/vector backend modes still use full regalloc.
+(define (compiler-reg-plan-function-stack-only [func : CompilerIrFunction]) : CompilerRegPlan
+  (let
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    (CompilerRegPlan
+      CompilerRegAssignmentNil
+      (compiler-live-set-empty)
+      CompilerRegIntervalNil
+      (compiler-reg-var-types-list type-info))))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
-    [(CompilerRegPlan assignments _ _) assignments]))
+    [(CompilerRegPlan assignments _ _ _) assignments]))
 
 (define (compiler-reg-plan-ineligible [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ ineligible _) ineligible]))
+    [(CompilerRegPlan _ ineligible _ _) ineligible]))
 
 (define (compiler-reg-plan-intervals [plan : CompilerRegPlan]) : CompilerRegIntervalList
   (match plan
-    [(CompilerRegPlan _ _ intervals) intervals]))
+    [(CompilerRegPlan _ _ intervals _) intervals]))
+
+(define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypeList
+  (match plan
+    [(CompilerRegPlan _ _ _ types) types]))
 
 (define (compiler-reg-location-register?
   [maybe-location : CompilerRegMaybeLocation]
@@ -2042,7 +2262,7 @@
 
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (and
@@ -2055,7 +2275,7 @@
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (and
@@ -2068,7 +2288,7 @@
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       ;; Seven simultaneously live values against a four-register callee-saved
       ;; pool: the first four take %r12..%r15 and the remaining three spill.
       (and
@@ -2089,7 +2309,7 @@
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 5)
         (and
@@ -2116,7 +2336,7 @@
 
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2129,7 +2349,7 @@
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2144,7 +2364,7 @@
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2159,7 +2379,7 @@
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2170,7 +2390,7 @@
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (let
         [marked : bool
           (and
@@ -2228,18 +2448,18 @@
 
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
-    [(CompilerRegPlan chain-assignments _ _)
+    [(CompilerRegPlan chain-assignments _ _ _)
       (match (compiler-reg-plan-function (compiler-reg-phi-join-function))
-        [(CompilerRegPlan phi-assignments _ _)
+        [(CompilerRegPlan phi-assignments _ _ _)
           (match (compiler-reg-plan-function
             (compiler-reg-loop-backedge-function))
-            [(CompilerRegPlan loop-assignments _ _)
+            [(CompilerRegPlan loop-assignments _ _ _)
               (match (compiler-reg-plan-function
                 (compiler-reg-interference-blocks-coalesce-function))
-                [(CompilerRegPlan blocked-assignments _ _)
+                [(CompilerRegPlan blocked-assignments _ _ _)
                   (match (compiler-reg-plan-function
                     (compiler-reg-spill-coalesce-function))
-                    [(CompilerRegPlan spill-assignments _ _)
+                    [(CompilerRegPlan spill-assignments _ _ _)
                       (and
                         (compiler-reg-same-location? chain-assignments 0 1)
                         (and
@@ -2263,9 +2483,9 @@
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
-    [(CompilerRegPlan vector-assignments _ _)
+    [(CompilerRegPlan vector-assignments _ _ _)
       (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
-        [(CompilerRegPlan mask-assignments _ _)
+        [(CompilerRegPlan mask-assignments _ _ _)
           (let
             [vector-ok : bool
               (and

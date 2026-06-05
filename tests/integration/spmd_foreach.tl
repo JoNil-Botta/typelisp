@@ -163,6 +163,61 @@
       (fill-f64-scalar a b want n)
       (eq-f64 got want n))))
 
+(define (init-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! a i 1.5)
+        (array-set! b i 2.25)
+        (set! i (+ i 1))))))
+
+(define (fill-f32-foreach
+  [a : (Array f32)]
+  [b : (Array f32)]
+  [out : (Array f32)]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+(define (fill-f32-scalar
+  [a : (Array f32)]
+  [b : (Array f32)]
+  [out : (Array f32)]
+  [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (set! i (+ i 1))))))
+
+(define (eq-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (!= (array-ref a i) (array-ref b i))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (case-f32 [n : i64]) : bool
+  (let
+    [a : (Array f32) (make-array f32 n)]
+    [b : (Array f32) (make-array f32 n)]
+    [got : (Array f32) (make-array f32 n)]
+    [want : (Array f32) (make-array f32 n)]
+    (begin
+      (init-f32 a b n)
+      (fill-f32-foreach a b got n)
+      (fill-f32-scalar a b want n)
+      (eq-f32 got want n))))
+
 (define (case-end-bound-evaluated-once) : bool
   (let
     [bounds : (Array i64) (make-array i64 1)]
@@ -244,6 +299,24 @@
         unit
         (set! ok false))
       (if (case-f64 17)
+        unit
+        (set! ok false))
+      (if (case-f32 0)
+        unit
+        (set! ok false))
+      (if (case-f32 3)
+        unit
+        (set! ok false))
+      (if (case-f32 8)
+        unit
+        (set! ok false))
+      (if (case-f32 9)
+        unit
+        (set! ok false))
+      (if (case-f32 16)
+        unit
+        (set! ok false))
+      (if (case-f32 17)
         unit
         (set! ok false))
       (if (case-end-bound-evaluated-once)

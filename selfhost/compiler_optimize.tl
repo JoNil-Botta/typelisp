@@ -25,6 +25,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "stdlib/hashmap.tl")
+
 (defenum ResultCompilerOptimizeLevel
   (OkCompilerOptimizeLevel i64)
   (ErrCompilerOptimizeLevel))
@@ -37,7 +39,7 @@
 
 (defenum OptAggregatePointerList
   (OptAggregatePointerNil)
-  (OptAggregatePointerCons OptAggregatePointer OptAggregatePointerList))
+  (OptAggregatePointerCons OptAggregatePointer (Box OptAggregatePointerList)))
 
 (defenum OptAggregateAccess
   (OptAggregateStore i64 AstType)
@@ -45,7 +47,7 @@
 
 (defenum OptAggregateAccessList
   (OptAggregateAccessNil)
-  (OptAggregateAccessCons OptAggregateAccess OptAggregateAccessList))
+  (OptAggregateAccessCons OptAggregateAccess (Box OptAggregateAccessList)))
 
 (defenum OptAggregateAllocCandidate
   (OptAggregateAllocCandidate
@@ -59,7 +61,7 @@
   (OptAggregateAllocCandidateNil)
   (OptAggregateAllocCandidateCons
     OptAggregateAllocCandidate
-    OptAggregateAllocCandidateList))
+    (Box OptAggregateAllocCandidateList)))
 
 (defenum OptMaybeAggregateAlloc
   (OptNoAggregateAlloc)
@@ -80,7 +82,12 @@
 
 (defenum OptAggregateFieldFacts
   (OptAggregateFieldNil)
-  (OptAggregateFieldCons i64 i64 CompilerIrValue AstType OptAggregateFieldFacts))
+  (OptAggregateFieldCons
+    i64
+    i64
+    CompilerIrValue
+    AstType
+    (Box OptAggregateFieldFacts)))
 
 (defenum OptAggregateSroaResult
   (OptAggregateSroaResult OptAggregateFieldFacts CompilerIrInstr))
@@ -92,13 +99,67 @@
   (OptAggregatePromoteSlotNil)
   (OptAggregatePromoteSlotCons
     OptAggregatePromoteSlot
-    OptAggregatePromoteSlotList))
+    (Box OptAggregatePromoteSlotList)))
 
 (defenum OptAggregatePromoteBuild
   (OptAggregatePromoteBuild OptAggregatePromoteSlotList i64))
 
 (define compiler-optimize-level-default : i64
   1)
+
+(cfg
+  compile-profile
+  (define compiler-opt-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-opt-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-opt-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-start) : unit
+    (begin
+      (set! compiler-opt-profile-start-ms (profile-now-ms))
+      (set! compiler-opt-profile-start-total (profile-alloc-total))
+      (set! compiler-opt-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile-alloc-peak) compiler-opt-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|optimize."
+          (string-append
+            phase
+            (string-append
+              (compiler-opt-profile-field
+                (- end-ms compiler-opt-profile-start-ms))
+              (string-append
+                (compiler-opt-profile-field
+                  (- end-total compiler-opt-profile-start-total))
+                (string-append
+                  (compiler-opt-profile-field
+                    (- end-live compiler-opt-profile-start-live))
+                  (string-append (compiler-opt-profile-field peak-delta) "\n"))))))))))
 
 (define (compiler-optimize-default-level) : i64
   compiler-optimize-level-default)
@@ -130,30 +191,34 @@
 
 (defenum OptConstEnv
   (OptConstNil)
-  (OptConstCons i64 CompilerIrValue AstType OptConstEnv))
+  (OptConstCons i64 CompilerIrValue AstType (Box OptConstEnv)))
 
 (define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
   (match env
     [(OptConstNil) (OptConstNil)]
     [(OptConstCons id value ty rest)
-      (if (= id var)
-        (opt-const-unbind rest var)
-        (OptConstCons id value ty (opt-const-unbind rest var)))]))
+      (let
+        [rest : OptConstEnv (box-get rest)]
+        (if (= id var)
+          (opt-const-unbind rest var)
+          (OptConstCons id value ty (box (opt-const-unbind rest var)))))]))
 
 (define (opt-const-bind
   [env : OptConstEnv]
   [var : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : OptConstEnv
-  (OptConstCons var value ty (opt-const-unbind env var)))
+  (OptConstCons var value ty (box (opt-const-unbind env var))))
 
 (define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
   (match env
     [(OptConstNil) (OptNoConst)]
     [(OptConstCons id value ty rest)
-      (if (= id var)
-        (OptSomeConst value ty)
-        (opt-const-lookup rest var))]))
+      (let
+        [rest : OptConstEnv (box-get rest)]
+        (if (= id var)
+          (OptSomeConst value ty)
+          (opt-const-lookup rest var)))]))
 
 (define (opt-integer-type? [ty : AstType]) : bool
   (match ty
@@ -870,20 +935,22 @@
 ;; reachability.
 (defenum OptUsedSet
   (OptUsedNil)
-  (OptUsedCons i64 OptUsedSet))
+  (OptUsedCons i64 (Box OptUsedSet)))
 
 (define (opt-used-contains [set : OptUsedSet] [var : i64]) : bool
   (match set
     [(OptUsedNil) false]
     [(OptUsedCons id rest)
-      (if (= id var)
-        true
-        (opt-used-contains rest var))]))
+      (let
+        [rest : OptUsedSet (box-get rest)]
+        (if (= id var)
+          true
+          (opt-used-contains rest var)))]))
 
 (define (opt-used-add [set : OptUsedSet] [var : i64]) : OptUsedSet
   (if (opt-used-contains set var)
     set
-    (OptUsedCons var set)))
+    (OptUsedCons var (box set))))
 
 (define (opt-collect-value-uses [set : OptUsedSet] [value : CompilerIrValue]) : OptUsedSet
   (match value
@@ -1073,6 +1140,263 @@
         (opt-dce-block set block)
         (opt-dce-block-list set (box-get rest)))]))
 
+(define (opt-used-array-fill
+  [items : (Array bool)]
+  [index : i64]
+  [value : bool]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index value)
+      (opt-used-array-fill items (+ index 1) value))))
+
+(define (opt-used-array-new [count : i64]) : (Array bool)
+  (let
+    [items : (Array bool) (make-array bool count)]
+    (begin
+      (opt-used-array-fill items 0 false)
+      items)))
+
+(define (opt-used-array-add [items : (Array bool)] [var : i64]) : unit
+  (if (< var 0)
+    unit
+    (if (>= var (array-length items))
+      unit
+      (begin
+        (array-set! items var true)
+        unit))))
+
+(define (opt-used-array-contains [items : (Array bool)] [var : i64]) : bool
+  (if (< var 0)
+    false
+    (if (>= var (array-length items))
+      false
+      (array-ref items var))))
+
+(define (opt-collect-value-uses-array
+  [items : (Array bool)]
+  [value : CompilerIrValue]) : unit
+  (match value
+    [(IrValueVar id) (opt-used-array-add items id)]
+    [_ unit]))
+
+(define (opt-collect-value-list-uses-array
+  [items : (Array bool)]
+  [values : CompilerIrValueList]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (opt-collect-value-uses-array items value)
+        (opt-collect-value-list-uses-array items (box-get rest)))]))
+
+(define (opt-collect-call-args-array-uses-array
+  [items : (Array bool)]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length values))
+    unit
+    (begin
+      (opt-collect-value-uses-array items (array-ref values index))
+      (opt-collect-call-args-array-uses-array items values (+ index 1)))))
+
+(define (opt-collect-call-args-uses-array
+  [items : (Array bool)]
+  [args : CompilerIrCallArgs]) : unit
+  (match args
+    [(IrCallArgsNil) unit]
+    [(IrCallArgsOne value) (opt-collect-value-uses-array items value)]
+    [(IrCallArgsTwo a b)
+      (begin
+        (opt-collect-value-uses-array items a)
+        (opt-collect-value-uses-array items b))]
+    [(IrCallArgsArray values)
+      (opt-collect-call-args-array-uses-array items values 0)]))
+
+(define (opt-collect-phi-uses-array
+  [items : (Array bool)]
+  [inputs : CompilerIrPhiInputList]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons value _ rest)
+      (begin
+        (opt-collect-value-uses-array items value)
+        (opt-collect-phi-uses-array items (box-get rest)))]))
+
+(define (opt-collect-instr-uses-array
+  [items : (Array bool)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(IrInstrMov _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrBinOp _ _ l r _)
+      (begin
+        (opt-collect-value-uses-array items l)
+        (opt-collect-value-uses-array items r))]
+    [(IrInstrUnOp _ _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrCall _ _ args _) (opt-collect-call-args-uses-array items args)]
+    [(IrInstrCallIndirect _ func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrTailCall _ args _) (opt-collect-call-args-uses-array items args)]
+    [(IrInstrStore _ value _) (opt-collect-value-uses-array items value)]
+    [(IrInstrAddrOf _ src) (opt-used-array-add items src)]
+    [(IrInstrGep _ base offset _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items offset))]
+    [(IrInstrLoad _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrStorePtr ptr value _)
+      (begin
+        (opt-collect-value-uses-array items ptr)
+        (opt-collect-value-uses-array items value))]
+    [(IrInstrBoundsCheck index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(IrInstrCast _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrSplat _ value _ _) (opt-collect-value-uses-array items value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrMaskNot _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (begin
+        (opt-collect-value-uses-array items mask)
+        (opt-collect-value-uses-array items on-true)
+        (opt-collect-value-uses-array items on-false))]
+    [(IrInstrVectorLoad _ base index _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index))]
+    [(IrInstrVectorStore base index value _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items value))]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items value)
+        (opt-collect-value-uses-array items mask))]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items mask))]
+    [(IrInstrTailMask _ index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(IrInstrEntryArgc _) unit]
+    [(IrInstrEntryArgv _) unit]
+    [(IrInstrEntryEnvp _) unit]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (begin
+        (opt-collect-value-uses-array items leaf)
+        (opt-collect-value-uses-array items subleaf))]
+    [(IrInstrXgetbv _ index) (opt-collect-value-uses-array items index)]
+    [(IrInstrBranch cond _ _) (opt-collect-value-uses-array items cond)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue value) (opt-collect-value-uses-array items value)]
+        [(IrNoValue) unit])]
+    [(IrInstrPhi _ inputs _) (opt-collect-phi-uses-array items inputs)]
+    [_ unit]))
+
+(define (opt-collect-instrs-uses-array
+  [items : (Array bool)]
+  [instrs : CompilerIrInstrList]) : unit
+  (match instrs
+    [(IrInstrNil) unit]
+    [(IrInstrCons instr rest)
+      (begin
+        (opt-collect-instr-uses-array items instr)
+        (opt-collect-instrs-uses-array items (box-get rest)))]))
+
+(define (opt-collect-blocks-uses-array-into
+  [items : (Array bool)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (opt-collect-instrs-uses-array items instrs)
+            (opt-collect-blocks-uses-array-into items (box-get rest)))])]))
+
+(define (opt-collect-blocks-uses-array
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : (Array bool)
+  (let
+    [items : (Array bool) (opt-used-array-new vars)]
+    (begin
+      (opt-collect-blocks-uses-array-into items blocks)
+      items)))
+
+(define (opt-instr-dead-array? [items : (Array bool)] [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrBinOp dst op _ _ _)
+      (and
+        (not (opt-binop-traps? op))
+        (not (opt-used-array-contains items dst)))]
+    [(IrInstrUnOp dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrPhi dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrLaneId dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSplat dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskNot dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskReduce dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrTailMask dst _ _ _) (not (opt-used-array-contains items dst))]
+    [_ false]))
+
+(define (opt-dce-instrs-array
+  [items : (Array bool)]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (if (opt-instr-dead-array? items instr)
+        (opt-dce-instrs-array items (box-get rest))
+        (compiler-ir-instr-cons
+          instr
+          (opt-dce-instrs-array items (box-get rest))))]))
+
+(define (opt-dce-block-array [items : (Array bool)] [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs) (IrBlock label (opt-dce-instrs-array items instrs))]))
+
+(define (opt-dce-block-list-array
+  [items : (Array bool)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-dce-block-array items block)
+        (opt-dce-block-list-array items (box-get rest)))]))
+
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;
 ;; This is intentionally analysis-only. It recognizes heap aggregate allocations
@@ -1115,11 +1439,13 @@
   (match ptrs
     [(OptAggregatePointerNil) (OptNoI64)]
     [(OptAggregatePointerCons ptr rest)
-      (match ptr
-        [(OptAggregatePointer ptr-var offset)
-          (if (= ptr-var var)
-            (OptSomeI64 offset)
-            (opt-aggregate-pointer-list-lookup rest var))])]))
+      (let
+        [rest : OptAggregatePointerList (box-get rest)]
+        (match ptr
+          [(OptAggregatePointer ptr-var offset)
+            (if (= ptr-var var)
+              (OptSomeI64 offset)
+              (opt-aggregate-pointer-list-lookup rest var))]))]))
 
 (define (opt-aggregate-value-offset
   [base : i64]
@@ -1401,7 +1727,7 @@
                       (box-get rest)
                       (OptAggregatePointerCons
                         (OptAggregatePointer dst (+ base-offset field-offset))
-                        ptrs)
+                        (box ptrs))
                       accesses
                       true)]
                   [_ (OptAggregateScanReject)])]
@@ -1427,7 +1753,7 @@
                   ptrs
                   (OptAggregateAccessCons
                     (OptAggregateLoad dst offset load-ty)
-                    accesses)
+                    (box accesses))
                   true)]
               [(OptNoI64)
                 (if (opt-aggregate-instrs-touch-candidate?
@@ -1456,7 +1782,7 @@
                     ptrs
                     (OptAggregateAccessCons
                       (OptAggregateStore offset store-ty)
-                      accesses)
+                      (box accesses))
                     true))]
               [(OptNoI64)
                 (if (or
@@ -1519,7 +1845,7 @@
             [(OptAggregateScanOk ptrs accesses)
               (OptAggregateAllocCandidateCons
                 (OptAggregateAllocCandidate base ty size ptrs accesses)
-                (opt-aggregate-candidates-from-instrs (box-get rest) all))]
+                (box (opt-aggregate-candidates-from-instrs (box-get rest) all)))]
             [(OptAggregateScanReject)
               (opt-aggregate-candidates-from-instrs (box-get rest) all)])]
         [(OptNoAggregateAlloc)
@@ -1561,7 +1887,7 @@
     [(OptAggregateAllocCandidateCons head rest)
       (OptAggregateAllocCandidateCons
         head
-        (opt-aggregate-candidate-list-append rest right))]))
+        (box (opt-aggregate-candidate-list-append (box-get rest) right)))]))
 
 (define (opt-aggregate-allocation-candidates-functions
   [functions : CompilerIrFunctionList]) : OptAggregateAllocCandidateList
@@ -1582,19 +1908,19 @@
   (match candidates
     [(OptAggregateAllocCandidateNil) 0]
     [(OptAggregateAllocCandidateCons _ rest)
-      (+ 1 (opt-aggregate-candidate-list-count rest))]))
+      (+ 1 (opt-aggregate-candidate-list-count (box-get rest)))]))
 
 (define (opt-aggregate-pointer-list-count [ptrs : OptAggregatePointerList]) : i64
   (match ptrs
     [(OptAggregatePointerNil) 0]
     [(OptAggregatePointerCons _ rest)
-      (+ 1 (opt-aggregate-pointer-list-count rest))]))
+      (+ 1 (opt-aggregate-pointer-list-count (box-get rest)))]))
 
 (define (opt-aggregate-access-list-count [accesses : OptAggregateAccessList]) : i64
   (match accesses
     [(OptAggregateAccessNil) 0]
     [(OptAggregateAccessCons _ rest)
-      (+ 1 (opt-aggregate-access-list-count rest))]))
+      (+ 1 (opt-aggregate-access-list-count (box-get rest)))]))
 
 (define (opt-aggregate-access-list-load-count
   [accesses : OptAggregateAccessList]) : i64
@@ -1605,7 +1931,7 @@
         (match access
           [(OptAggregateLoad _ _ _) 1]
           [_ 0])
-        (opt-aggregate-access-list-load-count rest))]))
+        (opt-aggregate-access-list-load-count (box-get rest)))]))
 
 (define (opt-aggregate-access-list-store-count
   [accesses : OptAggregateAccessList]) : i64
@@ -1616,7 +1942,7 @@
         (match access
           [(OptAggregateStore _ _) 1]
           [_ 0])
-        (opt-aggregate-access-list-store-count rest))]))
+        (opt-aggregate-access-list-store-count (box-get rest)))]))
 
 ;; --- aggregate stack promotion (#1489) --------------------------------------
 ;;
@@ -1653,14 +1979,14 @@
               [slots : i64 (opt-aggregate-stack-slot-count size)]
               [storage : i64 (+ next-frame (- slots 1))]
               [after-frame : i64 (+ next-frame slots)]
-              (match (opt-aggregate-promote-build rest after-frame)
+              (match (opt-aggregate-promote-build (box-get rest) after-frame)
                 [(OptAggregatePromoteBuild rest-slots final-frame)
                   (OptAggregatePromoteBuild
                     (OptAggregatePromoteSlotCons
                       (OptAggregatePromoteSlot base storage)
-                      rest-slots)
+                      (box rest-slots))
                     final-frame)]))
-            (opt-aggregate-promote-build rest next-frame))])]))
+            (opt-aggregate-promote-build (box-get rest) next-frame))])]))
 
 (define (opt-aggregate-promote-lookup
   [slots : OptAggregatePromoteSlotList]
@@ -1668,11 +1994,13 @@
   (match slots
     [(OptAggregatePromoteSlotNil) (OptNoI64)]
     [(OptAggregatePromoteSlotCons slot rest)
-      (match slot
-        [(OptAggregatePromoteSlot found storage)
-          (if (= found base)
-            (OptSomeI64 storage)
-            (opt-aggregate-promote-lookup rest base))])]))
+      (let
+        [rest : OptAggregatePromoteSlotList (box-get rest)]
+        (match slot
+          [(OptAggregatePromoteSlot found storage)
+            (if (= found base)
+              (OptSomeI64 storage)
+              (opt-aggregate-promote-lookup rest base))]))]))
 
 (define (opt-aggregate-promote-rewrite-instr
   [slots : OptAggregatePromoteSlotList]
@@ -1758,7 +2086,8 @@
       (match (opt-aggregate-candidate-location candidate value)
         [(OptSomeAggregateLocation base offset)
           (OptSomeAggregateLocation base offset)]
-        [(OptNoAggregateLocation) (opt-aggregate-location-for-value rest value)])]))
+        [(OptNoAggregateLocation)
+          (opt-aggregate-location-for-value (box-get rest) value)])]))
 
 (define (opt-aggregate-value-is-candidate-pointer?
   [candidates : OptAggregateAllocCandidateList]
@@ -1776,10 +2105,10 @@
     [(OptAggregateFieldCons fact-base fact-offset value ty rest)
       (let
         [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind rest base offset)]
+          (opt-aggregate-field-facts-unbind (box-get rest) base offset)]
         (if (and (= fact-base base) (= fact-offset offset))
           rest2
-          (OptAggregateFieldCons fact-base fact-offset value ty rest2)))]))
+          (OptAggregateFieldCons fact-base fact-offset value ty (box rest2))))]))
 
 (define (opt-aggregate-field-facts-unbind-base
   [facts : OptAggregateFieldFacts]
@@ -1789,10 +2118,10 @@
     [(OptAggregateFieldCons fact-base fact-offset value ty rest)
       (let
         [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind-base rest base)]
+          (opt-aggregate-field-facts-unbind-base (box-get rest) base)]
         (if (= fact-base base)
           rest2
-          (OptAggregateFieldCons fact-base fact-offset value ty rest2)))]))
+          (OptAggregateFieldCons fact-base fact-offset value ty (box rest2))))]))
 
 (define (opt-aggregate-field-facts-bind
   [facts : OptAggregateFieldFacts]
@@ -1805,7 +2134,7 @@
     offset
     value
     ty
-    (opt-aggregate-field-facts-unbind facts base offset)))
+    (box (opt-aggregate-field-facts-unbind facts base offset))))
 
 (define (opt-aggregate-field-facts-lookup
   [facts : OptAggregateFieldFacts]
@@ -1819,7 +2148,7 @@
         (= fact-base base)
         (and (= fact-offset offset) (opt-type-eq fact-ty ty)))
         (OptSomeAggregateStoredValue value fact-ty)
-        (opt-aggregate-field-facts-lookup rest base offset ty))]))
+        (opt-aggregate-field-facts-lookup (box-get rest) base offset ty))]))
 
 (define (opt-aggregate-field-facts-invalidate-var
   [facts : OptAggregateFieldFacts]
@@ -1829,10 +2158,10 @@
     [(OptAggregateFieldCons base offset value ty rest)
       (let
         [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-invalidate-var rest var)]
+          (opt-aggregate-field-facts-invalidate-var (box-get rest) var)]
         (if (or (= base var) (opt-value-is-var? value var))
           rest2
-          (OptAggregateFieldCons base offset value ty rest2)))]))
+          (OptAggregateFieldCons base offset value ty (box rest2))))]))
 
 (define (opt-aggregate-sroa-invalidate-def
   [facts : OptAggregateFieldFacts]
@@ -2015,7 +2344,7 @@
 
 (defenum OptExprTable
   (OptExprNil)
-  (OptExprCons OptExprKey i64 OptExprTable))
+  (OptExprCons OptExprKey i64 (Box OptExprTable)))
 
 (define (opt-binop-tag [op : CompilerIrBinOp]) : i64
   (match op
@@ -2870,9 +3199,11 @@
   (match table
     [(OptExprNil) (IrNoValue)]
     [(OptExprCons k var rest)
-      (if (opt-expr-key-eq k key)
-        (IrSomeValue (IrValueVar var))
-        (opt-expr-lookup rest key))]))
+      (let
+        [rest : OptExprTable (box-get rest)]
+        (if (opt-expr-key-eq k key)
+          (IrSomeValue (IrValueVar var))
+          (opt-expr-lookup rest key)))]))
 
 (define (opt-value-is-var? [value : CompilerIrValue] [var : i64]) : bool
   (match value
@@ -2891,10 +3222,10 @@
     [(OptExprNil) (OptExprNil)]
     [(OptExprCons k v rest)
       (let
-        [rest2 : OptExprTable (opt-expr-invalidate-var rest var)]
+        [rest2 : OptExprTable (opt-expr-invalidate-var (box-get rest) var)]
         (if (or (opt-key-uses-var? k var) (= v var))
           rest2
-          (OptExprCons k v rest2)))]))
+          (OptExprCons k v (box rest2))))]))
 
 (defenum OptCseResult
   (OptCseResult OptExprTable CompilerIrInstr))
@@ -2907,14 +3238,14 @@
         [key : OptExprKey (OptBinKey op l r)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
-          [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)]))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
     [(IrInstrUnOp dst op v ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
         [key : OptExprKey (OptUnKey op v)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
-          [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)]))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(IrInstrMov dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
@@ -3005,15 +3336,17 @@
 ;; the non-SSA IR never triggers a stale rewrite.
 (defenum OptCopyEnv
   (OptCopyNil)
-  (OptCopyCons i64 CompilerIrValue OptCopyEnv))
+  (OptCopyCons i64 CompilerIrValue (Box OptCopyEnv)))
 
 (define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : CompilerIrMaybeValue
   (match env
     [(OptCopyNil) (IrNoValue)]
     [(OptCopyCons id value rest)
-      (if (= id var)
-        (IrSomeValue value)
-        (opt-copy-lookup rest var))]))
+      (let
+        [rest : OptCopyEnv (box-get rest)]
+        (if (= id var)
+          (IrSomeValue value)
+          (opt-copy-lookup rest var)))]))
 
 ;; Drop the mapping for `var` and any mapping whose replacement is `IrValueVar
 ;; var`, so redefining either a copied destination or a copied source clears the
@@ -3023,10 +3356,10 @@
     [(OptCopyNil) (OptCopyNil)]
     [(OptCopyCons id value rest)
       (let
-        [rest2 : OptCopyEnv (opt-copy-invalidate-var rest var)]
+        [rest2 : OptCopyEnv (opt-copy-invalidate-var (box-get rest) var)]
         (if (or (= id var) (opt-value-is-var? value var))
           rest2
-          (OptCopyCons id value rest2)))]))
+          (OptCopyCons id value (box rest2))))]))
 
 ;; Only var copies and unambiguous scalar literals are safe to propagate in this
 ;; slice; F64/String/global sources stay put until their backend paths exist.
@@ -3180,7 +3513,7 @@
       (let
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
         (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
-          (OptCopyCons dst src e1)
+          (OptCopyCons dst src (box e1))
           e1))]
     [(IrInstrAlloc dst _) (opt-copy-invalidate-var env dst)]
     [(IrInstrAddrOf dst _) (opt-copy-invalidate-var env dst)]
@@ -3242,7 +3575,7 @@
 
 (defenum OptBoundsFacts
   (OptBoundsNil)
-  (OptBoundsCons OptBoundsFact OptBoundsFacts))
+  (OptBoundsCons OptBoundsFact (Box OptBoundsFacts)))
 
 (define (opt-bounds-fact-eq
   [fact : OptBoundsFact]
@@ -3259,9 +3592,11 @@
   (match facts
     [(OptBoundsNil) false]
     [(OptBoundsCons fact rest)
-      (if (opt-bounds-fact-eq fact index length)
-        true
-        (opt-bounds-contains rest index length))]))
+      (let
+        [rest : OptBoundsFacts (box-get rest)]
+        (if (opt-bounds-fact-eq fact index length)
+          true
+          (opt-bounds-contains rest index length)))]))
 
 (define (opt-bounds-add
   [facts : OptBoundsFacts]
@@ -3269,7 +3604,7 @@
   [length : CompilerIrValue]) : OptBoundsFacts
   (if (opt-bounds-contains facts index length)
     facts
-    (OptBoundsCons (OptBoundsFact index length) facts)))
+    (OptBoundsCons (OptBoundsFact index length) (box facts))))
 
 (define (opt-bounds-fact-uses-var? [fact : OptBoundsFact] [var : i64]) : bool
   (match fact
@@ -3281,10 +3616,10 @@
     [(OptBoundsNil) (OptBoundsNil)]
     [(OptBoundsCons fact rest)
       (let
-        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var rest var)]
+        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var (box-get rest) var)]
         (if (opt-bounds-fact-uses-var? fact var)
           rest2
-          (OptBoundsCons fact rest2)))]))
+          (OptBoundsCons fact (box rest2))))]))
 
 (define (opt-bounds-update-facts
   [facts : OptBoundsFacts]
@@ -3359,31 +3694,33 @@
 ;; inputs from predecessors that are no longer reachable.
 (defenum OptLabelSet
   (OptLabelNil)
-  (OptLabelCons String OptLabelSet))
+  (OptLabelCons String (Box OptLabelSet)))
 
 (define (opt-label-contains [set : OptLabelSet] [label : String]) : bool
   (match set
     [(OptLabelNil) false]
     [(OptLabelCons head rest)
-      (if (string-eq head label)
-        true
-        (opt-label-contains rest label))]))
+      (let
+        [rest : OptLabelSet (box-get rest)]
+        (if (string-eq head label)
+          true
+          (opt-label-contains rest label)))]))
 
 (define (opt-label-add [set : OptLabelSet] [label : String]) : OptLabelSet
   (if (opt-label-contains set label)
     set
-    (OptLabelCons label set)))
+    (OptLabelCons label (box set))))
 
 (define (opt-label-count [set : OptLabelSet]) : i64
   (match set
     [(OptLabelNil) 0]
-    [(OptLabelCons _ rest) (+ 1 (opt-label-count rest))]))
+    [(OptLabelCons _ rest) (+ 1 (opt-label-count (box-get rest)))]))
 
 (define (opt-label-subset? [a : OptLabelSet] [b : OptLabelSet]) : bool
   (match a
     [(OptLabelNil) true]
     [(OptLabelCons label rest)
-      (and (opt-label-contains b label) (opt-label-subset? rest b))]))
+      (and (opt-label-contains b label) (opt-label-subset? (box-get rest) b))]))
 
 (define (opt-label-set-eq? [a : OptLabelSet] [b : OptLabelSet]) : bool
   (and (opt-label-subset? a b) (opt-label-subset? b a)))
@@ -3393,7 +3730,7 @@
     [(OptLabelNil) (OptLabelNil)]
     [(OptLabelCons label rest)
       (let
-        [tail : OptLabelSet (opt-label-intersection rest b)]
+        [tail : OptLabelSet (opt-label-intersection (box-get rest) b)]
         (if (opt-label-contains b label)
           (opt-label-add tail label)
           tail))]))
@@ -3506,17 +3843,19 @@
 
 (defenum OptDomTable
   (OptDomNil)
-  (OptDomCons OptDomEntry OptDomTable))
+  (OptDomCons OptDomEntry (Box OptDomTable)))
 
 (define (opt-dom-table-lookup [table : OptDomTable] [label : String]) : OptLabelSet
   (match table
     [(OptDomNil) (OptLabelNil)]
     [(OptDomCons entry rest)
-      (match entry
-        [(OptDomEntry entry-label labels)
-          (if (string-eq entry-label label)
-            labels
-            (opt-dom-table-lookup rest label))])]))
+      (let
+        [rest : OptDomTable (box-get rest)]
+        (match entry
+          [(OptDomEntry entry-label labels)
+            (if (string-eq entry-label label)
+              labels
+              (opt-dom-table-lookup rest label))]))]))
 
 (define (opt-dom-entry-eq? [a : OptDomEntry] [b : OptDomEntry]) : bool
   (match a
@@ -3538,7 +3877,7 @@
         [(OptDomCons b-entry b-rest)
           (and
             (opt-dom-entry-eq? a-entry b-entry)
-            (opt-dom-table-eq? a-rest b-rest))]
+            (opt-dom-table-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
 (define (opt-dom-intersect-preds-rest
@@ -3550,7 +3889,7 @@
     [(OptLabelCons pred rest)
       (opt-dom-intersect-preds-rest
         table
-        rest
+        (box-get rest)
         (opt-label-intersection current (opt-dom-table-lookup table pred)))]))
 
 (define (opt-dom-intersect-preds [table : OptDomTable] [preds : OptLabelSet]) : OptLabelSet
@@ -3559,7 +3898,7 @@
     [(OptLabelCons pred rest)
       (opt-dom-intersect-preds-rest
         table
-        rest
+        (box-get rest)
         (opt-dom-table-lookup table pred))]))
 
 (define (opt-cfg-dominators-initial
@@ -3579,11 +3918,12 @@
                 (if (string-eq label entry-label)
                   (opt-label-add (OptLabelNil) label)
                   all-reachable))
-              (opt-cfg-dominators-initial
-                (box-get rest)
-                reachable
-                entry-label
-                all-reachable))
+              (box
+                (opt-cfg-dominators-initial
+                  (box-get rest)
+                  reachable
+                  entry-label
+                  all-reachable)))
             (opt-cfg-dominators-initial
               (box-get rest)
               reachable
@@ -3620,7 +3960,13 @@
     [(OptDomCons entry rest)
       (OptDomCons
         (opt-cfg-dominators-step-entry blocks reachable entry-label old entry)
-        (opt-cfg-dominators-step blocks reachable entry-label old rest))]))
+        (box
+          (opt-cfg-dominators-step
+            blocks
+            reachable
+            entry-label
+            old
+            (box-get rest))))]))
 
 (define (opt-cfg-dominators-fixed
   [blocks : CompilerIrBlockList]
@@ -3678,7 +4024,7 @@
     [(OptLabelCons pred rest)
       (if (opt-dom-dominates? doms label pred)
         true
-        (opt-cfg-frontier-has-pred? doms label rest))]))
+        (opt-cfg-frontier-has-pred? doms label (box-get rest)))]))
 
 (define (opt-cfg-dominance-frontier-blocks
   [all-blocks : CompilerIrBlockList]
@@ -3741,7 +4087,7 @@
 
 (defenum OptVarDefList
   (OptVarDefNil)
-  (OptVarDefCons OptVarDef OptVarDefList))
+  (OptVarDefCons OptVarDef (Box OptVarDefList)))
 
 (defenum OptMaybeVarDef
   (OptNoVarDef)
@@ -3851,7 +4197,7 @@
           (opt-var-defs-from-params
             (box-get rest)
             entry-label
-            (OptVarDefCons (OptVarDef var entry-label 0) defs))])]))
+            (OptVarDefCons (OptVarDef var entry-label 0) (box defs)))])]))
 
 (define (opt-var-defs-from-instrs
   [instrs : CompilerIrInstrList]
@@ -3869,7 +4215,7 @@
             (+ pos 1)
             (OptVarDefCons
               (OptVarDef var block-label (opt-instr-def-position instr pos))
-              defs))]
+              (box defs)))]
         [(OptNoI64)
           (opt-var-defs-from-instrs (box-get rest) block-label (+ pos 1) defs)])]))
 
@@ -3903,7 +4249,7 @@
         [(OptVarDef def-var _ _)
           (if (= def-var var)
             (OptSomeVarDef def)
-            (opt-var-def-lookup rest var))])]))
+            (opt-var-def-lookup (box-get rest) var))])]))
 
 (define (opt-verify-var-use
   [defs : OptVarDefList]
@@ -4313,14 +4659,14 @@
 
 (defenum OptGlobalExprFacts
   (OptGlobalExprNil)
-  (OptGlobalExprCons OptGlobalExprFact OptGlobalExprFacts))
+  (OptGlobalExprCons OptGlobalExprFact (Box OptGlobalExprFacts)))
 
 (defenum OptGlobalCopyFact
   (OptGlobalCopyFact i64 CompilerIrValue String i64))
 
 (defenum OptGlobalCopyFacts
   (OptGlobalCopyNil)
-  (OptGlobalCopyCons OptGlobalCopyFact OptGlobalCopyFacts))
+  (OptGlobalCopyCons OptGlobalCopyFact (Box OptGlobalCopyFacts)))
 
 (define (opt-global-expr-key-eq [a : OptGlobalExprKey] [b : OptGlobalExprKey]) : bool
   (match a
@@ -4408,7 +4754,7 @@
               (not (opt-value-is-var? src dst)))
               (OptGlobalCopyCons
                 (OptGlobalCopyFact dst src block-label pos)
-                rest-facts)
+                (box rest-facts))
               rest-facts)]
           [_ rest-facts]))]))
 
@@ -4445,7 +4791,7 @@
               use-pos
               doms))
             (IrSomeValue src)
-            (opt-global-copy-lookup rest var doms use-block use-pos))])]))
+            (opt-global-copy-lookup (box-get rest) var doms use-block use-pos))])]))
 
 (define (opt-global-copy-resolve-depth
   [facts : OptGlobalCopyFacts]
@@ -4725,7 +5071,7 @@
               [(OptSomeI64 dst)
                 (OptGlobalExprCons
                   (OptGlobalExprFact key dst block-label pos)
-                  rest-facts)]
+                  (box rest-facts))]
               [(OptNoI64) rest-facts])]
           [(OptNoGlobalExprKey) rest-facts]))]))
 
@@ -4765,7 +5111,13 @@
                 use-pos
                 doms)))
             (IrSomeValue (IrValueVar fact-dst))
-            (opt-global-expr-lookup rest key dst doms use-block use-pos))])]))
+            (opt-global-expr-lookup
+              (box-get rest)
+              key
+              dst
+              doms
+              use-block
+              use-pos))])]))
 
 (define (opt-global-cse-instr
   [facts : OptGlobalExprFacts]
@@ -4960,7 +5312,7 @@
     [(OptLabelCons label rest)
       (opt-cfg-reachable-label-list
         blocks
-        rest
+        (box-get rest)
         (opt-cfg-reachable-label blocks label seen))]))
 
 (define (opt-cfg-reachable-blocks [blocks : CompilerIrBlockList]) : OptLabelSet
@@ -4988,7 +5340,7 @@
 
 (defenum OptNaturalLoopList
   (OptNaturalLoopNil)
-  (OptNaturalLoopCons OptNaturalLoop OptNaturalLoopList))
+  (OptNaturalLoopCons OptNaturalLoop (Box OptNaturalLoopList)))
 
 (defenum OptNaturalLoopCollectState
   (OptNaturalLoopCollectState OptLabelSet OptLabelSet))
@@ -5012,7 +5364,8 @@
 (define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
   (match loops
     [(OptNaturalLoopNil) 0]
-    [(OptNaturalLoopCons _ rest) (+ 1 (opt-natural-loop-list-count rest))]))
+    [(OptNaturalLoopCons _ rest)
+      (+ 1 (opt-natural-loop-list-count (box-get rest)))]))
 
 (define (opt-natural-loop-find
   [loops : OptNaturalLoopList]
@@ -5025,7 +5378,7 @@
         (string-eq (opt-natural-loop-header loop) header)
         (string-eq (opt-natural-loop-latch loop) latch))
         (OptSomeNaturalLoop loop)
-        (opt-natural-loop-find rest header latch))]))
+        (opt-natural-loop-find (box-get rest) header latch))]))
 
 (define (opt-natural-loop-collect-add-pred
   [reachable : OptLabelSet]
@@ -5050,7 +5403,7 @@
     [(OptLabelCons pred rest)
       (opt-natural-loop-collect-add-preds
         reachable
-        rest
+        (box-get rest)
         (opt-natural-loop-collect-add-pred reachable state pred))]))
 
 (define (opt-natural-loop-collect-body
@@ -5066,7 +5419,7 @@
           (opt-natural-loop-collect-add-preds
             reachable
             (opt-cfg-predecessors blocks label)
-            (OptNaturalLoopCollectState body rest))]
+            (OptNaturalLoopCollectState body (box-get rest)))]
         (match state
           [(OptNaturalLoopCollectState next-body next-worklist)
             (opt-natural-loop-collect-body
@@ -5116,7 +5469,7 @@
           reachable
           header
           body
-          rest
+          (box-get rest)
           (opt-natural-loop-preheader-candidate-add
             blocks
             header
@@ -5127,7 +5480,7 @@
           reachable
           header
           body
-          rest
+          (box-get rest)
           candidate))]))
 
 (define (opt-natural-loop-preheader-from-candidate
@@ -5185,14 +5538,14 @@
             reachable
             doms
             source
-            rest
+            (box-get rest)
             tail)]
         (if (and
           (opt-label-contains reachable header)
           (opt-dom-dominates? doms header source))
           (OptNaturalLoopCons
             (opt-natural-loop-build blocks reachable header source)
-            next)
+            (box next))
           next))]))
 
 (define (opt-cfg-natural-loop-blocks
@@ -5421,7 +5774,7 @@
   (match loops
     [(OptNaturalLoopNil) blocks]
     [(OptNaturalLoopCons loop rest)
-      (opt-licm-apply-loops rest (opt-licm-apply-loop blocks loop))]))
+      (opt-licm-apply-loops (box-get rest) (opt-licm-apply-loop blocks loop))]))
 
 (define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-apply-loops (opt-cfg-natural-loops blocks) blocks))
@@ -5438,6 +5791,668 @@
             (match (opt-verify-function hoisted)
               [(OkCompilerOptimizeVerify) hoisted]
               [(ErrCompilerOptimizeVerify _) func]))])]
+    [(ErrCompilerOptimizeVerify _) func]))
+
+;; --- simple induction-derived cleanup (#1802) ------------------------------
+;;
+;; This first induction slice recognizes canonical `i64` loop-carried phis:
+;; `i = phi(preheader_seed, latch_next)` where `latch_next` is `i +/- const`.
+;; It then strength-reduces one repeated derived offset/address family per loop
+;; by adding a matching derived phi. The pass deliberately rejects loops with
+;; stores, calls, allocation, or unknown-effect instructions and leaves bounds
+;; checks in place. The function verifier gates the final rewritten function.
+(defenum OptInductionPhiInputs
+  (OptNoInductionPhiInputs)
+  (OptSomeInductionPhiInputs CompilerIrValue i64))
+
+(defenum OptInductionFact
+  (OptInductionFact i64 CompilerIrValue i64 i64 AstType))
+
+(defenum OptMaybeInductionFact
+  (OptNoInductionFact)
+  (OptSomeInductionFact OptInductionFact))
+
+(defenum OptInductionDerived
+  (OptInductionDerivedMul i64 AstType)
+  (OptInductionDerivedGep CompilerIrValue AstType))
+
+(defenum OptInductionLoopCandidate
+  (OptNoInductionLoopCandidate)
+  (OptSomeInductionLoopCandidate OptInductionFact OptInductionDerived))
+
+(defenum OptInductionApplyResult
+  (OptInductionApplyResult CompilerIrBlockList i64 bool))
+
+(define (opt-induction-fact-start [fact : OptInductionFact]) : CompilerIrValue
+  (match fact
+    [(OptInductionFact _ start _ _ _) start]))
+
+(define (opt-induction-fact-step [fact : OptInductionFact]) : i64
+  (match fact
+    [(OptInductionFact _ _ _ step _) step]))
+
+(define (opt-induction-i64-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [_ false]))
+
+(define (opt-induction-nonzero-step [step : i64]) : OptMaybeI64
+  (if (= step 0)
+    (OptNoI64)
+    (OptSomeI64 step)))
+
+(define (opt-induction-phi-input-pair
+  [a-value : CompilerIrValue]
+  [a-label : String]
+  [b-value : CompilerIrValue]
+  [b-label : String]
+  [preheader : String]
+  [latch : String]) : OptInductionPhiInputs
+  (if (and (string-eq a-label preheader) (string-eq b-label latch))
+    (match b-value
+      [(IrValueVar back) (OptSomeInductionPhiInputs a-value back)]
+      [_ (OptNoInductionPhiInputs)])
+    (if (and (string-eq b-label preheader) (string-eq a-label latch))
+      (match a-value
+        [(IrValueVar back) (OptSomeInductionPhiInputs b-value back)]
+        [_ (OptNoInductionPhiInputs)])
+      (OptNoInductionPhiInputs))))
+
+(define (opt-induction-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [preheader : String]
+  [latch : String]) : OptInductionPhiInputs
+  (match inputs
+    [(IrPhiInputCons a-value a-label rest)
+      (match (box-get rest)
+        [(IrPhiInputCons b-value b-label rest2)
+          (match (box-get rest2)
+            [(IrPhiInputNil)
+              (opt-induction-phi-input-pair
+                a-value
+                a-label
+                b-value
+                b-label
+                preheader
+                latch)]
+            [_ (OptNoInductionPhiInputs)])]
+        [_ (OptNoInductionPhiInputs)])]
+    [_ (OptNoInductionPhiInputs)]))
+
+(define (opt-induction-step-from-add
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 step) (opt-induction-nonzero-step step)]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [(IrValueI64 step)
+      (match rhs
+        [(IrValueVar var)
+          (if (= var phi-var)
+            (opt-induction-nonzero-step step)
+            (OptNoI64))]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-step-from-sub
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 step) (opt-induction-nonzero-step (- 0 step))]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-step-from-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match op
+    [(IrBinAdd) (opt-induction-step-from-add lhs rhs phi-var)]
+    [(IrBinSub) (opt-induction-step-from-sub lhs rhs phi-var)]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-update-step-instr
+  [instr : CompilerIrInstr]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (match instr
+    [(IrInstrBinOp dst op lhs rhs instr-ty)
+      (if (and
+        (= dst next-var)
+        (and (opt-type-eq instr-ty ty) (opt-induction-i64-type? ty)))
+        (opt-induction-step-from-binop op lhs rhs phi-var)
+        (OptNoI64))]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-find-update-instrs
+  [instrs : CompilerIrInstrList]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (match instrs
+    [(IrInstrNil) (OptNoI64)]
+    [(IrInstrCons instr rest)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 dst)
+          (if (= dst next-var)
+            (opt-induction-update-step-instr instr phi-var next-var ty)
+            (opt-induction-find-update-instrs
+              (box-get rest)
+              phi-var
+              next-var
+              ty))]
+        [(OptNoI64)
+          (opt-induction-find-update-instrs (box-get rest) phi-var next-var ty)])]))
+
+(define (opt-induction-find-update-blocks
+  [body : OptLabelSet]
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (match blocks
+    [(IrBlockNil) (OptNoI64)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (opt-label-contains body label)
+            (match (opt-induction-find-update-instrs instrs phi-var next-var ty)
+              [(OptSomeI64 step) (OptSomeI64 step)]
+              [(OptNoI64)
+                (opt-induction-find-update-blocks
+                  body
+                  (box-get rest)
+                  phi-var
+                  next-var
+                  ty)])
+            (opt-induction-find-update-blocks
+              body
+              (box-get rest)
+              phi-var
+              next-var
+              ty))])]))
+
+(define (opt-induction-fact-from-phi
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instr : CompilerIrInstr]) : OptMaybeInductionFact
+  (match instr
+    [(IrInstrPhi phi-var inputs ty)
+      (if (opt-induction-i64-type? ty)
+        (match (opt-induction-phi-inputs
+          inputs
+          preheader
+          (opt-natural-loop-latch loop))
+          [(OptSomeInductionPhiInputs start next-var)
+            (match (opt-induction-find-update-blocks
+              (opt-natural-loop-body loop)
+              blocks
+              phi-var
+              next-var
+              ty)
+              [(OptSomeI64 step)
+                (OptSomeInductionFact
+                  (OptInductionFact phi-var start next-var step ty))]
+              [(OptNoI64) (OptNoInductionFact)])]
+          [(OptNoInductionPhiInputs) (OptNoInductionFact)])
+        (OptNoInductionFact))]
+    [_ (OptNoInductionFact)]))
+
+(define (opt-induction-find-fact-instrs
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instrs : CompilerIrInstrList]) : OptMaybeInductionFact
+  (match instrs
+    [(IrInstrNil) (OptNoInductionFact)]
+    [(IrInstrCons instr rest)
+      (match (opt-induction-fact-from-phi blocks loop preheader instr)
+        [(OptSomeInductionFact fact) (OptSomeInductionFact fact)]
+        [(OptNoInductionFact)
+          (opt-induction-find-fact-instrs blocks loop preheader (box-get rest))])]))
+
+(define (opt-induction-find-fact
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]) : OptMaybeInductionFact
+  (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-induction-find-fact-instrs blocks loop preheader instrs)])]
+    [(OptNoBlock) (OptNoInductionFact)]))
+
+(define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrAlloc _ _) true]
+    [(IrInstrStorePtr _ _ _) true]
+    [(IrInstrVectorStore _ _ _ _ _) true]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) true]
+    [(IrInstrCpuId _ _ _ _) true]
+    [(IrInstrXgetbv _ _) true]
+    [(IrInstrCall _ _ _ _) true]
+    [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrTailCall _ _ _) true]
+    [(IrInstrStore _ _ _) true]
+    [_ false]))
+
+(define (opt-induction-blocker-instrs? [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (or
+        (opt-induction-blocker-instr? instr)
+        (opt-induction-blocker-instrs? (box-get rest)))]))
+
+(define (opt-induction-loop-blocked?
+  [body : OptLabelSet]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (and
+            (opt-label-contains body label)
+            (opt-induction-blocker-instrs? instrs))
+            true
+            (opt-induction-loop-blocked? body (box-get rest)))])]))
+
+(define (opt-induction-small-const? [value : i64]) : bool
+  (and (>= value (- 0 1000000)) (<= value 1000000)))
+
+(define (opt-induction-scale-ok? [step : i64] [scale : i64]) : bool
+  (and
+    (not (= scale 0))
+    (and
+      (not (= scale 1))
+      (and (opt-induction-small-const? step) (opt-induction-small-const? scale)))))
+
+(define (opt-induction-mul-scale
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]
+  [step : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 scale)
+            (if (opt-induction-scale-ok? step scale)
+              (OptSomeI64 scale)
+              (OptNoI64))]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [(IrValueI64 scale)
+      (match rhs
+        [(IrValueVar var)
+          (if (and (= var phi-var) (opt-induction-scale-ok? step scale))
+            (OptSomeI64 scale)
+            (OptNoI64))]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-find-derived-instr
+  [fact : OptInductionFact]
+  [loop-defs : OptUsedSet]
+  [instr : CompilerIrInstr]) : OptInductionLoopCandidate
+  (match fact
+    [(OptInductionFact phi-var _ _ step _)
+      (match instr
+        [(IrInstrBinOp _ op lhs rhs ty)
+          (match op
+            [(IrBinMul)
+              (if (opt-induction-i64-type? ty)
+                (match (opt-induction-mul-scale lhs rhs phi-var step)
+                  [(OptSomeI64 scale)
+                    (OptSomeInductionLoopCandidate
+                      fact
+                      (OptInductionDerivedMul scale ty))]
+                  [(OptNoI64) (OptNoInductionLoopCandidate)])
+                (OptNoInductionLoopCandidate))]
+            [_ (OptNoInductionLoopCandidate)])]
+        [(IrInstrGep _ base offset ty)
+          (match offset
+            [(IrValueVar offset-var)
+              (if (and
+                (= offset-var phi-var)
+                (opt-licm-value-invariant? loop-defs (OptUsedNil) base))
+                (OptSomeInductionLoopCandidate
+                  fact
+                  (OptInductionDerivedGep base ty))
+                (OptNoInductionLoopCandidate))]
+            [_ (OptNoInductionLoopCandidate)])]
+        [_ (OptNoInductionLoopCandidate)])]))
+
+(define (opt-induction-find-derived-instrs
+  [fact : OptInductionFact]
+  [loop-defs : OptUsedSet]
+  [instrs : CompilerIrInstrList]) : OptInductionLoopCandidate
+  (match instrs
+    [(IrInstrNil) (OptNoInductionLoopCandidate)]
+    [(IrInstrCons instr rest)
+      (match (opt-induction-find-derived-instr fact loop-defs instr)
+        [(OptSomeInductionLoopCandidate found-fact kind)
+          (OptSomeInductionLoopCandidate found-fact kind)]
+        [(OptNoInductionLoopCandidate)
+          (opt-induction-find-derived-instrs fact loop-defs (box-get rest))])]))
+
+(define (opt-induction-find-derived-blocks
+  [fact : OptInductionFact]
+  [body : OptLabelSet]
+  [loop-defs : OptUsedSet]
+  [blocks : CompilerIrBlockList]) : OptInductionLoopCandidate
+  (match blocks
+    [(IrBlockNil) (OptNoInductionLoopCandidate)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (opt-label-contains body label)
+            (match (opt-induction-find-derived-instrs fact loop-defs instrs)
+              [(OptSomeInductionLoopCandidate found-fact kind)
+                (OptSomeInductionLoopCandidate found-fact kind)]
+              [(OptNoInductionLoopCandidate)
+                (opt-induction-find-derived-blocks
+                  fact
+                  body
+                  loop-defs
+                  (box-get rest))])
+            (opt-induction-find-derived-blocks
+              fact
+              body
+              loop-defs
+              (box-get rest)))])]))
+
+(define (opt-induction-derived-type [derived : OptInductionDerived]) : AstType
+  (match derived
+    [(OptInductionDerivedMul _ ty) ty]
+    [(OptInductionDerivedGep _ ty) ty]))
+
+(define (opt-induction-derived-matches?
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [instr : CompilerIrInstr]) : bool
+  (match fact
+    [(OptInductionFact phi-var _ _ step _)
+      (match derived
+        [(OptInductionDerivedMul scale ty)
+          (match instr
+            [(IrInstrBinOp _ op lhs rhs instr-ty)
+              (match op
+                [(IrBinMul)
+                  (and
+                    (opt-type-eq instr-ty ty)
+                    (match (opt-induction-mul-scale lhs rhs phi-var step)
+                      [(OptSomeI64 found-scale) (= found-scale scale)]
+                      [(OptNoI64) false]))]
+                [_ false])]
+            [_ false])]
+        [(OptInductionDerivedGep base ty)
+          (match instr
+            [(IrInstrGep _ instr-base offset instr-ty)
+              (and
+                (opt-type-eq instr-ty ty)
+                (and
+                  (opt-value-eq instr-base base)
+                  (match offset
+                    [(IrValueVar offset-var) (= offset-var phi-var)]
+                    [_ false])))]
+            [_ false])])]))
+
+(define (opt-induction-rewrite-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (if (opt-induction-derived-matches? fact derived instr)
+    (match (opt-instr-def-var instr)
+      [(OptSomeI64 dst)
+        (IrInstrMov
+          dst
+          (IrValueVar derived-phi)
+          (opt-induction-derived-type derived))]
+      [(OptNoI64) instr])
+    instr))
+
+(define (opt-induction-rewrite-instrs
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons
+        (opt-induction-rewrite-instr fact derived derived-phi instr)
+        (opt-induction-rewrite-instrs fact derived derived-phi (box-get rest)))]))
+
+(define (opt-induction-rewrite-blocks
+  [body : OptLabelSet]
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-ir-block-cons
+            (if (opt-label-contains body label)
+              (IrBlock
+                label
+                (opt-induction-rewrite-instrs fact derived derived-phi instrs))
+              block)
+            (opt-induction-rewrite-blocks
+              body
+              fact
+              derived
+              derived-phi
+              (box-get rest)))])]))
+
+(define (opt-induction-seed-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [seed-var : i64]) : CompilerIrInstr
+  (match derived
+    [(OptInductionDerivedMul scale ty)
+      (IrInstrBinOp
+        seed-var
+        (IrBinMul)
+        (opt-induction-fact-start fact)
+        (IrValueI64 scale)
+        ty)]
+    [(OptInductionDerivedGep base ty)
+      (IrInstrGep seed-var base (opt-induction-fact-start fact) ty)]))
+
+(define (opt-induction-next-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [next-var : i64]) : CompilerIrInstr
+  (match derived
+    [(OptInductionDerivedMul scale ty)
+      (IrInstrBinOp
+        next-var
+        (IrBinAdd)
+        (IrValueVar derived-phi)
+        (IrValueI64 (* (opt-induction-fact-step fact) scale))
+        ty)]
+    [(OptInductionDerivedGep _ ty)
+      (IrInstrGep
+        next-var
+        (IrValueVar derived-phi)
+        (IrValueI64 (opt-induction-fact-step fact))
+        ty)]))
+
+(define (opt-induction-phi-instr
+  [derived : OptInductionDerived]
+  [preheader : String]
+  [latch : String]
+  [seed-var : i64]
+  [derived-phi : i64]
+  [next-var : i64]) : CompilerIrInstr
+  (IrInstrPhi
+    derived-phi
+    (compiler-ir-phi-input-cons
+      (IrValueVar seed-var)
+      preheader
+      (compiler-ir-phi-input-cons (IrValueVar next-var) latch (IrPhiInputNil)))
+    (opt-induction-derived-type derived)))
+
+(define (opt-induction-insert-support-blocks
+  [header : String]
+  [preheader : String]
+  [latch : String]
+  [seed-instr : CompilerIrInstr]
+  [phi-instr : CompilerIrInstr]
+  [next-instr : CompilerIrInstr]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [with-phi : CompilerIrInstrList
+              (if (string-eq label header)
+                (compiler-ir-instr-cons phi-instr instrs)
+                instrs)]
+            [with-seed : CompilerIrInstrList
+              (if (string-eq label preheader)
+                (opt-licm-insert-before-terminator
+                  (compiler-ir-instr-cons seed-instr IrInstrNil)
+                  with-phi)
+                with-phi)]
+            [with-next : CompilerIrInstrList
+              (if (string-eq label latch)
+                (opt-licm-insert-before-terminator
+                  (compiler-ir-instr-cons next-instr IrInstrNil)
+                  with-seed)
+                with-seed)]
+            (compiler-ir-block-cons
+              (IrBlock label with-next)
+              (opt-induction-insert-support-blocks
+                header
+                preheader
+                latch
+                seed-instr
+                phi-instr
+                next-instr
+                (box-get rest))))])]))
+
+(define (opt-induction-apply-loop
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptInductionApplyResult
+  (match (opt-natural-loop-preheader loop)
+    [(OptSomeLoopPreheader preheader)
+      (let
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        (if (opt-induction-loop-blocked? body blocks)
+          (OptInductionApplyResult blocks frame false)
+          (match (opt-induction-find-fact blocks loop preheader)
+            [(OptSomeInductionFact fact)
+              (let
+                [loop-defs : OptUsedSet
+                  (opt-licm-collect-defs-blocks body blocks (OptUsedNil))]
+                (match (opt-induction-find-derived-blocks
+                  fact
+                  body
+                  loop-defs
+                  blocks)
+                  [(OptSomeInductionLoopCandidate _ derived)
+                    (let
+                      [seed-var : i64 frame]
+                      [derived-phi : i64 (+ frame 1)]
+                      [next-var : i64 (+ frame 2)]
+                      [rewritten : CompilerIrBlockList
+                        (opt-induction-rewrite-blocks
+                          body
+                          fact
+                          derived
+                          derived-phi
+                          blocks)]
+                      [seed-instr : CompilerIrInstr
+                        (opt-induction-seed-instr fact derived seed-var)]
+                      [phi-instr : CompilerIrInstr
+                        (opt-induction-phi-instr
+                          derived
+                          preheader
+                          (opt-natural-loop-latch loop)
+                          seed-var
+                          derived-phi
+                          next-var)]
+                      [next-instr : CompilerIrInstr
+                        (opt-induction-next-instr
+                          fact
+                          derived
+                          derived-phi
+                          next-var)]
+                      (OptInductionApplyResult
+                        (opt-induction-insert-support-blocks
+                          (opt-natural-loop-header loop)
+                          preheader
+                          (opt-natural-loop-latch loop)
+                          seed-instr
+                          phi-instr
+                          next-instr
+                          rewritten)
+                        (+ frame 3)
+                        true))]
+                  [(OptNoInductionLoopCandidate)
+                    (OptInductionApplyResult blocks frame false)]))]
+            [(OptNoInductionFact) (OptInductionApplyResult blocks frame false)])))]
+    [(OptNoLoopPreheader) (OptInductionApplyResult blocks frame false)]))
+
+(define (opt-induction-apply-loops
+  [loops : OptNaturalLoopList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [changed : bool]) : OptInductionApplyResult
+  (match loops
+    [(OptNaturalLoopNil) (OptInductionApplyResult blocks frame changed)]
+    [(OptNaturalLoopCons loop rest)
+      (match (opt-induction-apply-loop blocks frame loop)
+        [(OptInductionApplyResult next-blocks next-frame loop-changed)
+          (opt-induction-apply-loops
+            (box-get rest)
+            next-blocks
+            next-frame
+            (or changed loop-changed))])]))
+
+(define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function func)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (match (opt-induction-apply-loops
+            (opt-cfg-natural-loops blocks)
+            blocks
+            frame
+            false)
+            [(OptInductionApplyResult next-blocks next-frame changed)
+              (if changed
+                (let
+                  [next : CompilerIrFunction
+                    (IrFunction name params ret-ty next-frame next-blocks)]
+                  (match (opt-verify-function next)
+                    [(OkCompilerOptimizeVerify) next]
+                    [(ErrCompilerOptimizeVerify _) func]))
+                func)])])]
     [(ErrCompilerOptimizeVerify _) func]))
 
 (define (opt-cfg-filter-phi-inputs
@@ -5536,7 +6551,7 @@
 
 (defenum OptSccpEnv
   (OptSccpEnvNil)
-  (OptSccpEnvCons i64 OptSccpValue OptSccpEnv))
+  (OptSccpEnvCons i64 OptSccpValue (Box OptSccpEnv)))
 
 (defenum OptSccpState
   (OptSccpState OptLabelSet OptSccpEnv bool))
@@ -5575,20 +6590,24 @@
   (match env
     [(OptSccpEnvNil) (OptSccpUnknown)]
     [(OptSccpEnvCons id value rest)
-      (if (= id var)
-        value
-        (opt-sccp-env-lookup rest var))]))
+      (let
+        [rest : OptSccpEnv (box-get rest)]
+        (if (= id var)
+          value
+          (opt-sccp-env-lookup rest var)))]))
 
 (define (opt-sccp-env-remove [env : OptSccpEnv] [var : i64]) : OptSccpEnv
   (match env
     [(OptSccpEnvNil) (OptSccpEnvNil)]
     [(OptSccpEnvCons id value rest)
-      (if (= id var)
-        (opt-sccp-env-remove rest var)
-        (OptSccpEnvCons id value (opt-sccp-env-remove rest var)))]))
+      (let
+        [rest : OptSccpEnv (box-get rest)]
+        (if (= id var)
+          (opt-sccp-env-remove rest var)
+          (OptSccpEnvCons id value (box (opt-sccp-env-remove rest var)))))]))
 
 (define (opt-sccp-env-set [env : OptSccpEnv] [var : i64] [value : OptSccpValue]) : OptSccpEnv
-  (OptSccpEnvCons var value (opt-sccp-env-remove env var)))
+  (OptSccpEnvCons var value (box (opt-sccp-env-remove env var))))
 
 (define (opt-sccp-state-bind
   [state : OptSccpState]
@@ -6174,14 +7193,14 @@
 ;; either arm.
 (defenum OptGvnDefs
   (OptGvnDefsNil)
-  (OptGvnDefsCons i64 OptGvnDefs))
+  (OptGvnDefsCons i64 (Box OptGvnDefs)))
 
 (defenum OptGvnEntry
   (OptGvnEntry OptExprKey i64 String))
 
 (defenum OptGvnMap
   (OptGvnMapNil)
-  (OptGvnMapCons OptGvnEntry OptGvnMap))
+  (OptGvnMapCons OptGvnEntry (Box OptGvnMap)))
 
 ;; Number of times `var` appears as a definition site (instruction destination
 ;; or seeded parameter) in the collected value-source list.
@@ -6189,9 +7208,11 @@
   (match sources
     [(OptGvnDefsNil) 0]
     [(OptGvnDefsCons id rest)
-      (if (= id var)
-        (+ 1 (opt-gvn-count rest var))
-        (opt-gvn-count rest var))]))
+      (let
+        [rest : OptGvnDefs (box-get rest)]
+        (if (= id var)
+          (+ 1 (opt-gvn-count rest var))
+          (opt-gvn-count rest var)))]))
 
 ;; A var is reusable across dominance only when it has exactly one value source.
 (define (opt-gvn-stable-var? [sources : OptGvnDefs] [var : i64]) : bool
@@ -6263,7 +7284,7 @@
     [(IrParamCons param rest)
       (match param
         [(IrParam _ _ id)
-          (opt-gvn-sources-params (box-get rest) (OptGvnDefsCons id acc))])]))
+          (opt-gvn-sources-params (box-get rest) (OptGvnDefsCons id (box acc)))])]))
 
 (define (opt-gvn-sources-instrs
   [instrs : CompilerIrInstrList]
@@ -6277,7 +7298,7 @@
           (box-get rest)
           (if (= dst (- 0 1))
             acc
-            (OptGvnDefsCons dst acc))))]))
+            (OptGvnDefsCons dst (box acc)))))]))
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
@@ -6305,13 +7326,13 @@
         (and
           (opt-gvn-value-stable? sources l)
           (opt-gvn-value-stable? sources r)))
-        (OptGvnMapCons (OptGvnEntry (OptBinKey op l r) dst label) acc)
+        (OptGvnMapCons (OptGvnEntry (OptBinKey op l r) dst label) (box acc))
         acc)]
     [(IrInstrUnOp dst op v _)
       (if (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources v))
-        (OptGvnMapCons (OptGvnEntry (OptUnKey op v) dst label) acc)
+        (OptGvnMapCons (OptGvnEntry (OptUnKey op v) dst label) (box acc))
         acc)]
     [_ acc]))
 
@@ -6359,7 +7380,7 @@
             (opt-expr-key-eq ekey key)
             (opt-dom-strict-dominates? doms elabel use-label))
             evar
-            (opt-gvn-lookup rest doms use-label key))])]))
+            (opt-gvn-lookup (box-get rest) doms use-label key))])]))
 
 (define (opt-gvn-rewrite-instr
   [table : OptGvnMap]
@@ -6502,24 +7523,34 @@
                   [licm : CompilerIrFunction
                     (opt-licm-function
                       (IrFunction name params ret-ty promoted-frame cfg))]
-                  [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
+                  [induction : CompilerIrFunction (opt-induction-function licm)]
+                  [induction-frame : i64 (opt-function-frame induction)]
+                  [induction-blocks : CompilerIrBlockList
+                    (opt-function-blocks induction)]
                   ;; Cross-block global value numbering + copy propagation
                   ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
                   ;; the post-stack-promotion frame so its slots stay
                   ;; consistent with the promoted blocks.
                   [global : CompilerIrFunction
                     (opt-global-value-number-function
-                      (IrFunction name params ret-ty promoted-frame licm-blocks))]
+                      (IrFunction
+                        name
+                        params
+                        ret-ty
+                        induction-frame
+                        induction-blocks))]
                   [global-blocks : CompilerIrBlockList
                     (opt-function-blocks global)]
-                  [used : OptUsedSet
-                    (opt-collect-blocks-uses (OptUsedNil) global-blocks)]
+                  [used : (Array bool)
+                    (opt-collect-blocks-uses-array
+                      induction-frame
+                      global-blocks)]
                   (IrFunction
                     name
                     params
                     ret-ty
-                    promoted-frame
-                    (opt-dce-block-list used global-blocks)))])]))]))
+                    induction-frame
+                    (opt-dce-block-list-array used global-blocks)))])]))]))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
@@ -6537,13 +7568,14 @@
             (let
               [cfg : CompilerIrBlockList
                 (opt-cfg-simplify-blocks promoted-blocks)]
-              [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+              [used : (Array bool)
+                (opt-collect-blocks-uses-array promoted-frame cfg)]
               (IrFunction
                 name
                 params
                 ret-ty
                 promoted-frame
-                (opt-dce-block-list used cfg)))]))]))
+                (opt-dce-block-list-array used cfg)))]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -6551,8 +7583,13 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
         [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-        (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))]))
+        [used : (Array bool) (opt-collect-blocks-uses-array frame cfg)]
+        (IrFunction
+          name
+          params
+          ret-ty
+          frame
+          (opt-dce-block-list-array used cfg)))]))
 
 (define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (let
@@ -6646,22 +7683,77 @@
 
 (defenum OptStringSet
   (OptStringNil)
-  (OptStringCons String OptStringSet))
+  (OptStringCons String (Box OptStringSet)))
 
 (defenum OptMaybeFunction
   (OptNoFunction)
   (OptSomeFunction CompilerIrFunction))
 
+(defstruct OptFunctionIndex
+  (ids StringI64Map)
+  (values (Array CompilerIrFunction)))
+
 (defenum OptReachState
-  (OptReachState OptStringSet OptStringSet))
+  (OptReachState StringI64Map OptStringSet))
+
+(define (opt-function-index-capacity [count : i64]) : i64
+  (if (< count 4)
+    8
+    (* count 2)))
+
+(define (opt-function-list-count [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons _ rest) (+ 1 (opt-function-list-count (box-get rest)))]))
+
+(define (opt-function-index-fill
+  [functions : CompilerIrFunctionList]
+  [ids : StringI64Map]
+  [values : (Array CompilerIrFunction)]
+  [index : i64]) : StringI64Map
+  (match functions
+    [(IrFunctionNil) ids]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (begin
+            (array-set! values index func)
+            (opt-function-index-fill
+              (box-get rest)
+              (string-i64-map-put ids name index)
+              values
+              (+ index 1)))])]))
+
+(define (opt-function-index-build [functions : CompilerIrFunctionList]) : OptFunctionIndex
+  (let
+    [count : i64 (opt-function-list-count functions)]
+    [values : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    [ids : StringI64Map
+      (opt-function-index-fill
+        functions
+        (string-i64-map-with-capacity (opt-function-index-capacity count))
+        values
+        0)]
+    (OptFunctionIndex ids values)))
+
+(define (opt-function-index-defines? [index : OptFunctionIndex] [name : String]) : bool
+  (string-i64-map-contains? (struct-get index ids) name))
+
+(define (opt-function-index-find [index : OptFunctionIndex] [name : String]) : OptMaybeFunction
+  (match (string-i64-map-get (struct-get index ids) name)
+    [(StringI64MapFound slot)
+      (OptSomeFunction (array-ref (struct-get index values) slot))]
+    [(StringI64MapMissing) (OptNoFunction)]))
 
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
     [(OptStringNil) false]
     [(OptStringCons item rest)
-      (if (string-eq item name)
-        true
-        (opt-string-set-contains? rest name))]))
+      (let
+        [rest : OptStringSet (box-get rest)]
+        (if (string-eq item name)
+          true
+          (opt-string-set-contains? rest name)))]))
 
 (define (opt-function-list-defines?
   [functions : CompilerIrFunctionList]
@@ -6688,190 +7780,174 @@
             (opt-function-list-find (box-get rest) name))])]))
 
 (define (opt-reach-add-function
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [name : String]) : OptReachState
   (match state
     [(OptReachState reachable worklist)
-      (if (opt-function-list-defines? functions name)
-        (if (opt-string-set-contains? reachable name)
+      (if (opt-function-index-defines? index name)
+        (if (string-i64-map-contains? reachable name)
           state
           (OptReachState
-            (OptStringCons name reachable)
-            (OptStringCons name worklist)))
+            (string-i64-map-put reachable name 1)
+            (OptStringCons name (box worklist))))
         state)]))
 
 (define (opt-reach-value
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [value : CompilerIrValue]) : OptReachState
   (match value
-    [(IrValueGlobal name) (opt-reach-add-function functions state name)]
-    [(IrValueGlobalAddr name) (opt-reach-add-function functions state name)]
-    [(IrValueFunction name) (opt-reach-add-function functions state name)]
+    [(IrValueGlobal name) (opt-reach-add-function index state name)]
+    [(IrValueGlobalAddr name) (opt-reach-add-function index state name)]
+    [(IrValueFunction name) (opt-reach-add-function index state name)]
     [_ state]))
 
 (define (opt-reach-value-list
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [values : CompilerIrValueList]) : OptReachState
   (match values
     [(IrValueNil) state]
     [(IrValueCons value rest)
       (opt-reach-value-list
-        functions
-        (opt-reach-value functions state value)
+        index
+        (opt-reach-value index state value)
         (box-get rest))]))
 
 (define (opt-reach-call-args-array
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [values : (Array CompilerIrValue)]
-  [index : i64]) : OptReachState
-  (if (>= index (array-length values))
+  [arg-index : i64]) : OptReachState
+  (if (>= arg-index (array-length values))
     state
     (opt-reach-call-args-array
-      functions
-      (opt-reach-value functions state (array-ref values index))
+      index
+      (opt-reach-value index state (array-ref values arg-index))
       values
-      (+ index 1))))
+      (+ arg-index 1))))
 
 (define (opt-reach-call-args
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [args : CompilerIrCallArgs]) : OptReachState
   (match args
     [(IrCallArgsNil) state]
-    [(IrCallArgsOne value) (opt-reach-value functions state value)]
+    [(IrCallArgsOne value) (opt-reach-value index state value)]
     [(IrCallArgsTwo a b)
-      (opt-reach-value functions (opt-reach-value functions state a) b)]
-    [(IrCallArgsArray values)
-      (opt-reach-call-args-array functions state values 0)]))
+      (opt-reach-value index (opt-reach-value index state a) b)]
+    [(IrCallArgsArray values) (opt-reach-call-args-array index state values 0)]))
 
 (define (opt-reach-maybe-value
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [maybe : CompilerIrMaybeValue]) : OptReachState
   (match maybe
     [(IrNoValue) state]
-    [(IrSomeValue value) (opt-reach-value functions state value)]))
+    [(IrSomeValue value) (opt-reach-value index state value)]))
 
 (define (opt-reach-phi-inputs
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [inputs : CompilerIrPhiInputList]) : OptReachState
   (match inputs
     [(IrPhiInputNil) state]
     [(IrPhiInputCons value _ rest)
       (opt-reach-phi-inputs
-        functions
-        (opt-reach-value functions state value)
+        index
+        (opt-reach-value index state value)
         (box-get rest))]))
 
 (define (opt-reach-instr
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [instr : CompilerIrInstr]) : OptReachState
   (match instr
-    [(IrInstrMov _ src _) (opt-reach-value functions state src)]
+    [(IrInstrMov _ src _) (opt-reach-value index state src)]
     [(IrInstrAlloc _ _) state]
     [(IrInstrAddrOf _ _) state]
     [(IrInstrGep _ base offset _)
-      (opt-reach-value functions (opt-reach-value functions state base) offset)]
-    [(IrInstrLoad _ src _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state base) offset)]
+    [(IrInstrLoad _ src _) (opt-reach-value index state src)]
     [(IrInstrStorePtr dst src _)
-      (opt-reach-value functions (opt-reach-value functions state dst) src)]
-    [(IrInstrBoundsCheck index length _)
-      (opt-reach-value functions (opt-reach-value functions state index) length)]
-    [(IrInstrCast _ src _ _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state dst) src)]
+    [(IrInstrBoundsCheck idx length _)
+      (opt-reach-value index (opt-reach-value index state idx) length)]
+    [(IrInstrCast _ src _ _) (opt-reach-value index state src)]
     [(IrInstrBinOp _ _ lhs rhs _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
-    [(IrInstrUnOp _ _ src _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrUnOp _ _ src _) (opt-reach-value index state src)]
     [(IrInstrLaneId _ _ _) state]
-    [(IrInstrSplat _ value _ _) (opt-reach-value functions state value)]
+    [(IrInstrSplat _ value _ _) (opt-reach-value index state value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
-    [(IrInstrVectorReduce _ _ src _ _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-reach-value index state src)]
     [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
-    [(IrInstrMaskNot _ src _) (opt-reach-value functions state src)]
-    [(IrInstrMaskReduce _ _ src _) (opt-reach-value functions state src)]
+      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrMaskNot _ src _) (opt-reach-value index state src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-reach-value index state src)]
     [(IrInstrSelect _ mask on-true on-false _ _)
       (opt-reach-value
-        functions
-        (opt-reach-value
-          functions
-          (opt-reach-value functions state mask)
-          on-true)
+        index
+        (opt-reach-value index (opt-reach-value index state mask) on-true)
         on-false)]
-    [(IrInstrVectorLoad _ base index _ _)
-      (opt-reach-value functions (opt-reach-value functions state base) index)]
-    [(IrInstrVectorStore base index value _ _)
+    [(IrInstrVectorLoad _ base idx _ _)
+      (opt-reach-value index (opt-reach-value index state base) idx)]
+    [(IrInstrVectorStore base idx value _ _)
       (opt-reach-value
-        functions
-        (opt-reach-value functions (opt-reach-value functions state base) index)
+        index
+        (opt-reach-value index (opt-reach-value index state base) idx)
         value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
+    [(IrInstrPredicatedStore base idx value mask _ _)
       (opt-reach-value
-        functions
+        index
         (opt-reach-value
-          functions
-          (opt-reach-value
-            functions
-            (opt-reach-value functions state base)
-            index)
+          index
+          (opt-reach-value index (opt-reach-value index state base) idx)
           value)
         mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
+    [(IrInstrPredicatedLoad _ base idx mask _ _)
       (opt-reach-value
-        functions
-        (opt-reach-value functions (opt-reach-value functions state base) index)
+        index
+        (opt-reach-value index (opt-reach-value index state base) idx)
         mask)]
-    [(IrInstrTailMask _ index length _)
-      (opt-reach-value functions (opt-reach-value functions state index) length)]
+    [(IrInstrTailMask _ idx length _)
+      (opt-reach-value index (opt-reach-value index state idx) length)]
     [(IrInstrEntryArgc _) state]
     [(IrInstrEntryArgv _) state]
     [(IrInstrEntryEnvp _) state]
     [(IrInstrCpuId _ leaf subleaf _)
-      (opt-reach-value functions (opt-reach-value functions state leaf) subleaf)]
-    [(IrInstrXgetbv _ index) (opt-reach-value functions state index)]
+      (opt-reach-value index (opt-reach-value index state leaf) subleaf)]
+    [(IrInstrXgetbv _ idx) (opt-reach-value index state idx)]
     [(IrInstrCall _ name args _)
-      (opt-reach-add-function
-        functions
-        (opt-reach-call-args functions state args)
-        name)]
+      (opt-reach-add-function index (opt-reach-call-args index state args) name)]
     [(IrInstrCallIndirect _ func args _)
-      (opt-reach-call-args
-        functions
-        (opt-reach-value functions state func)
-        args)]
+      (opt-reach-call-args index (opt-reach-value index state func) args)]
     [(IrInstrTailCall name args _)
-      (opt-reach-add-function
-        functions
-        (opt-reach-call-args functions state args)
-        name)]
-    [(IrInstrStore _ value _) (opt-reach-value functions state value)]
+      (opt-reach-add-function index (opt-reach-call-args index state args) name)]
+    [(IrInstrStore _ value _) (opt-reach-value index state value)]
     [(IrInstrJump _) state]
-    [(IrInstrBranch cond _ _) (opt-reach-value functions state cond)]
-    [(IrInstrReturn maybe) (opt-reach-maybe-value functions state maybe)]
-    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs functions state inputs)]))
+    [(IrInstrBranch cond _ _) (opt-reach-value index state cond)]
+    [(IrInstrReturn maybe) (opt-reach-maybe-value index state maybe)]
+    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]))
 
 (define (opt-reach-instrs
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [instrs : CompilerIrInstrList]) : OptReachState
   (match instrs
     [(IrInstrNil) state]
     [(IrInstrCons instr rest)
       (opt-reach-instrs
-        functions
-        (opt-reach-instr functions state instr)
+        index
+        (opt-reach-instr index state instr)
         (box-get rest))]))
 
 (define (opt-reach-blocks
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [blocks : CompilerIrBlockList]) : OptReachState
   (match blocks
@@ -6880,62 +7956,58 @@
       (match block
         [(IrBlock _ instrs)
           (opt-reach-blocks
-            functions
-            (opt-reach-instrs functions state instrs)
+            index
+            (opt-reach-instrs index state instrs)
             (box-get rest))])]))
 
 (define (opt-reach-function
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [func : CompilerIrFunction]) : OptReachState
   (match func
-    [(IrFunction _ _ _ _ blocks) (opt-reach-blocks functions state blocks)]))
+    [(IrFunction _ _ _ _ blocks) (opt-reach-blocks index state blocks)]))
 
-(define (opt-reach-process
-  [functions : CompilerIrFunctionList]
-  [state : OptReachState]) : OptReachState
+(define (opt-reach-process [index : OptFunctionIndex] [state : OptReachState]) : OptReachState
   (match state
     [(OptReachState reachable worklist)
       (match worklist
         [(OptStringNil) state]
         [(OptStringCons name rest)
           (let
-            [popped : OptReachState (OptReachState reachable rest)]
-            (match (opt-function-list-find functions name)
+            [popped : OptReachState (OptReachState reachable (box-get rest))]
+            (match (opt-function-index-find index name)
               [(OptSomeFunction func)
-                (opt-reach-process
-                  functions
-                  (opt-reach-function functions popped func))]
-              [(OptNoFunction) (opt-reach-process functions popped)]))])]))
+                (opt-reach-process index (opt-reach-function index popped func))]
+              [(OptNoFunction) (opt-reach-process index popped)]))])]))
 
 (define (opt-reach-global
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [global : CompilerIrGlobal]) : OptReachState
   (match global
-    [(IrGlobal _ _ value) (opt-reach-value functions state value)]))
+    [(IrGlobal _ _ value) (opt-reach-value index state value)]))
 
 (define (opt-reach-globals
-  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
   [state : OptReachState]
   [globals : CompilerIrGlobalList]) : OptReachState
   (match globals
     [(IrGlobalNil) state]
     [(IrGlobalCons global rest)
       (opt-reach-globals
-        functions
-        (opt-reach-global functions state global)
+        index
+        (opt-reach-global index state global)
         (box-get rest))]))
 
 (define (opt-filter-reachable-functions
   [functions : CompilerIrFunctionList]
-  [reachable : OptStringSet]) : CompilerIrFunctionList
+  [reachable : StringI64Map]) : CompilerIrFunctionList
   (match functions
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction name _ _ _ _)
-          (if (opt-string-set-contains? reachable name)
+          (if (string-i64-map-contains? reachable name)
             (compiler-ir-function-cons
               func
               (opt-filter-reachable-functions (box-get rest) reachable))
@@ -6945,17 +8017,22 @@
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (if (opt-function-list-defines? functions "main")
-    (match (opt-reach-process
-      functions
-      (opt-reach-globals
-        functions
-        (opt-reach-add-function
-          functions
-          (OptReachState (OptStringNil) (OptStringNil))
-          "main")
-        globals))
-      [(OptReachState reachable _)
-        (opt-filter-reachable-functions functions reachable)])
+    (let
+      [index : OptFunctionIndex (opt-function-index-build functions)]
+      [reachable : StringI64Map
+        (string-i64-map-with-capacity
+          (opt-function-index-capacity (opt-function-list-count functions)))]
+      (match (opt-reach-process
+        index
+        (opt-reach-globals
+          index
+          (opt-reach-add-function
+            index
+            (OptReachState reachable (OptStringNil))
+            "main")
+          globals))
+        [(OptReachState reachable-out _)
+          (opt-filter-reachable-functions functions reachable-out)]))
     functions))
 
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
@@ -6969,19 +8046,41 @@
       (if (= level 0)
         program
         (if (= level 1)
-          (IrProgram
-            globals
-            (optimize-function-list-with-level functions level)
-            externs)
-          (let
-            [reachable-functions : CompilerIrFunctionList
-              (opt-prune-unreachable-functions globals functions)]
-            [optimized-functions : CompilerIrFunctionList
-              (optimize-function-list-with-level reachable-functions level)]
-            (IrProgram
-              globals
-              (opt-prune-unreachable-functions globals optimized-functions)
-              externs))))]))
+          (begin
+            (cfg compile-profile (compiler-opt-profile-start))
+            (let
+              [optimized-functions : CompilerIrFunctionList
+                (optimize-function-list-with-level functions level)]
+              (begin
+                (cfg compile-profile (compiler-opt-profile-finish "functions"))
+                (IrProgram globals optimized-functions externs))))
+          (begin
+            (cfg compile-profile (compiler-opt-profile-start))
+            (let
+              [reachable-functions : CompilerIrFunctionList functions]
+              (begin
+                (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
+                (cfg compile-profile (compiler-opt-profile-start))
+                (let
+                  [optimized-functions : CompilerIrFunctionList
+                    (optimize-function-list-with-level
+                      reachable-functions
+                      level)]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-finish "functions"))
+                    (cfg compile-profile (compiler-opt-profile-start))
+                    (let
+                      [final-functions : CompilerIrFunctionList
+                        (opt-prune-unreachable-functions
+                          globals
+                          optimized-functions)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-finish "post_prune"))
+                        (IrProgram globals final-functions externs))))))))))]))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -7211,7 +8310,7 @@
   [source-spans : CompilerSourceSpans]
   [program : CompilerIrProgram]) : CompilerSourceSpans
   (if (opt-remap-spans-fast-path? source-spans)
-    source-spans
+    (compiler-source-spans-clear-instrs source-spans)
     (match program
       [(IrProgram _ functions _)
         (opt-remap-spans-functions
@@ -7665,7 +8764,7 @@
   (match (opt-aggregate-allocation-candidates
     (opt-spans-program (opt-aggregate-positive-instrs)))
     [(OptAggregateAllocCandidateCons candidate rest)
-      (match rest
+      (match (box-get rest)
         [(OptAggregateAllocCandidateNil)
           (match candidate
             [(OptAggregateAllocCandidate base ty size ptrs accesses)
@@ -9250,6 +10349,10 @@
   (match func
     [(IrFunction _ _ _ _ blocks) blocks]))
 
+(define (opt-function-frame [func : CompilerIrFunction]) : i64
+  (match func
+    [(IrFunction _ _ _ frame _) frame]))
+
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]
   [label : String]) : bool
@@ -9374,6 +10477,31 @@
             (opt-count-arith-instrs instrs)
             (opt-count-arith-label-blocks (box-get rest) label))])]))
 
+(define (opt-count-mul-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrBinOp _ op _ _ _)
+            (match op
+              [(IrBinMul) 1]
+              [_ 0])]
+          [_ 0])
+        (opt-count-mul-instrs (box-get rest)))]))
+
+(define (opt-count-mul-label-blocks
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label label)
+            (opt-count-mul-instrs instrs)
+            (opt-count-mul-label-blocks (box-get rest) label))])]))
+
 (define (opt-blocks-mov-dst-i64-value
   [blocks : CompilerIrBlockList]
   [dst : i64]
@@ -9418,6 +10546,18 @@
           (+
             (opt-count-gep-instrs instrs)
             (opt-count-gep-blocks (box-get rest)))])]))
+
+(define (opt-count-gep-label-blocks
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label label)
+            (opt-count-gep-instrs instrs)
+            (opt-count-gep-label-blocks (box-get rest) label))])]))
 
 (define (opt-count-load-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -10507,6 +11647,363 @@
       [(not (= (opt-count-arith-blocks nested) 1)) 14]
       [else 42])))
 
+(define (opt-induction-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "cond" (AstTyBool) 0)
+    (compiler-ir-param-cons
+      (IrParam "seed" (AstTyI64) 1)
+      (compiler-ir-param-cons (IrParam "ptr" (AstTyI64) 2) (IrParamNil)))))
+
+(define (opt-induction-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "induction" (opt-induction-params) (AstTyI64) 32 blocks))
+
+(define (opt-induction-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-induction-function (opt-induction-test-function blocks)))
+
+(define (opt-induction-offset-blocks [step : i64] [scale : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              4
+              (IrBinMul)
+              (IrValueVar 3)
+              (IrValueI64 scale)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                6
+                (IrBinAdd)
+                (IrValueVar 4)
+                (IrValueI64 7)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 3)
+                  (IrValueI64 step)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-gep-blocks [step : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrGep 4 (IrValueVar 2) (IrValueVar 3) (AstTyU8))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 6 (IrValueVar 4) (AstTyU8))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 3)
+                  (IrValueI64 step)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-unsupported-step-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinMul) (IrValueVar 3) (IrValueI64 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                6
+                (IrBinAdd)
+                (IrValueVar 4)
+                (IrValueI64 7)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinMul)
+                  (IrValueVar 3)
+                  (IrValueI64 2)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-call-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinMul) (IrValueVar 3) (IrValueI64 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall 7 "tl_noop" (IrCallArgsNil) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  6
+                  (IrBinAdd)
+                  (IrValueVar 4)
+                  (IrValueI64 7)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 3)
+                    (IrValueI64 1)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-store-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 (IrBinMul) (IrValueVar 3) (IrValueI64 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrStore "sink" (IrValueVar 4) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 3)
+                  (IrValueI64 1)
+                  (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-no-preheader-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "pre-one" "pre-two")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "pre-one"
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "pre-two"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrPhi
+                3
+                (compiler-ir-phi-input-cons
+                  (IrValueVar 1)
+                  "pre-one"
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 1)
+                    "pre-two"
+                    (compiler-ir-phi-input-cons
+                      (IrValueVar 5)
+                      "body"
+                      (IrPhiInputNil))))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 0) "body" "exit")
+                (IrInstrNil))))
+          (compiler-ir-block-cons
+            (IrBlock
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  4
+                  (IrBinMul)
+                  (IrValueVar 3)
+                  (IrValueI64 4)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    6
+                    (IrBinAdd)
+                    (IrValueVar 4)
+                    (IrValueI64 7)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrBinOp
+                      5
+                      (IrBinAdd)
+                      (IrValueVar 3)
+                      (IrValueI64 1)
+                      (AstTyI64))
+                    (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (compiler-optimize-induction-self-test) : i64
+  (let
+    [blocks : CompilerIrBlockList (opt-induction-offset-blocks 1 4)]
+    [func : CompilerIrFunction (opt-induction-optimized-function blocks)]
+    [out : CompilerIrBlockList (opt-function-blocks func)]
+    [nonunit-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-offset-blocks 3 4))]
+    [nonunit : CompilerIrBlockList (opt-function-blocks nonunit-func)]
+    [negative-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-offset-blocks (- 0 2) 4))]
+    [negative : CompilerIrBlockList (opt-function-blocks negative-func)]
+    [gep-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-gep-blocks 1))]
+    [gep : CompilerIrBlockList (opt-function-blocks gep-func)]
+    [unsupported-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-unsupported-step-blocks))]
+    [unsupported : CompilerIrBlockList (opt-function-blocks unsupported-func)]
+    [call-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-call-blocks))]
+    [call-blocks : CompilerIrBlockList (opt-function-blocks call-func)]
+    [store-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-store-blocks))]
+    [store-blocks : CompilerIrBlockList (opt-function-blocks store-func)]
+    [no-preheader-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-no-preheader-blocks))]
+    [no-preheader : CompilerIrBlockList (opt-function-blocks no-preheader-func)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function func))) 1]
+      [(not (= (opt-count-phi-blocks out) 2)) 2]
+      [(not (= (opt-blocks-mov-src-var out 4 (- 0 1)) 33)) 3]
+      [(not (= (opt-count-mul-label-blocks out "body") 0)) 4]
+      [(not (opt-verify-ok? (opt-verify-function nonunit-func))) 5]
+      [(not (= (opt-blocks-mov-src-var nonunit 4 (- 0 1)) 33)) 6]
+      [(not (= (opt-count-mul-label-blocks nonunit "body") 0)) 7]
+      [(not (opt-verify-ok? (opt-verify-function negative-func))) 8]
+      [(not (= (opt-blocks-mov-src-var negative 4 (- 0 1)) 33)) 9]
+      [(not (= (opt-count-mul-label-blocks negative "body") 0)) 10]
+      [(not (opt-verify-ok? (opt-verify-function gep-func))) 11]
+      [(not (= (opt-count-gep-label-blocks gep "body") 1)) 12]
+      [(not (= (opt-blocks-mov-src-var gep 4 (- 0 1)) 33)) 13]
+      [(not (opt-verify-ok? (opt-verify-function unsupported-func))) 14]
+      [(not (= (opt-blocks-mov-src-var unsupported 4 (- 0 1)) (- 0 1))) 15]
+      [(not (= (opt-count-mul-label-blocks unsupported "body") 2)) 16]
+      [(not (opt-verify-ok? (opt-verify-function call-func))) 17]
+      [(not (= (opt-blocks-mov-src-var call-blocks 4 (- 0 1)) (- 0 1))) 18]
+      [(not (= (opt-count-mul-label-blocks call-blocks "body") 1)) 19]
+      [(not (opt-verify-ok? (opt-verify-function store-func))) 20]
+      [(not (= (opt-blocks-mov-src-var store-blocks 4 (- 0 1)) (- 0 1))) 21]
+      [(not (= (opt-count-mul-label-blocks store-blocks "body") 1)) 22]
+      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 23]
+      [(not (= (opt-count-phi-blocks no-preheader) 1)) 24]
+      [(not (= (opt-count-mul-label-blocks no-preheader "body") 1)) 25]
+      [else 42])))
+
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (IrBlock
@@ -10878,7 +12375,7 @@
 
 (defenum OptAliasFacts
   (OptAliasNil)
-  (OptAliasCons OptAliasFact OptAliasFacts))
+  (OptAliasCons OptAliasFact (Box OptAliasFacts)))
 
 (defenum OptMaybeAliasKind
   (OptNoAliasKind)
@@ -10915,25 +12412,29 @@
   (match facts
     [(OptAliasNil) (OptNoAliasKind)]
     [(OptAliasCons fact rest)
-      (if (= (opt-alias-fact-var fact) var)
-        (OptSomeAliasKind (opt-alias-fact-kind fact))
-        (opt-alias-lookup rest var))]))
+      (let
+        [rest : OptAliasFacts (box-get rest)]
+        (if (= (opt-alias-fact-var fact) var)
+          (OptSomeAliasKind (opt-alias-fact-kind fact))
+          (opt-alias-lookup rest var)))]))
 
 ;; Drop any binding for `var` (a redefined/escaped temporary).
 (define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasNil) (OptAliasNil)]
     [(OptAliasCons fact rest)
-      (if (= (opt-alias-fact-var fact) var)
-        (opt-alias-remove-var rest var)
-        (OptAliasCons fact (opt-alias-remove-var rest var)))]))
+      (let
+        [rest : OptAliasFacts (box-get rest)]
+        (if (= (opt-alias-fact-var fact) var)
+          (opt-alias-remove-var rest var)
+          (OptAliasCons fact (box (opt-alias-remove-var rest var)))))]))
 
 ;; Bind `var` to `kind`, replacing any prior binding for that var.
 (define (opt-alias-bind
   [facts : OptAliasFacts]
   [var : i64]
   [kind : OptAliasKind]) : OptAliasFacts
-  (OptAliasCons (OptAliasFact var kind) (opt-alias-remove-var facts var)))
+  (OptAliasCons (OptAliasFact var kind) (box (opt-alias-remove-var facts var))))
 
 (define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasUnique)))
@@ -10985,18 +12486,18 @@
     [(OptAliasNil) (OptAliasNil)]
     [(OptAliasCons fact rest)
       (let
-        [rest2 : OptAliasFacts (opt-alias-intersect rest b)]
+        [rest2 : OptAliasFacts (opt-alias-intersect (box-get rest) b)]
         (if (opt-alias-contains?
           b
           (opt-alias-fact-var fact)
           (opt-alias-fact-kind fact))
-          (OptAliasCons fact rest2)
+          (OptAliasCons fact (box rest2))
           rest2))]))
 
 (define (opt-alias-facts-len [facts : OptAliasFacts]) : i64
   (match facts
     [(OptAliasNil) 0]
-    [(OptAliasCons _ rest) (+ 1 (opt-alias-facts-len rest))]))
+    [(OptAliasCons _ rest) (+ 1 (opt-alias-facts-len (box-get rest)))]))
 
 ;; A memory effect that can mutate or unknown-observe memory clears all facts.
 ;; `Alloc` is the one MemoryWrite that instead binds a fresh unique root, so it

@@ -84,9 +84,12 @@
 
 (define (build-root-list-append [roots : CompilerLoadRootList] [root : String]) : CompilerLoadRootList
   (match roots
-    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootNil)
+      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
     [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons head (build-root-list-append rest root))]))
+      (CompilerLoadRootCons
+        head
+        (box (build-root-list-append (box-get rest) root)))]))
 
 (define (build-parse-target [value : String]) : ResultBuildTarget
   (if (or (string-eq value "linux-x86_64") (string-eq value "linux_x86_64"))
@@ -551,7 +554,7 @@
         [(OkBuildLibs dep-libs)
           (match (build-package-deps-artifacts
             manifest-dir
-            rest
+            (box-get rest)
             target
             target-text
             has-target

@@ -29,13 +29,15 @@ case "$COMPILER" in
     *) [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe" ;;
 esac
 # Negative witnesses: the selfhost typechecker must REJECT these with the given
-# diagnostic substring (arena/region escape policy). Every other witness must be
-# accepted (parse + typecheck clean). Keep this list in sync with the
-# `expect-fail` rows of scripts/verify-stdlib.sh.
+# diagnostic substring. Every other witness must be accepted (parse + typecheck
+# clean). Keep this list in sync with the `expect-fail` rows of
+# scripts/verify-stdlib.sh.
 reject_diag() {
     case "$1" in
         stdlib/tests/arena_policy_escape_string.tl | stdlib/tests/arena_policy_escape_text_buf.tl)
             printf 'region-tagged value cannot escape with-arena' ;;
+        stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)
+            printf 'typecheck: argument type mismatch' ;;
         *) printf '' ;;
     esac
 }

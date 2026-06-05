@@ -40,7 +40,7 @@
   0)
 
 (define doc-site-stdlib-manifest-size : i64
-  21)
+  22)
 
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
@@ -133,21 +133,25 @@
                                       "stdlib-text-buf.html")
                                     (DocSiteModuleCons
                                       (DocSiteModule
-                                        "stdlib/vector.tl"
-                                        "stdlib-vector.html")
+                                        "stdlib/text_buf_borrowed.tl"
+                                        "stdlib-text-buf-borrowed.html")
                                       (DocSiteModuleCons
                                         (DocSiteModule
-                                          "stdlib/windows_registry.tl"
-                                          "stdlib-windows-registry.html")
+                                          "stdlib/vector.tl"
+                                          "stdlib-vector.html")
                                         (DocSiteModuleCons
                                           (DocSiteModule
-                                            "stdlib/windows_sdk.tl"
-                                            "stdlib-windows-sdk.html")
+                                            "stdlib/windows_registry.tl"
+                                            "stdlib-windows-registry.html")
                                           (DocSiteModuleCons
                                             (DocSiteModule
-                                              "stdlib/windows_setup.tl"
-                                              "stdlib-windows-setup.html")
-                                            DocSiteModuleNil))))))))))))))))))))))
+                                              "stdlib/windows_sdk.tl"
+                                              "stdlib-windows-sdk.html")
+                                            (DocSiteModuleCons
+                                              (DocSiteModule
+                                                "stdlib/windows_setup.tl"
+                                                "stdlib-windows-setup.html")
+                                              DocSiteModuleNil)))))))))))))))))))))))
 
 (define (doc-site-language-guides) : DocSiteGuidePageList
   (DocSiteGuidePageCons

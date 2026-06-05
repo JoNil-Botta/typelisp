@@ -41,7 +41,9 @@
         (format-core-tail-separator previous-comment node)
         (doc-append
           (format-core-cst-doc node)
-          (format-core-list-tail-doc (format-core-node-comment? node) rest)))]))
+          (format-core-list-tail-doc
+            (format-core-node-comment? node)
+            (box-get rest))))]))
 
 (define (format-core-list-items-doc [items : FormatCstList]) : Doc
   (match items
@@ -49,7 +51,9 @@
     [(FmtCstCons node rest)
       (doc-append
         (format-core-cst-doc node)
-        (format-core-list-tail-doc (format-core-node-comment? node) rest))]))
+        (format-core-list-tail-doc
+          (format-core-node-comment? node)
+          (box-get rest)))]))
 
 (define (format-core-delimited-doc
   [open : String]
@@ -72,7 +76,9 @@
         (format-core-forms-separator previous-comment node)
         (doc-append
           (format-core-cst-doc node)
-          (format-core-forms-tail-doc (format-core-node-comment? node) rest)))]))
+          (format-core-forms-tail-doc
+            (format-core-node-comment? node)
+            (box-get rest))))]))
 
 (define (format-core-forms-doc [items : FormatCstList]) : Doc
   (match items
@@ -80,7 +86,9 @@
     [(FmtCstCons node rest)
       (doc-append
         (format-core-cst-doc node)
-        (format-core-forms-tail-doc (format-core-node-comment? node) rest))]))
+        (format-core-forms-tail-doc
+          (format-core-node-comment? node)
+          (box-get rest)))]))
 
 (define (format-core-cst-doc [node : FormatCst]) : Doc
   (match node
@@ -89,10 +97,11 @@
     [(FmtCstPrefix tok child)
       (doc-append
         (doc-text (format-token-text tok))
-        (format-core-cst-doc child))]
-    [(FmtCstList items) (format-core-delimited-doc "(" items ")")]
-    [(FmtCstBracketList items) (format-core-delimited-doc "[" items "]")]
-    [(FmtCstForms items) (format-core-forms-doc items)]))
+        (format-core-cst-doc (box-get child)))]
+    [(FmtCstList items) (format-core-delimited-doc "(" (box-get items) ")")]
+    [(FmtCstBracketList items)
+      (format-core-delimited-doc "[" (box-get items) "]")]
+    [(FmtCstForms items) (format-core-forms-doc (box-get items))]))
 
 (define (format-core-source-doc [src : String]) : Doc
   (format-core-cst-doc (parse-format-source src)))

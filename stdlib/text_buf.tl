@@ -1,9 +1,12 @@
 ;# Arena-aware text buffer utilities for incremental string construction.
 ;#
 ;# `TextBuf` is a byte-oriented text builder backed by active-arena chunk
-;# nodes. Appending records chunks without concatenating the accumulated
+;# nodes. Appending records owned chunks without concatenating the accumulated
 ;# prefix on every step; `text-buf-render` is the single operation that
 ;# materializes an owned `String` in the active arena.
+;#
+;# The check-only borrowed-chunk surface lives in `stdlib/text_buf_borrowed.tl`
+;# until reference-typed lowering can compile it through ordinary import paths.
 ;#
 ;# Usage: `(import "stdlib/text_buf.tl")`
 ;#
@@ -16,9 +19,8 @@
 ;# ```
 ;#
 ;# The buffer and rendered strings allocate in the active arena: the default
-;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena
-;# inside one. No borrow-typed `str` API is exposed yet because the owned
-;# `String` / borrowed `str` split is still tracked by #807.
+;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
+;# one.
 (import "io.tl")
 
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
@@ -163,6 +165,32 @@
         (if (> count 32)
           (text-buf-chunks-render-balanced chunks count)
           (text-buf-chunks-render-rev chunks "")))]))
+
+;: Write chunks in insertion order to an open raw file handle.
+(define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
+  (match chunks
+    [(TextBufChunkNil) io-status-ok]
+    [(TextBufChunkCons chunk rest)
+      (let
+        [status : i64 (text-buf-write-chunks-rev raw (box-get rest))]
+        (if (= status io-status-ok)
+          (file-write-status raw chunk)
+          status))]))
+
+;: Write the rendered buffer contents to `path`, replacing any existing file.
+(define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
+  (match (file-open (& path) (OpenWriteTruncate))
+    [(OkIoFile handle)
+      (let
+        [write-status : i64
+          (match buf
+            [(TextBuf chunks _)
+              (text-buf-write-chunks-rev (struct-get handle id) chunks)])]
+        [close-result : ResultIoUnit (file-close handle)]
+        (match close-result
+          [(OkIoUnit) write-status]
+          [(ErrIoUnit _) 1]))]
+    [(ErrIoFile _) 1]))
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [buf : TextBuf]) : TextBuf

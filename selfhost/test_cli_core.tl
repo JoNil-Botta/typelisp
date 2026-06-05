@@ -44,7 +44,7 @@
   (InlineRuntimeDecls AstDeclList AstDeclPathList))
 
 (define (tltest-root-cons [root : String] [roots : CompilerLoadRootList]) : CompilerLoadRootList
-  (CompilerLoadRootCons root roots))
+  (CompilerLoadRootCons root (box roots)))
 
 (define (tltest-unknown-target [value : String]) : String
   (source-tool-cat3 "test: unknown target " value ""))

@@ -82,7 +82,7 @@ shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expecte
 shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
-stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/text_buf.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl stdlib/io.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/string.tl
@@ -105,7 +105,8 @@ unit_main|tests/integration/unit_main.tl|0|-|-|-
 valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
 with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|-
 with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|-
-with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:with-escape
+with_arena_mark_stress|tests/integration/with_arena_mark_stress.tl|42|-|-|-
+with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:with-escape,_tl_clone_u24EscapeOutcome
 compiler_ast_types_smoke|selfhost/compiler_ast_types_smoke.tl|42|-|-|compiler_ast_types.tl
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl

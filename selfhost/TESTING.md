@@ -109,8 +109,8 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 
 Each published asset is a single self-hosted `selfhost/cli.tl` binary
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that handles every
-toolchain command (compile/build/run/check/fmt/lint/test/doc, plus
-`debug host-action`) in-process. The `Bootstrap Stage0` workflow is
+toolchain command (compile/build/run/check/fmt/lint/test/doc/repl/lsp/new/init)
+in-process. The `Bootstrap Stage0` workflow is
 self-perpetuating: it fetches the previously published stage0 and uses it to
 build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0.sh)
 (`compile selfhost/cli.tl` + native link). There is no Rust seed.

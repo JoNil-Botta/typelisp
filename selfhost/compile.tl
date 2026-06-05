@@ -3,8 +3,7 @@
 ;; A thin `main` wrapper over the main-free `compile_cli_core.tl`, kept as the
 ;; minimal bootstrap entry point: `scripts/check-bootstrap-fixpoint.sh` compiles
 ;; this file to produce each stage. The unified `cli.tl` dispatcher shares the
-;; same core (it routes compile/tokenize/parse/debug into `compile-cli-run`), so
-;; the compiler logic lives in one place (#1639).
+;; same core, so the compiler logic lives in one place (#1639).
 (import "../stdlib/io.tl")
 
 (import "compile_cli_core.tl")

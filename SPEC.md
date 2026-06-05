@@ -4072,9 +4072,7 @@ bundles are tracked by #902 on top of #893/#913.
 typelisp <command> [file.tl] [options]
 
 Commands:
-  debug tokenize    Print token stream
-  debug parse       Print AST
-  debug check       Run type checker
+  check             Run type checker
   repl              Minimal stdio command loop
   compile           Generate assembly (.s)
   build <file.tl>   Compile, assemble, and link a native executable
@@ -4123,8 +4121,7 @@ Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the CRT,
 and emits a console `.exe`.
 
-`tokenize`, `parse`, and `check` are also accepted as top-level compatibility
-aliases for the corresponding `debug` commands.
+`check` is accepted as the public top-level type-check command.
 
 The selfhost `repl` driver supports `.help`, `.type <expr>`, and `.exit`.
 Top-level declarations are remembered for later commands. `.type` parses and

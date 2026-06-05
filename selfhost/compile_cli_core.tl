@@ -1,12 +1,12 @@
-;; compile_cli_core.tl - Main-free selfhost compile/tokenize/parse/debug core (#565, #1639).
+;; compile_cli_core.tl - Main-free selfhost compile/check core (#565, #1639).
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--target <target>]
 ;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...]`,
-;; plus `tokenize`/`parse`/`check`/`debug …`.
-;; The private bootstrap form `<file.tl> [compile options]` remains accepted so
-;; existing stage1->stage2 scripts can call the raw compiler directly.
+;; plus `check <file.tl> [--stdlib-root <dir>...]`.
+;; Bootstrap scripts call the standalone driver with the same `compile`
+;; subcommand shape used by the unified CLI.
 ;; `--backend-mode scalar`, `avx2`, and `avx512` are accepted by the selfhost
 ;; compiler.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
@@ -14,15 +14,13 @@
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(arg 1)`
 ;; as the command name. The standalone `compile.tl` driver and the unified
-;; `cli.tl` dispatcher both call it; `cli.tl` routes compile/tokenize/parse/debug
-;; here so the single binary drives the compiler (#1638).
+;; `cli.tl` dispatcher both call it, so the single binary drives the compiler
+;; (#1638).
 (import "../stdlib/io.tl")
 
 (import "compiler_check_core.tl")
 
 (import "compiler_driver_core.tl")
-
-(import "frontend_tools_core.tl")
 
 (defenum CompileCliConfig
   (CompileCliConfig
@@ -43,8 +41,6 @@
 (defenum CompileCliAction
   (CompileCliRun CompileCliConfig)
   (CompileCliCheck String CompilerLoadRootList)
-  (CompileCliTokenize String)
-  (CompileCliParse String)
   (CompileCliHelp)
   (CompileCliError String))
 
@@ -66,16 +62,10 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp debug tokenize <file.tl>    Show tokens\n  typelisp debug parse <file.tl>       Show AST\n  typelisp debug check <file.tl> [--stdlib-root <dir>...]\n  typelisp tokenize <file.tl>\n  typelisp parse <file.tl>\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...] [--cfg <name>...]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...] [--cfg <name>...]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))
-
-(define (compile-cli-debug-usage) : String
-  "Usage:\n    typelisp debug tokenize <file.tl>    Show tokens\n    typelisp debug parse <file.tl>       Show AST\n    typelisp debug check <file.tl> [--stdlib-root <dir>...]")
-
-(define (compile-cli-debug-message-with-usage [message : String]) : String
-  (string-append message (string-append "\n\n" (compile-cli-debug-usage))))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
@@ -398,53 +388,6 @@
     count
     (compile-cli-message-with-usage "Error: missing file argument")))
 
-(define (compile-cli-debug-check-config [count : i64]) : ResultCompileCliCheckConfig
-  (compile-cli-check-config-from
-    3
-    count
-    (compile-cli-debug-message-with-usage "Error: missing file argument")))
-
-(define (compile-cli-top-level-path-action [command : String] [count : i64]) : CompileCliAction
-  (if (< count 3)
-    (CompileCliError
-      (compile-cli-message-with-usage "Error: missing file argument"))
-    (if (string-eq command "tokenize")
-      (CompileCliTokenize (arg 2))
-      (CompileCliParse (arg 2)))))
-
-(define (compile-cli-debug-path-action [command : String] [count : i64]) : CompileCliAction
-  (if (< count 4)
-    (CompileCliError
-      (compile-cli-debug-message-with-usage "Error: missing file argument"))
-    (if (string-eq command "tokenize")
-      (CompileCliTokenize (arg 3))
-      (CompileCliParse (arg 3)))))
-
-(define (compile-cli-debug-dispatch [count : i64]) : CompileCliAction
-  (if (< count 3)
-    (CompileCliError
-      (compile-cli-debug-message-with-usage "Error: missing debug subcommand"))
-    (let
-      [command : String (arg 2)]
-      (cond
-        [(string-eq command "tokenize")
-          (compile-cli-debug-path-action command count)]
-        [(string-eq command "parse")
-          (compile-cli-debug-path-action command count)]
-        [(string-eq command "check")
-          (match (compile-cli-debug-check-config count)
-            [(OkCompileCliCheckConfig input-path roots)
-              (CompileCliCheck input-path roots)]
-            [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
-        [(or
-            (string-eq command "help")
-            (or (string-eq command "--help") (string-eq command "-h")))
-          (CompileCliError (compile-cli-debug-usage))]
-        [else
-          (CompileCliError
-            (compile-cli-debug-message-with-usage
-              (string-append "Unknown debug command: " command)))]))))
-
 (define (compile-cli-dispatch [count : i64]) : CompileCliAction
   (if (< count 2)
     (CompileCliError
@@ -460,14 +403,11 @@
           (match (compile-cli-command-config count)
             [(OkCompileCliConfig config) (CompileCliRun config)]
             [(ErrCompileCliConfig message) (CompileCliError message)])]
-        [(or (string-eq command "tokenize") (string-eq command "parse"))
-          (compile-cli-top-level-path-action command count)]
         [(string-eq command "check")
           (match (compile-cli-top-level-check-config count)
             [(OkCompileCliCheckConfig input-path roots)
               (CompileCliCheck input-path roots)]
             [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
-        [(string-eq command "debug") (compile-cli-debug-dispatch count)]
         [else
           (CompileCliError
             (compile-cli-message-with-usage
@@ -521,8 +461,6 @@
           (begin
             (print-error (compiler-diagnostic-render diag))
             1)])]
-    [(CompileCliTokenize input-path) (front-tokenize-file input-path)]
-    [(CompileCliParse input-path) (front-parse-file input-path)]
     [(CompileCliHelp)
       (begin
         (print-error (compile-cli-usage))

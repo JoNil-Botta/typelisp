@@ -19,10 +19,8 @@
     [before : u64 (tl_region_mark)]
     [total : i64 (scoped-loop 2000 0)]
     [after : u64 (tl_region_mark)]
-    (if (= before after)
-      (if (> total 0)
-        (if (= (string-length anchor) 9)
-          42
-          3)
-        2)
-      1)))
+    (begin
+      (unless (= before after) (return 1))
+      (unless (> total 0) (return 2))
+      (unless (= (string-length anchor) 9) (return 3))
+      42)))

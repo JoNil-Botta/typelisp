@@ -232,6 +232,7 @@ stdlib_check_manifest() {
 stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/borrowed_str_gate.tl|pass|-|requires-borrowed-str-capable
 EOF
 }
@@ -540,6 +541,31 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 done < "$TEST_MANIFEST"
 fi
 
+pipe_regressions=0
+if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
+    fixture=stdlib/tests/io_stdio_pipe_short_read.tl
+    stem="$RUN_ROOT/stdlib_tests_io_stdio_pipe_short_read.pipe"
+    stdout="$stem.stdout"
+    stderr="$stem.stderr"
+
+    echo "[stdlib] running $fixture through native pipe (--stdlib-root)"
+    set +e
+    dd if=/dev/zero bs=4096 count=512 2>/dev/null |
+        tr '\000' x |
+        "$COMPILER" run "$fixture" --stdlib-root "$ROOT/stdlib" > "$stdout" 2> "$stderr"
+    got=$?
+    set -e
+
+    if [ "$got" -ne 42 ]; then
+        echo "FAIL: $fixture pipe regression expected exit 42, got $got" >&2
+        show_streams "$stdout" "$stderr"
+        exit 1
+    fi
+    compare_stream "$fixture pipe regression" stdout "-" "$stdout" "$stdout" "$stderr"
+    compare_stream "$fixture pipe regression" stderr "-" "$stderr" "$stdout" "$stderr"
+    pipe_regressions=1
+fi
+
 checked=0
 while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
@@ -648,4 +674,4 @@ fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
-echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $skipped staged fixture(s) skipped, $checked check fixture(s)"
+echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $skipped staged fixture(s) skipped, $checked check fixture(s), $pipe_regressions pipe regression(s)"

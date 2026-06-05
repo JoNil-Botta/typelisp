@@ -27,6 +27,8 @@
 
 (include-str compiler-embedded-stdlib-process "stdlib/process.tl")
 
+(include-str compiler-embedded-stdlib-profile "stdlib/profile.tl")
+
 (include-str compiler-embedded-stdlib-queue "stdlib/queue.tl")
 
 (include-str compiler-embedded-stdlib-random "stdlib/random.tl")
@@ -78,6 +80,8 @@
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
+
+(include-str compiler-embedded-stdlib-tests-profile-api "stdlib/tests/profile_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-queue-api "stdlib/tests/queue_api.tl")
 
@@ -135,6 +139,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)]
     [(string-eq suffix "process.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process)]
+    [(string-eq suffix "profile.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-profile)]
     [(string-eq suffix "queue.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)]
     [(string-eq suffix "random.tl")
@@ -201,6 +207,9 @@
     [(string-eq suffix "tests/process_runtime.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-process-runtime)]
+    [(string-eq suffix "tests/profile_api.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-profile-api)]
     [(string-eq suffix "tests/queue_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-queue-api)]

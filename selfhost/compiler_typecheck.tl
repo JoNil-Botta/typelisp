@@ -5045,11 +5045,19 @@
         (set! ok false))
       ok)))
 
+(define (compiler-typecheck-profile-no-default-tests-ok?) : bool
+  (compiler-typecheck-error-ok?
+    "(define (main) : i64 (profile-now-ms))"
+    "typecheck: unbound name profile-now-ms"))
+
 (define (compiler-typecheck-self-test-builtins) : unit
   (begin
     (if (compiler-typecheck-runtime-builtin-tests-ok?)
       unit
       (panic "typecheck: runtime builtin tests failed"))
+    (if (compiler-typecheck-profile-no-default-tests-ok?)
+      unit
+      (panic "typecheck: profile helpers should require stdlib import"))
     (if (compiler-typecheck-panic-error-never-tests-ok?)
       unit
       (panic "typecheck: panic/error never-context tests failed"))

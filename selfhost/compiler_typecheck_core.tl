@@ -539,19 +539,7 @@
       (tc-render-nominal-lifetime-type name lifetimes)]))
 
 (define (tc-default-env) : TcTypeEnv
-  (tc-profile-builtins-env
-    (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit))))
-
-(define (tc-profile-builtins-env [env : TcTypeEnv]) : TcTypeEnv
-  (let
-    [out : TcTypeEnv env]
-    (begin
-      (set! out (tc-bind out "profile-now-ms" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "profile-alloc-total" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "profile-alloc-live" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "profile-alloc-peak" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "profile-alloc-reset-peak" (tc-fn0 (AstTyUnit))))
-      out)))
+  (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit)))
 
 (define (tc-default-env-base) : TcTypeEnv
   (let

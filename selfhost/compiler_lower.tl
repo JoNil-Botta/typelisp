@@ -17390,93 +17390,148 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (let
-    [needs-specialization : bool (compiler-specialize-needed? program)]
-    [specialized-paths : AstDeclPathList
-      (if needs-specialization
-        AstDeclPathNil
-        paths)]
-    [names : LowerNameEnv
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
-    (match (compiler-specialize-program program)
-      [(OkSpecProgram specialized)
-        (let
-          [prune-names : LowerNameEnv
-            (if needs-specialization
-              (match specialized
-                [(AstProgram decls-box)
-                  (let
-                    [decls : AstDeclList (box-get decls-box)]
-                    (lower-name-env-from-decls
-                      decls
-                      specialized-paths
-                      entry-path
-                      LowerNameNil))])
-              names)]
-          (match (lower-prune-unreachable-functions-with-clone-roots
-            entry-path
-            specialized
-            specialized-paths
-            prune-names
-            (CloneNameNil))
-            [(LowerPrunedProgram base-program base-paths)
-              (match (lower-reachable-clone-roots
-                base-program
-                base-paths
-                prune-names)
-                [(OkLowerCloneRoots clone-roots)
-                  (let
-                    [checked-program : AstProgram
-                      (clone-augment-program-with-roots
-                        base-program
-                        clone-roots)]
-                    [checked-paths : AstDeclPathList base-paths]
-                    [checked-names : LowerNameEnv
-                      (match checked-program
-                        [(AstProgram decls-box)
+  (begin
+    (cfg compile-profile (compiler-lower-profile-start))
+    (let
+      [needs-specialization : bool (compiler-specialize-needed? program)]
+      [specialized-paths : AstDeclPathList
+        (if needs-specialization
+          AstDeclPathNil
+          paths)]
+      [names : LowerNameEnv
+        (match program
+          [(AstProgram decls-box)
+            (let
+              [decls : AstDeclList (box-get decls-box)]
+              (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (begin
+            (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+            (cfg compile-profile (compiler-lower-profile-start))
+            (let
+              [prune-names : LowerNameEnv
+                (if needs-specialization
+                  (match specialized
+                    [(AstProgram decls-box)
+                      (let
+                        [decls : AstDeclList (box-get decls-box)]
+                        (lower-name-env-from-decls
+                          decls
+                          specialized-paths
+                          entry-path
+                          LowerNameNil))])
+                  names)]
+              (match (lower-prune-unreachable-functions-with-clone-roots
+                entry-path
+                specialized
+                specialized-paths
+                prune-names
+                (CloneNameNil))
+                [(LowerPrunedProgram base-program base-paths)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish "prune"))
+                    (cfg compile-profile (compiler-lower-profile-start))
+                    (match (lower-reachable-clone-roots
+                      base-program
+                      base-paths
+                      prune-names)
+                      [(OkLowerCloneRoots clone-roots)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-finish "clone_roots"))
+                          (cfg compile-profile (compiler-lower-profile-start))
                           (let
-                            [decls : AstDeclList (box-get decls-box)]
-                            (lower-name-env-from-decls
-                              decls
-                              checked-paths
-                              entry-path
-                              LowerNameNil))])]
-                    [lower-names : LowerNameEnv
-                      (if needs-specialization
-                        (match checked-program
-                          [(AstProgram decls-box)
-                            (let
-                              [decls : AstDeclList (box-get decls-box)]
-                              (lower-name-env-add-clone-decls
-                                decls
-                                checked-paths
-                                entry-path
-                                names))])
-                        checked-names)]
-                    (match (typecheck-compiler-specialized-program-with-paths-checked
-                      checked-program
-                      checked-paths)
-                      [(OkCompilerTypecheckChecked _ ctx top-env)
-                        (match (lower-compiler-program-checked-with-names-mode
-                          ctx
-                          top-env
-                          checked-program
-                          lower-names
-                          mode)
-                          [(OkCompilerLower ir spans)
-                            (OkCompilerLower ir spans)]
-                          [(ErrCompilerLower diag)
-                            (ErrCompilerLower
-                              (lower-diagnostic-with-path diag entry-path))])]
-                      [(ErrCompilerTypecheckChecked diag)
-                        (ErrCompilerLower diag)]))]
-                [(ErrLowerCloneRoots diag) (ErrCompilerLower diag)])]))]
-      [(ErrSpecProgram diag)
-        (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
+                            [checked-program : AstProgram
+                              (clone-augment-program-with-roots
+                                base-program
+                                clone-roots)]
+                            [checked-paths : AstDeclPathList base-paths]
+                            [checked-names : LowerNameEnv
+                              (match checked-program
+                                [(AstProgram decls-box)
+                                  (let
+                                    [decls : AstDeclList (box-get decls-box)]
+                                    (lower-name-env-from-decls
+                                      decls
+                                      checked-paths
+                                      entry-path
+                                      LowerNameNil))])]
+                            [lower-names : LowerNameEnv
+                              (if needs-specialization
+                                (match checked-program
+                                  [(AstProgram decls-box)
+                                    (let
+                                      [decls : AstDeclList (box-get decls-box)]
+                                      (lower-name-env-add-clone-decls
+                                        decls
+                                        checked-paths
+                                        entry-path
+                                        names))])
+                                checked-names)]
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-finish
+                                  "clone_augment_names"))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-start))
+                              (match (typecheck-compiler-specialized-program-with-paths-checked
+                                checked-program
+                                checked-paths)
+                                [(OkCompilerTypecheckChecked _ ctx top-env)
+                                  (begin
+                                    (cfg
+                                      compile-profile
+                                      (compiler-lower-profile-finish
+                                        "typecheck"))
+                                    (cfg
+                                      compile-profile
+                                      (compiler-lower-profile-start))
+                                    (match (lower-compiler-program-checked-with-names-mode
+                                      ctx
+                                      top-env
+                                      checked-program
+                                      lower-names
+                                      mode)
+                                      [(OkCompilerLower ir spans)
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-lower-profile-finish
+                                              "decls"))
+                                          (OkCompilerLower ir spans))]
+                                      [(ErrCompilerLower diag)
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-lower-profile-finish
+                                              "decls"))
+                                          (ErrCompilerLower
+                                            (lower-diagnostic-with-path
+                                              diag
+                                              entry-path)))]))]
+                                [(ErrCompilerTypecheckChecked diag)
+                                  (begin
+                                    (cfg
+                                      compile-profile
+                                      (compiler-lower-profile-finish
+                                        "typecheck"))
+                                    (ErrCompilerLower diag))]))))]
+                      [(ErrLowerCloneRoots diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-finish "clone_roots"))
+                          (ErrCompilerLower diag))]))])))]
+        [(ErrSpecProgram diag)
+          (begin
+            (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+            (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))]))))
 
 (define (lower-compiler-program-with-decl-paths-mode
   [entry-path : String]

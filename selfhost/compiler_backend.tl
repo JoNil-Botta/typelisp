@@ -9550,18 +9550,40 @@
           globals)
         functions)]))
 
+(define (compiler-backend-emit-string-entry-into
+  [text : String]
+  [buf : TextBuf]) : TextBuf
+  (let
+    [suffix : String (compiler-backend-string-label-suffix text)]
+    [data-label : String (string-append ".L_tl_str_data_" suffix)]
+    [fat-label : String (string-append ".L_tl_str_" suffix)]
+    [escaped : String (compiler-backend-escape-string text)]
+    [len-text : String (int->string (string-length text))]
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append
+          (text-buf-append
+            (text-buf-append
+              (text-buf-append
+                (text-buf-append
+                  (text-buf-append
+                    (text-buf-append
+                      (text-buf-append
+                        (text-buf-append buf data-label)
+                        ":\n    .string \"")
+                      escaped)
+                    "\"\n    .balign 8\n")
+                  fat-label)
+                ":\n    .quad ")
+              data-label)
+            "\n    .quad ")
+          len-text)
+        "\n")
+      "")))
+
 (define (compiler-backend-emit-string-entry [text : String]) : String
-  (backend-cat5
-    (compiler-backend-string-data-label text)
-    ":\n    .string "
-    (compiler-backend-quoted-gas-string text)
-    "\n    .balign 8\n"
-    (backend-cat5
-      (compiler-backend-string-fat-label text)
-      ":\n    .quad "
-      (compiler-backend-string-data-label text)
-      "\n    .quad "
-      (backend-cat3 (int->string (string-length text)) "\n" ""))))
+  (text-buf-render
+    (compiler-backend-emit-string-entry-into text (text-buf-empty))))
 
 (define (compiler-backend-emit-string-entries-into
   [strings : BackendStringList]
@@ -9571,7 +9593,7 @@
     [(BackendStringCons text rest)
       (compiler-backend-emit-string-entries-into
         (box-get rest)
-        (text-buf-append buf (compiler-backend-emit-string-entry text)))]))
+        (compiler-backend-emit-string-entry-into text buf))]))
 
 (define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
   (text-buf-render
@@ -19154,6 +19176,212 @@ tl_windows_sdk_registry_install:
     emit-entry
     false))
 
+(define (compiler-backend-emit-program-prefix-buffer
+  [target : CompilerBackendTarget]
+  [entry-functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [closure-names : BackendStringList]
+  [strings : BackendStringList]
+  [floats : BackendStringList]
+  [globals-buf : TextBuf]
+  [emit-entry : bool]
+  [crt-entry : bool]) : TextBuf
+  (let
+    [string-buf : TextBuf
+      (compiler-backend-emit-string-rodata-into strings globals-buf)]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-backend-profile-finish "compose.string_rodata"))
+      (cfg compile-profile (compiler-backend-profile-start))
+      (let
+        [f64-buf : TextBuf
+          (compiler-backend-emit-f64-rodata-into floats string-buf)]
+        (begin
+          (cfg
+            compile-profile
+            (compiler-backend-profile-finish "compose.f64_rodata"))
+          (cfg compile-profile (compiler-backend-profile-start))
+          (let
+            [descriptor-buf : TextBuf
+              (compiler-backend-emit-closure-descriptors-into
+                closure-names
+                entry-functions
+                externs
+                program-index
+                f64-buf)]
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-finish "compose.closure_descriptors"))
+              (cfg compile-profile (compiler-backend-profile-start))
+              (let
+                [runtime-data-buf : TextBuf
+                  (text-buf-append
+                    descriptor-buf
+                    (if emit-entry
+                      (compiler-backend-runtime-data-for-target target plan)
+                      ""))]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-backend-profile-finish "compose.runtime_data"))
+                  (cfg compile-profile (compiler-backend-profile-start))
+                  (let
+                    [externs-buf : TextBuf
+                      (compiler-backend-emit-externs-into
+                        externs
+                        plan
+                        runtime-data-buf)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "compose.externs"))
+                      (cfg compile-profile (compiler-backend-profile-start))
+                      (let
+                        [runtime-externs-buf : TextBuf
+                          (text-buf-append
+                            externs-buf
+                            (compiler-backend-runtime-externs-for-target
+                              target
+                              plan))]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish
+                              "compose.runtime_externs"))
+                          (cfg compile-profile (compiler-backend-profile-start))
+                          (let
+                            [prefix-buf : TextBuf
+                              (text-buf-append
+                                runtime-externs-buf
+                                (compiler-backend-target-entry-text-with-crt
+                                  target
+                                  emit-entry
+                                  crt-entry))]
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-finish
+                                  "compose.entry_text"))
+                              prefix-buf)))))))))))))))
+
+(define (compiler-backend-emit-program-buffer-after-index
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [entry-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [globals-buf : TextBuf]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (let
+    [collections : CompilerBackendProgramCollections
+      (compiler-backend-collect-program-collections program)]
+    [closure-names : BackendStringList
+      (compiler-backend-program-collections-functions collections)]
+    [strings : BackendStringList
+      (compiler-backend-program-collections-strings collections)]
+    [floats : BackendStringList
+      (compiler-backend-program-collections-floats collections)]
+    [span-index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    [global-types : CompilerBackendGlobalTypeList
+      (compiler-backend-global-types globals)]
+    (begin
+      (cfg compile-profile (compiler-backend-profile-finish "collect"))
+      (cfg compile-profile (compiler-backend-profile-start))
+      (let
+        [prefix-buf : TextBuf
+          (compiler-backend-emit-program-prefix-buffer
+            target
+            entry-functions
+            externs
+            plan
+            program-index
+            closure-names
+            strings
+            floats
+            globals-buf
+            emit-entry
+            crt-entry)]
+        (begin
+          (cfg compile-profile (compiler-backend-profile-start))
+          (match (compiler-backend-emit-functions-buffer-into
+            target
+            mode
+            entry-functions
+            entry-functions
+            globals
+            global-types
+            externs
+            plan
+            program-index
+            spans
+            span-index
+            crt-entry
+            prefix-buf)
+            [(OkCompilerBackendBuffer with-functions)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "functions"))
+                (cfg compile-profile (compiler-backend-profile-start))
+                (match (compiler-backend-emit-closure-entry-adapters-buffer-into
+                  target
+                  closure-names
+                  entry-functions
+                  externs
+                  plan
+                  program-index
+                  with-functions)
+                  [(OkCompilerBackendBuffer with-adapters)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "adapters"))
+                      (cfg compile-profile (compiler-backend-profile-start))
+                      (let
+                        [buf : TextBuf
+                          (text-buf-append
+                            (text-buf-append
+                              with-adapters
+                              (if emit-entry
+                                (compiler-backend-runtime-functions-for-target
+                                  target
+                                  plan)
+                                ""))
+                            (if emit-entry
+                              (compiler-backend-entry-for-target-with-crt
+                                target
+                                plan
+                                globals
+                                crt-entry)
+                              ""))]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "compose_tail"))
+                          (OkCompilerBackendBuffer buf))))]
+                  [(ErrCompilerBackendBuffer message)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "adapters"))
+                      (ErrCompilerBackendBuffer message))]))]
+            [(ErrCompilerBackendBuffer message)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "functions"))
+                (ErrCompilerBackendBuffer message))]))))))
+
 (define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -19161,134 +19389,78 @@ tl_windows_sdk_registry_install:
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (match (compiler-backend-runtime-plan program)
-    [(OkBackendRuntimePlan plan)
-      (if (compiler-backend-target-runtime-ok? target plan)
-        (match program
-          [(IrProgram globals functions externs)
-            (match (compiler-backend-emit-globals-buffer-into
-              target
-              globals
-              (text-buf-append (text-buf-empty) ".data\n"))
-              [(OkCompilerBackendBuffer globals-buf)
-                (let
-                  [entry-functions : CompilerIrFunctionList
-                    (compiler-backend-functions-with-implicit-main
-                      functions
-                      emit-entry)]
-                  [program-index : CompilerBackendProgramIndex
-                    (compiler-backend-program-index-build
-                      entry-functions
-                      externs)]
-                  (begin
-                    (cfg compile-profile (compiler-backend-profile-start))
-                    (match (compiler-backend-emit-functions-buffer
-                      target
-                      mode
-                      entry-functions
-                      globals
-                      entry-functions
-                      externs
-                      plan
-                      program-index
-                      spans
-                      crt-entry)
-                      [(OkCompilerBackendBuffer functions-buf)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-backend-profile-finish "functions"))
-                          (let
-                            [collections : CompilerBackendProgramCollections
-                              (compiler-backend-collect-program-collections
-                                program)]
-                            [closure-names : BackendStringList
-                              (compiler-backend-program-collections-functions
-                                collections)]
-                            (match (compiler-backend-emit-closure-entry-adapters-buffer-into
-                              target
-                              closure-names
+  (begin
+    (cfg compile-profile (compiler-backend-profile-start))
+    (match (compiler-backend-runtime-plan program)
+      [(OkBackendRuntimePlan plan)
+        (begin
+          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
+          (cfg compile-profile (compiler-backend-profile-start))
+          (if (compiler-backend-target-runtime-ok? target plan)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-finish "target_check"))
+              (cfg compile-profile (compiler-backend-profile-start))
+              (match program
+                [(IrProgram globals functions externs)
+                  (match (compiler-backend-emit-globals-buffer-into
+                    target
+                    globals
+                    (text-buf-append (text-buf-empty) ".data\n"))
+                    [(OkCompilerBackendBuffer globals-buf)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "globals"))
+                        (cfg compile-profile (compiler-backend-profile-start))
+                        (let
+                          [entry-functions : CompilerIrFunctionList
+                            (compiler-backend-functions-with-implicit-main
+                              functions
+                              emit-entry)]
+                          [program-index : CompilerBackendProgramIndex
+                            (compiler-backend-program-index-build
                               entry-functions
+                              externs)]
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-backend-profile-finish "index"))
+                            (cfg
+                              compile-profile
+                              (compiler-backend-profile-start))
+                            (compiler-backend-emit-program-buffer-after-index
+                              program
+                              target
+                              mode
+                              entry-functions
+                              globals
                               externs
                               plan
                               program-index
-                              (text-buf-empty))
-                              [(OkCompilerBackendBuffer closure-adapters-buf)
-                                (let
-                                  [strings : BackendStringList
-                                    (compiler-backend-program-collections-strings
-                                      collections)]
-                                  [floats : BackendStringList
-                                    (compiler-backend-program-collections-floats
-                                      collections)]
-                                  [prefix-buf : TextBuf
-                                    (text-buf-append
-                                      (text-buf-append
-                                        (compiler-backend-emit-externs-into
-                                          externs
-                                          plan
-                                          (text-buf-append
-                                            (compiler-backend-emit-closure-descriptors-into
-                                              closure-names
-                                              entry-functions
-                                              externs
-                                              program-index
-                                              (compiler-backend-emit-f64-rodata-into
-                                                floats
-                                                (compiler-backend-emit-string-rodata-into
-                                                  strings
-                                                  globals-buf)))
-                                            (if emit-entry
-                                              (compiler-backend-runtime-data-for-target
-                                                target
-                                                plan)
-                                              "")))
-                                        (compiler-backend-runtime-externs-for-target
-                                          target
-                                          plan))
-                                      (compiler-backend-target-entry-text-with-crt
-                                        target
-                                        emit-entry
-                                        crt-entry))]
-                                  [with-functions : TextBuf
-                                    (text-buf-append-buffer
-                                      prefix-buf
-                                      functions-buf)]
-                                  [buf : TextBuf
-                                    (text-buf-append
-                                      (text-buf-append
-                                        (text-buf-append-buffer
-                                          with-functions
-                                          closure-adapters-buf)
-                                        (if emit-entry
-                                          (compiler-backend-runtime-functions-for-target
-                                            target
-                                            plan)
-                                          ""))
-                                      (if emit-entry
-                                        (compiler-backend-entry-for-target-with-crt
-                                          target
-                                          plan
-                                          globals
-                                          crt-entry)
-                                        ""))]
-                                  (OkCompilerBackendBuffer buf))]
-                              [(ErrCompilerBackendBuffer message)
-                                (ErrCompilerBackendBuffer message)])))]
-                      [(ErrCompilerBackendBuffer message)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-backend-profile-finish "functions"))
-                          (ErrCompilerBackendBuffer message))])))]
-              [(ErrCompilerBackendBuffer message)
-                (ErrCompilerBackendBuffer message)])])
-        (ErrCompilerBackendBuffer
-          (compiler-diagnostic-at-start
-            ""
-            "backend: internal target runtime rejection")))]
-    [(ErrBackendRuntimePlan message)
-      (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
+                              spans
+                              globals-buf
+                              emit-entry
+                              crt-entry))))]
+                    [(ErrCompilerBackendBuffer message)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "globals"))
+                        (ErrCompilerBackendBuffer message))])]))
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-finish "target_check"))
+              (ErrCompilerBackendBuffer
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: internal target runtime rejection")))))]
+      [(ErrBackendRuntimePlan message)
+        (begin
+          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
+          (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]

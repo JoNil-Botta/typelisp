@@ -1,2 +1,2 @@
-.type (begin (print-string "ran") 1)
+.type (begin (/ 1 0) 1)
 .exit

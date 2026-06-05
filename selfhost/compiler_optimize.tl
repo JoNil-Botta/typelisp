@@ -6993,7 +6993,7 @@
         entries
         (CompilerSourceSpansEntryCons
           (CompilerSourceSpansEntry key span)
-          instr-entries)
+          (box instr-entries))
         (+ instr-count 1))]))
 
 (define (opt-remap-spans-prepend-instr

@@ -8,9 +8,9 @@
 ;;
 ;;   typelisp run selfhost/cli.tl -- <command> <args...>
 ;;
-;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, debug,
-;; new, and init. The command name is `(arg 1)`; each `*-run-from` entry parses
-;; its own arguments starting at index 2.
+;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
+;; debug, new, and init. The command name is `(arg 1)`; each `*-run-from` entry
+;; parses its own arguments starting at index 2.
 ;;
 ;; This is the shipped Rust-free stage0 dispatcher (#666/#795): the toolchain
 ;; needs neither a host-language compiler driver nor per-command driver
@@ -36,6 +36,8 @@
 
 (import "compile_cli_core.tl")
 
+(import "clean_cli_core.tl")
+
 (import "repl_cli_core.tl")
 
 (import "scaffold_cli_core.tl")
@@ -59,6 +61,7 @@ Usage:
     typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
     typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
+    typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
     typelisp lint <file.tl> [--stdlib-root <dir>...]
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
@@ -84,6 +87,9 @@ Options for build:
     -o <exe>                       Source build executable output path
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --opt-level <0|1|2|3>          Package-build optimizer level (default 2; 0 skips it)
+Options for clean:
+    --dry-run                      List artifacts without deleting them
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for fmt:
     --check                        Report files that would change without writing them
 Options for test:
@@ -118,6 +124,7 @@ Options for doc:
         (or (string-eq command "--help") (string-eq command "-h")))
       (cli-print-help 0)]
     [(string-eq command "build") (build-run-from 2 count)]
+    [(string-eq command "clean") (clean-run-from 2 count)]
     [(string-eq command "run") (run-run-from 2 count)]
     [(string-eq command "check") (selfhost-check-run-from 2 count)]
     [(string-eq command "fmt") (fmt-run-from 2 count)]

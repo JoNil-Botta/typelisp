@@ -16900,10 +16900,14 @@
               (cast (char-at (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-print-string-builtin-source) : String
-  "(define (main [text : String]) : i64
+  "(define (print-string [text : String]) : unit
+  unit)
+(define (print-str [text : String]) : unit
+  (print-string text))
+(define (main [text : String]) : i64
   (begin
     (print-string text)
-    (print-str (& text))
+    (print-str text)
     0))")
 
 (define (compiler-lower-borrowed-str-param-source) : String
@@ -16942,7 +16946,18 @@
         (string-length (read-stdin-bytes 3)))))")
 
 (define (compiler-lower-stdio-builtin-source) : String
-  "(define (main [count : i64]) : i64
+  "(define stdin-eof-state : bool false)
+(define (read-stdin-bytes [count : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 count)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) count))))
+(define (read-stdin-line) : String
+  (let
+    [buf : (Array u8) (make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+(define (stdin-eof?) : bool stdin-eof-state)
+(define (flush-stdout) : unit unit)
+(define (main [count : i64]) : i64
   (begin
     (flush-stdout)
     (if (stdin-eof?)
@@ -16950,13 +16965,16 @@
         (string-length (read-stdin-bytes count)))))")
 
 (define (compiler-lower-env-builtin-source) : String
-  "(define (main [name : String]) : i64
+  "(define (env-var-exists? [name : String]) : bool true)
+(define (env-var-value [name : String]) : String name)
+(define (env-path-separator) : String \":\")
+(define (main [name : String]) : i64
   (let
     [separator : String (env-path-separator)]
-    [value : String (env-var-value (& name))]
-    (if (env-var-exists? (& name))
-      (+ (string-length (& value)) (string-length (& separator)))
-      (string-length (& separator)))))")
+    [value : String (env-var-value name)]
+    (if (env-var-exists? name)
+      (+ (string-length value) (string-length separator))
+      (string-length separator))))")
 
 (define (compiler-lower-cpu-builtin-source) : String
   "(define (main) : i64
@@ -17012,7 +17030,19 @@
                    (file-close-status handle))))))))))")
 
 (define (compiler-lower-fs-status-source) : String
-  "(define (main) : i64
+  "(define (fs-current-dir-status) : i64 0)
+(define (fs-current-dir) : String \".\")
+(define (fs-process-id) : i64 1)
+(define (fs-mkdir-status [path : String]) : i64 0)
+(define (fs-remove-file-status [path : String]) : i64 0)
+(define (fs-remove-dir-status [path : String]) : i64 0)
+(define (fs-rename-status [source : String] [destination : String]) : i64 0)
+(define (fs-read-dir-status [path : String]) : i64 0)
+(define (fs-read-dir [path : String]) : String path)
+(define (fs-file-kind-status [path : String]) : i64 0)
+(define (fs-file-size-status [path : String]) : i64 0)
+(define (fs-file-size [path : String]) : i64 (string-length path))
+(define (main) : i64
   (+ (fs-current-dir-status)
     (+ (string-length (fs-current-dir))
       (+ (fs-process-id)
@@ -19659,10 +19689,10 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "tl_print_str") 2)
+            (= (lower-test-functions-call-count functions "tl_print_str") 0)
             (and
-              (= (lower-test-functions-call-count functions "print-string") 0)
-              (= (lower-test-functions-call-count functions "print-str") 0)))])]
+              (= (lower-test-functions-call-count functions "print-string") 2)
+              (= (lower-test-functions-call-count functions "print-str") 1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -20178,134 +20208,148 @@
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_mkdir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_file_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_rename_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_read_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions ".L_tl_fs_read_dir")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_file_kind_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_file_size_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions ".L_tl_fs_file_size")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_process_id")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "tl_fs_current_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "tl_fs_current_dir")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-mkdir-status")
-                0)
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-remove-file-status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-remove-dir-status")
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-rename-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-file-kind-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-file-size-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-file-size")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-process-id")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-current-dir-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-current-dir")
-                0)
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -20840,25 +20884,52 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (=
-              (lower-test-functions-call-count functions ".L_tl_flush_stdout")
-              1)
-            (and
-              (=
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count functions ".L_tl_flush_stdout")
+                0)
+                unit
+                (set! ok false))
+              (if (=
                 (lower-test-functions-call-count functions ".L_tl_stdin_eof")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_read_stdin_line")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_read_stdin_bytes")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "flush-stdout")
                 1)
-              (and
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_read_stdin_line")
-                  1)
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_read_stdin_bytes")
-                  1))))])]
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "stdin-eof?") 1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "read-stdin-line")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "read-stdin-bytes")
+                1)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-env-builtin-shape-ok?) : bool
@@ -20871,27 +20942,27 @@
             (begin
               (if (=
                 (lower-test-functions-call-count functions "tl_env_var_exists")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "tl_env_var_value")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-exists?")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-value")
                 1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "env-path-separator")
                 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "env-var-exists?")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "env-var-value")
-                0)
                 unit
                 (set! ok false))
               ok))])]

@@ -270,6 +270,42 @@ assert_active_cli_surface_command() {
             assert_contains "$label" "$WORKDIR/$label.out" "Generated:"
             assert_contains "$label" "$asm" "main:"
             ;;
+        clean)
+            clean_label=$label
+            clean_dry_label="$clean_label-dry-run"
+            clean_idempotent_label="$clean_label-idempotent"
+            clean_src="$CLI_SURFACE_DIR/clean-surface.tl"
+            clean_base="$CLI_SURFACE_DIR/clean-surface"
+            printf '%s' '(define (main) : i64 0)' > "$clean_src"
+            : > "$clean_base.s"
+            : > "$clean_base.ir"
+            : > "$clean_base.o"
+            : > "$clean_base.obj"
+            : > "$clean_base"
+            : > "$clean_base.exe"
+            run_cli_capture "$clean_dry_label" "$COMPILER" clean --dry-run "$clean_src"
+            assert_status "$clean_dry_label" "$status" 0
+            assert_empty "$clean_dry_label" "$WORKDIR/$clean_dry_label.err"
+            assert_contains "$clean_dry_label" "$WORKDIR/$clean_dry_label.out" "Would remove:"
+            assert_contains "$clean_dry_label" "$WORKDIR/$clean_dry_label.out" "clean-surface.s"
+            assert_file_exists "$clean_dry_label" "$clean_base.s"
+            assert_file_exists "$clean_dry_label" "$clean_base"
+            run_cli_capture "$clean_label" "$COMPILER" clean "$clean_src"
+            assert_status "$clean_label" "$status" 0
+            assert_empty "$clean_label" "$WORKDIR/$clean_label.err"
+            assert_contains "$clean_label" "$WORKDIR/$clean_label.out" "Removed:"
+            assert_file_exists "$clean_label" "$clean_src"
+            [ ! -e "$clean_base.s" ] || fail "$clean_label did not remove $clean_base.s"
+            [ ! -e "$clean_base.ir" ] || fail "$clean_label did not remove $clean_base.ir"
+            [ ! -e "$clean_base.o" ] || fail "$clean_label did not remove $clean_base.o"
+            [ ! -e "$clean_base.obj" ] || fail "$clean_label did not remove $clean_base.obj"
+            [ ! -e "$clean_base" ] || fail "$clean_label did not remove $clean_base"
+            [ ! -e "$clean_base.exe" ] || fail "$clean_label did not remove $clean_base.exe"
+            run_cli_capture "$clean_idempotent_label" "$COMPILER" clean "$clean_src"
+            assert_status "$clean_idempotent_label" "$status" 0
+            assert_empty "$clean_idempotent_label" "$WORKDIR/$clean_idempotent_label.out"
+            assert_empty "$clean_idempotent_label" "$WORKDIR/$clean_idempotent_label.err"
+            ;;
         "debug tokenize")
             run_cli_capture "$label" "$COMPILER" debug tokenize "$CLI_SURFACE_SRC"
             assert_status "$label" "$status" 0

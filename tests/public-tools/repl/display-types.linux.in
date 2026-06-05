@@ -3,5 +3,5 @@ true
 3.5
 #\Z'
 "hi"
-(print-newline)
+""
 .exit

@@ -359,13 +359,15 @@
 (define (process-run [command : ProcessCommand]) : ResultProcessOutput
   (process-output command))
 
-;: Start a command without waiting for process completion.
+;: Start a command without waiting for process completion. The returned child
+;: owns captured-output descriptors until it is passed to `process-wait`.
 (define (process-start [command : ProcessCommand]) : ResultProcessChild
   (match (process-command-validation-error command)
     [(ProcessSomeString message)
       (ErrProcessChild (ProcessInvalidCommand message))]
     [(ProcessNoString) (tl_process_start command)]))
 
-;: Wait for a child started by `process-start` and collect its captured output.
+;: Wait for a child started by `process-start`, collect its captured output, and
+;: release the child handle resources. Do not wait on the same child twice.
 (define (process-wait [child : ProcessChild]) : ResultProcessOutput
   (tl_process_wait child))

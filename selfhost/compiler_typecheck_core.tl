@@ -1050,6 +1050,13 @@
       (set! out (tc-bind out "expr-if-cond" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if-then" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if-else" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind out "expr-list-empty?" (tc-fn1 (AstTyExprList) (AstTyBool))))
+      (set! out (tc-bind out "expr-list-head" (tc-fn1 (AstTyExprList) expr)))
+      (set!
+        out
+        (tc-bind out "expr-list-tail" (tc-fn1 (AstTyExprList) (AstTyExprList))))
       out)))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType

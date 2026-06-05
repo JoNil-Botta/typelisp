@@ -5029,6 +5029,34 @@
   then-expr)
 (define (main) : i64 (cond 1 42 0))")
 
+(define (compiler-typecheck-macro-own-and-source) : String
+  "(defmacro (and [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (and ,@(expr-list-tail args))
+       false)))
+(define (main [x : bool] [y : bool] [z : bool]) : i64
+  (if (and)
+    (if (and x)
+      (if (and x y z) 42 0)
+      0)
+    0))")
+
+(define (compiler-typecheck-macro-own-or-source) : String
+  "(defmacro (or [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool false)
+    `(if ,(expr-list-head args)
+       true
+       (or ,@(expr-list-tail args)))))
+(define (main [x : bool] [y : bool] [z : bool]) : i64
+  (if (or)
+    0
+    (if (or x)
+      42
+      (if (or x y z) 42 0))))")
+
 (define (compiler-typecheck-compat-guards-source) : String
   "(define (main) : unit
   (begin
@@ -5042,7 +5070,11 @@
       (compiler-typecheck-ok? (compiler-typecheck-macro-own-unless-source))
       (and
         (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
-        (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))))
+        (and
+          (compiler-typecheck-ok? (compiler-typecheck-macro-own-and-source))
+          (and
+            (compiler-typecheck-ok? (compiler-typecheck-macro-own-or-source))
+            (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))))))
 
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and

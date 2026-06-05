@@ -1060,6 +1060,7 @@
           [(string-eq name "with-escape") (compiler-parse-tag-expr-with-escape)]
           [(string-eq name "string-data") (compiler-parse-tag-expr-string-data)]
           [(string-eq name "include-str") (compiler-parse-tag-decl-include-str)]
+          [(string-eq name "defdispatch") (compiler-parse-tag-decl-defdispatch)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 12)
         (cond

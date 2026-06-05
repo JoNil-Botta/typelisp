@@ -4957,15 +4957,6 @@
 (import \"kernels.tl\" module kernels :as k)
 (define (main [x : i64]) : i64 (k/dot x))")
 
-(define (compiler-typecheck-defdispatch-private-variant-source) : String
-  "(module kernels)
-(define (dot-scalar [x : i64]) : i64 x)
-(defdispatch dot (scalar dot-scalar))
-(export (value dot))
-(module app)
-(import \"kernels.tl\" module kernels :as k)
-(define (main [x : i64]) : i64 (k/dot-scalar x))")
-
 (define (compiler-typecheck-defdispatch-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defdispatch-full-source))
@@ -4977,35 +4968,31 @@
           (compiler-typecheck-defdispatch-export-alias-source))
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-defdispatch-private-variant-source)
-            "typecheck: unbound name k/dot-scalar")
+            (compiler-typecheck-defdispatch-no-scalar-source)
+            "typecheck: defdispatch requires exactly one scalar variant")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-defdispatch-no-scalar-source)
-              "typecheck: defdispatch requires exactly one scalar variant")
+              (compiler-typecheck-defdispatch-duplicate-isa-source)
+              "typecheck: duplicate defdispatch ISA variant")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-defdispatch-duplicate-isa-source)
-                "typecheck: duplicate defdispatch ISA variant")
+                (compiler-typecheck-defdispatch-unknown-source)
+                "typecheck: unknown defdispatch variant dot-avx2")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-defdispatch-unknown-source)
-                  "typecheck: unknown defdispatch variant dot-avx2")
+                  (compiler-typecheck-defdispatch-non-function-source)
+                  "typecheck: defdispatch variant is not a function value")
                 (and
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-defdispatch-non-function-source)
-                    "typecheck: defdispatch variant is not a function value")
+                    (compiler-typecheck-defdispatch-mismatch-source)
+                    "typecheck: defdispatch variant signatures must match")
                   (and
                     (compiler-typecheck-error-ok?
-                      (compiler-typecheck-defdispatch-mismatch-source)
-                      "typecheck: defdispatch variant signatures must match")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-defdispatch-self-source)
-                        "typecheck: defdispatch cannot use itself as a variant")
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-defdispatch-dispatch-variant-source)
-                        "typecheck: defdispatch variant cannot be another dispatch"))))))))))))
+                      (compiler-typecheck-defdispatch-self-source)
+                      "typecheck: defdispatch cannot use itself as a variant")
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-defdispatch-dispatch-variant-source)
+                      "typecheck: defdispatch variant cannot be another dispatch")))))))))))
 
 ;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through

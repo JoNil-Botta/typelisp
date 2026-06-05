@@ -2170,30 +2170,8 @@
           "_"
           (int->string (compiler-backend-string-label-reverse-hash text)))))))
 
-(define (compiler-backend-string-label-forward-hash [text : String]) : i64
-  (let
-    [i : i64 0]
-    [n : i64 (string-length text)]
-    [hash : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [next : i64
-            (+
-              (+
-                (* hash 131)
-                (compiler-backend-char-code (string-ref text i)))
-              1)]
-          [reduced : i64
-            (+ (bit-and next 2147483647) (shr next 31))]
-          (begin
-            (set!
-              hash
-              (if (>= reduced 2147483647)
-                (- reduced 2147483647)
-                reduced))
-            (set! i (+ i 1)))))
-      hash)))
+(define (compiler-backend-string-label-forward-hash [key : String]) : i64
+  (hash-string (& key)))
 
 (define (compiler-backend-string-label-reverse-hash [text : String]) : i64
   (let

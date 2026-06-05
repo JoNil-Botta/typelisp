@@ -65,6 +65,10 @@
   (CompilerBackendNoSignature)
   (CompilerBackendSomeSignature AstTypeList AstType))
 
+(defenum CompilerBackendGlobalTypeList
+  (CompilerBackendGlobalTypeNil)
+  (CompilerBackendGlobalTypeCons String AstType CompilerBackendGlobalTypeList))
+
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
@@ -2384,11 +2388,36 @@
     [(AstTyU8) true]
     [_ false]))
 
+(define (compiler-backend-global-type-lookup
+  [types : CompilerBackendGlobalTypeList]
+  [name : String]) : CompilerRegMaybeType
+  (match types
+    [(CompilerBackendGlobalTypeNil) (CompilerRegNoType)]
+    [(CompilerBackendGlobalTypeCons key ty rest)
+      (if (string-eq key name)
+        (CompilerRegSomeType ty)
+        (compiler-backend-global-type-lookup rest name))]))
+
+(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
+  (match globals
+    [(IrGlobalNil) (CompilerBackendGlobalTypeNil)]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal name ty _)
+          (CompilerBackendGlobalTypeCons
+            name
+            ty
+            (compiler-backend-global-types (box-get rest)))])]))
+
 (define (compiler-backend-value-type
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : CompilerRegMaybeType
   (match value
     [(IrValueVar id) (compiler-reg-var-type-lookup types id)]
+    [(IrValueGlobal name)
+      (compiler-backend-global-type-lookup global-types name)]
+    [(IrValueGlobalAddr _) (CompilerRegSomeType (AstTyU64))]
     [(IrValueI64 _) (CompilerRegSomeType (AstTyI64))]
     [(IrValueBool _) (CompilerRegSomeType (AstTyBool))]
     [(IrValueChar _) (CompilerRegSomeType (AstTyChar))]
@@ -2418,25 +2447,27 @@
 
 (define (compiler-backend-binop-operand-ty
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [result-ty : AstType]) : AstType
   (if (compiler-backend-binop-compare-result? op)
-    (match (compiler-backend-value-type types lhs)
+    (match (compiler-backend-value-type types global-types lhs)
       [(CompilerRegSomeType ty) ty]
       [(CompilerRegNoType)
-        (match (compiler-backend-value-type types rhs)
+        (match (compiler-backend-value-type types global-types rhs)
           [(CompilerRegSomeType ty) ty]
           [(CompilerRegNoType) result-ty])])
     (if (compiler-backend-binop-bit-or-shift? op)
-      (match (compiler-backend-value-type types lhs)
+      (match (compiler-backend-value-type types global-types lhs)
         [(CompilerRegSomeType ty) ty]
         [(CompilerRegNoType) result-ty])
       result-ty)))
 
 (define (compiler-backend-value-f64?
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : bool
   (match value
     [(IrValueF64 _) true]
@@ -2444,15 +2475,24 @@
       (match (compiler-reg-var-type-lookup types id)
         [(CompilerRegSomeType ty) (compiler-backend-f64-type? ty)]
         [(CompilerRegNoType) false])]
+    [(IrValueGlobal name)
+      (match (compiler-backend-global-type-lookup global-types name)
+        [(CompilerRegSomeType ty) (compiler-backend-f64-type? ty)]
+        [(CompilerRegNoType) false])]
     [_ false]))
 
 (define (compiler-backend-value-float?
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : bool
   (match value
     [(IrValueF64 _) true]
     [(IrValueVar id)
       (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
+        [(CompilerRegNoType) false])]
+    [(IrValueGlobal name)
+      (match (compiler-backend-global-type-lookup global-types name)
         [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
         [(CompilerRegNoType) false])]
     [_ false]))
@@ -2463,14 +2503,15 @@
 ;; via compiler-backend-binop-operand-ty.
 (define (compiler-backend-binop-f64?
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
   (if (compiler-backend-float-type? ty)
     true
-    (if (compiler-backend-value-float? types lhs)
+    (if (compiler-backend-value-float? types global-types lhs)
       true
-      (compiler-backend-value-float? types rhs))))
+      (compiler-backend-value-float? types global-types rhs))))
 
 (define (compiler-backend-int-instruction-suffix [ty : AstType]) : String
   (let
@@ -2927,15 +2968,17 @@
 
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
-  (if (compiler-backend-binop-f64? types lhs rhs ty)
+  (if (compiler-backend-binop-f64? types global-types lhs rhs ty)
     (let
-      [fty : AstType (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+      [fty : AstType
+        (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
       (match (compiler-backend-emit-load-float-value-with-plan
         assignments
         lhs
@@ -2972,7 +3015,7 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
     (let
       [operand-ty : AstType
-        (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+        (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
       (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
         [(OkCompilerBackend lhs-asm)
           (match (compiler-backend-immediate-operand rhs)
@@ -3033,6 +3076,7 @@
   [source-function : String]
   [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [op : CompilerIrBinOp]
@@ -3042,9 +3086,10 @@
   (let
     [return-tail : String
       (compiler-backend-return-tail source-function assignments vars blocks)]
-    (if (compiler-backend-binop-f64? types lhs rhs ty)
+    (if (compiler-backend-binop-f64? types global-types lhs rhs ty)
       (let
-        [fty : AstType (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+        [fty : AstType
+          (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
         (match (compiler-backend-emit-load-float-value-with-plan
           assignments
           lhs
@@ -3070,7 +3115,7 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (let
         [operand-ty : AstType
-          (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+          (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs
@@ -5321,6 +5366,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -5396,7 +5442,15 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrBinOp dst op lhs rhs ty)
-        (match (compiler-backend-emit-binop types assignments dst op lhs rhs ty)
+        (match (compiler-backend-emit-binop
+          types
+          global-types
+          assignments
+          dst
+          op
+          lhs
+          rhs
+          ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5924,6 +5978,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -5944,6 +5999,7 @@
     assignments
     vars
     types
+    global-types
     ret-ty
     plan
     functions
@@ -5962,6 +6018,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -5991,6 +6048,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6004,7 +6062,7 @@
     op
     lhs
     rhs
-    (compiler-backend-binop-operand-ty types op lhs rhs ty)
+    (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough))
@@ -6020,6 +6078,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -6060,6 +6119,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6089,6 +6149,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -6132,6 +6193,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6163,6 +6225,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -6200,6 +6263,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6226,6 +6290,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -6263,6 +6328,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6289,6 +6355,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -6324,6 +6391,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6355,6 +6423,7 @@
           assignments
           vars
           types
+          global-types
           ret-ty
           plan
           functions
@@ -6373,6 +6442,7 @@
           assignments
           vars
           types
+          global-types
           ret-ty
           plan
           functions
@@ -6460,7 +6530,10 @@
         [(CompilerBackendSomeSignature param-types _) param-types]
         [(CompilerBackendNoSignature) AstTypeNil])]
     [_
-      (match (compiler-backend-value-type types func)
+      (match (compiler-backend-value-type
+        types
+        (CompilerBackendGlobalTypeNil)
+        func)
         [(CompilerRegSomeType ty)
           (match ty
             [(AstTyFunc param-types _) param-types]
@@ -6544,6 +6617,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6575,6 +6649,7 @@
                     assignments
                     vars
                     types
+                    global-types
                     ret-ty
                     plan
                     functions
@@ -6618,6 +6693,7 @@
                               assignments
                               vars
                               types
+                              global-types
                               ret-ty
                               plan
                               functions
@@ -6638,6 +6714,7 @@
                             assignments
                             vars
                             types
+                            global-types
                             ret-ty
                             plan
                             functions
@@ -6658,6 +6735,7 @@
                         assignments
                         vars
                         types
+                        global-types
                         ret-ty
                         plan
                         functions
@@ -6678,6 +6756,7 @@
                     assignments
                     vars
                     types
+                    global-types
                     ret-ty
                     plan
                     functions
@@ -6698,6 +6777,7 @@
                 assignments
                 vars
                 types
+                global-types
                 ret-ty
                 plan
                 functions
@@ -6746,6 +6826,7 @@
                               assignments
                               vars
                               types
+                              global-types
                               ret-ty
                               plan
                               functions
@@ -6766,6 +6847,7 @@
                             assignments
                             vars
                             types
+                            global-types
                             ret-ty
                             plan
                             functions
@@ -6786,6 +6868,7 @@
                         assignments
                         vars
                         types
+                        global-types
                         ret-ty
                         plan
                         functions
@@ -6806,6 +6889,7 @@
                     assignments
                     vars
                     types
+                    global-types
                     ret-ty
                     plan
                     functions
@@ -6826,6 +6910,7 @@
                 assignments
                 vars
                 types
+                global-types
                 ret-ty
                 plan
                 functions
@@ -6864,6 +6949,7 @@
                                           (not
                                             (compiler-backend-binop-f64?
                                               types
+                                              global-types
                                               lhs
                                               rhs
                                               cmp-ty)))))
@@ -6900,6 +6986,7 @@
                                                   assignments
                                                   vars
                                                   types
+                                                  global-types
                                                   ret-ty
                                                   plan
                                                   functions
@@ -6924,6 +7011,7 @@
                                                   assignments
                                                   vars
                                                   types
+                                                  global-types
                                                   ret-ty
                                                   plan
                                                   functions
@@ -6949,6 +7037,7 @@
                                                 assignments
                                                 vars
                                                 types
+                                                global-types
                                                 ret-ty
                                                 plan
                                                 functions
@@ -6974,6 +7063,7 @@
                                             assignments
                                             vars
                                             types
+                                            global-types
                                             ret-ty
                                             plan
                                             functions
@@ -6998,6 +7088,7 @@
                                         assignments
                                         vars
                                         types
+                                        global-types
                                         ret-ty
                                         plan
                                         functions
@@ -7023,6 +7114,7 @@
                                       assignments
                                       vars
                                       types
+                                      global-types
                                       ret-ty
                                       plan
                                       functions
@@ -7048,6 +7140,7 @@
                                   assignments
                                   vars
                                   types
+                                  global-types
                                   ret-ty
                                   plan
                                   functions
@@ -7072,6 +7165,7 @@
                               assignments
                               vars
                               types
+                              global-types
                               ret-ty
                               plan
                               functions
@@ -7091,6 +7185,7 @@
                             assignments
                             vars
                             types
+                            global-types
                             ret-ty
                             plan
                             functions
@@ -7117,6 +7212,7 @@
                             assignments
                             vars
                             types
+                            global-types
                             ret-ty
                             plan
                             functions
@@ -7136,6 +7232,7 @@
                             assignments
                             vars
                             types
+                            global-types
                             ret-ty
                             plan
                             functions
@@ -7156,6 +7253,7 @@
                           assignments
                           vars
                           types
+                          global-types
                           ret-ty
                           plan
                           functions
@@ -7176,6 +7274,7 @@
                       assignments
                       vars
                       types
+                      global-types
                       ret-ty
                       plan
                       functions
@@ -7196,6 +7295,7 @@
                   assignments
                   vars
                   types
+                  global-types
                   ret-ty
                   plan
                   functions
@@ -7215,6 +7315,7 @@
               assignments
               vars
               types
+              global-types
               ret-ty
               plan
               functions
@@ -7237,7 +7338,12 @@
                         (and
                           (compiler-backend-var-single-use? use-counts cmp-dst)
                           (not
-                            (compiler-backend-binop-f64? types lhs rhs cmp-ty)))))
+                            (compiler-backend-binop-f64?
+                              types
+                              global-types
+                              lhs
+                              rhs
+                              cmp-ty)))))
                       (match (box-get after-cmp)
                         [(IrInstrCons branch after-branch)
                           (match branch
@@ -7265,6 +7371,7 @@
                                   assignments
                                   vars
                                   types
+                                  global-types
                                   ret-ty
                                   plan
                                   functions
@@ -7284,6 +7391,7 @@
                                   assignments
                                   vars
                                   types
+                                  global-types
                                   ret-ty
                                   plan
                                   functions
@@ -7304,6 +7412,7 @@
                                 assignments
                                 vars
                                 types
+                                global-types
                                 ret-ty
                                 plan
                                 functions
@@ -7324,6 +7433,7 @@
                             assignments
                             vars
                             types
+                            global-types
                             ret-ty
                             plan
                             functions
@@ -7343,6 +7453,7 @@
                         assignments
                         vars
                         types
+                        global-types
                         ret-ty
                         plan
                         functions
@@ -7363,6 +7474,7 @@
                       assignments
                       vars
                       types
+                      global-types
                       ret-ty
                       plan
                       functions
@@ -7383,6 +7495,7 @@
                   assignments
                   vars
                   types
+                  global-types
                   ret-ty
                   plan
                   functions
@@ -7402,6 +7515,7 @@
               assignments
               vars
               types
+              global-types
               ret-ty
               plan
               functions
@@ -7414,7 +7528,7 @@
             (compiler-backend-compare-op? op)
             (and
               (compiler-backend-var-single-use? use-counts dst)
-              (not (compiler-backend-binop-f64? types lhs rhs ty))))
+              (not (compiler-backend-binop-f64? types global-types lhs rhs ty))))
             (match (box-get rest)
               [(IrInstrCons next after-branch)
                 (match next
@@ -7428,6 +7542,7 @@
                                 source-function
                                 blocks
                                 types
+                                global-types
                                 assignments
                                 vars
                                 op
@@ -7446,6 +7561,7 @@
                                 assignments
                                 vars
                                 types
+                                global-types
                                 ret-ty
                                 plan
                                 functions
@@ -7466,6 +7582,7 @@
                               assignments
                               vars
                               types
+                              global-types
                               ret-ty
                               plan
                               functions
@@ -7486,6 +7603,7 @@
                           assignments
                           vars
                           types
+                          global-types
                           ret-ty
                           plan
                           functions
@@ -7513,6 +7631,7 @@
                         assignments
                         vars
                         types
+                        global-types
                         ret-ty
                         plan
                         functions
@@ -7532,6 +7651,7 @@
                         assignments
                         vars
                         types
+                        global-types
                         ret-ty
                         plan
                         functions
@@ -7552,6 +7672,7 @@
                       assignments
                       vars
                       types
+                      global-types
                       ret-ty
                       plan
                       functions
@@ -7572,6 +7693,7 @@
                   assignments
                   vars
                   types
+                  global-types
                   ret-ty
                   plan
                   functions
@@ -7591,6 +7713,7 @@
               assignments
               vars
               types
+              global-types
               ret-ty
               plan
               functions
@@ -7611,6 +7734,7 @@
             assignments
             vars
             types
+            global-types
             ret-ty
             plan
             functions
@@ -7629,6 +7753,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -7649,6 +7774,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -7681,6 +7807,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -7702,6 +7829,7 @@
         assignments
         vars
         types
+        global-types
         ret-ty
         plan
         functions
@@ -7719,6 +7847,7 @@
             assignments
             vars
             types
+            global-types
             ret-ty
             plan
             functions
@@ -7738,6 +7867,7 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -7754,6 +7884,7 @@
     assignments
     vars
     types
+    global-types
     ret-ty
     plan
     functions
@@ -7921,6 +8052,8 @@
           (compiler-reg-plan-assignments reg-plan)]
         [assignments : CompilerRegAssignmentList raw-assignments]
         [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
+        [global-types : CompilerBackendGlobalTypeList
+          (compiler-backend-global-types globals)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts vars blocks)]
         (match (compiler-backend-emit-param-spills
@@ -7943,6 +8076,7 @@
                 assignments
                 vars
                 types
+                global-types
                 ret-ty
                 plan
                 functions

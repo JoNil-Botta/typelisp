@@ -5,8 +5,8 @@
 ;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
 ;; local rewrites: constant folding, algebraic strength reduction, CSE, copy
 ;; propagation, conservative global value numbering/cross-block copy
-;; propagation, redundant bounds-check elimination, conservative CFG
-;; simplification, and DCE.
+;; propagation, conservative loop-invariant scalar hoisting, redundant
+;; bounds-check elimination, conservative CFG simplification, and DCE.
 ;;
 ;; Safety:
 ;; - Integer `+`, `-`, `*`, bitwise ops, shifts, and `neg` are folded through
@@ -5187,6 +5187,216 @@
     [doms : OptDomTable (opt-cfg-dominators blocks)]
     (opt-cfg-natural-loop-blocks blocks blocks reachable doms)))
 
+;; --- conservative loop-invariant code motion (#1801) ------------------------
+;;
+;; LICM is deliberately scalar-only and verifier-gated. It moves only
+;; non-trapping `BinOp` and `UnOp` definitions from natural loops with a single
+;; safe preheader. A candidate's value operands must be defined outside the loop
+;; or by an earlier instruction already selected for the same hoist. Loads,
+;; stores, calls, allocations, bounds checks, GEPs, phis, vector memory ops, and
+;; trapping arithmetic are left in place.
+(defenum OptLicmInstrsResult
+  (OptLicmInstrsResult CompilerIrInstrList CompilerIrInstrList OptUsedSet bool))
+
+(defenum OptLicmBlocksResult
+  (OptLicmBlocksResult CompilerIrBlockList CompilerIrInstrList OptUsedSet bool))
+
+(define (opt-licm-collect-defs-instrs
+  [instrs : CompilerIrInstrList]
+  [set : OptUsedSet]) : OptUsedSet
+  (match instrs
+    [(IrInstrNil) set]
+    [(IrInstrCons instr rest)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 var)
+          (opt-licm-collect-defs-instrs (box-get rest) (opt-used-add set var))]
+        [(OptNoI64) (opt-licm-collect-defs-instrs (box-get rest) set)])]))
+
+(define (opt-licm-collect-defs-blocks
+  [body : OptLabelSet]
+  [blocks : CompilerIrBlockList]
+  [set : OptUsedSet]) : OptUsedSet
+  (match blocks
+    [(IrBlockNil) set]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (opt-licm-collect-defs-blocks
+            body
+            (box-get rest)
+            (if (opt-label-contains body label)
+              (opt-licm-collect-defs-instrs instrs set)
+              set))])]))
+
+(define (opt-licm-value-invariant?
+  [loop-defs : OptUsedSet]
+  [hoisted : OptUsedSet]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueVar var)
+      (or
+        (not (opt-used-contains loop-defs var))
+        (opt-used-contains hoisted var))]
+    [_ true]))
+
+(define (opt-licm-candidate?
+  [loop-defs : OptUsedSet]
+  [hoisted : OptUsedSet]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBinOp _ op lhs rhs _)
+      (and
+        (not (opt-binop-traps? op))
+        (and
+          (opt-licm-value-invariant? loop-defs hoisted lhs)
+          (opt-licm-value-invariant? loop-defs hoisted rhs)))]
+    [(IrInstrUnOp _ _ src _) (opt-licm-value-invariant? loop-defs hoisted src)]
+    [_ false]))
+
+(define (opt-licm-add-hoisted-def
+  [hoisted : OptUsedSet]
+  [instr : CompilerIrInstr]) : OptUsedSet
+  (match (opt-instr-def-var instr)
+    [(OptSomeI64 var) (opt-used-add hoisted var)]
+    [(OptNoI64) hoisted]))
+
+(define (opt-licm-filter-instrs
+  [loop-defs : OptUsedSet]
+  [instrs : CompilerIrInstrList]
+  [hoisted : OptUsedSet]) : OptLicmInstrsResult
+  (match instrs
+    [(IrInstrNil) (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)]
+    [(IrInstrCons instr rest)
+      (if (opt-licm-candidate? loop-defs hoisted instr)
+        (match (opt-licm-filter-instrs
+          loop-defs
+          (box-get rest)
+          (opt-licm-add-hoisted-def hoisted instr))
+          [(OptLicmInstrsResult kept moved next-hoisted _)
+            (OptLicmInstrsResult
+              kept
+              (compiler-ir-instr-cons instr moved)
+              next-hoisted
+              true)])
+        (match (opt-licm-filter-instrs loop-defs (box-get rest) hoisted)
+          [(OptLicmInstrsResult kept moved next-hoisted changed)
+            (OptLicmInstrsResult
+              (compiler-ir-instr-cons instr kept)
+              moved
+              next-hoisted
+              changed)]))]))
+
+(define (opt-licm-filter-blocks
+  [body : OptLabelSet]
+  [loop-defs : OptUsedSet]
+  [blocks : CompilerIrBlockList]
+  [hoisted : OptUsedSet]) : OptLicmBlocksResult
+  (match blocks
+    [(IrBlockNil) (OptLicmBlocksResult (IrBlockNil) (IrInstrNil) hoisted false)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (if (opt-label-contains body label)
+            (match (opt-licm-filter-instrs loop-defs instrs hoisted)
+              [(OptLicmInstrsResult kept moved next-hoisted block-changed)
+                (match (opt-licm-filter-blocks
+                  body
+                  loop-defs
+                  (box-get rest)
+                  next-hoisted)
+                  [(OptLicmBlocksResult
+                      rest-blocks
+                      rest-moved
+                      final-hoisted
+                      rest-changed)
+                    (OptLicmBlocksResult
+                      (compiler-ir-block-cons (IrBlock label kept) rest-blocks)
+                      (opt-aggregate-instr-list-append moved rest-moved)
+                      final-hoisted
+                      (or block-changed rest-changed))])])
+            (match (opt-licm-filter-blocks
+              body
+              loop-defs
+              (box-get rest)
+              hoisted)
+              [(OptLicmBlocksResult rest-blocks moved final-hoisted changed)
+                (OptLicmBlocksResult
+                  (compiler-ir-block-cons block rest-blocks)
+                  moved
+                  final-hoisted
+                  changed)]))])]))
+
+(define (opt-licm-insert-before-terminator
+  [hoisted : CompilerIrInstrList]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match hoisted
+    [(IrInstrNil) instrs]
+    [_
+      (match instrs
+        [(IrInstrNil) hoisted]
+        [(IrInstrCons instr rest)
+          (if (opt-cfg-terminator-instr? instr)
+            (opt-aggregate-instr-list-append hoisted instrs)
+            (compiler-ir-instr-cons
+              instr
+              (opt-licm-insert-before-terminator hoisted (box-get rest))))])]))
+
+(define (opt-licm-insert-preheader-blocks
+  [preheader : String]
+  [hoisted : CompilerIrInstrList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-ir-block-cons
+            (if (string-eq label preheader)
+              (IrBlock label (opt-licm-insert-before-terminator hoisted instrs))
+              block)
+            (opt-licm-insert-preheader-blocks preheader hoisted (box-get rest)))])]))
+
+(define (opt-licm-apply-loop
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]) : CompilerIrBlockList
+  (match (opt-natural-loop-preheader loop)
+    [(OptSomeLoopPreheader preheader)
+      (let
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        [loop-defs : OptUsedSet
+          (opt-licm-collect-defs-blocks body blocks (OptUsedNil))]
+        (match (opt-licm-filter-blocks body loop-defs blocks (OptUsedNil))
+          [(OptLicmBlocksResult filtered hoisted _ changed)
+            (if changed
+              (opt-licm-insert-preheader-blocks preheader hoisted filtered)
+              blocks)]))]
+    [(OptNoLoopPreheader) blocks]))
+
+(define (opt-licm-apply-loops
+  [loops : OptNaturalLoopList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match loops
+    [(OptNaturalLoopNil) blocks]
+    [(OptNaturalLoopCons loop rest)
+      (opt-licm-apply-loops rest (opt-licm-apply-loop blocks loop))]))
+
+(define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-licm-apply-loops (opt-cfg-natural-loops blocks) blocks))
+
+(define (opt-licm-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function func)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (let
+            [hoisted-blocks : CompilerIrBlockList (opt-licm-blocks blocks)]
+            [hoisted : CompilerIrFunction
+              (IrFunction name params ret-ty frame hoisted-blocks)]
+            (match (opt-verify-function hoisted)
+              [(OkCompilerOptimizeVerify) hoisted]
+              [(ErrCompilerOptimizeVerify _) func]))])]
+    [(ErrCompilerOptimizeVerify _) func]))
+
 (define (opt-cfg-filter-phi-inputs
   [reachable : OptLabelSet]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -6246,13 +6456,17 @@
                     (opt-gvn-blocks params sroa-blocks)]
                   [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
                   [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                  [licm : CompilerIrFunction
+                    (opt-licm-function
+                      (IrFunction name params ret-ty promoted-frame cfg))]
+                  [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
                   ;; Cross-block global value numbering + copy propagation
-                  ;; (#1530) runs after local GVN/SCCP/CFG cleanup, on the
-                  ;; post-stack-promotion frame so its slots stay consistent
-                  ;; with the promoted blocks.
+                  ;; (#1530) runs after local GVN/SCCP/CFG/LICM cleanup, on
+                  ;; the post-stack-promotion frame so its slots stay
+                  ;; consistent with the promoted blocks.
                   [global : CompilerIrFunction
                     (opt-global-value-number-function
-                      (IrFunction name params ret-ty promoted-frame cfg))]
+                      (IrFunction name params ret-ty promoted-frame licm-blocks))]
                   [global-blocks : CompilerIrBlockList
                     (opt-function-blocks global)]
                   [used : OptUsedSet
@@ -9105,6 +9319,18 @@
             (opt-count-arith-instrs instrs)
             (opt-count-arith-blocks (box-get rest)))])]))
 
+(define (opt-count-arith-label-blocks
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label label)
+            (opt-count-arith-instrs instrs)
+            (opt-count-arith-label-blocks (box-get rest) label))])]))
+
 (define (opt-blocks-mov-dst-i64-value
   [blocks : CompilerIrBlockList]
   [dst : i64]
@@ -10008,6 +10234,235 @@
       (match (opt-natural-loop-preheader loop)
         [(OptNoLoopPreheader) true]
         [(OptSomeLoopPreheader _) false])]))
+
+(define (opt-licm-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "cond" (AstTyBool) 0)
+    (compiler-ir-param-cons
+      (IrParam "lhs" (AstTyI64) 1)
+      (compiler-ir-param-cons (IrParam "rhs" (AstTyI64) 2) (IrParamNil)))))
+
+(define (opt-licm-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "licm" (opt-licm-params) (AstTyI64) 16 blocks))
+
+(define (opt-licm-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-licm-function (opt-licm-test-function blocks)))
+
+(define (opt-licm-arithmetic-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 3 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            4
+            (compiler-ir-phi-input-cons
+              (IrValueVar 3)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" IrPhiInputNil))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              10
+              (IrBinAdd)
+              (IrValueVar 1)
+              (IrValueVar 2)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                11
+                (IrBinMul)
+                (IrValueVar 10)
+                (IrValueI64 2)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 0) "body" "exit")
+                (IrInstrNil))))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 5 (IrBinAdd) (IrValueVar 4) (IrValueI64 1) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 11)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-trap-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 10 (IrBinDiv) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-call-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrCall 8 "tl_noop" (IrCallArgsNil) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              10
+              (IrBinAdd)
+              (IrValueVar 8)
+              (IrValueVar 1)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueVar 0) "body" "exit")
+              (IrInstrNil)))))
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-no-preheader-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "pre-one" "pre-two")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "pre-one"
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "pre-two"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                10
+                (IrBinAdd)
+                (IrValueVar 1)
+                (IrValueVar 2)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 0) "body" "exit")
+                (IrInstrNil))))
+          (compiler-ir-block-cons
+            (IrBlock
+              "body"
+              (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (opt-licm-nested-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "outer") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "outer"
+        (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "inner"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              10
+              (IrBinAdd)
+              (IrValueVar 1)
+              (IrValueVar 2)
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueVar 0) "inner-body" "outer-latch")
+              (IrInstrNil))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "inner-body"
+            (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+          (compiler-ir-block-cons
+            (IrBlock
+              "outer-latch"
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 0) "outer" "exit")
+                (IrInstrNil)))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (compiler-optimize-licm-self-test) : i64
+  (let
+    [arith-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-arithmetic-blocks))]
+    [arith : CompilerIrBlockList (opt-function-blocks arith-func)]
+    [trap-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-trap-blocks))]
+    [trap : CompilerIrBlockList (opt-function-blocks trap-func)]
+    [call-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-call-blocks))]
+    [call-blocks : CompilerIrBlockList (opt-function-blocks call-func)]
+    [no-preheader-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-no-preheader-blocks))]
+    [no-preheader : CompilerIrBlockList (opt-function-blocks no-preheader-func)]
+    [nested-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-nested-blocks))]
+    [nested : CompilerIrBlockList (opt-function-blocks nested-func)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
+      [(not (= (opt-count-arith-label-blocks arith "entry") 2)) 2]
+      [(not (= (opt-count-arith-label-blocks arith "loop") 0)) 3]
+      [(not (= (opt-count-arith-label-blocks arith "body") 1)) 4]
+      [(not (opt-verify-ok? (opt-verify-function trap-func))) 5]
+      [(not (= (opt-count-arith-label-blocks trap "loop") 1)) 6]
+      [(not (opt-verify-ok? (opt-verify-function call-func))) 7]
+      [(not (= (opt-count-arith-label-blocks call-blocks "loop") 1)) 8]
+      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 9]
+      [(not (= (opt-count-arith-label-blocks no-preheader "loop") 1)) 10]
+      [(not (= (opt-count-arith-blocks no-preheader) 1)) 11]
+      [(not (opt-verify-ok? (opt-verify-function nested-func))) 12]
+      [(not (= (opt-count-arith-label-blocks nested "inner") 0)) 13]
+      [(not (= (opt-count-arith-blocks nested) 1)) 14]
+      [else 42])))
 
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons

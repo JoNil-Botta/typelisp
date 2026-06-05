@@ -52,7 +52,7 @@ tl=target/stage0/typelisp          # tl=target/stage0/typelisp.exe on Windows
 
 # Type-check, compile, build, or run a program.
 # Linux build/run require `as`/`ld`; Windows target build/run require `clang`/MSVC `link.exe`.
-$tl debug check examples/hello.tl
+$tl check examples/hello.tl
 $tl fmt --check examples/hello.tl
 $tl compile examples/hello.tl     # writes examples/hello.s
 $tl build   examples/hello.tl     # writes examples/hello
@@ -556,11 +556,9 @@ Source (.tl)
 ## CLI
 
 ```bash
-typelisp debug tokenize file.tl    # Print token stream
-typelisp debug parse    file.tl    # Print AST
-typelisp debug check    file.tl    # Type check
 typelisp lsp                      # Start stdio LSP diagnostics server
 typelisp repl                     # Start minimal stdio REPL (.help, .type, .exit)
+typelisp check          file.tl    # Type check
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>, --cfg <name>
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
@@ -570,8 +568,7 @@ typelisp lint           file.tl    # Report lint findings; --check exits non-zer
 typelisp test           file.tl    # Run inline `(test ...)` items; --check type-checks the generated harness
 ```
 
-The older top-level `tokenize`, `parse`, and `check` commands remain as
-compatibility aliases.
+`check` is the public type-check command.
 
 The selfhost REPL driver provides a stdio command loop for `.help`,
 `.type <expr>`, and `.exit`. Top-level declarations are remembered for later

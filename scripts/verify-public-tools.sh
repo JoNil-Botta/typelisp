@@ -379,83 +379,6 @@ assert_failure
 assert_stdout_empty
 assert_contains_any "$err" "Usage:" "usage:"
 
-# tokenize/parse are reached via their canonical `debug` forms; the top-level
-# compatibility aliases were removed from the unified cli.tl dispatcher (#1638).
-run_cmd tokenize-debug "$COMPILER" debug tokenize examples/hello.tl
-assert_success
-assert_stderr_empty
-assert_contains "$out" "("
-assert_contains "$out" "define"
-
-run_cmd parse-debug "$COMPILER" debug parse examples/hello.tl
-assert_success
-assert_stderr_empty
-assert_contains "$out" "Program"
-
-# `debug tokenize` emits the public frontend token spellings one-per-line. Assert
-# the exact stream for a representative signature so the selfhost lexer's spelling
-# (parens, brackets, `:`, type names, operators) stays byte-stable. Ports the
-# Rust `tokenize_preserves_public_frontend_token_spellings` CLI test (tests/cli.rs).
-TOKENIZE_SPELLING_DIR="$WORKDIR/tokenize-spelling"
-mkdir -p "$TOKENIZE_SPELLING_DIR"
-cat > "$TOKENIZE_SPELLING_DIR/main.tl" <<'EOF'
-(define (main [x : i64]) : i64 (+ x 1))
-EOF
-run_cmd tokenize-spelling "$COMPILER" debug tokenize "$TOKENIZE_SPELLING_DIR/main.tl"
-assert_success
-assert_stderr_empty
-printf '(\ndefine\n(\nmain\n[\nx\n:\ni64\n]\n)\n:\ni64\n(\n+\nx\n1\n)\n)\n' \
-    > "$TOKENIZE_SPELLING_DIR/expected.txt"
-tr -d '\r' < "$out" > "$TOKENIZE_SPELLING_DIR/actual.txt"
-check_file_exact "$TOKENIZE_SPELLING_DIR/actual.txt" "$TOKENIZE_SPELLING_DIR/expected.txt"
-
-# `debug parse` prints a `Program {` summary with the trivial `main` DefFn and
-# its integer literal body. Ports the Rust `parse_prints_selfhost_program_summary`
-# CLI test (tests/cli.rs).
-PARSE_SUMMARY_DIR="$WORKDIR/parse-summary"
-mkdir -p "$PARSE_SUMMARY_DIR"
-cat > "$PARSE_SUMMARY_DIR/main.tl" <<'EOF'
-(define (main) : i64 42)
-EOF
-run_cmd parse-summary "$COMPILER" debug parse "$PARSE_SUMMARY_DIR/main.tl"
-assert_success
-assert_stderr_empty
-assert_contains "$out" "Program {"
-assert_contains "$out" 'DefFn { name: "main"'
-assert_contains "$out" "Literal(Int(42))"
-
-# `debug parse` renders the newer selfhost AST forms (ComptimeDecl,
-# DefStruct/field `:cleanup`, TypeLiteral{Array}, WithRegion, SpmdReduce,
-# ArrayRef) in the Rust-Debug-style text. Ports the Rust
-# `parse_renders_newer_selfhost_ast_forms` CLI test (tests/cli.rs). The Rust
-# test also asserts top-level `parse` == `debug parse`; the no-Rust cli.tl
-# removed the top-level `parse` alias (#1638), so only the canonical `debug
-# parse` rendering is exercised here.
-PARSE_NEWFORMS_DIR="$WORKDIR/parse-newforms"
-mkdir -p "$PARSE_NEWFORMS_DIR"
-cat > "$PARSE_NEWFORMS_DIR/main.tl" <<'EOF'
-(comptime-decl
-  (defstruct Point
-    (:cleanup close-point)
-    (x i64 (:cleanup close-x))))
-(define (main [n : i64] [xs : (Array i64)]) : i64
-  (begin
-    (comptime (type (Array i64 4)))
-    (with-arena r (int->string 41))
-    (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i))))
-EOF
-run_cmd parse-newforms "$COMPILER" debug parse "$PARSE_NEWFORMS_DIR/main.tl"
-assert_success
-assert_stderr_empty
-assert_contains "$out" "ComptimeDecl { template: DefStruct"
-assert_contains "$out" 'cleanup: Some("close-point")'
-assert_contains "$out" 'cleanup: Some("close-x")'
-assert_contains "$out" "TypeLiteral { ty: Array(I64, 4) }"
-assert_contains "$out" 'WithRegion { region: "r"'
-assert_contains "$out" "SpmdReduce { op: Sum"
-assert_contains "$out" 'index: "i"'
-assert_contains "$out" 'value: ArrayRef { expr: Var("xs"), index: Var("i") }'
-
 run_cmd check-hello "$COMPILER" check examples/hello.tl
 assert_success
 assert_stderr_empty
@@ -514,35 +437,18 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "unknown target"
 
-run_cmd debug-missing "$COMPILER" debug
-assert_failure
-assert_stdout_empty
-assert_contains "$err" "Error: missing debug subcommand"
-assert_contains "$err" "typelisp debug tokenize <file.tl>"
-
-run_cmd debug-unknown "$COMPILER" debug wat
-assert_failure
-assert_stdout_empty
-assert_contains "$err" "Unknown debug command: wat"
-assert_contains "$err" "typelisp debug check <file.tl>"
-
-DEBUG_CHECK="$WORKDIR/debug-check"
-mkdir -p "$DEBUG_CHECK/app" "$DEBUG_CHECK/repo-stdlib"
-cat > "$DEBUG_CHECK/repo-stdlib/helper.tl" <<'EOF'
+CHECK_ROOT="$WORKDIR/check-root"
+mkdir -p "$CHECK_ROOT/app" "$CHECK_ROOT/repo-stdlib"
+cat > "$CHECK_ROOT/repo-stdlib/helper.tl" <<'EOF'
 (define (helper) : i64 42)
 EOF
-cat > "$DEBUG_CHECK/app/main.tl" <<'EOF'
+cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
 (import "stdlib/helper.tl")
 (define (main) : i64 (helper))
 EOF
-run_cmd check-stdlib-root "$COMPILER" check "$DEBUG_CHECK/app/main.tl" --stdlib-root "$DEBUG_CHECK/repo-stdlib"
+run_cmd check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
 assert_success
 assert_stderr_empty
-cp "$out" "$WORKDIR/check-stdlib-root.expected"
-run_cmd debug-check-stdlib-root "$COMPILER" debug check "$DEBUG_CHECK/app/main.tl" --stdlib-root "$DEBUG_CHECK/repo-stdlib"
-assert_success
-assert_stderr_empty
-cmp -s "$out" "$WORKDIR/check-stdlib-root.expected" || fail "debug check differs from public check"
 assert_contains "$out" "Type checking passed!"
 
 echo "[public-tools] CLI command matrix and diagnostics"

@@ -4080,6 +4080,7 @@ Commands:
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
   build             Build nearest typelisp.pkg artifact
+  lint              Report lint findings
   test              Run inline `(test ...)` items
 
 Options:
@@ -4104,6 +4105,9 @@ Options:
   test --check <file.tl>
                           Type-check the generated inline test harness without
                           assembling or running it
+  lint <file.tl> --check
+                          Exit non-zero when lint findings are present; default
+                          lint mode is warn-only
   build <file.tl> -o <exe>
                           Write the native executable to the given path
   build --manifest-path <file>

@@ -708,7 +708,7 @@ assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
 
 echo "[stage1-wrapper] lint"
-assert_contains "$WORKDIR/help.stderr" "typelisp lint <file.tl>"
+assert_contains "$WORKDIR/help.stderr" "typelisp lint <file.tl> [--check]"
 
 run_expect_failure lint-missing "$COMPILER" lint
 assert_empty "$WORKDIR/lint-missing.stdout"
@@ -717,6 +717,10 @@ assert_contains "$WORKDIR/lint-missing.stderr" "expected input path"
 run_capture lint-clean "$COMPILER" lint "$SRC"
 assert_empty "$WORKDIR/lint-clean.stderr"
 assert_contains "$WORKDIR/lint-clean.stdout" "lint: 0 finding(s)"
+
+run_capture lint-clean-check "$COMPILER" lint "$SRC" --check
+assert_empty "$WORKDIR/lint-clean-check.stderr"
+assert_contains "$WORKDIR/lint-clean-check.stdout" "lint: 0 finding(s)"
 
 LINT_SRC="$WORKDIR/lint_ladder.tl"
 cat > "$LINT_SRC" <<'EOF'
@@ -737,6 +741,12 @@ assert_contains "$WORKDIR/lint-nested-if.stdout" "prefer cond"
 assert_contains "$WORKDIR/lint-nested-if.stdout" "match"
 assert_contains "$WORKDIR/lint-nested-if.stdout" "lint: 1 finding(s)"
 
+run_expect_failure lint-nested-if-check "$COMPILER" lint "$LINT_SRC" --check
+assert_empty "$WORKDIR/lint-nested-if-check.stderr"
+assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint_ladder.tl:"
+assert_contains "$WORKDIR/lint-nested-if-check.stdout" "nested if-ladder"
+assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint: 1 finding(s)"
+
 run_expect_failure lint-missing-file "$COMPILER" lint "$WORKDIR/missing-lint.tl"
 assert_empty "$WORKDIR/lint-missing-file.stdout"
 assert_nonempty "$WORKDIR/lint-missing-file.stderr"
@@ -745,6 +755,10 @@ printf '(define (' > "$WORKDIR/lint-parse-error.tl"
 run_expect_failure lint-parse-error "$COMPILER" lint "$WORKDIR/lint-parse-error.tl"
 assert_empty "$WORKDIR/lint-parse-error.stdout"
 assert_nonempty "$WORKDIR/lint-parse-error.stderr"
+
+run_expect_failure lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint-parse-error.tl" --check
+assert_empty "$WORKDIR/lint-parse-error-check.stdout"
+assert_nonempty "$WORKDIR/lint-parse-error-check.stderr"
 
 echo "[stage1-wrapper] debug host-action"
 if grep -qF "stage1 wrapper commands" "$WORKDIR/help.stderr"; then

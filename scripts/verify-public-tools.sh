@@ -180,6 +180,10 @@ assert_stderr_empty() {
     [ ! -s "$err" ] || fail "$case_name wrote unexpected stderr: $(cat "$err")"
 }
 
+assert_stderr_nonempty() {
+    [ -s "$err" ] || fail "$case_name did not write stderr"
+}
+
 assert_contains() {
     file=$1
     text=$2
@@ -1509,6 +1513,13 @@ EOF
     assert_contains "$out" "match"
     assert_contains "$out" "lint: 1 finding(s)"
 
+    run_cmd lint-nested-if-check "$COMPILER" lint "$WORKDIR/lint_ladder.tl" --check
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "lint_ladder.tl:"
+    assert_contains "$out" "nested if-ladder"
+    assert_contains "$out" "lint: 1 finding(s)"
+
     cat > "$WORKDIR/lint_clean.tl" <<'EOF'
 (define (classify [x : i64]) : i64
   (if (= x 0)
@@ -1516,6 +1527,11 @@ EOF
     0))
 EOF
     run_cmd lint-clean "$COMPILER" lint "$WORKDIR/lint_clean.tl"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+
+    run_cmd lint-clean-check "$COMPILER" lint "$WORKDIR/lint_clean.tl" --check
     assert_success
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
@@ -1532,6 +1548,12 @@ EOF
         assert_contains "$err" "Error: missing file argument"
         assert_contains "$err" "typelisp lint <file.tl>"
     fi
+
+    printf '(define (' > "$WORKDIR/lint_parse_error.tl"
+    run_cmd lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint_parse_error.tl" --check
+    assert_failure
+    assert_stdout_empty
+    assert_stderr_nonempty
 else
     fail "public lint CLI is required"
 fi

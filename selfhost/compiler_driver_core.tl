@@ -155,11 +155,22 @@
         (- (profile-alloc-live) compiler-driver-profile-total-start-live)
         compiler-driver-profile-best-peak))))
 
-(define (compiler-driver-lower-mode-for-backend [mode : CompilerBackendMode]) : CompilerLowerMode
+(define (compiler-driver-lower-mode-for-target
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]) : CompilerLowerMode
   (match mode
-    [(BackendModeAvx2) (CompilerLowerAvx2)]
-    [(BackendModeAvx512) (CompilerLowerAvx512)]
-    [_ (CompilerLowerScalar)]))
+    [(BackendModeAvx2)
+      (match target
+        [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
+        [(BackendTargetWindows) (CompilerLowerAvx2)])]
+    [(BackendModeAvx512)
+      (match target
+        [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
+        [(BackendTargetWindows) (CompilerLowerAvx512)])]
+    [_
+      (match target
+        [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
+        [(BackendTargetWindows) (CompilerLowerScalar)])]))
 
 (define (compiler-driver-enable-linux-cfgs [cfgs : SymI64Env]) : SymI64Env
   (compiler-cfg-enable
@@ -343,6 +354,7 @@
 
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
+  [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
@@ -365,7 +377,7 @@
               input-path
               (ast-program decls)
               paths
-              (compiler-driver-lower-mode-for-backend mode))
+              (compiler-driver-lower-mode-for-target target mode))
               [(OkCompilerLower program spans)
                 (let
                   [scratch-head : i64 (arena-current)]
@@ -516,6 +528,7 @@
     (cfg compile-profile (compiler-driver-profile-start-total))
     (match (compiler-driver-load-and-lower-escaping
       input-path
+      target
       stdlib-roots
       mode
       (compiler-driver-target-cfgs target cfgs))
@@ -547,9 +560,10 @@
     (cfg compile-profile (compiler-driver-profile-start-total))
     (match (compiler-driver-load-and-lower-escaping
       input-path
+      target
       stdlib-roots
       mode
-      cfgs)
+      (compiler-driver-target-cfgs target cfgs))
       [(OkCompilerDriverLowered program spans)
         (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
           input-path
@@ -627,7 +641,7 @@
         input-path
         (ast-program decls)
         paths
-        (compiler-driver-lower-mode-for-backend mode))
+        (compiler-driver-lower-mode-for-target target mode))
         [(OkCompilerLower program spans)
           (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
             input-path

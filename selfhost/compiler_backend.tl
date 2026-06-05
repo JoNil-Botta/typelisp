@@ -18787,12 +18787,6 @@ tl_windows_sdk_registry_install:
     [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
     [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
 
-(define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
-  (match (lower-compiler-source src)
-    [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-with-spans program spans)]
-    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
-
 (define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : SymI64Env
   (match target
     [(BackendTargetLinux)
@@ -18810,6 +18804,23 @@ tl_windows_sdk_registry_install:
           "target-windows")
         "os-windows")]))
 
+(define (compiler-backend-lower-mode-for-target
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]) : CompilerLowerMode
+  (match mode
+    [(BackendModeAvx2)
+      (match target
+        [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
+        [(BackendTargetWindows) (CompilerLowerAvx2)])]
+    [(BackendModeAvx512)
+      (match target
+        [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
+        [(BackendTargetWindows) (CompilerLowerAvx512)])]
+    [_
+      (match target
+        [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
+        [(BackendTargetWindows) (CompilerLowerScalar)])]))
+
 (define (compiler-backend-lower-source-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerLower
@@ -18818,8 +18829,17 @@ tl_windows_sdk_registry_install:
     src
     (compiler-backend-target-cfgs target))
     [(OkAstProgramDiagnostic program)
-      (lower-compiler-program-with-path "<source>" program)]
+      (lower-compiler-program-with-path-mode
+        "<source>"
+        program
+        (compiler-backend-lower-mode-for-target target (BackendModeScalar)))]
     [(ErrAstProgramDiagnostic diag) (ErrCompilerLower diag)]))
+
+(define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans program spans)]
+    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]

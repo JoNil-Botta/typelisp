@@ -12,7 +12,7 @@
 
 (defenum CompilerRegStringList
   (CompilerRegStringNil)
-  (CompilerRegStringCons String CompilerRegStringList))
+  (CompilerRegStringCons String (Box CompilerRegStringList)))
 
 (defenum CompilerRegLocation
   (CompilerRegRegister String)
@@ -27,14 +27,16 @@
 
 (defenum CompilerRegAssignmentList
   (CompilerRegAssignmentNil)
-  (CompilerRegAssignmentCons CompilerRegAssignment CompilerRegAssignmentList))
+  (CompilerRegAssignmentCons
+    CompilerRegAssignment
+    (Box CompilerRegAssignmentList)))
 
 (defenum CompilerRegInterval
   (CompilerRegInterval i64 i64 i64))
 
 (defenum CompilerRegIntervalList
   (CompilerRegIntervalNil)
-  (CompilerRegIntervalCons CompilerRegInterval CompilerRegIntervalList))
+  (CompilerRegIntervalCons CompilerRegInterval (Box CompilerRegIntervalList)))
 
 (defenum CompilerRegMaybeInterval
   (CompilerRegNoInterval)
@@ -45,7 +47,7 @@
 
 (defenum CompilerRegVarTypeList
   (CompilerRegVarTypeNil)
-  (CompilerRegVarTypeCons CompilerRegVarType CompilerRegVarTypeList))
+  (CompilerRegVarTypeCons CompilerRegVarType (Box CompilerRegVarTypeList)))
 
 (defenum CompilerRegMaybeType
   (CompilerRegNoType)
@@ -56,7 +58,7 @@
 
 (defenum CompilerRegActiveList
   (CompilerRegActiveNil)
-  (CompilerRegActiveCons CompilerRegActive CompilerRegActiveList))
+  (CompilerRegActiveCons CompilerRegActive (Box CompilerRegActiveList)))
 
 (defenum CompilerRegMaybeActive
   (CompilerRegNoActive)
@@ -76,7 +78,37 @@
 
 (defenum CompilerRegMoveList
   (CompilerRegMoveNil)
-  (CompilerRegMoveCons CompilerRegMove CompilerRegMoveList))
+  (CompilerRegMoveCons CompilerRegMove (Box CompilerRegMoveList)))
+
+(define (compiler-reg-string-cons
+  [head : String]
+  [rest : CompilerRegStringList]) : CompilerRegStringList
+  (CompilerRegStringCons head (box rest)))
+
+(define (compiler-reg-assignment-cons
+  [head : CompilerRegAssignment]
+  [rest : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons head (box rest)))
+
+(define (compiler-reg-interval-cons
+  [head : CompilerRegInterval]
+  [rest : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (CompilerRegIntervalCons head (box rest)))
+
+(define (compiler-reg-var-type-cons
+  [head : CompilerRegVarType]
+  [rest : CompilerRegVarTypeList]) : CompilerRegVarTypeList
+  (CompilerRegVarTypeCons head (box rest)))
+
+(define (compiler-reg-active-cons
+  [head : CompilerRegActive]
+  [rest : CompilerRegActiveList]) : CompilerRegActiveList
+  (CompilerRegActiveCons head (box rest)))
+
+(define (compiler-reg-move-cons
+  [head : CompilerRegMove]
+  [rest : CompilerRegMoveList]) : CompilerRegMoveList
+  (CompilerRegMoveCons head (box rest)))
 
 (define (compiler-reg-min [a : i64] [b : i64]) : i64
   (if (< a b)
@@ -101,149 +133,149 @@
 ;; the backend prologue/epilogue save and restore. Mirrors the former Rust
 ;; backend's `SYSV_ALLOCATABLE_INTEGER_REGS` (callee-saved only).
 (define (compiler-reg-sysv-integer-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%r12"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%r13"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%r14"
-        (CompilerRegStringCons "%r15" CompilerRegStringNil)))))
+        (compiler-reg-string-cons "%r15" CompilerRegStringNil)))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%rax"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%rcx"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%rdx"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%rsi"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%rdi"
-            (CompilerRegStringCons
+            (compiler-reg-string-cons
               "%r8"
-              (CompilerRegStringCons
+              (compiler-reg-string-cons
                 "%r9"
-                (CompilerRegStringCons
+                (compiler-reg-string-cons
                   "%r10"
-                  (CompilerRegStringCons "%r11" CompilerRegStringNil))))))))))
+                  (compiler-reg-string-cons "%r11" CompilerRegStringNil))))))))))
 
 (define (compiler-reg-sysv-callee-saved-integer-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%rbx"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%r12"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%r13"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%r14"
-          (CompilerRegStringCons "%r15" CompilerRegStringNil))))))
+          (compiler-reg-string-cons "%r15" CompilerRegStringNil))))))
 
 (define (compiler-reg-win64-caller-saved-integer-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%rax"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%rcx"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%rdx"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%r8"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%r9"
-            (CompilerRegStringCons
+            (compiler-reg-string-cons
               "%r10"
-              (CompilerRegStringCons "%r11" CompilerRegStringNil))))))))
+              (compiler-reg-string-cons "%r11" CompilerRegStringNil))))))))
 
 (define (compiler-reg-win64-callee-saved-integer-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%rbx"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%rsi"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%rdi"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%r12"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%r13"
-            (CompilerRegStringCons
+            (compiler-reg-string-cons
               "%r14"
-              (CompilerRegStringCons "%r15" CompilerRegStringNil))))))))
+              (compiler-reg-string-cons "%r15" CompilerRegStringNil))))))))
 
 ;; Persistent float homes use XMM registers that are caller-saved on both SysV
 ;; and Windows x64, avoid %xmm0/%xmm1 arithmetic scratch, avoid %xmm15 outgoing
 ;; stack-argument scratch, and avoid Windows callee-saved XMM6-XMM15 until the
 ;; backend has save/restore support for those registers.
 (define (compiler-reg-xmm-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%xmm2"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%xmm3"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%xmm4"
-        (CompilerRegStringCons "%xmm5" CompilerRegStringNil)))))
+        (compiler-reg-string-cons "%xmm5" CompilerRegStringNil)))))
 
 (define (compiler-reg-vector-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%vec6"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%vec7"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%vec8"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%vec9"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%vec10"
-            (CompilerRegStringCons
+            (compiler-reg-string-cons
               "%vec11"
-              (CompilerRegStringCons
+              (compiler-reg-string-cons
                 "%vec12"
-                (CompilerRegStringCons "%vec13" CompilerRegStringNil)))))))))
+                (compiler-reg-string-cons "%vec13" CompilerRegStringNil)))))))))
 
 (define (compiler-reg-mask-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%k1"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%k2"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%k3"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%k4"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%k5"
-            (CompilerRegStringCons "%k6" CompilerRegStringNil)))))))
+            (compiler-reg-string-cons "%k6" CompilerRegStringNil)))))))
 
 (define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%xmm0"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%xmm1"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%xmm2"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%xmm3"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%xmm4"
-            (CompilerRegStringCons
+            (compiler-reg-string-cons
               "%xmm5"
-              (CompilerRegStringCons
+              (compiler-reg-string-cons
                 "%xmm6"
-                (CompilerRegStringCons
+                (compiler-reg-string-cons
                   "%xmm7"
-                  (CompilerRegStringCons
+                  (compiler-reg-string-cons
                     "%xmm8"
-                    (CompilerRegStringCons
+                    (compiler-reg-string-cons
                       "%xmm9"
-                      (CompilerRegStringCons
+                      (compiler-reg-string-cons
                         "%xmm10"
-                        (CompilerRegStringCons
+                        (compiler-reg-string-cons
                           "%xmm11"
-                          (CompilerRegStringCons
+                          (compiler-reg-string-cons
                             "%xmm12"
-                            (CompilerRegStringCons
+                            (compiler-reg-string-cons
                               "%xmm13"
-                              (CompilerRegStringCons
+                              (compiler-reg-string-cons
                                 "%xmm14"
-                                (CompilerRegStringCons
+                                (compiler-reg-string-cons
                                   "%xmm15"
                                   CompilerRegStringNil)))))))))))))))))
 
@@ -251,43 +283,44 @@
   CompilerRegStringNil)
 
 (define (compiler-reg-win64-caller-saved-xmm-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%xmm0"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%xmm1"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%xmm2"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%xmm3"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%xmm4"
-            (CompilerRegStringCons "%xmm5" CompilerRegStringNil)))))))
+            (compiler-reg-string-cons "%xmm5" CompilerRegStringNil)))))))
 
 (define (compiler-reg-win64-callee-saved-xmm-registers) : CompilerRegStringList
-  (CompilerRegStringCons
+  (compiler-reg-string-cons
     "%xmm6"
-    (CompilerRegStringCons
+    (compiler-reg-string-cons
       "%xmm7"
-      (CompilerRegStringCons
+      (compiler-reg-string-cons
         "%xmm8"
-        (CompilerRegStringCons
+        (compiler-reg-string-cons
           "%xmm9"
-          (CompilerRegStringCons
+          (compiler-reg-string-cons
             "%xmm10"
-            (CompilerRegStringCons
+            (compiler-reg-string-cons
               "%xmm11"
-              (CompilerRegStringCons
+              (compiler-reg-string-cons
                 "%xmm12"
-                (CompilerRegStringCons
+                (compiler-reg-string-cons
                   "%xmm13"
-                  (CompilerRegStringCons
+                  (compiler-reg-string-cons
                     "%xmm14"
-                    (CompilerRegStringCons "%xmm15" CompilerRegStringNil)))))))))))
+                    (compiler-reg-string-cons "%xmm15" CompilerRegStringNil)))))))))))
 
 (define (compiler-reg-string-list-count [regs : CompilerRegStringList]) : i64
   (match regs
     [(CompilerRegStringNil) 0]
-    [(CompilerRegStringCons _ rest) (+ 1 (compiler-reg-string-list-count rest))]))
+    [(CompilerRegStringCons _ rest)
+      (+ 1 (compiler-reg-string-list-count (box-get rest)))]))
 
 (define (compiler-reg-string-list-contains?
   [regs : CompilerRegStringList]
@@ -297,7 +330,7 @@
     [(CompilerRegStringCons reg rest)
       (if (string-eq reg want)
         true
-        (compiler-reg-string-list-contains? rest want))]))
+        (compiler-reg-string-list-contains? (box-get rest) want))]))
 
 (define (compiler-reg-float-type? [ty : AstType]) : bool
   (match ty
@@ -332,17 +365,21 @@
   [ty : AstType]) : CompilerRegVarTypeList
   (match types
     [(CompilerRegVarTypeNil)
-      (CompilerRegVarTypeCons (CompilerRegVarType var ty) CompilerRegVarTypeNil)]
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType var ty)
+        CompilerRegVarTypeNil)]
     [(CompilerRegVarTypeCons item rest)
       (match item
         [(CompilerRegVarType id _)
           (if (= id var)
-            (CompilerRegVarTypeCons (CompilerRegVarType var ty) rest)
+            (compiler-reg-var-type-cons
+              (CompilerRegVarType var ty)
+              (box-get rest))
             (if (> id var)
-              (CompilerRegVarTypeCons (CompilerRegVarType var ty) types)
-              (CompilerRegVarTypeCons
+              (compiler-reg-var-type-cons (CompilerRegVarType var ty) types)
+              (compiler-reg-var-type-cons
                 item
-                (compiler-reg-var-type-insert rest var ty))))])]))
+                (compiler-reg-var-type-insert (box-get rest) var ty))))])]))
 
 (define (compiler-reg-var-type-lookup
   [types : CompilerRegVarTypeList]
@@ -356,7 +393,7 @@
             (CompilerRegSomeType ty)
             (if (> id var)
               CompilerRegNoType
-              (compiler-reg-var-type-lookup rest var)))])]))
+              (compiler-reg-var-type-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-param-types
   [params : CompilerIrParamList]
@@ -441,7 +478,7 @@
         [(CompilerRegMove found-src found-dst)
           (if (and (= found-src src) (= found-dst dst))
             true
-            (compiler-reg-move-list-contains? rest src dst))])]))
+            (compiler-reg-move-list-contains? (box-get rest) src dst))])]))
 
 (define (compiler-reg-move-list-add
   [moves : CompilerRegMoveList]
@@ -451,7 +488,7 @@
     moves
     (if (compiler-reg-move-list-contains? moves src dst)
       moves
-      (CompilerRegMoveCons (CompilerRegMove src dst) moves))))
+      (compiler-reg-move-cons (CompilerRegMove src dst) moves))))
 
 (define (compiler-reg-phi-input-moves
   [dst : i64]
@@ -603,7 +640,7 @@
             (compiler-reg-extend-instr starts ends live-after point instr)
             (compiler-reg-live-intervals-instrs
               (box-get rest)
-              rest-after
+              (box-get rest-after)
               (+ point 2)
               starts
               ends))]
@@ -669,7 +706,7 @@
           starts
           ends
           (- index 1)
-          (CompilerRegIntervalCons (CompilerRegInterval index start end) acc))))))
+          (compiler-reg-interval-cons (CompilerRegInterval index start end) acc))))))
 
 (define (compiler-reg-live-intervals
   [func : CompilerIrFunction]
@@ -698,7 +735,7 @@
       (match item
         [(CompilerRegVarType var ty)
           (compiler-reg-ineligible-non-scalars
-            rest
+            (box-get rest)
             (if (compiler-reg-scalar-type? ty)
               set
               (compiler-live-set-insert set var)))])]))
@@ -857,13 +894,13 @@
   [interval : CompilerRegInterval]) : CompilerRegIntervalList
   (match candidates
     [(CompilerRegIntervalNil)
-      (CompilerRegIntervalCons interval CompilerRegIntervalNil)]
+      (compiler-reg-interval-cons interval CompilerRegIntervalNil)]
     [(CompilerRegIntervalCons head rest)
       (if (compiler-reg-interval-before? interval head)
-        (CompilerRegIntervalCons interval candidates)
-        (CompilerRegIntervalCons
+        (compiler-reg-interval-cons interval candidates)
+        (compiler-reg-interval-cons
           head
-          (compiler-reg-candidate-insert rest interval)))]))
+          (compiler-reg-candidate-insert (box-get rest) interval)))]))
 
 (define (compiler-reg-candidates
   [intervals : CompilerRegIntervalList]
@@ -877,7 +914,11 @@
         [(CompilerRegInterval var _ _)
           (let
             [tail : CompilerRegIntervalList
-              (compiler-reg-candidates rest types ineligible want-float)]
+              (compiler-reg-candidates
+                (box-get rest)
+                types
+                ineligible
+                want-float)]
             (if (compiler-live-set-contains? ineligible var)
               tail
               (match (compiler-reg-var-type-lookup types var)
@@ -958,7 +999,7 @@
         [(CompilerRegInterval var _ _)
           (let
             [tail : CompilerRegIntervalList
-              (compiler-reg-special-candidates rest vars blocked)]
+              (compiler-reg-special-candidates (box-get rest) vars blocked)]
             (if (and
               (compiler-live-set-contains? vars var)
               (not (compiler-live-set-contains? blocked var)))
@@ -968,7 +1009,8 @@
 (define (compiler-reg-active-count [active : CompilerRegActiveList]) : i64
   (match active
     [(CompilerRegActiveNil) 0]
-    [(CompilerRegActiveCons _ rest) (+ 1 (compiler-reg-active-count rest))]))
+    [(CompilerRegActiveCons _ rest)
+      (+ 1 (compiler-reg-active-count (box-get rest)))]))
 
 (define (compiler-reg-active-contains-register?
   [active : CompilerRegActiveList]
@@ -980,7 +1022,7 @@
         [(CompilerRegActive _ _ active-reg)
           (if (string-eq reg active-reg)
             true
-            (compiler-reg-active-contains-register? rest reg))])]))
+            (compiler-reg-active-contains-register? (box-get rest) reg))])]))
 
 (define (compiler-reg-active-before?
   [left : CompilerRegActive]
@@ -999,11 +1041,14 @@
   [active : CompilerRegActiveList]
   [item : CompilerRegActive]) : CompilerRegActiveList
   (match active
-    [(CompilerRegActiveNil) (CompilerRegActiveCons item CompilerRegActiveNil)]
+    [(CompilerRegActiveNil)
+      (compiler-reg-active-cons item CompilerRegActiveNil)]
     [(CompilerRegActiveCons head rest)
       (if (compiler-reg-active-before? item head)
-        (CompilerRegActiveCons item active)
-        (CompilerRegActiveCons head (compiler-reg-active-insert rest item)))]))
+        (compiler-reg-active-cons item active)
+        (compiler-reg-active-cons
+          head
+          (compiler-reg-active-insert (box-get rest) item)))]))
 
 (define (compiler-reg-expire-active
   [active : CompilerRegActiveList]
@@ -1014,9 +1059,9 @@
       (match item
         [(CompilerRegActive _ end _)
           (if (<= end start)
-            (compiler-reg-expire-active rest start)
+            (compiler-reg-expire-active (box-get rest) start)
             (compiler-reg-active-insert
-              (compiler-reg-expire-active rest start)
+              (compiler-reg-expire-active (box-get rest) start)
               item))])]))
 
 (define (compiler-reg-first-free-register
@@ -1026,14 +1071,14 @@
     [(CompilerRegStringNil) "%r12"]
     [(CompilerRegStringCons reg rest)
       (if (compiler-reg-active-contains-register? active reg)
-        (compiler-reg-first-free-register rest active)
+        (compiler-reg-first-free-register (box-get rest) active)
         reg)]))
 
 (define (compiler-reg-active-max [active : CompilerRegActiveList]) : CompilerRegMaybeActive
   (match active
     [(CompilerRegActiveNil) CompilerRegNoActive]
     [(CompilerRegActiveCons item rest)
-      (match (compiler-reg-active-max rest)
+      (match (compiler-reg-active-max (box-get rest))
         [(CompilerRegNoActive) (CompilerRegSomeActive item)]
         [(CompilerRegSomeActive other)
           (if (compiler-reg-active-before? item other)
@@ -1049,10 +1094,10 @@
       (match item
         [(CompilerRegActive id _ _)
           (if (= id var)
-            (compiler-reg-active-remove-var rest var)
-            (CompilerRegActiveCons
+            (compiler-reg-active-remove-var (box-get rest) var)
+            (compiler-reg-active-cons
               item
-              (compiler-reg-active-remove-var rest var)))])]))
+              (compiler-reg-active-remove-var (box-get rest) var)))])]))
 
 (define (compiler-reg-assignment-insert
   [assignments : CompilerRegAssignmentList]
@@ -1060,23 +1105,23 @@
   [location : CompilerRegLocation]) : CompilerRegAssignmentList
   (match assignments
     [(CompilerRegAssignmentNil)
-      (CompilerRegAssignmentCons
+      (compiler-reg-assignment-cons
         (CompilerRegAssignment var location)
         CompilerRegAssignmentNil)]
     [(CompilerRegAssignmentCons item rest)
       (match item
         [(CompilerRegAssignment id _)
           (if (= id var)
-            (CompilerRegAssignmentCons
+            (compiler-reg-assignment-cons
               (CompilerRegAssignment var location)
-              rest)
+              (box-get rest))
             (if (> id var)
-              (CompilerRegAssignmentCons
+              (compiler-reg-assignment-cons
                 (CompilerRegAssignment var location)
                 assignments)
-              (CompilerRegAssignmentCons
+              (compiler-reg-assignment-cons
                 item
-                (compiler-reg-assignment-insert rest var location))))])]))
+                (compiler-reg-assignment-insert (box-get rest) var location))))])]))
 
 (define (compiler-reg-assignment-lookup
   [assignments : CompilerRegAssignmentList]
@@ -1090,7 +1135,7 @@
             (CompilerRegSomeLocation location)
             (if (> id var)
               CompilerRegNoLocation
-              (compiler-reg-assignment-lookup rest var)))])]))
+              (compiler-reg-assignment-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-location-eq?
   [left : CompilerRegLocation]
@@ -1117,7 +1162,7 @@
             (CompilerRegSomeInterval interval)
             (if (> id var)
               CompilerRegNoInterval
-              (compiler-reg-interval-lookup rest var)))])]))
+              (compiler-reg-interval-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-interval-overlap?
   [left : CompilerRegInterval]
@@ -1171,7 +1216,7 @@
         [(CompilerRegAssignment assigned-var assigned-location)
           (if (or (= assigned-var var) (= assigned-var ignore-var))
             (compiler-reg-location-conflicts?
-              rest
+              (box-get rest)
               intervals
               var
               ignore-var
@@ -1181,7 +1226,7 @@
               (compiler-reg-vars-interfere? intervals var assigned-var))
               true
               (compiler-reg-location-conflicts?
-                rest
+                (box-get rest)
                 intervals
                 var
                 ignore-var
@@ -1233,7 +1278,7 @@
                 (CompilerRegSomeLocation location)]
               [(CompilerRegNoLocation)
                 (compiler-reg-coalesce-location
-                  rest
+                  (box-get rest)
                   assignments
                   intervals
                   types
@@ -1249,13 +1294,13 @@
                   (CompilerRegSomeLocation location)]
                 [(CompilerRegNoLocation)
                   (compiler-reg-coalesce-location
-                    rest
+                    (box-get rest)
                     assignments
                     intervals
                     types
                     var)])
               (compiler-reg-coalesce-location
-                rest
+                (box-get rest)
                 assignments
                 intervals
                 types
@@ -1266,7 +1311,7 @@
   (match assignments
     [(CompilerRegAssignmentNil) 0]
     [(CompilerRegAssignmentCons _ rest)
-      (+ 1 (compiler-reg-assignment-count rest))]))
+      (+ 1 (compiler-reg-assignment-count (box-get rest)))]))
 
 (define (compiler-reg-spill-count [assignments : CompilerRegAssignmentList]) : i64
   (match assignments
@@ -1275,8 +1320,9 @@
       (match item
         [(CompilerRegAssignment _ location)
           (match location
-            [(CompilerRegSpill _) (+ 1 (compiler-reg-spill-count rest))]
-            [_ (compiler-reg-spill-count rest)])])]))
+            [(CompilerRegSpill _)
+              (+ 1 (compiler-reg-spill-count (box-get rest)))]
+            [_ (compiler-reg-spill-count (box-get rest))])])]))
 
 (define (compiler-reg-spill-at-interval
   [interval : CompilerRegInterval]
@@ -1341,7 +1387,7 @@
                 (match location
                   [(CompilerRegRegister reg)
                     (compiler-reg-assign-candidates
-                      rest
+                      (box-get rest)
                       regs
                       (compiler-reg-active-insert
                         expired
@@ -1352,7 +1398,7 @@
                       types)]
                   [(CompilerRegSpill _)
                     (compiler-reg-assign-candidates
-                      rest
+                      (box-get rest)
                       regs
                       expired
                       (compiler-reg-assignment-insert assignments var location)
@@ -1369,7 +1415,7 @@
                     assignments)
                     [(CompilerRegAssignState next-active next-assignments)
                       (compiler-reg-assign-candidates
-                        rest
+                        (box-get rest)
                         regs
                         next-active
                         next-assignments
@@ -1380,7 +1426,7 @@
                     [reg : String
                       (compiler-reg-first-free-register regs expired)]
                     (compiler-reg-assign-candidates
-                      rest
+                      (box-get rest)
                       regs
                       (compiler-reg-active-insert
                         expired
@@ -1410,14 +1456,14 @@
               (compiler-reg-active-count expired)
               (compiler-reg-string-list-count regs))
               (compiler-reg-assign-fixed-candidates
-                rest
+                (box-get rest)
                 regs
                 expired
                 assignments)
               (let
                 [reg : String (compiler-reg-first-free-register regs expired)]
                 (compiler-reg-assign-fixed-candidates
-                  rest
+                  (box-get rest)
                   regs
                   (compiler-reg-active-insert
                     expired

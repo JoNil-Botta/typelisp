@@ -366,6 +366,18 @@
             [(AstTypeNil) ""]
             [_ (string-append ", " (front-type-list-render rest))])))]))
 
+(define (front-lifetime-list-render [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) ""]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append
+          head
+          (match rest
+            [(AstLifetimeNil) ""]
+            [_ (string-append ", " (front-lifetime-list-render rest))])))]))
+
 (define (front-type-render [ty : AstType]) : String
   (match ty
     [(AstTyI64) "I64"]
@@ -420,8 +432,23 @@
         region
         (front-cat3 "\", " (front-type-render (box-get inner)) ")"))]
     [(AstTyEnum name) (front-cat3 "Enum(\"" name "\")")]
+    [(AstTyEnumArgs name lifetimes)
+      (front-cat3
+        "Enum(\""
+        name
+        (front-cat3 "\", [" (front-lifetime-list-render lifetimes) "])"))]
     [(AstTyStruct name) (front-cat3 "Struct(\"" name "\")")]
-    [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]))
+    [(AstTyStructArgs name lifetimes)
+      (front-cat3
+        "Struct(\""
+        name
+        (front-cat3 "\", [" (front-lifetime-list-render lifetimes) "])"))]
+    [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]
+    [(AstTyVarArgs name lifetimes)
+      (front-cat3
+        "Var(\""
+        name
+        (front-cat3 "\", [" (front-lifetime-list-render lifetimes) "])"))]))
 
 (define (front-binop-render [op : AstBinOp]) : String
   (match op
@@ -956,32 +983,38 @@
 (define (front-decl-render [decl : AstDecl]) : String
   (match decl
     [(AstDeclModule name) (front-cat3 "Module(\"" name "\")")]
-    [(AstDeclDef name ty value)
-      (front-cat3
-        "Def { name: \""
-        name
+    [(AstDeclDef name ty value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
         (front-cat3
-          "\", ty: "
-          (match ty
-            [(AstNoType) "None"]
-            [(AstSomeType some-ty) (front-type-render some-ty)])
-          (front-cat3 ", value: " (front-expr-render value) " }")))]
-    [(AstDeclDefFn name _ ret body)
-      (front-cat3
-        "DefFn { name: \""
-        name
+          "Def { name: \""
+          name
+          (front-cat3
+            "\", ty: "
+            (match ty
+              [(AstNoType) "None"]
+              [(AstSomeType some-ty) (front-type-render some-ty)])
+            (front-cat3 ", value: " (front-expr-render value) " }"))))]
+    [(AstDeclDefFn name _ ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
         (front-cat3
-          "\", ret: "
-          (front-type-render ret)
-          (front-cat3 ", body: " (front-expr-render body) " }")))]
-    [(AstDeclDefMacro name _ ret body)
-      (front-cat3
-        "DefMacro { name: \""
-        name
+          "DefFn { name: \""
+          name
+          (front-cat3
+            "\", ret: "
+            (front-type-render ret)
+            (front-cat3 ", body: " (front-expr-render body) " }"))))]
+    [(AstDeclDefMacro name _ ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
         (front-cat3
-          "\", ret: "
-          (front-type-render ret)
-          (front-cat3 ", body: " (front-expr-render body) " }")))]
+          "DefMacro { name: \""
+          name
+          (front-cat3
+            "\", ret: "
+            (front-type-render ret)
+            (front-cat3 ", body: " (front-expr-render body) " }"))))]
     [(AstDeclExtern name metadata ty)
       (front-cat3
         "Extern { name: \""
@@ -991,6 +1024,14 @@
           (ast-extern-metadata-symbol metadata)
           (front-cat3 "\", ty: " (front-type-render ty) " }")))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
+    [(AstDeclDefEnumLifetimes name lifetimes _)
+      (front-cat3
+        "DefEnum { name: \""
+        name
+        (front-cat3
+          "\", lifetimes: ["
+          (front-lifetime-list-render lifetimes)
+          "] }"))]
     [(AstDeclDefStruct name repr cleanup fields)
       (front-cat3
         "DefStruct { name: \""
@@ -1004,6 +1045,22 @@
             ", cleanup: "
             (front-struct-cleanup-render cleanup)
             (front-cat3 ", fields: " (front-field-list-render fields) " }"))))]
+    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+      (front-cat3
+        "DefStruct { name: \""
+        name
+        (front-cat3
+          "\", lifetimes: ["
+          (front-lifetime-list-render lifetimes)
+          (front-cat3
+            "], repr: "
+            (if (ast-struct-repr-c? repr)
+              "c"
+              "default")
+            (front-cat3
+              ", cleanup: "
+              (front-struct-cleanup-render cleanup)
+              (front-cat3 ", fields: " (front-field-list-render fields) " }")))))]
     [(AstDeclImport spec) (front-import-render spec)]
     [(AstDeclIncludeStr name path)
       (front-cat3
@@ -1012,15 +1069,24 @@
         (front-cat3 "\", path: \"" path "\" }"))]
     [(AstDeclExport items)
       (front-cat3 "Export { items: " (front-export-item-list-render items) " }")]
-    [(AstDeclTest name body _)
-      (front-cat3
-        "Test { name: \""
-        name
-        (front-cat3 "\", body: " (front-expr-render body) " }"))]
-    [(AstDeclUnsafe inner)
-      (front-cat3 "UnsafeDecl { inner: " (front-decl-render inner) " }")]
-    [(AstDeclComptimeDecl template)
-      (front-cat3 "ComptimeDecl { template: " (front-decl-render template) " }")]))
+    [(AstDeclTest name body-box _)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (front-cat3
+          "Test { name: \""
+          name
+          (front-cat3 "\", body: " (front-expr-render body) " }")))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (front-cat3 "UnsafeDecl { inner: " (front-decl-render inner) " }"))]
+    [(AstDeclComptimeDecl template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (front-cat3
+          "ComptimeDecl { template: "
+          (front-decl-render template)
+          " }"))]))
 
 (define (front-decl-list-render [decls : AstDeclList]) : String
   (match decls
@@ -1032,11 +1098,13 @@
 
 (define (front-program-render [program : AstProgram]) : String
   (match program
-    [(AstProgram decls)
-      (front-cat3
-        "Program {\n  decls: [\n"
-        (front-decl-list-render decls)
-        "  ],\n}\n")]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (front-cat3
+          "Program {\n  decls: [\n"
+          (front-decl-list-render decls)
+          "  ],\n}\n"))]))
 
 (define (front-parse-file [path : String]) : i64
   (match (parse-ast-source-diagnostic path (read-file path))

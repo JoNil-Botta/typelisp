@@ -1,6 +1,5 @@
 (begin
-  (print-string "not closing )")
   #\)'
   ; comment with ( and )
-  1)
+  (string-append "not closing )" (int->string 1)))
 .exit

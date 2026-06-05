@@ -166,11 +166,13 @@ Implemented today: `define` (variable / function), `defenum`, `defstruct`,
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
-The current default struct/enum representation is still compiler-owned and
-pointer-shaped, so existing recursive enums remain implementation-compatible.
-The specified path toward Rust-like inline aggregate layout uses explicit
-`(Box T)` fields/payloads for recursion; direct recursive-by-value inline
-cycles will be rejected once that opt-in layout lands.
+Ordinary `defstruct` and `defenum` declarations have stable inline layout
+metadata by default. Struct fields use declaration order with natural
+alignment; enums use an 8-byte tag at offset 0 plus max-aligned payload
+storage. The current lowering path may still use aggregate heap handles in
+runtime slots, and full recursive-by-value enforcement is being staged
+separately, but source that needs recursive aggregates should use explicit
+`(Box T)` fields/payloads at the recursive edge.
 
 `extern` defaults to the target C ABI with the linker symbol equal to the local
 name. `(:symbol "...")` can bind a local TypeLisp declaration to an exact
@@ -185,11 +187,11 @@ the specified migration contract. Macro exports/imports use the same module
 loader identities and path-resolution rules, with macro expansion happening
 before ordinary runtime typechecking.
 
-FFI-facing structs will use explicit `repr c` metadata and comptime layout
-queries such as `size-of`, `align-of`, and `offset-of`; this is specified for
-the selfhost compiler in `SPEC.md` and is being implemented in #987-#989.
-Default TypeLisp struct layout remains compiler-owned and should not be treated
-as a C ABI contract.
+Comptime layout queries such as `size-of`, `align-of`, and `offset-of` use
+ordinary aggregate layout. `(:repr c)` remains accepted on structs as
+compatibility/ABI-intent metadata, but it is not required for declaration-order
+field offsets. Target C ABI call/return lowering for aggregate externs is a
+separate backend contract.
 
 `stdlib/string.tl` is the canonical in-repo string utility module. Stdlib files
 are ordinary modules imported with explicit paths such as
@@ -220,7 +222,8 @@ Local packages can be described with a std-only S-expression manifest named
   (name "my-app")
   (version "0.1.0")
   (dependencies
-    (math "../math")))
+    (math "../math")
+    (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123")))))
 ```
 
 `typelisp build <file.tl> [-o <exe>]` compiles, assembles, and links one source
@@ -233,7 +236,12 @@ resolves `entry` relative to the manifest directory and writes outputs under
 libraries. `kind "bin"` builds a native executable named after the package;
 `kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
 `<name>.lib` on Windows). `kind "lib"` remains accepted as a compatibility
-alias. Dependency paths may be relative to that same package root or absolute.
+alias. Dependency entries may use a local path relative to that same package
+root, an absolute path, or the GitHub shorthand form shown above. `tag` and
+`branch` pins are also accepted, and the shorthand normalizes to
+`https://github.com/owner/repo.git#rev=commit`. Remote entries currently report
+a fetch-support diagnostic until git dependency fetch, cache, and lockfile
+support lands; local paths keep the existing behavior.
 Inside a package build, imports of the form `(import
 "pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
 `math`; ordinary string imports remain relative to the importing file, and
@@ -371,12 +379,13 @@ reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are mutable
 buffers reached through a live owner handle; `array-set!` is a temporary
-borrow-like compatibility operation until mutable references land. Struct and
-enum values are pointer-shaped internally; structs are read-only today because
-`struct-set!` is not implemented. Heap allocation uses a backend-emitted
-`tl_alloc` bump allocator and allocations live until process exit. See
-[SPEC.md](SPEC.md) sections 4.6.2 and 7 for the precise current and specified
-model.
+borrow-like compatibility operation until mutable references land. Structs are
+read-only today because `struct-set!` is not implemented. The current IR/ABI may
+still carry aggregate values through pointer-shaped heap handles in positions
+not covered by the new layout-query contract. Heap allocation uses a
+backend-emitted `tl_alloc` bump allocator and allocations live until process
+exit. See [SPEC.md](SPEC.md) sections 4.6.2 and 7 for the precise current and
+specified model.
 
 `SPEC.md` also defines the v1 owned `String` / borrowed `str` direction:
 string literals remain owned `String` values, `str` is a borrowed-only referent
@@ -394,9 +403,9 @@ type parameters; selfhost parser/typechecker support is tracked by #1722.
 `(box expr)` allocates `expr` in the active arena, and `(box-get b)` projects
 the boxed value for read/pattern use under the move rules. A box allocated
 inside `(with-arena r ...)` is typed as `(in r (Box T))` and cannot escape that
-scope. This does not change default aggregate layout by itself; it provides the
-explicit indirection needed before recursive structs/enums can opt into inline
-storage.
+scope. It provides the explicit indirection required by the default inline
+aggregate layout contract for recursive structs/enums; complete enforcement is
+staged separately.
 
 The v1 reclamation direction keeps the program-lifetime arena as the default
 allocation target and does not add general per-object `free` or GC yet.

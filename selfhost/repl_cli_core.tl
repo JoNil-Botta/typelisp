@@ -24,6 +24,8 @@
 
 (import "compiler_typecheck.tl")
 
+(import "compiler_load.tl")
+
 (import "build_run_core.tl")
 
 (defenum ReplTypeCommand
@@ -36,6 +38,10 @@
 (defenum ResultReplString
   (OkReplString String)
   (ErrReplString String))
+
+(defenum ResultReplDeclList
+  (OkReplDeclList AstDeclList)
+  (ErrReplDeclList String))
 
 (define (repl-banner) : String
   "TypeLisp REPL. Type .help for commands.\n")
@@ -155,6 +161,16 @@
             (repl-type-render head)
             (repl-type-list-render-spaced rest))))]))
 
+(define (repl-lifetime-list-render-spaced [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) ""]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append
+          " "
+          (string-append head (repl-lifetime-list-render-spaced rest))))]))
+
 (define (repl-type-render [ty : AstType]) : String
   (match ty
     [(AstTyI64) "i64"]
@@ -234,8 +250,26 @@
             " "
             (string-append (repl-type-render (box-get inner)) ")"))))]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name lifetimes)
+      (string-append
+        "("
+        (string-append
+          name
+          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
     [(AstTyStruct name) name]
-    [(AstTyVar name) (string-append "'" (string-append name "'"))]))
+    [(AstTyStructArgs name lifetimes)
+      (string-append
+        "("
+        (string-append
+          name
+          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
+    [(AstTyVar name) (string-append "'" (string-append name "'"))]
+    [(AstTyVarArgs name lifetimes)
+      (string-append
+        "("
+        (string-append
+          name
+          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]))
 
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))
@@ -362,12 +396,14 @@
     [(OkReplString body)
       (OkReplString
         (string-append
-          session-source
+          "(import \"stdlib/io.tl\")\n"
           (string-append
-            "\n"
+            session-source
             (string-append
-              (repl-display-helpers-source ty)
-              (repl-scratch-main-source body)))))]
+              "\n"
+              (string-append
+                (repl-display-helpers-source ty)
+                (repl-scratch-main-source body))))))]
     [(ErrReplString message) (ErrReplString message)]))
 
 (define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit
@@ -375,6 +411,24 @@
     (repl-try-remove-file-if-exists source-path)
     (repl-try-remove-dir-if-exists temp-dir)
     unit))
+
+(define (repl-session-source-path) : String
+  "repl-session.tl")
+
+(define (repl-load-session-decls [session-source : String]) : ResultReplDeclList
+  (match (compiler-load-source
+    (repl-session-source-path)
+    session-source
+    (sym-i64-empty))
+    [(OkCompilerLoad decls _) (OkReplDeclList decls)]
+    [(ErrCompilerLoad diag)
+      (ErrReplDeclList (compiler-diagnostic-message diag))]))
+
+(define (repl-typecheck-session-source [session-source : String]) : ResultCompilerTypecheck
+  (match (repl-load-session-decls session-source)
+    [(OkReplDeclList decls) (typecheck-compiler-program (ast-program decls))]
+    [(ErrReplDeclList message)
+      (ErrCompilerTypecheck (tc-diag-at-start message))]))
 
 (define (repl-report-run-status [status : i64]) : unit
   (if (= status 0)
@@ -422,8 +476,8 @@
   [session-source : String]
   [expr-source : String]
   [expr : AstExpr]) : unit
-  (match (parse-ast-source session-source)
-    [(OkAstProgram (AstProgram decls))
+  (match (repl-load-session-decls session-source)
+    [(OkReplDeclList decls)
       (match (typecheck-compiler-repl-expr decls expr)
         [(OkTcType ty)
           (match (repl-scratch-source session-source expr-source ty)
@@ -432,7 +486,7 @@
             [(ErrReplString message) (repl-print-error-line message)])]
         [(ErrTcType message)
           (repl-print-error-line (string-append "Error: " message))])]
-    [(ErrAstProgram message)
+    [(ErrReplDeclList message)
       (repl-print-error-line (string-append "Error: " message))]))
 
 (define (repl-handle-type-command
@@ -447,13 +501,13 @@
             (repl-print-error-line
               "Error: .type expects an expression, got a declaration")]
           [(AstReplExpr expr)
-            (match (parse-ast-source session-source)
-              [(OkAstProgram (AstProgram decls))
+            (match (repl-load-session-decls session-source)
+              [(OkReplDeclList decls)
                 (match (typecheck-compiler-repl-expr decls expr)
                   [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
                   [(ErrTcType message)
                     (repl-print-error-line (string-append "Error: " message))])]
-              [(ErrAstProgram message)
+              [(ErrReplDeclList message)
                 (repl-print-error-line (string-append "Error: " message))])])]
       [(ErrAstReplItem message)
         (repl-print-error-line (string-append "Error: " message))])))
@@ -468,7 +522,7 @@
         [(AstReplDecl _)
           (let
             [candidate : String (repl-session-candidate session-source input)]
-            (match (typecheck-compiler-source candidate)
+            (match (repl-typecheck-session-source candidate)
               [(OkCompilerTypecheck _) candidate]
               [(ErrCompilerTypecheck diag)
                 (begin

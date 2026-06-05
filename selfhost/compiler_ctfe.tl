@@ -313,6 +313,22 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
+          [(AstDeclDefStructLifetimes name _ _ _ fields)
+            (let
+              [key : String
+                (if (= (string-length module) 0)
+                  name
+                  (string-append module (string-append "/" name)))]
+              [info : CtfeReflectInfo
+                (CtfeReflectStruct
+                  key
+                  module
+                  name
+                  (ctfe-reflect-field-list-from-fields fields))]
+              (ctfe-reflections-from-decls
+                rest
+                module
+                (ctfe-reflect-info-add-names infos info name module)))]
           [(AstDeclDefEnum name variants)
             (let
               [key : String
@@ -329,47 +345,99 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
-          [(AstDeclComptimeDecl template)
-            (match template
-              [(AstDeclDefStruct name _ _ fields)
-                (let
-                  [key : String
-                    (if (= (string-length module) 0)
-                      name
-                      (string-append module (string-append "/" name)))]
-                  [info : CtfeReflectInfo
-                    (CtfeReflectStruct
-                      key
+          [(AstDeclDefEnumLifetimes name _ variants)
+            (let
+              [key : String
+                (if (= (string-length module) 0)
+                  name
+                  (string-append module (string-append "/" name)))]
+              [info : CtfeReflectInfo
+                (CtfeReflectEnum
+                  key
+                  module
+                  name
+                  (ctfe-reflect-variant-list-from-variants variants))]
+              (ctfe-reflections-from-decls
+                rest
+                module
+                (ctfe-reflect-info-add-names infos info name module)))]
+          [(AstDeclComptimeDecl template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (match template
+                [(AstDeclDefStruct name _ _ fields)
+                  (let
+                    [key : String
+                      (if (= (string-length module) 0)
+                        name
+                        (string-append module (string-append "/" name)))]
+                    [info : CtfeReflectInfo
+                      (CtfeReflectStruct
+                        key
+                        module
+                        name
+                        (ctfe-reflect-field-list-from-fields fields))]
+                    (ctfe-reflections-from-decls
+                      rest
                       module
-                      name
-                      (ctfe-reflect-field-list-from-fields fields))]
-                  (ctfe-reflections-from-decls
-                    rest
-                    module
-                    (ctfe-reflect-info-add-names infos info name module)))]
-              [(AstDeclDefEnum name variants)
-                (let
-                  [key : String
-                    (if (= (string-length module) 0)
-                      name
-                      (string-append module (string-append "/" name)))]
-                  [info : CtfeReflectInfo
-                    (CtfeReflectEnum
-                      key
+                      (ctfe-reflect-info-add-names infos info name module)))]
+                [(AstDeclDefStructLifetimes name _ _ _ fields)
+                  (let
+                    [key : String
+                      (if (= (string-length module) 0)
+                        name
+                        (string-append module (string-append "/" name)))]
+                    [info : CtfeReflectInfo
+                      (CtfeReflectStruct
+                        key
+                        module
+                        name
+                        (ctfe-reflect-field-list-from-fields fields))]
+                    (ctfe-reflections-from-decls
+                      rest
                       module
-                      name
-                      (ctfe-reflect-variant-list-from-variants variants))]
-                  (ctfe-reflections-from-decls
-                    rest
-                    module
-                    (ctfe-reflect-info-add-names infos info name module)))]
-              [_ (ctfe-reflections-from-decls rest module infos)])]
+                      (ctfe-reflect-info-add-names infos info name module)))]
+                [(AstDeclDefEnum name variants)
+                  (let
+                    [key : String
+                      (if (= (string-length module) 0)
+                        name
+                        (string-append module (string-append "/" name)))]
+                    [info : CtfeReflectInfo
+                      (CtfeReflectEnum
+                        key
+                        module
+                        name
+                        (ctfe-reflect-variant-list-from-variants variants))]
+                    (ctfe-reflections-from-decls
+                      rest
+                      module
+                      (ctfe-reflect-info-add-names infos info name module)))]
+                [(AstDeclDefEnumLifetimes name _ variants)
+                  (let
+                    [key : String
+                      (if (= (string-length module) 0)
+                        name
+                        (string-append module (string-append "/" name)))]
+                    [info : CtfeReflectInfo
+                      (CtfeReflectEnum
+                        key
+                        module
+                        name
+                        (ctfe-reflect-variant-list-from-variants variants))]
+                    (ctfe-reflections-from-decls
+                      rest
+                      module
+                      (ctfe-reflect-info-add-names infos info name module)))]
+                [_ (ctfe-reflections-from-decls rest module infos)]))]
           [_ (ctfe-reflections-from-decls rest module infos)]))]))
 
 (define (ctfe-reflections-from-program [program : AstProgram]) : CtfeReflectInfoList
   (match program
-    [(AstProgram decls)
-      (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil)]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a
@@ -850,6 +918,32 @@
           (ctfe-type-key-with-reflections infos head)
           (string-append "_" (ctfe-type-list-key infos rest))))]))
 
+(define (ctfe-lifetime-list-key [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) "nil"]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append head (string-append "_" (ctfe-lifetime-list-key rest))))]))
+
+(define (ctfe-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
+  (match a
+    [(AstLifetimeNil)
+      (match b
+        [(AstLifetimeNil) true]
+        [_ false])]
+    [(AstLifetimeCons a-head a-rest)
+      (let
+        [a-rest : AstLifetimeList (box-get a-rest)]
+        (match b
+          [(AstLifetimeCons b-head b-rest)
+            (let
+              [b-rest : AstLifetimeList (box-get b-rest)]
+              (and
+                (string-eq a-head b-head)
+                (ctfe-lifetime-list-eq a-rest b-rest)))]
+          [_ false]))]))
+
 (define (ctfe-type-key-with-reflections
   [infos : CtfeReflectInfoList]
   [ty : AstType]) : String
@@ -929,8 +1023,26 @@
             "_"
             (ctfe-type-key-with-reflections infos (box-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
+    [(AstTyEnumArgs name lifetimes)
+      (string-append
+        "enumargs_"
+        (string-append
+          name
+          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
     [(AstTyStruct name) (string-append "struct_" name)]
-    [(AstTyVar name) (string-append "var_" name)]))
+    [(AstTyStructArgs name lifetimes)
+      (string-append
+        "structargs_"
+        (string-append
+          name
+          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
+    [(AstTyVar name) (string-append "var_" name)]
+    [(AstTyVarArgs name lifetimes)
+      (string-append
+        "varargs_"
+        (string-append
+          name
+          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
 
 (define (ctfe-type-key [ty : AstType]) : String
   (ctfe-type-key-with-reflections CtfeReflectInfoNil ty))
@@ -968,8 +1080,11 @@
     [(AstTyMutRef _ _) "mut-ref"]
     [(AstTyRegion _ _) "region"]
     [(AstTyEnum _) "enum"]
+    [(AstTyEnumArgs _ _) "enum"]
     [(AstTyStruct _) "struct"]
-    [(AstTyVar _) "type-var"]))
+    [(AstTyStructArgs _ _) "struct"]
+    [(AstTyVar _) "type-var"]
+    [(AstTyVarArgs _ _) "type-var"]))
 
 (define (ctfe-eval-type-arg
   [arg : AstExpr]
@@ -1233,7 +1348,14 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (ctfe-type-size layouts (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ size _ _) size])]
+        [(CtfeNoLayoutInfo) 8])]
+    [(AstTyStructArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1241,6 +1363,12 @@
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ size _ _) size])]
+        [(CtfeNoLayoutInfo) -1])]
+    [(AstTyVarArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1277,7 +1405,14 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (ctfe-type-align layouts (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ _ align _) align])]
+        [(CtfeNoLayoutInfo) 8])]
+    [(AstTyStructArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1285,6 +1420,12 @@
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ _ align _) align])]
+        [(CtfeNoLayoutInfo) -1])]
+    [(AstTyVarArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1358,11 +1499,14 @@
   [ty : AstType]) : CtfeMaybeLayoutInfo
   (match ty
     [(AstTyStruct name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyStructArgs name _) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyEnum name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyEnumArgs name _) (ctfe-layout-info-lookup layouts name)]
     [(AstTyVar name) (ctfe-layout-info-lookup layouts name)]
     [(AstTyRegion _ inner) (ctfe-layout-info-for-type layouts (box-get inner))]
     [_ (CtfeNoLayoutInfo)]))
 
-;; Evaluate `(offset-of (type ReprCStruct) field)` to the field byte offset.
+;; Evaluate `(offset-of (type Struct) field)` to the field byte offset.
 ;; The field name is intentionally syntactic: a bare variable names the field
 ;; and is not resolved as a runtime/comptime variable.
 (define (ctfe-eval-offset-from-layout
@@ -1382,7 +1526,7 @@
                 (string-append "offset-of unknown field " field-name)))
             (OkCtfe (CtfeI64 offset) fuel)))
         (ErrCtfe
-          (ctfe-diagnostic-at-expr expr "offset-of requires repr c struct type")))]))
+          (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type")))]))
 
 (define (ctfe-eval-offset-from-type
   [ty : AstType]
@@ -1395,7 +1539,7 @@
       (ctfe-eval-offset-from-layout field-name info expr fuel)]
     [(CtfeNoLayoutInfo)
       (ErrCtfe
-        (ctfe-diagnostic-at-expr expr "offset-of requires repr c struct type"))]))
+        (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type"))]))
 
 (define (ctfe-eval-offset-value
   [value : CompilerCtfeValue]
@@ -1630,8 +1774,11 @@
 (define (ctfe-type-nominal-key [ty : AstType]) : String
   (match ty
     [(AstTyStruct name) name]
+    [(AstTyStructArgs name _) name]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name _) name]
     [(AstTyVar name) name]
+    [(AstTyVarArgs name _) name]
     [_ ""]))
 
 (define (ctfe-struct-field-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
@@ -4140,13 +4287,34 @@
       (match b
         [(AstTyEnum b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyEnumArgs a-name a-lifetimes)
+      (match b
+        [(AstTyEnumArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyStruct a-name)
       (match b
         [(AstTyStruct b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyStructArgs a-name a-lifetimes)
+      (match b
+        [(AstTyStructArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyVar a-name)
       (match b
         [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVarArgs a-name a-lifetimes)
+      (match b
+        [(AstTyVarArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
 
 (define (compiler-ctfe-type-literal-ok?) : bool
@@ -4293,6 +4461,7 @@
   (let
     [packet-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Packet"))]
     [box-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Box"))]
+    [choice-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Choice"))]
     [env : CtfeEnv
       (ctfe-env-with-layouts
         (CtfeLayoutInfoCons
@@ -4307,40 +4476,72 @@
                 (CtfeLayoutField "count" 8)
                 CtfeLayoutFieldNil)))
           (CtfeLayoutInfoCons
-            (CtfeLayoutInfo "Box" false 8 8 CtfeLayoutFieldNil)
-            CtfeLayoutInfoNil)))]
-    (and
-      (compiler-ctfe-eval-i64-ok?
+            (CtfeLayoutInfo
+              "Box"
+              true
+              8
+              8
+              (CtfeLayoutFieldCons (CtfeLayoutField "x" 0) CtfeLayoutFieldNil))
+            (CtfeLayoutInfoCons
+              (CtfeLayoutInfo "Choice" false 24 8 CtfeLayoutFieldNil)
+              CtfeLayoutInfoNil))))]
+    [ok : bool true]
+    (begin
+      (if (compiler-ctfe-eval-i64-ok?
         (compiler-ctfe-call1 "size-of" packet-ty)
         env
         16)
-      (and
-        (compiler-ctfe-eval-i64-ok?
-          (compiler-ctfe-call1 "align-of" packet-ty)
-          env
-          8)
-        (and
-          (compiler-ctfe-eval-i64-ok?
-            (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "count"))
-            env
-            8)
-          (and
-            (compiler-ctfe-eval-i64-ok?
-              (compiler-ctfe-call1 "size-of" box-ty)
-              env
-              8)
-            (and
-              (compiler-ctfe-eval-error-ok?
-                (compiler-ctfe-call2 "offset-of" box-ty (AstExprVar "x"))
-                env
-                "offset-of requires repr c struct type")
-              (compiler-ctfe-eval-error-ok?
-                (compiler-ctfe-call2
-                  "offset-of"
-                  packet-ty
-                  (AstExprVar "missing"))
-                env
-                "offset-of unknown field missing"))))))))
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "align-of" packet-ty)
+        env
+        8)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "count"))
+        env
+        8)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "size-of" box-ty)
+        env
+        8)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call2 "offset-of" box-ty (AstExprVar "x"))
+        env
+        0)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "size-of" choice-ty)
+        env
+        24)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "align-of" choice-ty)
+        env
+        8)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call2 "offset-of" choice-ty (AstExprVar "tag"))
+        env
+        "offset-of requires struct layout type")
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "missing"))
+        env
+        "offset-of unknown field missing")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-ctfe-reflection-env) : CtfeEnv
   (ctfe-env-with-reflections

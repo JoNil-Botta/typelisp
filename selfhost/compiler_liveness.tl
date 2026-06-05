@@ -16,7 +16,7 @@
 
 (defenum CompilerLiveInstrSetList
   (CompilerLiveInstrSetNil)
-  (CompilerLiveInstrSetCons CompilerLiveI64Set CompilerLiveInstrSetList))
+  (CompilerLiveInstrSetCons CompilerLiveI64Set (Box CompilerLiveInstrSetList)))
 
 (defenum CompilerLiveBlock
   (CompilerLiveBlock
@@ -30,7 +30,7 @@
 
 (defenum CompilerLiveBlockList
   (CompilerLiveBlockNil)
-  (CompilerLiveBlockCons CompilerLiveBlock CompilerLiveBlockList))
+  (CompilerLiveBlockCons CompilerLiveBlock (Box CompilerLiveBlockList)))
 
 (defenum CompilerFunctionLiveness
   (CompilerFunctionLiveness CompilerLiveBlockList))
@@ -55,6 +55,16 @@
 
 (defenum CompilerLiveInstrScan
   (CompilerLiveInstrScan CompilerLiveInstrSetList CompilerLiveI64Set))
+
+(define (compiler-live-instr-set-cons
+  [head : CompilerLiveI64Set]
+  [rest : CompilerLiveInstrSetList]) : CompilerLiveInstrSetList
+  (CompilerLiveInstrSetCons head (box rest)))
+
+(define (compiler-live-block-cons
+  [head : CompilerLiveBlock]
+  [rest : CompilerLiveBlockList]) : CompilerLiveBlockList
+  (CompilerLiveBlockCons head (box rest)))
 
 (define (compiler-live-set-word-bits) : i64
   31)
@@ -631,7 +641,7 @@
   (match blocks
     [(IrBlockNil) CompilerLiveBlockNil]
     [(IrBlockCons block rest)
-      (CompilerLiveBlockCons
+      (compiler-live-block-cons
         (compiler-live-build-block block)
         (compiler-live-build-blocks (box-get rest)))]))
 
@@ -645,7 +655,7 @@
         [(CompilerLiveBlock block-label _ _ _ _ _ _)
           (if (string-eq block-label label)
             (CompilerLiveSomeBlock block)
-            (compiler-live-find-block rest label))])]))
+            (compiler-live-find-block (box-get rest) label))])]))
 
 (define (compiler-live-successor-live-out
   [successors : CompilerLiveLabelSet]
@@ -703,10 +713,10 @@
       (let
         [updated : CompilerLiveBlock
           (compiler-live-recompute-block block all-blocks)]
-        (match (compiler-live-update-blocks rest all-blocks)
+        (match (compiler-live-update-blocks (box-get rest) all-blocks)
           [(CompilerLiveBlockListStep updated-rest rest-changed)
             (CompilerLiveBlockListStep
-              (CompilerLiveBlockCons updated updated-rest)
+              (compiler-live-block-cons updated updated-rest)
               (if (compiler-live-block-liveness-eq? block updated)
                 rest-changed
                 true))]))]))
@@ -740,7 +750,7 @@
       (match (compiler-live-instr-scan (box-get rest) live-out)
         [(CompilerLiveInstrScan rest-after live-after)
           (CompilerLiveInstrScan
-            (CompilerLiveInstrSetCons live-after rest-after)
+            (compiler-live-instr-set-cons live-after rest-after)
             (compiler-live-before-instr live-after instr))])]))
 
 (define (compiler-live-fill-instr-after-block
@@ -790,9 +800,9 @@
   (match blocks
     [(CompilerLiveBlockNil) CompilerLiveBlockNil]
     [(CompilerLiveBlockCons block rest)
-      (CompilerLiveBlockCons
+      (compiler-live-block-cons
         (compiler-live-fill-instr-after-block ir-blocks block)
-        (compiler-live-fill-instr-after-blocks ir-blocks rest))]))
+        (compiler-live-fill-instr-after-blocks ir-blocks (box-get rest)))]))
 
 (define (compiler-live-analyze-function [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
@@ -843,7 +853,7 @@
     [(CompilerLiveInstrSetCons head rest)
       (if (= index 0)
         head
-        (compiler-live-instr-set-list-nth rest (- index 1)))]))
+        (compiler-live-instr-set-list-nth (box-get rest) (- index 1)))]))
 
 (define (compiler-live-after
   [liveness : CompilerFunctionLiveness]

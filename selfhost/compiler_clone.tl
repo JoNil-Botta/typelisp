@@ -16,12 +16,29 @@
 
 (import "compiler_ast_types.tl")
 
+(import "stdlib/hashmap.tl")
+
+(defstruct CloneNameSet
+  (map StringI64Map))
+
 (defenum CloneNameList
   (CloneNameNil)
   (CloneNameCons String CloneNameList))
 
 (define (clone-helper-name [type-name : String]) : String
   (string-append "clone$" type-name))
+
+(define (clone-name-set-empty) : CloneNameSet
+  (CloneNameSet (string-i64-map-with-capacity 8)))
+
+(define (clone-name-set-map [names : CloneNameSet]) : StringI64Map
+  (struct-get names map))
+
+(define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
+  (CloneNameSet (string-i64-map-put (clone-name-set-map names) name 1)))
+
+(define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
+  (string-i64-map-contains? (clone-name-set-map names) name))
 
 (define (clone-name-list-contains? [names : CloneNameList] [name : String]) : bool
   (match names
@@ -31,11 +48,41 @@
         true
         (clone-name-list-contains? rest name))]))
 
+(define (clone-name-set-len [names : CloneNameSet]) : i64
+  (string-i64-map-len (clone-name-set-map names)))
+
+(define (clone-name-set-capacity [names : CloneNameSet]) : i64
+  (string-i64-map-capacity (clone-name-set-map names)))
+
+(define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
+  (if (<= count 0)
+    names
+    (clone-name-set-smoke-insert-count
+      (clone-name-set-insert names (string-append "T" (int->string count)))
+      (- count 1))))
+
+(define (clone-name-set-smoke-ok?) : bool
+  (let
+    [empty : CloneNameSet (clone-name-set-empty)]
+    [one : CloneNameSet (clone-name-set-insert empty "Alpha")]
+    [dupe : CloneNameSet (clone-name-set-insert one "Alpha")]
+    [seed-capacity : i64 (clone-name-set-capacity dupe)]
+    [grown : CloneNameSet (clone-name-set-smoke-insert-count dupe 10)]
+    (and
+      (not (clone-name-set-contains? one "Beta"))
+      (and
+        (clone-name-set-contains? one "Alpha")
+        (and
+          (= (clone-name-set-len dupe) 1)
+          (and
+            (= (clone-name-set-len grown) 11)
+            (> (clone-name-set-capacity grown) seed-capacity)))))))
+
 ;; A field type is clone-able given the current clone-able-name set: scalars,
 ;; String, tuples, fixed arrays, and dynamic arrays are clone-able recursively; a
 ;; named type (parsed as AstTyVar, or resolved to AstTyEnum/AstTyStruct) is
 ;; clone-able iff it is in `names`; everything else is not.
-(define (clone-field-type-able? [ty : AstType] [names : CloneNameList]) : bool
+(define (clone-field-type-able? [ty : AstType] [names : CloneNameSet]) : bool
   (match ty
     [(AstTyI64) true]
     [(AstTyI32) true]
@@ -57,14 +104,14 @@
     [(AstTyDynArray elem) (clone-field-type-able? (box-get elem) names)]
     [(AstTyBox elem) (clone-field-type-able? (box-get elem) names)]
     [(AstTyRegion _ inner) (clone-field-type-able? (box-get inner) names)]
-    [(AstTyVar name) (clone-name-list-contains? names name)]
-    [(AstTyEnum name) (clone-name-list-contains? names name)]
-    [(AstTyStruct name) (clone-name-list-contains? names name)]
+    [(AstTyVar name) (clone-name-set-contains? names name)]
+    [(AstTyEnum name) (clone-name-set-contains? names name)]
+    [(AstTyStruct name) (clone-name-set-contains? names name)]
     [_ false]))
 
 (define (clone-field-type-list-able?
   [types : AstTypeList]
-  [names : CloneNameList]) : bool
+  [names : CloneNameSet]) : bool
   (match types
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
@@ -76,7 +123,7 @@
 
 (define (clone-variant-list-able?
   [variants : AstVariantDefList]
-  [names : CloneNameList]) : bool
+  [names : CloneNameSet]) : bool
   (match variants
     [(AstVariantDefNil) true]
     [(AstVariantDefCons variant rest)
@@ -90,7 +137,7 @@
 
 (define (clone-struct-fields-able?
   [fields : AstFieldDefList]
-  [names : CloneNameList]) : bool
+  [names : CloneNameSet]) : bool
   (match fields
     [(AstFieldDefNil) true]
     [(AstFieldDefCons field rest)
@@ -107,8 +154,8 @@
 ;; shrinking (monotone decreasing, so it terminates).
 (define (clone-fixpoint-step
   [decls : AstDeclList]
-  [names : CloneNameList]
-  [acc : CloneNameList]) : CloneNameList
+  [names : CloneNameSet]
+  [acc : CloneNameSet]) : CloneNameSet
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
@@ -120,24 +167,19 @@
               rest
               names
               (if (clone-variant-list-able? variants names)
-                (CloneNameCons name acc)
+                (clone-name-set-insert acc name)
                 acc))]
           [(AstDeclDefStruct name _ _ fields)
             (clone-fixpoint-step
               rest
               names
               (if (clone-struct-fields-able? fields names)
-                (CloneNameCons name acc)
+                (clone-name-set-insert acc name)
                 acc))]
           [_ (clone-fixpoint-step rest names acc)]))]))
 
-(define (clone-name-list-len [names : CloneNameList]) : i64
-  (match names
-    [(CloneNameNil) 0]
-    [(CloneNameCons _ rest) (+ 1 (clone-name-list-len rest))]))
-
 ;; Initial over-approximation: every enum/struct name is assumed clone-able.
-(define (clone-all-type-names [decls : AstDeclList] [acc : CloneNameList]) : CloneNameList
+(define (clone-all-type-names [decls : AstDeclList] [acc : CloneNameSet]) : CloneNameSet
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
@@ -145,15 +187,16 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclDefEnum name _)
-            (clone-all-type-names rest (CloneNameCons name acc))]
+            (clone-all-type-names rest (clone-name-set-insert acc name))]
           [(AstDeclDefStruct name _ _ _)
-            (clone-all-type-names rest (CloneNameCons name acc))]
+            (clone-all-type-names rest (clone-name-set-insert acc name))]
           [_ (clone-all-type-names rest acc)]))]))
 
-(define (clone-fixpoint [decls : AstDeclList] [names : CloneNameList]) : CloneNameList
+(define (clone-fixpoint [decls : AstDeclList] [names : CloneNameSet]) : CloneNameSet
   (let
-    [next : CloneNameList (clone-fixpoint-step decls names (CloneNameNil))]
-    (if (= (clone-name-list-len next) (clone-name-list-len names))
+    [next : CloneNameSet
+      (clone-fixpoint-step decls names (clone-name-set-empty))]
+    (if (= (clone-name-set-len next) (clone-name-set-len names))
       next
       (clone-fixpoint decls next))))
 
@@ -225,7 +268,7 @@
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
 (define (clone-make-helper-decl [type-name : String] [body : AstExpr]) : AstDecl
-  (AstDeclDefFn
+  (ast-decl-def-fn
     (clone-helper-name type-name)
     (ast-param-cons (AstParam "x" (AstTyVar type-name) false) AstParamNil)
     (AstTyVar type-name)
@@ -368,7 +411,7 @@
   [fn-name : String]
   [type-name : String]
   [body : AstExpr]) : AstDecl
-  (AstDeclDefFn
+  (ast-decl-def-fn
     fn-name
     (ast-param-cons
       (AstParam "x" (AstTyVar type-name) false)
@@ -494,7 +537,7 @@
 ;; Generate clone$ helpers for every clone-able enum/struct, prepended in order.
 (define (clone-generate-decls
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [acc : AstDeclList]) : AstDeclList
   (match decls
     [(AstDeclNil) acc]
@@ -506,14 +549,14 @@
             (clone-generate-decls
               rest
               able
-              (if (clone-name-list-contains? able name)
+              (if (clone-name-set-contains? able name)
                 (clone-emit-enum-clone name variants acc)
                 acc))]
           [(AstDeclDefStruct name _ _ fields)
             (clone-generate-decls
               rest
               able
-              (if (clone-name-list-contains? able name)
+              (if (clone-name-set-contains? able name)
                 (ast-decl-cons
                   (clone-make-helper-decl
                     name
@@ -534,7 +577,7 @@
 
 (define (clone-root-add-type-list
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [types : AstTypeList]) : CloneNameList
   (match types
@@ -550,7 +593,7 @@
 
 (define (clone-root-add-fields
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [fields : AstFieldDefList]) : CloneNameList
   (match fields
@@ -568,7 +611,7 @@
 
 (define (clone-root-add-variants
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [variants : AstVariantDefList]) : CloneNameList
   (match variants
@@ -587,7 +630,7 @@
 (define (clone-root-add-name-deps
   [decls : AstDeclList]
   [cursor : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [name : String]) : CloneNameList
   (match cursor
@@ -608,10 +651,10 @@
 
 (define (clone-root-add-name
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [name : String]) : CloneNameList
-  (if (clone-name-list-contains? able name)
+  (if (clone-name-set-contains? able name)
     (if (clone-name-list-contains? roots name)
       roots
       (clone-root-add-name-deps
@@ -624,7 +667,7 @@
 
 (define (clone-root-add-type
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [ty : AstType]) : CloneNameList
   (match ty
@@ -641,7 +684,7 @@
 
 (define (clone-root-expand
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [cursor : CloneNameList]) : CloneNameList
   (match cursor
@@ -655,34 +698,48 @@
           (clone-root-add-name-deps decls decls able with-name name)
           rest))]))
 
+(define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
+  (match names
+    [(CloneNameNil) acc]
+    [(CloneNameCons name rest)
+      (clone-name-list-to-set rest (clone-name-set-insert acc name))]))
+
 ;; Append the generated clone$ helpers AFTER the program's decls, so the real
 ;; declarations keep their source paths (the generated helpers, being last, get
 ;; the empty path on lookup). Top-level functions are mutually visible, so the
 ;; helpers can forward-reference the type constructors and each other.
 (define (clone-augment-decls [decls : AstDeclList]) : AstDeclList
   (let
-    [able : CloneNameList
-      (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil)))]
+    [able : CloneNameSet
+      (clone-fixpoint decls (clone-all-type-names decls (clone-name-set-empty)))]
     (clone-decl-list-append decls (clone-generate-decls decls able AstDeclNil))))
 
 (define (clone-augment-decls-with-roots
   [decls : AstDeclList]
   [roots : CloneNameList]) : AstDeclList
   (let
-    [able : CloneNameList
-      (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil)))]
+    [able : CloneNameSet
+      (clone-fixpoint decls (clone-all-type-names decls (clone-name-set-empty)))]
     [expanded : CloneNameList (clone-root-expand decls able roots roots)]
     (clone-decl-list-append
       decls
-      (clone-generate-decls decls expanded AstDeclNil))))
+      (clone-generate-decls
+        decls
+        (clone-name-list-to-set expanded (clone-name-set-empty))
+        AstDeclNil))))
 
 (define (clone-augment-program [program : AstProgram]) : AstProgram
   (match program
-    [(AstProgram decls) (AstProgram (clone-augment-decls decls))]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-program (clone-augment-decls decls)))]))
 
 (define (clone-augment-program-with-roots
   [program : AstProgram]
   [roots : CloneNameList]) : AstProgram
   (match program
-    [(AstProgram decls)
-      (AstProgram (clone-augment-decls-with-roots decls roots))]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-program (clone-augment-decls-with-roots decls roots)))]))

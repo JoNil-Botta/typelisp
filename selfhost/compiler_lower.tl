@@ -60,8 +60,11 @@
 
 (defenum CompilerLowerMode
   (CompilerLowerScalar)
+  (CompilerLowerLinuxScalar)
   (CompilerLowerAvx2)
+  (CompilerLowerLinuxAvx2)
   (CompilerLowerAvx512)
+  (CompilerLowerLinuxAvx512)
   (CompilerLowerInlineAggregates))
 
 (defenum LowerState
@@ -127,6 +130,11 @@
 (defenum ResultLowerArgs
   (OkLowerArgs LowerState CompilerIrValueList)
   (ErrLowerArgs CompilerDiagnostic))
+
+(defenum LowerCAbiAggregate
+  (LowerCAbiNoAggregate)
+  (LowerCAbiIntegerAggregate AstType i64)
+  (LowerCAbiUnsupportedAggregate String))
 
 (defenum ResultLowerState
   (OkLowerState LowerState)
@@ -599,13 +607,15 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
-    [(AstDeclUnsafe inner)
-      (lower-name-env-add-decl-in-module
-        names
-        entry-path
-        decl-path
-        module
-        inner)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-name-env-add-decl-in-module
+          names
+          entry-path
+          decl-path
+          module
+          inner))]
     [_ names]))
 
 (define (lower-name-env-add-decl
@@ -683,13 +693,15 @@
           name
           (lower-decl-logical-name entry-path decl-path module name))
         names)]
-    [(AstDeclUnsafe inner)
-      (lower-name-env-add-clone-decl-in-module
-        names
-        entry-path
-        decl-path
-        module
-        inner)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-name-env-add-clone-decl-in-module
+          names
+          entry-path
+          decl-path
+          module
+          inner))]
     [_ names]))
 
 (define (lower-name-env-add-clone-decls-in-module
@@ -773,24 +785,28 @@
         names)]
     [(AstDeclExtern name _ _)
       (LowerNameBind (compiler-symbol-module-key alias name) name names)]
-    [(AstDeclComptimeDecl template)
-      (lower-name-env-add-decl-alias-in-module
-        names
-        entry-path
-        decl-path
-        alias
-        module
-        template
-        path-aware)]
-    [(AstDeclUnsafe inner)
-      (lower-name-env-add-decl-alias-in-module
-        names
-        entry-path
-        decl-path
-        alias
-        module
-        inner
-        path-aware)]
+    [(AstDeclComptimeDecl template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-name-env-add-decl-alias-in-module
+          names
+          entry-path
+          decl-path
+          alias
+          module
+          template
+          path-aware))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-name-env-add-decl-alias-in-module
+          names
+          entry-path
+          decl-path
+          alias
+          module
+          inner
+          path-aware))]
     [_ names]))
 
 (define (lower-name-env-add-module-aliases
@@ -973,7 +989,10 @@
         name
         (lower-current-decl-logical-name names module name)
         names)]
-    [(AstDeclUnsafe inner) (lower-name-env-add-local-decl names module inner)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-name-env-add-local-decl names module inner))]
     [_ names]))
 
 (define (lower-module-local-type-env-bind-qualified
@@ -1026,10 +1045,14 @@
       (lower-module-local-type-env-add-variants top-env env module variants)]
     [(AstDeclDefStruct name _ _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
-    [(AstDeclComptimeDecl template)
-      (lower-module-local-type-env-add-decl top-env env module template)]
-    [(AstDeclUnsafe inner)
-      (lower-module-local-type-env-add-decl top-env env module inner)]
+    [(AstDeclComptimeDecl template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-module-local-type-env-add-decl top-env env module template))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-module-local-type-env-add-decl top-env env module inner))]
     [_ (OkTcEnv env)]))
 
 (define (lower-module-local-envs-list
@@ -1085,8 +1108,10 @@
   (if (string-eq module "")
     (OkLowerModuleLocalEnv top-env names)
     (match (tc-context-program ctx)
-      [(AstProgram decls)
-        (lower-module-local-envs-list top-env decls top-env names module "")])))
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (lower-module-local-envs-list top-env decls top-env names module ""))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -1163,7 +1188,7 @@
 (define (lower-clone-root-add-type-list
   [ctx : TcContext]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [types : AstTypeList]) : CloneNameList
   (match types
@@ -1181,7 +1206,7 @@
 (define (lower-clone-root-add-field-list
   [ctx : TcContext]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [fields : AstFieldDefList]) : CloneNameList
   (match fields
@@ -1201,7 +1226,7 @@
 (define (lower-clone-root-add-variant-list
   [ctx : TcContext]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [variants : AstVariantDefList]) : CloneNameList
   (match variants
@@ -1221,7 +1246,7 @@
 (define (lower-clone-root-add-named-deps
   [ctx : TcContext]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [name : String]) : CloneNameList
   (match decls
@@ -1243,12 +1268,12 @@
 (define (lower-clone-root-add-named
   [ctx : TcContext]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [name : String]) : CloneNameList
   (let
     [helper-name : String (tc-qualified-name-base name)]
-    (if (clone-name-list-contains? able helper-name)
+    (if (clone-name-set-contains? able helper-name)
       (if (clone-name-list-contains? roots helper-name)
         roots
         (lower-clone-root-add-named-deps
@@ -1262,7 +1287,7 @@
 (define (lower-clone-root-add-type
   [ctx : TcContext]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [ty : AstType]) : CloneNameList
   (let
@@ -1391,7 +1416,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [exprs : AstExprList]) : CloneNameList
   (match exprs
@@ -1424,7 +1449,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [bindings : AstLetBindingList]) : LowerCloneRootEnv
   (match bindings
@@ -1452,7 +1477,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : CloneNameList
@@ -1482,7 +1507,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [bindings : AstResourceBindingList]) : CloneNameList
   (match bindings
@@ -1513,7 +1538,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [callee : AstExpr]
   [args : AstExprList]) : CloneNameList
@@ -1548,7 +1573,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [expr : AstExpr]) : CloneNameList
   (match expr
@@ -1962,7 +1987,7 @@
   [local-env : TcTypeEnv]
   [decls : AstDeclList]
   [all-decls : AstDeclList]
-  [able : CloneNameList]
+  [able : CloneNameSet]
   [roots : CloneNameList]
   [names : LowerNameEnv]
   [module : String]) : CloneNameList
@@ -1972,37 +1997,42 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe inner)
-            (lower-clone-roots-decls-in-module
-              ctx
-              top-env
-              local-env
-              (ast-decl-cons inner rest)
-              all-decls
-              able
-              roots
-              names
-              module)]
-          [(AstDeclDef _ _ expr)
-            (lower-clone-roots-decls-in-module
-              ctx
-              top-env
-              local-env
-              rest
-              all-decls
-              able
-              (lower-clone-roots-expr
-                (tc-context-with-module ctx module)
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (lower-clone-roots-decls-in-module
+                ctx
+                top-env
                 local-env
+                (ast-decl-cons inner rest)
                 all-decls
                 able
                 roots
-                expr)
-              names
-              module)]
-          [(AstDeclDefFn _ params ret body)
+                names
+                module))]
+          [(AstDeclDef _ _ expr-box)
+            (let
+              [expr : AstExpr (box-get expr-box)]
+              (lower-clone-roots-decls-in-module
+                ctx
+                top-env
+                local-env
+                rest
+                all-decls
+                able
+                (lower-clone-roots-expr
+                  (tc-context-with-module ctx module)
+                  local-env
+                  all-decls
+                  able
+                  roots
+                  expr)
+                names
+                module))]
+          [(AstDeclDefFn _ params ret body-box)
             (let
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
+              [body : AstExpr (box-get body-box)]
               [fn-env : TcTypeEnv
                 (tc-bind-return-type
                   (tc-bind-params decl-ctx local-env params)
@@ -2065,17 +2095,21 @@
   [names : LowerNameEnv]
   [program : AstProgram]) : CloneNameList
   (match program
-    [(AstProgram decls)
-      (lower-clone-roots-decls-in-module
-        ctx
-        top-env
-        top-env
-        decls
-        decls
-        (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil)))
-        (CloneNameNil)
-        names
-        "")]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (lower-clone-roots-decls-in-module
+          ctx
+          top-env
+          top-env
+          decls
+          decls
+          (clone-fixpoint
+            decls
+            (clone-all-type-names decls (clone-name-set-empty)))
+          (CloneNameNil)
+          names
+          ""))]))
 
 (define (lower-reachable-clone-roots
   [program : AstProgram]
@@ -2454,21 +2488,27 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDef _ _ expr)
-            (lower-reach-global-decls
-              all-functions
-              names
-              (lower-reach-expr all-functions names state expr)
-              rest)]
-          [(AstDeclComptimeDecl inner)
-            (lower-reach-global-decls
-              all-functions
-              names
-              (match inner
-                [(AstDeclDef _ _ expr)
-                  (lower-reach-expr all-functions names state expr)]
-                [_ state])
-              rest)]
+          [(AstDeclDef _ _ expr-box)
+            (let
+              [expr : AstExpr (box-get expr-box)]
+              (lower-reach-global-decls
+                all-functions
+                names
+                (lower-reach-expr all-functions names state expr)
+                rest))]
+          [(AstDeclComptimeDecl inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (lower-reach-global-decls
+                all-functions
+                names
+                (match inner
+                  [(AstDeclDef _ _ expr-box)
+                    (let
+                      [expr : AstExpr (box-get expr-box)]
+                      (lower-reach-expr all-functions names state expr))]
+                  [_ state])
+                rest))]
           [_ (lower-reach-global-decls all-functions names state rest)]))]))
 
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
@@ -2485,8 +2525,12 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
-          [(AstDeclUnsafe (AstDeclDefFn _ _ _ _))
-            (+ 1 (lower-function-decl-count rest))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+                [_ (lower-function-decl-count rest)]))]
           [_ (lower-function-decl-count rest)]))]))
 
 (define (lower-function-body-index-add
@@ -2542,26 +2586,45 @@
               entry-path
               next-module
               index)]
-          [(AstDeclDefFn name _ _ body)
-            (lower-function-body-index-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              (lower-function-body-index-add
-                index
-                (lower-decl-logical-name entry-path decl-path module name)
-                body))]
-          [(AstDeclUnsafe (AstDeclDefFn name _ _ body))
-            (lower-function-body-index-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              (lower-function-body-index-add
-                index
-                (lower-decl-logical-name entry-path decl-path module name)
-                body))]
+          [(AstDeclDefFn name _ _ body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (lower-function-body-index-from-decls-in-module
+                rest
+                rest-paths
+                entry-path
+                module
+                (lower-function-body-index-add
+                  index
+                  (lower-decl-logical-name entry-path decl-path module name)
+                  body)))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn name _ _ body-box)
+                  (let
+                    [body : AstExpr (box-get body-box)]
+                    (lower-function-body-index-from-decls-in-module
+                      rest
+                      rest-paths
+                      entry-path
+                      module
+                      (lower-function-body-index-add
+                        index
+                        (lower-decl-logical-name
+                          entry-path
+                          decl-path
+                          module
+                          name)
+                        body)))]
+                [_
+                  (lower-function-body-index-from-decls-in-module
+                    rest
+                    rest-paths
+                    entry-path
+                    module
+                    index)]))]
           [_
             (lower-function-body-index-from-decls-in-module
               rest
@@ -2752,8 +2815,9 @@
   [names : LowerNameEnv]
   [clone-roots : CloneNameList]) : LowerPrunedProgram
   (match program
-    [(AstProgram decls)
+    [(AstProgram decls-box)
       (let
+        [decls : AstDeclList (box-get decls-box)]
         [all-functions : StringI64Map
           (lower-function-set-from-decls decls paths entry-path)]
         [body-index : LowerFunctionBodyIndex
@@ -2784,7 +2848,7 @@
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram
-                (AstProgram
+                (ast-program
                   (lower-filter-reachable-decls-in-module
                     decls
                     paths
@@ -3179,10 +3243,13 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-size ctx (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
     [(AstTyString) 8]
     [(AstTyStr) 8]
-    [(AstTyVar _) 8]))
+    [(AstTyVar _) 8]
+    [(AstTyVarArgs _ _) 8]))
 
 (define (lower-type-align [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
@@ -3213,10 +3280,13 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-align ctx (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
     [(AstTyString) 8]
     [(AstTyStr) 8]
-    [(AstTyVar _) 8]))
+    [(AstTyVar _) 8]
+    [(AstTyVarArgs _ _) 8]))
 
 (define (lower-type-list-extent
   [ctx : TcContext]
@@ -5944,38 +6014,6 @@
     [(string-eq name "arena-set!") "tl_arena_set"]
     [(string-eq name "arena-destroy") "tl_arena_destroy"]
     [else "tl_region_reset"]))
-
-(define (lower-profile-builtin? [name : String]) : bool
-  (cond
-    [(string-eq name "profile-now-ms") true]
-    [(string-eq name "profile-alloc-total") true]
-    [(string-eq name "profile-alloc-live") true]
-    [(string-eq name "profile-alloc-peak") true]
-    [else (string-eq name "profile-alloc-reset-peak")]))
-
-(define (lower-profile-builtin-symbol [name : String]) : String
-  (cond
-    [(string-eq name "profile-now-ms") "tl_profile_now_ms"]
-    [(string-eq name "profile-alloc-total") "tl_profile_alloc_total"]
-    [(string-eq name "profile-alloc-live") "tl_profile_alloc_live"]
-    [(string-eq name "profile-alloc-peak") "tl_profile_alloc_peak"]
-    [else "tl_profile_alloc_reset_peak"]))
-
-(define (lower-profile-builtin-call
-  [state : LowerState]
-  [name : String]
-  [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
-  (match args
-    [(AstExprNil)
-      (lower-runtime-call-values
-        state
-        (lower-profile-builtin-symbol name)
-        IrValueNil
-        result-ty)]
-    [_
-      (ErrLowerExpr
-        (lower-diagnostic "lower: profile builtin expects no arguments"))]))
 
 (define (lower-arena-builtin-call
   [ctx : TcContext]
@@ -9163,6 +9201,273 @@
                 "lower: string-concat requires String")))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-c-abi-runtime-handle-extern? [name : String]) : bool
+  (or
+    (lower-string-prefix-at? name "tl_" 0)
+    (lower-string-prefix-at? name ".L_tl_" 0)))
+
+(define (lower-c-abi-extern-call?
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]) : bool
+  (if (not (lower-mode-linux-c-abi? (lower-state-mode state)))
+    false
+    (match (sym-i64-lookup env name)
+      [(SomeI64 _) false]
+      [(NoneI64)
+        (if (lower-c-abi-runtime-handle-extern? name)
+          false
+          (match (compiler-symbols-lookup-value
+            (tc-context-symbols ctx)
+            (lower-hygiene-source-name name))
+            [(SomeI64 handle)
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-extern))]
+            [(NoneI64) false]))])))
+
+(define (lower-c-abi-integer-field-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
+    [_ false]))
+
+(define (lower-c-abi-inline-fields-integer-only?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]) : bool
+  (match fields
+    [(TcInlineFieldLayoutNil) true]
+    [(TcInlineFieldLayoutCons field rest)
+      (and
+        (lower-c-abi-integer-field-type?
+          ctx
+          (tc-inline-field-layout-type field))
+        (lower-c-abi-inline-fields-integer-only? ctx rest))]))
+
+(define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
+  (cond
+    [(<= size 1) (AstTyU8)]
+    [(<= size 2) (AstTyU16)]
+    [(<= size 4) (AstTyU32)]
+    [else (AstTyU64)]))
+
+(define (lower-c-abi-unsupported-message [ty : AstType]) : String
+  (string-append
+    "lower: unsupported linux-x86_64 C aggregate ABI for "
+    (string-append
+      (tc-type-render ty)
+      "; this slice supports integer-only structs up to 8 bytes")))
+
+(define (lower-c-abi-aggregate-class [ctx : TcContext] [ty : AstType]) : LowerCAbiAggregate
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyStruct name)
+        (match (tc-inline-aggregate-layout-for ctx name)
+          [(OkTcInlineAggregateLayout layout)
+            (match layout
+              [(TcInlineStructLayout size _ fields)
+                (if (and
+                  (> size 0)
+                  (and
+                    (<= size 8)
+                    (lower-c-abi-inline-fields-integer-only? ctx fields)))
+                  (LowerCAbiIntegerAggregate
+                    (lower-c-abi-integer-scalar-type size)
+                    size)
+                  (LowerCAbiUnsupportedAggregate
+                    (lower-c-abi-unsupported-message resolved)))]
+              [(TcInlineEnumLayout _ _ _)
+                (LowerCAbiUnsupportedAggregate
+                  (lower-c-abi-unsupported-message resolved))])]
+          [(ErrTcInlineAggregateLayout message)
+            (LowerCAbiUnsupportedAggregate message)])]
+      [(AstTyEnum _)
+        (LowerCAbiUnsupportedAggregate
+          (lower-c-abi-unsupported-message resolved))]
+      [_ (LowerCAbiNoAggregate)])))
+
+(define (lower-c-abi-args-as
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [types : AstTypeList]) : ResultLowerArgs
+  (match args
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkLowerArgs state IrValueNil)]
+        [_
+          (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(AstExprCons arg rest-args)
+      (let
+        [rest-args : AstExprList (box-get rest-args)]
+        (match types
+          [(AstTypeCons expected rest-types)
+            (let
+              [rest-types : AstTypeList (box-get rest-types)]
+              [arg-ty : AstType
+                (tc-type-without-regions (tc-resolve-type ctx expected))]
+              (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
+                [(OkLowerExpr lowered)
+                  (match lowered
+                    [(LowerExpr arg-state value _)
+                      (match (lower-c-abi-aggregate-class ctx arg-ty)
+                        [(LowerCAbiNoAggregate)
+                          (match (lower-c-abi-args-as
+                            ctx
+                            arg-state
+                            env
+                            type-env
+                            rest-args
+                            rest-types)
+                            [(OkLowerArgs rest-state rest-values)
+                              (OkLowerArgs
+                                rest-state
+                                (compiler-ir-value-cons value rest-values))]
+                            [(ErrLowerArgs message) (ErrLowerArgs message)])]
+                        [(LowerCAbiIntegerAggregate scalar-ty _)
+                          (match (lower-load-at-offset
+                            arg-state
+                            value
+                            0
+                            scalar-ty)
+                            [(LowerExpr scalar-state scalar-value _)
+                              (match (lower-c-abi-args-as
+                                ctx
+                                scalar-state
+                                env
+                                type-env
+                                rest-args
+                                rest-types)
+                                [(OkLowerArgs rest-state rest-values)
+                                  (OkLowerArgs
+                                    rest-state
+                                    (compiler-ir-value-cons
+                                      scalar-value
+                                      rest-values))]
+                                [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+                        [(LowerCAbiUnsupportedAggregate message)
+                          (ErrLowerArgs (lower-diagnostic-at-expr arg message))])])]
+                [(ErrLowerExpr message) (ErrLowerArgs message)]))]
+          [(AstTypeNil)
+            (ErrLowerArgs
+              (lower-diagnostic "lower: constructor arity mismatch"))]))]))
+
+(define (lower-c-abi-finish-call-result
+  [state : LowerState]
+  [call-value : CompilerIrValue]
+  [result-ty : AstType]
+  [abi : LowerCAbiAggregate]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match abi
+    [(LowerCAbiNoAggregate)
+      (OkLowerExpr (LowerExpr state call-value result-ty))]
+    [(LowerCAbiIntegerAggregate scalar-ty size)
+      (match (lower-reserve-heap-storage state size result-ty)
+        [(LowerExpr base-state base _)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-store-at-offset base-state base 0 call-value scalar-ty)
+              base
+              result-ty))])]
+    [(LowerCAbiUnsupportedAggregate message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
+
+(define (lower-direct-c-abi-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [param-types : AstTypeList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-c-abi-args-as ctx state env type-env args param-types)
+    [(OkLowerArgs args-state values)
+      (match (lower-c-abi-aggregate-class ctx result-ty)
+        [(LowerCAbiUnsupportedAggregate message)
+          (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+        [(LowerCAbiNoAggregate)
+          (match (lower-state-alloc-var args-state)
+            [(LowerAlloc allocated var-id)
+              (let
+                [instr : CompilerIrInstr
+                  (IrInstrCall
+                    var-id
+                    (lower-resolve-call-name allocated env name)
+                    (compiler-ir-call-args-from-list values)
+                    result-ty)]
+                (lower-c-abi-finish-call-result
+                  (lower-state-emit-at-expr allocated instr origin)
+                  (IrValueVar var-id)
+                  result-ty
+                  (LowerCAbiNoAggregate)
+                  origin))])]
+        [(LowerCAbiIntegerAggregate scalar-ty size)
+          (match (lower-state-alloc-var args-state)
+            [(LowerAlloc allocated var-id)
+              (let
+                [instr : CompilerIrInstr
+                  (IrInstrCall
+                    var-id
+                    (lower-resolve-call-name allocated env name)
+                    (compiler-ir-call-args-from-list values)
+                    scalar-ty)]
+                (lower-c-abi-finish-call-result
+                  (lower-state-emit-at-expr allocated instr origin)
+                  (IrValueVar var-id)
+                  result-ty
+                  (LowerCAbiIntegerAggregate scalar-ty size)
+                  origin))])])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
+(define (lower-direct-call-values
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (let
+        [instr : CompilerIrInstr
+          (IrInstrCall
+            var-id
+            (lower-resolve-call-name allocated env name)
+            (compiler-ir-call-args-from-list values)
+            result-ty)]
+        (OkLowerExpr
+          (LowerExpr
+            (lower-state-emit-at-expr allocated instr origin)
+            (IrValueVar var-id)
+            result-ty)))]))
+
+(define (lower-direct-call-from-args
+  [args-result : ResultLowerArgs]
+  [env : SymI64Env]
+  [name : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args-result
+    [(OkLowerArgs args-state values)
+      (lower-direct-call-values args-state env name values result-ty origin)]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
 (define (lower-direct-call
   [ctx : TcContext]
   [state : LowerState]
@@ -9172,39 +9477,47 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (match (lower-lookup-type
-    (lower-state-type-cache state)
-    env
-    type-env
-    name)
+  (match (lower-lookup-type (lower-state-type-cache state) env type-env name)
     [(OkTcType fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(AstTyFunc param-types _)
-          (lower-args-as
-            ctx
-            state
+          (if (lower-c-abi-extern-call? ctx state env name)
+            (lower-direct-c-abi-call
+              ctx
+              state
+              env
+              type-env
+              name
+              args
+              (tc-resolve-type-list ctx param-types)
+              result-ty
+              origin)
+            (lower-direct-call-from-args
+              (lower-args-as
+                ctx
+                state
+                env
+                type-env
+                args
+                (tc-resolve-type-list ctx param-types))
+              env
+              name
+              result-ty
+              origin))]
+        [_
+          (lower-direct-call-from-args
+            (lower-args ctx state env type-env args)
             env
-            type-env
-            args
-            (tc-resolve-type-list ctx param-types))]
-        [_ (lower-args ctx state env type-env args)])]
-    [(ErrTcType _) (lower-args ctx state env type-env args)])
-    [(OkLowerArgs args-state values)
-      (match (lower-state-alloc-var args-state)
-        [(LowerAlloc allocated var-id)
-          (let
-            [instr : CompilerIrInstr
-              (IrInstrCall
-                var-id
-                (lower-resolve-call-name allocated env name)
-                (compiler-ir-call-args-from-list values)
-                result-ty)]
-            (OkLowerExpr
-              (LowerExpr
-                (lower-state-emit-at-expr allocated instr origin)
-                (IrValueVar var-id)
-                result-ty)))])]
-    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+            name
+            result-ty
+            origin)])]
+    [(ErrTcType _)
+      (lower-direct-call-from-args
+        (lower-args ctx state env type-env args)
+        env
+        name
+        result-ty
+        origin)]))
 
 (define (lower-indirect-call-values
   [state : LowerState]
@@ -11712,10 +12025,6 @@
                 result-ty)]
             [(and
                 (lower-builtin-call-available? ctx env name)
-                (lower-profile-builtin? name))
-              (lower-profile-builtin-call state name args result-ty)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
                 (lower-bootstrap-runtime-builtin? name))
               (lower-bootstrap-runtime-call
                 ctx
@@ -13778,17 +14087,27 @@
 (define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx2) true]
+    [(CompilerLowerLinuxAvx2) true]
     [(CompilerLowerAvx512) true]
+    [(CompilerLowerLinuxAvx512) true]
     [_ false]))
 
 (define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx512) true]
+    [(CompilerLowerLinuxAvx512) true]
     [_ false]))
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerInlineAggregates) true]
+    [_ false]))
+
+(define (lower-mode-linux-c-abi? [mode : CompilerLowerMode]) : bool
+  (match mode
+    [(CompilerLowerLinuxScalar) true]
+    [(CompilerLowerLinuxAvx2) true]
+    [(CompilerLowerLinuxAvx512) true]
     [_ false]))
 
 (define (lower-type-i64? [ty : AstType]) : bool
@@ -13806,7 +14125,23 @@
         [(AstTyI32) 8]
         [(AstTyU32) 8]
         [_ 0])]
+    [(CompilerLowerLinuxAvx2)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 4]
+        [(AstTyU64) 4]
+        [(AstTyF64) 4]
+        [(AstTyI32) 8]
+        [(AstTyU32) 8]
+        [_ 0])]
     [(CompilerLowerAvx512)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 8]
+        [(AstTyU64) 8]
+        [(AstTyF64) 8]
+        [(AstTyI32) 16]
+        [(AstTyU32) 16]
+        [_ 0])]
+    [(CompilerLowerLinuxAvx512)
       (match (tc-type-without-regions ty)
         [(AstTyI64) 8]
         [(AstTyU64) 8]
@@ -16583,23 +16918,26 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe inner)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              (ast-decl-cons inner rest)
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              mode
-              module)]
-          [(AstDeclDef name _ expr)
+          [(AstDeclUnsafe inner-box)
             (let
+              [inner : AstDecl (box-get inner-box)]
+              (lower-decls-in-module
+                ctx
+                top-env
+                local-top-env
+                (ast-decl-cons inner rest)
+                globals
+                functions
+                externs
+                spans
+                names
+                name-cache
+                type-cache
+                mode
+                module))]
+          [(AstDeclDef name _ expr-box)
+            (let
+              [expr : AstExpr (box-get expr-box)]
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
               (match (lower-top-decl-type-or-check decl-ctx local-top-env decl)
                 [(OkTcType ty)
@@ -16692,8 +17030,9 @@
                   type-cache
                   mode
                   module)))]
-          [(AstDeclDefFn name params ret body)
+          [(AstDeclDefFn name params ret body-box)
             (let
+              [body : AstExpr (box-get body-box)]
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
               (match (lower-function-escaping
                 decl-ctx
@@ -16835,7 +17174,41 @@
               type-cache
               mode
               module)]
+          [(AstDeclDefEnumLifetimes name _ variants)
+            (lower-decls-in-module
+              ctx
+              top-env
+              local-top-env
+              rest
+              (lower-nullary-variant-globals
+                (lower-current-decl-logical-name names module name)
+                variants
+                0
+                globals)
+              functions
+              externs
+              spans
+              names
+              name-cache
+              type-cache
+              mode
+              module)]
           [(AstDeclDefStruct _ _ _ _)
+            (lower-decls-in-module
+              ctx
+              top-env
+              local-top-env
+              rest
+              globals
+              functions
+              externs
+              spans
+              names
+              name-cache
+              type-cache
+              mode
+              module)]
+          [(AstDeclDefStructLifetimes _ _ _ _ _)
             (lower-decls-in-module
               ctx
               top-env
@@ -16873,20 +17246,22 @@
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match program
-    [(AstProgram decls)
-      (match (lower-decls
-        ctx
-        top-env
-        decls
-        IrGlobalNil
-        IrFunctionNil
-        IrExternNil
-        (compiler-source-spans-empty)
-        names
-        mode)
-        [(OkLowerDecls globals functions externs spans)
-          (OkCompilerLower (IrProgram globals functions externs) spans)]
-        [(ErrLowerDecls message) (ErrCompilerLower message)])]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (lower-decls
+          ctx
+          top-env
+          decls
+          IrGlobalNil
+          IrFunctionNil
+          IrExternNil
+          (compiler-source-spans-empty)
+          names
+          mode)
+          [(OkLowerDecls globals functions externs spans)
+            (OkCompilerLower (IrProgram globals functions externs) spans)]
+          [(ErrLowerDecls message) (ErrCompilerLower message)]))]))
 
 (define (lower-compiler-program-checked-with-names
   [ctx : TcContext]
@@ -16930,13 +17305,15 @@
                         (let
                           [alias-names : LowerNameEnv
                             (match specialized
-                              [(AstProgram decls)
-                                (lower-name-env-with-import-aliases
-                                  decls
-                                  AstDeclPathNil
-                                  "<source>"
-                                  LowerNameNil
-                                  false)])]
+                              [(AstProgram decls-box)
+                                (let
+                                  [decls : AstDeclList (box-get decls-box)]
+                                  (lower-name-env-with-import-aliases
+                                    decls
+                                    AstDeclPathNil
+                                    "<source>"
+                                    LowerNameNil
+                                    false))])]
                           (lower-compiler-program-checked-with-names-mode
                             ctx
                             top-env
@@ -16990,20 +17367,24 @@
         paths)]
     [names : LowerNameEnv
       (match program
-        [(AstProgram decls)
-          (lower-name-env-from-decls decls paths entry-path LowerNameNil)])]
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
     (match (compiler-specialize-program program)
       [(OkSpecProgram specialized)
         (let
           [prune-names : LowerNameEnv
             (if needs-specialization
               (match specialized
-                [(AstProgram decls)
-                  (lower-name-env-from-decls
-                    decls
-                    specialized-paths
-                    entry-path
-                    LowerNameNil)])
+                [(AstProgram decls-box)
+                  (let
+                    [decls : AstDeclList (box-get decls-box)]
+                    (lower-name-env-from-decls
+                      decls
+                      specialized-paths
+                      entry-path
+                      LowerNameNil))])
               names)]
           (match (lower-prune-unreachable-functions-with-clone-roots
             entry-path
@@ -17025,21 +17406,25 @@
                     [checked-paths : AstDeclPathList base-paths]
                     [checked-names : LowerNameEnv
                       (match checked-program
-                        [(AstProgram decls)
-                          (lower-name-env-from-decls
-                            decls
-                            checked-paths
-                            entry-path
-                            LowerNameNil)])]
-                    [lower-names : LowerNameEnv
-                      (if needs-specialization
-                        (match checked-program
-                          [(AstProgram decls)
-                            (lower-name-env-add-clone-decls
+                        [(AstProgram decls-box)
+                          (let
+                            [decls : AstDeclList (box-get decls-box)]
+                            (lower-name-env-from-decls
                               decls
                               checked-paths
                               entry-path
-                              names)])
+                              LowerNameNil))])]
+                    [lower-names : LowerNameEnv
+                      (if needs-specialization
+                        (match checked-program
+                          [(AstProgram decls-box)
+                            (let
+                              [decls : AstDeclList (box-get decls-box)]
+                              (lower-name-env-add-clone-decls
+                                decls
+                                checked-paths
+                                entry-path
+                                names))])
                         checked-names)]
                     (match (typecheck-compiler-specialized-program-with-paths
                       checked-program
@@ -17357,6 +17742,12 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _ _) false]))
 
+(define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerLinuxScalar))
+    [(ErrCompilerLower diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerLower _ _) false]))
+
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
 (define (compiler-lower-match-source) : String
@@ -17462,10 +17853,14 @@
               (cast (char-at (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-print-string-builtin-source) : String
-  "(define (main [text : String]) : i64
+  "(define (print-string [text : String]) : unit
+  unit)
+(define (print-str [text : String]) : unit
+  (print-string text))
+(define (main [text : String]) : i64
   (begin
     (print-string text)
-    (print-str (& text))
+    (print-str text)
     0))")
 
 (define (compiler-lower-borrowed-str-param-source) : String
@@ -17504,7 +17899,18 @@
         (string-length (read-stdin-bytes 3)))))")
 
 (define (compiler-lower-stdio-builtin-source) : String
-  "(define (main [count : i64]) : i64
+  "(define stdin-eof-state : bool false)
+(define (read-stdin-bytes [count : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 count)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) count))))
+(define (read-stdin-line) : String
+  (let
+    [buf : (Array u8) (make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+(define (stdin-eof?) : bool stdin-eof-state)
+(define (flush-stdout) : unit unit)
+(define (main [count : i64]) : i64
   (begin
     (flush-stdout)
     (if (stdin-eof?)
@@ -17512,13 +17918,16 @@
         (string-length (read-stdin-bytes count)))))")
 
 (define (compiler-lower-env-builtin-source) : String
-  "(define (main [name : String]) : i64
+  "(define (env-var-exists? [name : String]) : bool true)
+(define (env-var-value [name : String]) : String name)
+(define (env-path-separator) : String \":\")
+(define (main [name : String]) : i64
   (let
     [separator : String (env-path-separator)]
-    [value : String (env-var-value (& name))]
-    (if (env-var-exists? (& name))
-      (+ (string-length (& value)) (string-length (& separator)))
-      (string-length (& separator)))))")
+    [value : String (env-var-value name)]
+    (if (env-var-exists? name)
+      (+ (string-length value) (string-length separator))
+      (string-length separator))))")
 
 (define (compiler-lower-cpu-builtin-source) : String
   "(define (main) : i64
@@ -17574,7 +17983,19 @@
                    (file-close-status handle))))))))))")
 
 (define (compiler-lower-fs-status-source) : String
-  "(define (main) : i64
+  "(define (fs-current-dir-status) : i64 0)
+(define (fs-current-dir) : String \".\")
+(define (fs-process-id) : i64 1)
+(define (fs-mkdir-status [path : String]) : i64 0)
+(define (fs-remove-file-status [path : String]) : i64 0)
+(define (fs-remove-dir-status [path : String]) : i64 0)
+(define (fs-rename-status [source : String] [destination : String]) : i64 0)
+(define (fs-read-dir-status [path : String]) : i64 0)
+(define (fs-read-dir [path : String]) : String path)
+(define (fs-file-kind-status [path : String]) : i64 0)
+(define (fs-file-size-status [path : String]) : i64 0)
+(define (fs-file-size [path : String]) : i64 (string-length path))
+(define (main) : i64
   (+ (fs-current-dir-status)
     (+ (string-length (fs-current-dir))
       (+ (fs-process-id)
@@ -19686,6 +20107,12 @@
   "(extern ffi-add (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))
 (define (main) : i64 (ffi-add 35))")
 
+(define (compiler-lower-c-abi-unsupported-aggregate-source) : String
+  "(defstruct Big (lo i64) (hi i64))
+(extern big-use (:symbol \"tl_cabi_big_use\") : (-> Big i64))
+(define (main) : i64
+  (big-use (Big 1 2)))")
+
 (define (compiler-lower-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
   (match inputs
@@ -20273,10 +20700,10 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "tl_print_str") 2)
+            (= (lower-test-functions-call-count functions "tl_print_str") 0)
             (and
-              (= (lower-test-functions-call-count functions "print-string") 0)
-              (= (lower-test-functions-call-count functions "print-str") 0)))])]
+              (= (lower-test-functions-call-count functions "print-string") 2)
+              (= (lower-test-functions-call-count functions "print-str") 1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -20792,134 +21219,148 @@
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_mkdir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_file_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_rename_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_read_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions ".L_tl_fs_read_dir")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_file_kind_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_file_size_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions ".L_tl_fs_file_size")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_process_id")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "tl_fs_current_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "tl_fs_current_dir")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-mkdir-status")
-                0)
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-remove-file-status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-remove-dir-status")
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-rename-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-file-kind-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-file-size-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-file-size")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-process-id")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-current-dir-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-current-dir")
-                0)
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -21454,25 +21895,52 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (=
-              (lower-test-functions-call-count functions ".L_tl_flush_stdout")
-              1)
-            (and
-              (=
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count functions ".L_tl_flush_stdout")
+                0)
+                unit
+                (set! ok false))
+              (if (=
                 (lower-test-functions-call-count functions ".L_tl_stdin_eof")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_read_stdin_line")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_read_stdin_bytes")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "flush-stdout")
                 1)
-              (and
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_read_stdin_line")
-                  1)
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_read_stdin_bytes")
-                  1))))])]
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "stdin-eof?") 1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "read-stdin-line")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "read-stdin-bytes")
+                1)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-env-builtin-shape-ok?) : bool
@@ -21485,27 +21953,27 @@
             (begin
               (if (=
                 (lower-test-functions-call-count functions "tl_env_var_exists")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "tl_env_var_value")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-exists?")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-value")
                 1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "env-path-separator")
                 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "env-var-exists?")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "env-var-value")
-                0)
                 unit
                 (set! ok false))
               ok))])]
@@ -21739,6 +22207,11 @@
       (if (compiler-lower-extern-link-metadata-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-linux-error-ok?
+        (compiler-lower-c-abi-unsupported-aggregate-source)
+        "lower: unsupported linux-x86_64 C aggregate ABI for Big; this slice supports integer-only structs up to 8 bytes")
+        unit
+        (set! ok false))
       (if (compiler-lower-global-shape-ok?)
         unit
         (set! ok false))
@@ -21772,29 +22245,29 @@
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
 (define (compiler-lower-ast-dce-program) : AstProgram
-  (AstProgram
+  (ast-program
     (ast-decl-cons
-      (AstDeclDef "callback" AstNoType (AstExprVar "callback-target"))
+      (ast-decl-def "callback" AstNoType (AstExprVar "callback-target"))
       (ast-decl-cons
-        (AstDeclDefFn
+        (ast-decl-def-fn
           "main"
           AstParamNil
           (AstTyI64)
           (ast-expr-call (AstExprVar "helper") AstExprNil))
         (ast-decl-cons
-          (AstDeclDefFn
+          (ast-decl-def-fn
             "helper"
             AstParamNil
             (AstTyI64)
             (AstExprLiteral (AstLitInt 7)))
           (ast-decl-cons
-            (AstDeclDefFn
+            (ast-decl-def-fn
               "callback-target"
               AstParamNil
               (AstTyI64)
               (AstExprLiteral (AstLitInt 11)))
             (ast-decl-cons
-              (AstDeclDefFn
+              (ast-decl-def-fn
                 "dead"
                 AstParamNil
                 (AstTyI64)
@@ -21802,15 +22275,15 @@
               AstDeclNil)))))))
 
 (define (compiler-lower-ast-dce-no-main-program) : AstProgram
-  (AstProgram
+  (ast-program
     (ast-decl-cons
-      (AstDeclDefFn
+      (ast-decl-def-fn
         "helper"
         AstParamNil
         (AstTyI64)
         (AstExprLiteral (AstLitInt 7)))
       (ast-decl-cons
-        (AstDeclDefFn
+        (ast-decl-def-fn
           "dead"
           AstParamNil
           (AstTyI64)
@@ -21823,20 +22296,24 @@
     [no-main-program : AstProgram (compiler-lower-ast-dce-no-main-program)]
     [names : LowerNameEnv
       (match program
-        [(AstProgram decls)
-          (lower-name-env-from-decls
-            decls
-            AstDeclPathNil
-            "entry.tl"
-            LowerNameNil)])]
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
     [no-main-names : LowerNameEnv
       (match no-main-program
-        [(AstProgram decls)
-          (lower-name-env-from-decls
-            decls
-            AstDeclPathNil
-            "entry.tl"
-            LowerNameNil)])]
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
     [pruned : LowerPrunedProgram
       (lower-prune-unreachable-functions
         "entry.tl"
@@ -21854,22 +22331,29 @@
         (match no-main-pruned
           [(LowerPrunedProgram kept-no-main _)
             (match kept-program
-              [(AstProgram kept)
-                (match kept-no-main
-                  [(AstProgram no-main-kept)
-                    (and
-                      (= (lower-test-decl-list-count kept) 4)
-                      (and
-                        (lower-test-decl-list-defines? kept "main")
+              [(AstProgram kept-box)
+                (let
+                  [kept : AstDeclList (box-get kept-box)]
+                  (match kept-no-main
+                    [(AstProgram no-main-kept-box)
+                      (let
+                        [no-main-kept : AstDeclList (box-get no-main-kept-box)]
                         (and
-                          (lower-test-decl-list-defines? kept "helper")
+                          (= (lower-test-decl-list-count kept) 4)
                           (and
-                            (lower-test-decl-list-defines?
-                              kept
-                              "callback-target")
+                            (lower-test-decl-list-defines? kept "main")
                             (and
-                              (not (lower-test-decl-list-defines? kept "dead"))
-                              (= (lower-test-decl-list-count no-main-kept) 2))))))])])])])))
+                              (lower-test-decl-list-defines? kept "helper")
+                              (and
+                                (lower-test-decl-list-defines?
+                                  kept
+                                  "callback-target")
+                                (and
+                                  (not
+                                    (lower-test-decl-list-defines? kept "dead"))
+                                  (=
+                                    (lower-test-decl-list-count no-main-kept)
+                                    2)))))))]))])])])))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let

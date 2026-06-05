@@ -1,6 +1,8 @@
 ; `string-eq` compares strings through the emit-on-demand, libc-free
 ; `tl_string_eq` runtime helper. This covers empty, short, long, first-byte
 ; mismatch, late mismatch, and length mismatch cases. Exit status 0.
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-bool (string-eq "" ""))

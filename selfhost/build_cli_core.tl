@@ -55,9 +55,38 @@
   (OkBuildManifest CompilerPkgManifest)
   (ErrBuildManifest String))
 
-(defenum ResultBuildLibs
-  (OkBuildLibs ProcessStringList)
-  (ErrBuildLibs String))
+(defstruct BuildPackageGraphNode
+  (manifest-path String)
+  (manifest CompilerPkgManifest))
+
+(defenum BuildPackageGraphNodeList
+  (BuildPackageGraphNodeNil)
+  (BuildPackageGraphNodeCons
+    BuildPackageGraphNode
+    (Box BuildPackageGraphNodeList)))
+
+(defstruct BuildPackageGraph
+  (order BuildPackageGraphNodeList))
+
+(defstruct BuildPackageGraphState
+  (seen StringI64Map)
+  (order BuildPackageGraphNodeList))
+
+(defenum ResultBuildPackageGraph
+  (OkBuildPackageGraph BuildPackageGraph)
+  (ErrBuildPackageGraph String))
+
+(defenum ResultBuildPackageGraphState
+  (OkBuildPackageGraphState BuildPackageGraphState)
+  (ErrBuildPackageGraphState String))
+
+(defenum ResultBuildPackageGraphNode
+  (OkBuildPackageGraphNode BuildPackageGraphNode)
+  (ErrBuildPackageGraphNode String))
+
+(defenum BuildPackagePathList
+  (BuildPackagePathNil)
+  (BuildPackagePathCons String (Box BuildPackagePathList)))
 
 (defenum BuildProfile
   (BuildProfileDev)
@@ -68,6 +97,12 @@
   (ErrBuildProfile String))
 
 (define build-default-opt-level : i64
+  2)
+
+(define build-package-visit-visiting : i64
+  1)
+
+(define build-package-visit-done : i64
   2)
 
 (define build-status-ok : i64
@@ -618,120 +653,178 @@
 (define (build-package-dep-manifest-path
   [manifest-dir : String]
   [dep : CompilerPkgDep]) : String
-  (compiler-load-join-root-path
-    (build-package-dep-root manifest-dir dep)
-    "typelisp.pkg"))
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path
+      (build-package-dep-root manifest-dir dep)
+      "typelisp.pkg")))
 
-(define (build-package-dep-artifact
-  [manifest-dir : String]
-  [dep : CompilerPkgDep]
-  [target : CompilerBackendTarget]
-  [target-text : String]
-  [has-target : bool]
-  [opt-level : i64]
-  [profile : BuildProfile]
-  [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
-  [fuel : i64]) : ResultBuildLibs
-  (if (<= fuel 0)
-    (ErrBuildLibs "build: dependency graph is too deep or cyclic")
-    (if (compiler-load-github-dependency-path? (struct-get dep path))
-      (ErrBuildLibs
-        (string-append
-          "build: GitHub dependency `"
-          (string-append
-            (struct-get dep alias)
-            "` requires git dependency fetch support (#1157)")))
+(define (build-package-normalize-manifest-path [manifest-path : String]) : String
+  (compiler-load-normalize-path manifest-path))
+
+(define (build-package-path-list-render [paths : BuildPackagePathList]) : String
+  (match paths
+    [(BuildPackagePathNil) ""]
+    [(BuildPackagePathCons path rest)
       (let
-        [dep-manifest-path : String
-          (build-package-dep-manifest-path manifest-dir dep)]
-        (match (build-load-manifest dep-manifest-path)
-          [(ErrBuildManifest message)
-            (ErrBuildLibs
+        [tail : String (build-package-path-list-render (box-get rest))]
+        (if (= (string-length tail) 0)
+          path
+          (string-append tail (string-append " -> " path))))]))
+
+(define (build-package-cycle-message
+  [stack : BuildPackagePathList]
+  [manifest-path : String]) : String
+  (string-append
+    "build: dependency cycle: "
+    (string-append
+      (build-package-path-list-render stack)
+      (string-append " -> " manifest-path))))
+
+(define (build-package-graph-node-list-append-one
+  [items : BuildPackageGraphNodeList]
+  [node : BuildPackageGraphNode]) : BuildPackageGraphNodeList
+  (match items
+    [(BuildPackageGraphNodeNil)
+      (BuildPackageGraphNodeCons node (box BuildPackageGraphNodeNil))]
+    [(BuildPackageGraphNodeCons head rest)
+      (BuildPackageGraphNodeCons
+        head
+        (box (build-package-graph-node-list-append-one (box-get rest) node)))]))
+
+(define (build-package-graph-state-mark
+  [state : BuildPackageGraphState]
+  [manifest-path : String]
+  [mark : i64]) : BuildPackageGraphState
+  (BuildPackageGraphState
+    (string-i64-map-put (struct-get state seen) manifest-path mark)
+    (struct-get state order)))
+
+(define (build-package-graph-state-add-order
+  [state : BuildPackageGraphState]
+  [node : BuildPackageGraphNode]) : BuildPackageGraphState
+  (BuildPackageGraphState
+    (struct-get state seen)
+    (build-package-graph-node-list-append-one (struct-get state order) node)))
+
+(define (build-package-load-dep-node
+  [manifest-dir : String]
+  [dep : CompilerPkgDep]) : ResultBuildPackageGraphNode
+  (if (compiler-load-github-dependency-path? (struct-get dep path))
+    (ErrBuildPackageGraphNode
+      (string-append
+        "build: GitHub dependency `"
+        (string-append
+          (struct-get dep alias)
+          "` requires git dependency fetch support (#1157)")))
+    (let
+      [dep-manifest-path : String
+        (build-package-dep-manifest-path manifest-dir dep)]
+      (match (build-load-manifest dep-manifest-path)
+        [(ErrBuildManifest message)
+          (ErrBuildPackageGraphNode
+            (string-append
+              "dependency `"
               (string-append
-                "dependency `"
+                (struct-get dep alias)
+                (string-append "`: " message))))]
+        [(OkBuildManifest dep-manifest)
+          (if (not (build-package-kind-lib? (struct-get dep-manifest kind)))
+            (ErrBuildPackageGraphNode
+              (string-append
+                "build: dependency `"
                 (string-append
                   (struct-get dep alias)
-                  (string-append "`: " message))))]
-          [(OkBuildManifest dep-manifest)
-            (let
-              [dep-kind : CompilerPkgKind (struct-get dep-manifest kind)]
-              (if (not (build-package-kind-lib? dep-kind))
-                (ErrBuildLibs
                   (string-append
-                    "build: dependency `"
+                    "` at "
                     (string-append
-                      (struct-get dep alias)
-                      "` must be a lib package")))
-                (let
-                  [dep-dir : String (compiler-load-dirname dep-manifest-path)]
-                  [dep-name : String (struct-get dep-manifest name)]
-                  [dep-artifact : String
-                    (build-package-artifact-path-profile
-                      dep-dir
-                      dep-name
-                      dep-kind
-                      profile
-                      target)]
-                  [dep-status : i64
-                    (build-package-emit-with-fuel
                       dep-manifest-path
-                      dep-manifest
-                      target-text
-                      has-target
-                      opt-level
-                      profile
-                      mode
-                      stdlib-roots
-                      (- fuel 1))]
-                  (if (= dep-status 0)
-                    (OkBuildLibs (process-args-single dep-artifact))
-                    (ErrBuildLibs
-                      (string-append
-                        "build: dependency `"
-                        (string-append (struct-get dep alias) "` failed")))))))])))))
+                      " must be a staticlib package")))))
+            (OkBuildPackageGraphNode
+              (BuildPackageGraphNode dep-manifest-path dep-manifest)))]))))
 
-(define (build-package-deps-artifacts
+(define (build-package-graph-add-node
+  [node : BuildPackageGraphNode]
+  [state : BuildPackageGraphState]
+  [stack : BuildPackagePathList]) : ResultBuildPackageGraphState
+  (let
+    [manifest-path : String (struct-get node manifest-path)]
+    (match (string-i64-map-get (struct-get state seen) manifest-path)
+      [(StringI64MapFound mark)
+        (if (= mark build-package-visit-visiting)
+          (ErrBuildPackageGraphState
+            (build-package-cycle-message stack manifest-path))
+          (OkBuildPackageGraphState state))]
+      [(StringI64MapMissing)
+        (let
+          [visiting : BuildPackageGraphState
+            (build-package-graph-state-mark
+              state
+              manifest-path
+              build-package-visit-visiting)]
+          [manifest : CompilerPkgManifest (struct-get node manifest)]
+          [manifest-dir : String (compiler-load-dirname manifest-path)]
+          [next-stack : BuildPackagePathList
+            (BuildPackagePathCons manifest-path (box stack))]
+          (match (build-package-graph-add-deps
+            manifest-dir
+            (struct-get manifest deps)
+            visiting
+            next-stack)
+            [(ErrBuildPackageGraphState message)
+              (ErrBuildPackageGraphState message)]
+            [(OkBuildPackageGraphState with-deps)
+              (OkBuildPackageGraphState
+                (build-package-graph-state-add-order
+                  (build-package-graph-state-mark
+                    with-deps
+                    manifest-path
+                    build-package-visit-done)
+                  node))]))])))
+
+(define (build-package-graph-add-deps
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
-  [target : CompilerBackendTarget]
-  [target-text : String]
-  [has-target : bool]
-  [opt-level : i64]
-  [profile : BuildProfile]
-  [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
-  [fuel : i64]) : ResultBuildLibs
+  [state : BuildPackageGraphState]
+  [stack : BuildPackagePathList]) : ResultBuildPackageGraphState
   (match deps
-    [(CompilerPkgDepNil) (OkBuildLibs (process-args-empty))]
+    [(CompilerPkgDepNil) (OkBuildPackageGraphState state)]
     [(CompilerPkgDepCons dep rest)
-      (match (build-package-dep-artifact
-        manifest-dir
-        dep
-        target
-        target-text
-        has-target
-        opt-level
-        profile
-        mode
-        stdlib-roots
-        fuel)
-        [(ErrBuildLibs message) (ErrBuildLibs message)]
-        [(OkBuildLibs dep-libs)
-          (match (build-package-deps-artifacts
-            manifest-dir
-            (box-get rest)
-            target
-            target-text
-            has-target
-            opt-level
-            profile
-            mode
-            stdlib-roots
-            fuel)
-            [(ErrBuildLibs message) (ErrBuildLibs message)]
-            [(OkBuildLibs rest-libs)
-              (OkBuildLibs (process-args-append dep-libs rest-libs))])])]))
+      (match (build-package-load-dep-node manifest-dir dep)
+        [(ErrBuildPackageGraphNode message) (ErrBuildPackageGraphState message)]
+        [(OkBuildPackageGraphNode node)
+          (match (build-package-graph-add-node node state stack)
+            [(ErrBuildPackageGraphState message)
+              (ErrBuildPackageGraphState message)]
+            [(OkBuildPackageGraphState next-state)
+              (build-package-graph-add-deps
+                manifest-dir
+                (box-get rest)
+                next-state
+                stack)])])]))
+
+(define (build-package-dependency-graph
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]) : ResultBuildPackageGraph
+  (let
+    [root-path : String (build-package-normalize-manifest-path manifest-path)]
+    [root-dir : String (compiler-load-dirname root-path)]
+    [initial : BuildPackageGraphState
+      (BuildPackageGraphState
+        (string-i64-map-put
+          (string-i64-map-with-capacity 32)
+          root-path
+          build-package-visit-visiting)
+        BuildPackageGraphNodeNil)]
+    [stack : BuildPackagePathList
+      (BuildPackagePathCons root-path (box BuildPackagePathNil))]
+    (match (build-package-graph-add-deps
+      root-dir
+      (struct-get manifest deps)
+      initial
+      stack)
+      [(ErrBuildPackageGraphState message) (ErrBuildPackageGraph message)]
+      [(OkBuildPackageGraphState state)
+        (OkBuildPackageGraph (BuildPackageGraph (struct-get state order)))])))
 
 (define (build-mkdir-ok? [path : String]) : bool
   (let
@@ -772,112 +865,144 @@
     [(CompilerPkgKindLib)
       (source-tool-assemble-and-archive target asm-path obj-path artifact-path)]))
 
-(define (build-package-emit-with-fuel
+(define (build-package-graph-node-artifact-path
+  [node : BuildPackageGraphNode]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
+  (let
+    [manifest-path : String (struct-get node manifest-path)]
+    [manifest : CompilerPkgManifest (struct-get node manifest)]
+    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    (build-package-artifact-path-profile
+      manifest-dir
+      (struct-get manifest name)
+      (struct-get manifest kind)
+      profile
+      target)))
+
+(define (build-package-graph-link-libs
+  [nodes : BuildPackageGraphNodeList]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : ProcessStringList
+  (match nodes
+    [(BuildPackageGraphNodeNil) (process-args-empty)]
+    [(BuildPackageGraphNodeCons node rest)
+      (process-args-append
+        (build-package-graph-link-libs (box-get rest) profile target)
+        (process-args-single
+          (build-package-graph-node-artifact-path node profile target)))]))
+
+(define (build-package-emit-one
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
-  [target-text : String]
-  [has-target : bool]
+  [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
-  [fuel : i64]) : i64
-  (match (build-parse-target target-text)
-    [(ErrBuildTarget message)
+  [dep-libs : ProcessStringList]) : i64
+  (let
+    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [entry-path : String
+      (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]
+    [name : String (struct-get manifest name)]
+    [kind : CompilerPkgKind (struct-get manifest kind)]
+    [asm-path : String
+      (build-package-asm-path-profile manifest-dir name profile)]
+    [obj-path : String
+      (build-package-obj-path-profile manifest-dir name profile target)]
+    [artifact-path : String
+      (build-package-artifact-path-profile
+        manifest-dir
+        name
+        kind
+        profile
+        target)]
+    (if (not (build-ensure-package-output-dirs manifest-dir name profile))
       (begin
-        (print-error message)
-        1)]
-    [(OkBuildTarget target)
+        (print-error
+          (string-append
+            "build: failed to create package output directory "
+            (build-package-output-dir-profile manifest-dir name profile)))
+        1)
       (let
-        [manifest-dir : String (compiler-load-dirname manifest-path)]
-        [entry-path : String
-          (compiler-load-join-root-path
-            manifest-dir
-            (struct-get manifest entry))]
-        [name : String (struct-get manifest name)]
-        [kind : CompilerPkgKind (struct-get manifest kind)]
-        [asm-path : String
-          (build-package-asm-path-profile manifest-dir name profile)]
-        [obj-path : String
-          (build-package-obj-path-profile manifest-dir name profile target)]
-        [artifact-path : String
-          (build-package-artifact-path-profile
-            manifest-dir
-            name
-            kind
-            profile
-            target)]
-        (if (not (build-ensure-package-output-dirs manifest-dir name profile))
-          (begin
-            (print-error
-              (string-append
-                "build: failed to create package output directory "
-                (build-package-output-dir-profile manifest-dir name profile)))
-            1)
-          (match (build-package-deps-artifacts
-            manifest-dir
-            (struct-get manifest deps)
+        [dep-link-inputs : SourceToolLinkInputs
+          (source-tool-link-inputs-from-archives dep-libs)]
+        [emit-entry : bool (build-package-kind-entry? kind)]
+        [crt-entry : bool
+          (and emit-entry (source-tool-linux-crt-entry? target dep-link-inputs))]
+        (match (source-tool-emit-package-assembly
+          entry-path
+          target
+          stdlib-roots
+          opt-level
+          mode
+          manifest-dir
+          (struct-get manifest deps)
+          emit-entry
+          crt-entry)
+          [(ErrSourceToolString message)
+            (begin
+              (print-error message)
+              1)]
+          [(OkSourceToolString asm)
+            (match (source-tool-write-file
+              asm-path
+              asm
+              "build: failed to write package assembly")
+              [(SourceToolCommandErr message)
+                (begin
+                  (print-error message)
+                  1)]
+              [(SourceToolCommandOk)
+                (match (build-package-artifact-status
+                  kind
+                  target
+                  asm-path
+                  obj-path
+                  artifact-path
+                  dep-libs)
+                  [(SourceToolCommandErr message)
+                    (begin
+                      (print-error message)
+                      1)]
+                  [(SourceToolCommandOk)
+                    (begin
+                      (print-string (string-append "Generated: " artifact-path))
+                      0)])])])))))
+
+(define (build-package-emit-graph-nodes
+  [nodes : BuildPackageGraphNodeList]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (match nodes
+    [(BuildPackageGraphNodeNil) 0]
+    [(BuildPackageGraphNodeCons node rest)
+      (let
+        [manifest-path : String (struct-get node manifest-path)]
+        [manifest : CompilerPkgManifest (struct-get node manifest)]
+        [status : i64
+          (build-package-emit-one
+            manifest-path
+            manifest
             target
-            target-text
-            has-target
             opt-level
             profile
             mode
             stdlib-roots
-            fuel)
-            [(ErrBuildLibs message)
-              (begin
-                (print-error message)
-                1)]
-            [(OkBuildLibs dep-libs)
-              (let
-                [dep-link-inputs : SourceToolLinkInputs
-                  (source-tool-link-inputs-from-archives dep-libs)]
-                [emit-entry : bool (build-package-kind-entry? kind)]
-                [crt-entry : bool
-                  (and
-                    emit-entry
-                    (source-tool-linux-crt-entry? target dep-link-inputs))]
-                (match (source-tool-emit-package-assembly
-                  entry-path
-                  target
-                  stdlib-roots
-                  opt-level
-                  mode
-                  manifest-dir
-                  (struct-get manifest deps)
-                  emit-entry
-                  crt-entry)
-                  [(ErrSourceToolString message)
-                    (begin
-                      (print-error message)
-                      1)]
-                  [(OkSourceToolString asm)
-                    (match (source-tool-write-file
-                      asm-path
-                      asm
-                      "build: failed to write package assembly")
-                      [(SourceToolCommandErr message)
-                        (begin
-                          (print-error message)
-                          1)]
-                      [(SourceToolCommandOk)
-                        (match (build-package-artifact-status
-                          kind
-                          target
-                          asm-path
-                          obj-path
-                          artifact-path
-                          dep-libs)
-                          [(SourceToolCommandErr message)
-                            (begin
-                              (print-error message)
-                              1)]
-                          [(SourceToolCommandOk)
-                            (begin
-                              (print-string
-                                (string-append "Generated: " artifact-path))
-                              0)])])]))])))]))
+            (process-args-empty))]
+        (if (= status 0)
+          (build-package-emit-graph-nodes
+            (box-get rest)
+            target
+            opt-level
+            profile
+            mode
+            stdlib-roots)
+          status))]))
 
 (define (build-package-emit
   [manifest-path : String]
@@ -888,16 +1013,42 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (build-package-emit-with-fuel
-    manifest-path
-    manifest
-    target-text
-    has-target
-    opt-level
-    profile
-    mode
-    stdlib-roots
-    64))
+  (match (build-parse-target target-text)
+    [(ErrBuildTarget message)
+      (begin
+        (print-error message)
+        1)]
+    [(OkBuildTarget target)
+      (let
+        [normalized-path : String
+          (build-package-normalize-manifest-path manifest-path)]
+        (match (build-package-dependency-graph normalized-path manifest)
+          [(ErrBuildPackageGraph message)
+            (begin
+              (print-error message)
+              1)]
+          [(OkBuildPackageGraph graph)
+            (let
+              [nodes : BuildPackageGraphNodeList (struct-get graph order)]
+              [dep-status : i64
+                (build-package-emit-graph-nodes
+                  nodes
+                  target
+                  opt-level
+                  profile
+                  mode
+                  stdlib-roots)]
+              (if (= dep-status 0)
+                (build-package-emit-one
+                  normalized-path
+                  manifest
+                  target
+                  opt-level
+                  profile
+                  mode
+                  stdlib-roots
+                  (build-package-graph-link-libs nodes profile target))
+                dep-status))]))]))
 
 (define (build-package-from-path
   [manifest-path : String]

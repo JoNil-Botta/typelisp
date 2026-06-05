@@ -20,6 +20,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   wrappers, argv access, panic/error, and monomorphic Result-style I/O error
   APIs built as stdlib extern wrappers over backend runtime symbols. Import it with
   `(import "stdlib/io.tl")`.
+- `io_caller_result.tl`: check-only lifetime-preserving `read-file-or-result`
+  surface that can return a borrow of the caller fallback or owned file
+  contents. Import it with `(import "stdlib/io_caller_result.tl")`; ordinary
+  lowering still rejects reference-typed aggregate values until borrow/reference
+  lowering lands.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
   target-cfg-derived `env-path-separator` wrappers. Import it with
@@ -79,6 +84,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   Import it with `(import "stdlib/random.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
+- `string_caller_result.tl`: check-only lifetime-preserving string replacement
+  caller-result surface. It exposes a branch-composed `StringReplaceResult`
+  shape for no-match borrowed results and replacement-owned results. Import it
+  with `(import "stdlib/string_caller_result.tl")`; ordinary lowering still
+  rejects reference-typed aggregate values until borrow/reference lowering
+  lands.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
@@ -123,12 +134,15 @@ conservatively tags aggregate results from stdlib calls made inside a scoped
 arena as arena-owned, which prevents those values from escaping the scope. The
 v1 `String`/`str` contract in `SPEC.md` classifies which future signatures
 should take borrowed text and which should return owned active-arena strings.
+The `string_caller_result.tl` and `io_caller_result.tl` companion modules expose
+source/typecheck-only lifetime-preserving caller-result shapes while ordinary
+runnable stdlib imports keep the lowerable compatibility wrappers.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
-| `string-replace` | Returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. |
+| `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes a check-only branch-composed caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `try-read-file` | Performs host file inspection through stdlib FFI; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
 | `try-write-file` | Writes through the recoverable stdlib status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
@@ -136,7 +150,7 @@ should take borrowed text and which should return owned active-arena strings.
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque stdlib-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The stdlib copies the path into active-arena storage for the host call and tracks handle state in a process-global table. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
 | `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `file-write`, `file-flush` | `file-write` writes a `String` to an `OpenWriteTruncate` or `OpenWriteAppend` handle, retrying host short writes until complete or an error is reported. `file-flush` flushes a write-mode handle. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. |
-| `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
+| `read-file-or` | Compatibility wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. `io_caller_result.tl` exposes a check-only `read-file-or-result` that preserves the fallback borrow on error paths and owned file contents on success. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
 | `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing an active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until a future byte-buffer/slice split lands. |
@@ -163,7 +177,9 @@ The recoverable I/O API maps the runtime's integer status codes into the public
 directory-read statuses get semantic variants; target-specific or unstable
 codes remain available as `IoSystemCode`.
 
-No current stdlib function returns a borrow-typed `str` or mutates a
+Only the check-only companion modules currently return borrow-typed text inside
+reference-typed aggregate results; the runnable stdlib compatibility wrappers
+still lower through owned `String`/aggregate APIs. No stdlib function mutates a
 caller-provided buffer in place. Except for the explicit `stdlib/arena.tl`
 manual-control surface, stdlib APIs do not manually reset arenas and should
 prefer `with-arena` for scoped reclamation. Source-level `arena-set!`,

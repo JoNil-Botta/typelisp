@@ -1363,7 +1363,7 @@ results for allocation sites.
 | Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `string-append`/`string-concat`, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
-| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths | Preserve the caller-owned value instead of allocating. Precise returned/stored lifetime signatures use section 3.10.1 and remain conservatively checked until #1722/#804 lands. |
+| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths; check-only companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The companion modules expose source/typecheck-only lifetime-preserving aggregate shapes: branch-composed `StringReplaceResult` for replacement helpers and `ReadFileOrResult` for fallback reads. Ordinary runnable wrappers remain conservatively owned-compatible until reference-typed aggregate lowering and fuller branch lifetime unification land (#1722/#804). |
 | Mutable or binary byte storage | dynamic arrays today; future byte-buffer/slice work | Not modeled as `str`. `str` is immutable borrowed text/bytes and should not become the mutable buffer type. |
 
 #### ABI and lowering representation
@@ -3612,13 +3612,15 @@ stdlib surface.
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
-| Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing | The current type system cannot express this borrowed/caller-owned distinction, so calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. |
+| Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing; check-only `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` companion surfaces | Compatibility wrapper calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. The companion modules express the borrowed/caller-owned distinction in source/typecheck-only reference-typed aggregates; ordinary lowering of those aggregate values still waits for reference/borrow lowering. |
 | Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
 
 The owned `String` / borrowed `str` source contract is specified in section
-3.11, but no current stdlib function has migrated to a borrow-typed `str`
-signature. Except for the explicit `stdlib/arena.tl` manual-control surface, no
+3.11. Check-only companion stdlib modules now expose borrow-typed caller-result
+aggregate surfaces, while runnable compatibility wrappers still use lowerable
+owned `String`/aggregate signatures. Except for the explicit `stdlib/arena.tl`
+manual-control surface, no
 current stdlib function manually resets arenas; safe scoped cleanup is owned by
 `with-arena`. Source code that needs manual arena control imports
 `stdlib/arena.tl` and uses the first-class arena helpers, with `arena-set!`,

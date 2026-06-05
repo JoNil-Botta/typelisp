@@ -38,6 +38,10 @@ reject_diag() {
             printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)
             printf 'typecheck: argument type mismatch' ;;
+        stdlib/tests/io_caller_result_escape.tl)
+            printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/string_caller_result_escape.tl)
+            printf 'typecheck: argument type mismatch' ;;
         *) printf '' ;;
     esac
 }

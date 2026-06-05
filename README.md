@@ -342,7 +342,9 @@ function values, `String`, dynamic arrays, tuples/structs/enums, and fixed
 arrays, including nested aggregate and fixed-array contents that are recursively
 deep-copied. The aggregate captures snapshot their storage onto the heap so the
 environment can outlive the creating frame. Capturing aggregate-element
-references and mutation of captured names are still rejected.
+references and mutation of captured names are still rejected. `SPEC.md`
+specifies the future checker-only rule for local non-escaping immutable
+reference captures; relaxing the current rejection is tracked by #808.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2` supports a first contiguous map/zip

@@ -16023,15 +16023,31 @@ tl_string_eq:
 .L_tl_string_eq_tail:
     andq $7, %rsi
     jz .L_tl_string_eq_true
-.L_tl_string_eq_tail_loop:
+    cmpq $4, %rsi
+    jb .L_tl_string_eq_tail_2
+    movl (%rdi), %eax
+    cmpl (%rdx), %eax
+    jne .L_tl_string_eq_false
+    addq $4, %rdi
+    addq $4, %rdx
+    subq $4, %rsi
+.L_tl_string_eq_tail_2:
+    cmpq $2, %rsi
+    jb .L_tl_string_eq_tail_1
+    movzwl (%rdi), %eax
+    movzwl (%rdx), %r8d
+    cmpw %r8w, %ax
+    jne .L_tl_string_eq_false
+    addq $2, %rdi
+    addq $2, %rdx
+    subq $2, %rsi
+.L_tl_string_eq_tail_1:
+    testq %rsi, %rsi
+    jz .L_tl_string_eq_true
     movzbl (%rdi), %eax
     movzbl (%rdx), %r8d
     cmpb %r8b, %al
     jne .L_tl_string_eq_false
-    incq %rdi
-    incq %rdx
-    decq %rsi
-    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -16094,15 +16110,31 @@ tl_string_eq:
 .L_tl_string_eq_tail:
     andq $7, %rdx
     jz .L_tl_string_eq_true
-.L_tl_string_eq_tail_loop:
+    cmpq $4, %rdx
+    jb .L_tl_string_eq_tail_2
+    movl (%rcx), %eax
+    cmpl (%r8), %eax
+    jne .L_tl_string_eq_false
+    addq $4, %rcx
+    addq $4, %r8
+    subq $4, %rdx
+.L_tl_string_eq_tail_2:
+    cmpq $2, %rdx
+    jb .L_tl_string_eq_tail_1
+    movzwl (%rcx), %eax
+    movzwl (%r8), %r10d
+    cmpw %r10w, %ax
+    jne .L_tl_string_eq_false
+    addq $2, %rcx
+    addq $2, %r8
+    subq $2, %rdx
+.L_tl_string_eq_tail_1:
+    testq %rdx, %rdx
+    jz .L_tl_string_eq_true
     movzbl (%rcx), %eax
     movzbl (%r8), %r10d
     cmpb %r10b, %al
     jne .L_tl_string_eq_false
-    incq %rcx
-    incq %r8
-    decq %rdx
-    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret

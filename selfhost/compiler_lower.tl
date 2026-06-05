@@ -53,8 +53,11 @@
 
 (defenum CompilerLowerMode
   (CompilerLowerScalar)
+  (CompilerLowerLinuxScalar)
   (CompilerLowerAvx2)
+  (CompilerLowerLinuxAvx2)
   (CompilerLowerAvx512)
+  (CompilerLowerLinuxAvx512)
   (CompilerLowerInlineAggregates))
 
 (defenum LowerState
@@ -120,6 +123,11 @@
 (defenum ResultLowerArgs
   (OkLowerArgs LowerState CompilerIrValueList)
   (ErrLowerArgs CompilerDiagnostic))
+
+(defenum LowerCAbiAggregate
+  (LowerCAbiNoAggregate)
+  (LowerCAbiIntegerAggregate AstType i64)
+  (LowerCAbiUnsupportedAggregate String))
 
 (defenum ResultLowerState
   (OkLowerState LowerState)
@@ -8288,6 +8296,273 @@
                 "lower: string-concat requires String")))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-c-abi-runtime-handle-extern? [name : String]) : bool
+  (or
+    (lower-string-prefix-at? name "tl_" 0)
+    (lower-string-prefix-at? name ".L_tl_" 0)))
+
+(define (lower-c-abi-extern-call?
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]) : bool
+  (if (not (lower-mode-linux-c-abi? (lower-state-mode state)))
+    false
+    (match (sym-i64-lookup env name)
+      [(SomeI64 _) false]
+      [(NoneI64)
+        (if (lower-c-abi-runtime-handle-extern? name)
+          false
+          (match (compiler-symbols-lookup-value
+            (tc-context-symbols ctx)
+            (lower-hygiene-source-name name))
+            [(SomeI64 handle)
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-extern))]
+            [(NoneI64) false]))])))
+
+(define (lower-c-abi-integer-field-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
+    [_ false]))
+
+(define (lower-c-abi-inline-fields-integer-only?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]) : bool
+  (match fields
+    [(TcInlineFieldLayoutNil) true]
+    [(TcInlineFieldLayoutCons field rest)
+      (and
+        (lower-c-abi-integer-field-type?
+          ctx
+          (tc-inline-field-layout-type field))
+        (lower-c-abi-inline-fields-integer-only? ctx rest))]))
+
+(define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
+  (cond
+    [(<= size 1) (AstTyU8)]
+    [(<= size 2) (AstTyU16)]
+    [(<= size 4) (AstTyU32)]
+    [else (AstTyU64)]))
+
+(define (lower-c-abi-unsupported-message [ty : AstType]) : String
+  (string-append
+    "lower: unsupported linux-x86_64 C aggregate ABI for "
+    (string-append
+      (tc-type-render ty)
+      "; this slice supports integer-only structs up to 8 bytes")))
+
+(define (lower-c-abi-aggregate-class [ctx : TcContext] [ty : AstType]) : LowerCAbiAggregate
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyStruct name)
+        (match (tc-inline-aggregate-layout-for ctx name)
+          [(OkTcInlineAggregateLayout layout)
+            (match layout
+              [(TcInlineStructLayout size _ fields)
+                (if (and
+                  (> size 0)
+                  (and
+                    (<= size 8)
+                    (lower-c-abi-inline-fields-integer-only? ctx fields)))
+                  (LowerCAbiIntegerAggregate
+                    (lower-c-abi-integer-scalar-type size)
+                    size)
+                  (LowerCAbiUnsupportedAggregate
+                    (lower-c-abi-unsupported-message resolved)))]
+              [(TcInlineEnumLayout _ _ _)
+                (LowerCAbiUnsupportedAggregate
+                  (lower-c-abi-unsupported-message resolved))])]
+          [(ErrTcInlineAggregateLayout message)
+            (LowerCAbiUnsupportedAggregate message)])]
+      [(AstTyEnum _)
+        (LowerCAbiUnsupportedAggregate
+          (lower-c-abi-unsupported-message resolved))]
+      [_ (LowerCAbiNoAggregate)])))
+
+(define (lower-c-abi-args-as
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [types : AstTypeList]) : ResultLowerArgs
+  (match args
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkLowerArgs state IrValueNil)]
+        [_
+          (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(AstExprCons arg rest-args)
+      (let
+        [rest-args : AstExprList (box-get rest-args)]
+        (match types
+          [(AstTypeCons expected rest-types)
+            (let
+              [rest-types : AstTypeList (box-get rest-types)]
+              [arg-ty : AstType
+                (tc-type-without-regions (tc-resolve-type ctx expected))]
+              (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
+                [(OkLowerExpr lowered)
+                  (match lowered
+                    [(LowerExpr arg-state value _)
+                      (match (lower-c-abi-aggregate-class ctx arg-ty)
+                        [(LowerCAbiNoAggregate)
+                          (match (lower-c-abi-args-as
+                            ctx
+                            arg-state
+                            env
+                            type-env
+                            rest-args
+                            rest-types)
+                            [(OkLowerArgs rest-state rest-values)
+                              (OkLowerArgs
+                                rest-state
+                                (compiler-ir-value-cons value rest-values))]
+                            [(ErrLowerArgs message) (ErrLowerArgs message)])]
+                        [(LowerCAbiIntegerAggregate scalar-ty _)
+                          (match (lower-load-at-offset
+                            arg-state
+                            value
+                            0
+                            scalar-ty)
+                            [(LowerExpr scalar-state scalar-value _)
+                              (match (lower-c-abi-args-as
+                                ctx
+                                scalar-state
+                                env
+                                type-env
+                                rest-args
+                                rest-types)
+                                [(OkLowerArgs rest-state rest-values)
+                                  (OkLowerArgs
+                                    rest-state
+                                    (compiler-ir-value-cons
+                                      scalar-value
+                                      rest-values))]
+                                [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+                        [(LowerCAbiUnsupportedAggregate message)
+                          (ErrLowerArgs (lower-diagnostic-at-expr arg message))])])]
+                [(ErrLowerExpr message) (ErrLowerArgs message)]))]
+          [(AstTypeNil)
+            (ErrLowerArgs
+              (lower-diagnostic "lower: constructor arity mismatch"))]))]))
+
+(define (lower-c-abi-finish-call-result
+  [state : LowerState]
+  [call-value : CompilerIrValue]
+  [result-ty : AstType]
+  [abi : LowerCAbiAggregate]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match abi
+    [(LowerCAbiNoAggregate)
+      (OkLowerExpr (LowerExpr state call-value result-ty))]
+    [(LowerCAbiIntegerAggregate scalar-ty size)
+      (match (lower-reserve-heap-storage state size result-ty)
+        [(LowerExpr base-state base _)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-store-at-offset base-state base 0 call-value scalar-ty)
+              base
+              result-ty))])]
+    [(LowerCAbiUnsupportedAggregate message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
+
+(define (lower-direct-c-abi-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [param-types : AstTypeList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-c-abi-args-as ctx state env type-env args param-types)
+    [(OkLowerArgs args-state values)
+      (match (lower-c-abi-aggregate-class ctx result-ty)
+        [(LowerCAbiUnsupportedAggregate message)
+          (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+        [(LowerCAbiNoAggregate)
+          (match (lower-state-alloc-var args-state)
+            [(LowerAlloc allocated var-id)
+              (let
+                [instr : CompilerIrInstr
+                  (IrInstrCall
+                    var-id
+                    (lower-resolve-call-name allocated env name)
+                    (compiler-ir-call-args-from-list values)
+                    result-ty)]
+                (lower-c-abi-finish-call-result
+                  (lower-state-emit-at-expr allocated instr origin)
+                  (IrValueVar var-id)
+                  result-ty
+                  (LowerCAbiNoAggregate)
+                  origin))])]
+        [(LowerCAbiIntegerAggregate scalar-ty size)
+          (match (lower-state-alloc-var args-state)
+            [(LowerAlloc allocated var-id)
+              (let
+                [instr : CompilerIrInstr
+                  (IrInstrCall
+                    var-id
+                    (lower-resolve-call-name allocated env name)
+                    (compiler-ir-call-args-from-list values)
+                    scalar-ty)]
+                (lower-c-abi-finish-call-result
+                  (lower-state-emit-at-expr allocated instr origin)
+                  (IrValueVar var-id)
+                  result-ty
+                  (LowerCAbiIntegerAggregate scalar-ty size)
+                  origin))])])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
+(define (lower-direct-call-values
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (let
+        [instr : CompilerIrInstr
+          (IrInstrCall
+            var-id
+            (lower-resolve-call-name allocated env name)
+            (compiler-ir-call-args-from-list values)
+            result-ty)]
+        (OkLowerExpr
+          (LowerExpr
+            (lower-state-emit-at-expr allocated instr origin)
+            (IrValueVar var-id)
+            result-ty)))]))
+
+(define (lower-direct-call-from-args
+  [args-result : ResultLowerArgs]
+  [env : SymI64Env]
+  [name : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args-result
+    [(OkLowerArgs args-state values)
+      (lower-direct-call-values args-state env name values result-ty origin)]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
 (define (lower-direct-call
   [ctx : TcContext]
   [state : LowerState]
@@ -8297,39 +8572,47 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (match (lower-lookup-type
-    (lower-state-type-cache state)
-    env
-    type-env
-    name)
+  (match (lower-lookup-type (lower-state-type-cache state) env type-env name)
     [(OkTcType fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(AstTyFunc param-types _)
-          (lower-args-as
-            ctx
-            state
+          (if (lower-c-abi-extern-call? ctx state env name)
+            (lower-direct-c-abi-call
+              ctx
+              state
+              env
+              type-env
+              name
+              args
+              (tc-resolve-type-list ctx param-types)
+              result-ty
+              origin)
+            (lower-direct-call-from-args
+              (lower-args-as
+                ctx
+                state
+                env
+                type-env
+                args
+                (tc-resolve-type-list ctx param-types))
+              env
+              name
+              result-ty
+              origin))]
+        [_
+          (lower-direct-call-from-args
+            (lower-args ctx state env type-env args)
             env
-            type-env
-            args
-            (tc-resolve-type-list ctx param-types))]
-        [_ (lower-args ctx state env type-env args)])]
-    [(ErrTcType _) (lower-args ctx state env type-env args)])
-    [(OkLowerArgs args-state values)
-      (match (lower-state-alloc-var args-state)
-        [(LowerAlloc allocated var-id)
-          (let
-            [instr : CompilerIrInstr
-              (IrInstrCall
-                var-id
-                (lower-resolve-call-name allocated env name)
-                (compiler-ir-call-args-from-list values)
-                result-ty)]
-            (OkLowerExpr
-              (LowerExpr
-                (lower-state-emit-at-expr allocated instr origin)
-                (IrValueVar var-id)
-                result-ty)))])]
-    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+            name
+            result-ty
+            origin)])]
+    [(ErrTcType _)
+      (lower-direct-call-from-args
+        (lower-args ctx state env type-env args)
+        env
+        name
+        result-ty
+        origin)]))
 
 (define (lower-indirect-call-values
   [state : LowerState]
@@ -12903,17 +13186,27 @@
 (define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx2) true]
+    [(CompilerLowerLinuxAvx2) true]
     [(CompilerLowerAvx512) true]
+    [(CompilerLowerLinuxAvx512) true]
     [_ false]))
 
 (define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx512) true]
+    [(CompilerLowerLinuxAvx512) true]
     [_ false]))
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerInlineAggregates) true]
+    [_ false]))
+
+(define (lower-mode-linux-c-abi? [mode : CompilerLowerMode]) : bool
+  (match mode
+    [(CompilerLowerLinuxScalar) true]
+    [(CompilerLowerLinuxAvx2) true]
+    [(CompilerLowerLinuxAvx512) true]
     [_ false]))
 
 (define (lower-type-i64? [ty : AstType]) : bool
@@ -12931,7 +13224,23 @@
         [(AstTyI32) 8]
         [(AstTyU32) 8]
         [_ 0])]
+    [(CompilerLowerLinuxAvx2)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 4]
+        [(AstTyU64) 4]
+        [(AstTyF64) 4]
+        [(AstTyI32) 8]
+        [(AstTyU32) 8]
+        [_ 0])]
     [(CompilerLowerAvx512)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 8]
+        [(AstTyU64) 8]
+        [(AstTyF64) 8]
+        [(AstTyI32) 16]
+        [(AstTyU32) 16]
+        [_ 0])]
+    [(CompilerLowerLinuxAvx512)
       (match (tc-type-without-regions ty)
         [(AstTyI64) 8]
         [(AstTyU64) 8]
@@ -16480,6 +16789,12 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _ _) false]))
 
+(define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerLinuxScalar))
+    [(ErrCompilerLower diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerLower _ _) false]))
+
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
 (define (compiler-lower-match-source) : String
@@ -16585,10 +16900,14 @@
               (cast (char-at (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-print-string-builtin-source) : String
-  "(define (main [text : String]) : i64
+  "(define (print-string [text : String]) : unit
+  unit)
+(define (print-str [text : String]) : unit
+  (print-string text))
+(define (main [text : String]) : i64
   (begin
     (print-string text)
-    (print-str (& text))
+    (print-str text)
     0))")
 
 (define (compiler-lower-borrowed-str-param-source) : String
@@ -16627,7 +16946,18 @@
         (string-length (read-stdin-bytes 3)))))")
 
 (define (compiler-lower-stdio-builtin-source) : String
-  "(define (main [count : i64]) : i64
+  "(define stdin-eof-state : bool false)
+(define (read-stdin-bytes [count : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 count)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) count))))
+(define (read-stdin-line) : String
+  (let
+    [buf : (Array u8) (make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+(define (stdin-eof?) : bool stdin-eof-state)
+(define (flush-stdout) : unit unit)
+(define (main [count : i64]) : i64
   (begin
     (flush-stdout)
     (if (stdin-eof?)
@@ -16635,13 +16965,16 @@
         (string-length (read-stdin-bytes count)))))")
 
 (define (compiler-lower-env-builtin-source) : String
-  "(define (main [name : String]) : i64
+  "(define (env-var-exists? [name : String]) : bool true)
+(define (env-var-value [name : String]) : String name)
+(define (env-path-separator) : String \":\")
+(define (main [name : String]) : i64
   (let
     [separator : String (env-path-separator)]
-    [value : String (env-var-value (& name))]
-    (if (env-var-exists? (& name))
-      (+ (string-length (& value)) (string-length (& separator)))
-      (string-length (& separator)))))")
+    [value : String (env-var-value name)]
+    (if (env-var-exists? name)
+      (+ (string-length value) (string-length separator))
+      (string-length separator))))")
 
 (define (compiler-lower-cpu-builtin-source) : String
   "(define (main) : i64
@@ -16697,7 +17030,19 @@
                    (file-close-status handle))))))))))")
 
 (define (compiler-lower-fs-status-source) : String
-  "(define (main) : i64
+  "(define (fs-current-dir-status) : i64 0)
+(define (fs-current-dir) : String \".\")
+(define (fs-process-id) : i64 1)
+(define (fs-mkdir-status [path : String]) : i64 0)
+(define (fs-remove-file-status [path : String]) : i64 0)
+(define (fs-remove-dir-status [path : String]) : i64 0)
+(define (fs-rename-status [source : String] [destination : String]) : i64 0)
+(define (fs-read-dir-status [path : String]) : i64 0)
+(define (fs-read-dir [path : String]) : String path)
+(define (fs-file-kind-status [path : String]) : i64 0)
+(define (fs-file-size-status [path : String]) : i64 0)
+(define (fs-file-size [path : String]) : i64 (string-length path))
+(define (main) : i64
   (+ (fs-current-dir-status)
     (+ (string-length (fs-current-dir))
       (+ (fs-process-id)
@@ -18751,6 +19096,12 @@
   "(extern ffi-add (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))
 (define (main) : i64 (ffi-add 35))")
 
+(define (compiler-lower-c-abi-unsupported-aggregate-source) : String
+  "(defstruct Big (lo i64) (hi i64))
+(extern big-use (:symbol \"tl_cabi_big_use\") : (-> Big i64))
+(define (main) : i64
+  (big-use (Big 1 2)))")
+
 (define (compiler-lower-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
   (match inputs
@@ -19338,10 +19689,10 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "tl_print_str") 2)
+            (= (lower-test-functions-call-count functions "tl_print_str") 0)
             (and
-              (= (lower-test-functions-call-count functions "print-string") 0)
-              (= (lower-test-functions-call-count functions "print-str") 0)))])]
+              (= (lower-test-functions-call-count functions "print-string") 2)
+              (= (lower-test-functions-call-count functions "print-str") 1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -19857,134 +20208,148 @@
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_mkdir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_file_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_rename_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_read_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions ".L_tl_fs_read_dir")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_file_kind_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_file_size_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions ".L_tl_fs_file_size")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_process_id")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "tl_fs_current_dir_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "tl_fs_current_dir")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-mkdir-status")
-                0)
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-remove-file-status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-remove-dir-status")
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-rename-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-file-kind-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-file-size-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-file-size")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-process-id")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   "fs-current-dir-status")
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-current-dir")
-                0)
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -20519,25 +20884,52 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (=
-              (lower-test-functions-call-count functions ".L_tl_flush_stdout")
-              1)
-            (and
-              (=
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count functions ".L_tl_flush_stdout")
+                0)
+                unit
+                (set! ok false))
+              (if (=
                 (lower-test-functions-call-count functions ".L_tl_stdin_eof")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_read_stdin_line")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_read_stdin_bytes")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "flush-stdout")
                 1)
-              (and
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_read_stdin_line")
-                  1)
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_read_stdin_bytes")
-                  1))))])]
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "stdin-eof?") 1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "read-stdin-line")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "read-stdin-bytes")
+                1)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-env-builtin-shape-ok?) : bool
@@ -20550,27 +20942,27 @@
             (begin
               (if (=
                 (lower-test-functions-call-count functions "tl_env_var_exists")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "tl_env_var_value")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-exists?")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-value")
                 1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "env-path-separator")
                 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "env-var-exists?")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "env-var-value")
-                0)
                 unit
                 (set! ok false))
               ok))])]
@@ -20799,6 +21191,11 @@
         unit
         (set! ok false))
       (if (compiler-lower-extern-link-metadata-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-linux-error-ok?
+        (compiler-lower-c-abi-unsupported-aggregate-source)
+        "lower: unsupported linux-x86_64 C aggregate ABI for Big; this slice supports integer-only structs up to 8 bytes")
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)

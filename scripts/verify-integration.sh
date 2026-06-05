@@ -192,6 +192,10 @@ dep_source_path() {
             printf '%s\n' "$ROOT/$_dep"
             return
             ;;
+        benchmarks/*)
+            printf '%s\n' "$ROOT/$_dep"
+            return
+            ;;
         sym_i64_env_core.tl)
             printf '%s\n' "$ROOT/selfhost/sym_i64_env.tl"
             return
@@ -235,9 +239,40 @@ copy_dep() {
     cp "$_src" "$_dst"
 }
 
+compile_linux_c_deps() {
+    _deps=$1
+    _case_dir=$2
+    _build_stdout=$3
+    _build_stderr=$4
+    _objs=
+
+    for _dep in $(deps_or_empty "$_deps"); do
+        case "$_dep" in
+            requires-stage0-symbol:*) continue ;;
+            *.c)
+                if ! command -v cc >/dev/null 2>&1; then
+                    echo "missing C compiler: cc" >> "$_build_stderr"
+                    return 1
+                fi
+                _base=$(basename -- "$_dep" .c)
+                _src="$_case_dir/$_dep"
+                _obj="$_case_dir/$_base.native.o"
+                if ! cc -std=c99 -Wall -Wextra -c "$_src" -o "$_obj" \
+                    >> "$_build_stdout" 2>> "$_build_stderr"; then
+                    return 1
+                fi
+                _objs="${_objs:+$_objs }$_obj"
+                ;;
+        esac
+    done
+
+    printf '%s\n' "$_objs"
+}
+
 # Integration cases that are not Windows-applicable in this manifest
 # (kept covered on Linux via native-linux.manifest):
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
+#   c_abi_aggregate_color     Linux System V aggregate ABI fixture
 #   with_arena_*               existing host gaps
 #   tl_alloc_huge_trap /       Windows huge-alloc + region-reset guards do not
 #   region_reset_invalid_trap  abort cleanly with 134 (#1660)
@@ -245,6 +280,7 @@ windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
 arena_poison_stale_array_trap
+c_abi_aggregate_color
 with_arena_builtin_alloc
 with_arena_loop
 tl_alloc_huge_trap
@@ -1089,7 +1125,15 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ran=$((ran + 1))
             continue
         fi
-        if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        if ! native_objs=$(compile_linux_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr"); then
+            echo "FAIL: $name C dependency compile failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
+            failed=$((failed + 1))
+            ran=$((ran + 1))
+            continue
+        fi
+        # shellcheck disable=SC2086
+        if ! ld "$obj" $native_objs -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
             >> "$build_stdout" 2>> "$build_stderr"; then
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"

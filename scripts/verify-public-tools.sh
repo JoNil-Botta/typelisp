@@ -625,6 +625,8 @@ for target_alias in windows-x86_64 windows_x86_64; do
     target_dir="$CLI_MATRIX/target-$target_alias"
     mkdir -p "$target_dir"
     cat > "$target_dir/main.tl" <<'EOF'
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print 3)

@@ -556,162 +556,56 @@
 (define (tc-default-env-base) : TcTypeEnv
   (let
     [e0 : TcTypeEnv (tc-empty-env)]
-    [e1 : TcTypeEnv (tc-bind e0 "print" (tc-fn1 (AstTyI64) (AstTyUnit)))]
-    [e2 : TcTypeEnv (tc-bind e1 "print-bool" (tc-fn1 (AstTyBool) (AstTyUnit)))]
-    [e3 : TcTypeEnv (tc-bind e2 "print-float" (tc-fn1 (AstTyF64) (AstTyUnit)))]
-    [e4 : TcTypeEnv (tc-bind e3 "print-char" (tc-fn1 (AstTyChar) (AstTyUnit)))]
-    [e5 : TcTypeEnv (tc-bind e4 "print-newline" (tc-fn0 (AstTyUnit)))]
+    [e1 : TcTypeEnv
+      (tc-bind e0 "string-length" (tc-fn1 (AstTyString) (AstTyI64)))]
+    [e2 : TcTypeEnv (tc-bind e1 "length" (tc-fn1 (AstTyString) (AstTyI64)))]
+    [e3 : TcTypeEnv
+      (tc-bind e2 "string-eq" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
+    [e4 : TcTypeEnv
+      (tc-bind e3 "string=?" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
+    [e5 : TcTypeEnv
+      (tc-bind e4 "string->int" (tc-fn1 (AstTyString) (AstTyI64)))]
     [e6 : TcTypeEnv
-      (tc-bind e5 "print-string" (tc-fn1 (AstTyString) (AstTyUnit)))]
-    [e7 : TcTypeEnv (tc-bind e6 "print-str" (tc-fn1 (AstTyString) (AstTyUnit)))]
-    [e8 : TcTypeEnv
-      (tc-bind e7 "print-error" (tc-fn1 (AstTyString) (AstTyUnit)))]
-    [e9 : TcTypeEnv (tc-bind e8 "arg-count" (tc-fn0 (AstTyI64)))]
-    [e10 : TcTypeEnv (tc-bind e9 "arg" (tc-fn1 (AstTyI64) (AstTyString)))]
-    [e11 : TcTypeEnv
-      (tc-bind e10 "string-length" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e12 : TcTypeEnv (tc-bind e11 "length" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e13 : TcTypeEnv
-      (tc-bind e12 "string-eq" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
-    [e14 : TcTypeEnv
-      (tc-bind e13 "string=?" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
-    [e15 : TcTypeEnv
-      (tc-bind e14 "string->int" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e16 : TcTypeEnv
-      (tc-bind e15 "int->string" (tc-fn1 (AstTyI64) (AstTyString)))]
-    [e17 : TcTypeEnv
-      (tc-bind e16 "read-file" (tc-fn1 (AstTyString) (AstTyString)))]
-    [e18 : TcTypeEnv
+      (tc-bind e5 "int->string" (tc-fn1 (AstTyI64) (AstTyString)))]
+    [e7 : TcTypeEnv
       (tc-bind
         (tc-bind
-          (tc-bind
-            (tc-bind e17 "read-file-status" (tc-fn1 (AstTyString) (AstTyI64)))
-            "write-file"
-            (tc-fn2 (AstTyString) (AstTyString) (AstTyUnit)))
-          "write-file-status"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
-        "append-file-status"
-        (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))]
-    [e19 : TcTypeEnv
-      (tc-bind
-        (tc-bind
-          (tc-bind
-            (tc-bind
-              (tc-bind
-                (tc-bind
-                  (tc-bind
-                    (tc-bind
-                      (tc-bind
-                        (tc-bind
-                          (tc-bind
-                            (tc-bind
-                              (tc-bind
-                                (tc-bind
-                                  (tc-bind
-                                    (tc-bind
-                                      e18
-                                      "file-exists?"
-                                      (tc-fn1 (AstTyString) (AstTyBool)))
-                                    "file-exists-status"
-                                    (tc-fn1 (AstTyString) (AstTyI64)))
-                                  "file-open-status"
-                                  (tc-fn2 (AstTyString) (AstTyI64) (AstTyI64)))
-                                "file-close-status"
-                                (tc-fn1 (AstTyI64) (AstTyI64)))
-                              "fs-mkdir-status"
-                              (tc-fn1 (AstTyString) (AstTyI64)))
-                            "fs-remove-file-status"
-                            (tc-fn1 (AstTyString) (AstTyI64)))
-                          "fs-remove-dir-status"
-                          (tc-fn1 (AstTyString) (AstTyI64)))
-                        "fs-rename-status"
-                        (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
-                      "fs-read-dir-status"
-                      (tc-fn1 (AstTyString) (AstTyI64)))
-                    "fs-read-dir"
-                    (tc-fn1 (AstTyString) (AstTyString)))
-                  "fs-file-kind-status"
-                  (tc-fn1 (AstTyString) (AstTyI64)))
-                "fs-file-size-status"
-                (tc-fn1 (AstTyString) (AstTyI64)))
-              "fs-file-size"
-              (tc-fn1 (AstTyString) (AstTyI64)))
-            "fs-process-id"
-            (tc-fn0 (AstTyI64)))
-          "fs-current-dir-status"
-          (tc-fn0 (AstTyI64)))
-        "fs-current-dir"
-        (tc-fn0 (AstTyString)))]
-    [e20 : TcTypeEnv
-      (tc-bind
-        (tc-bind
-          (tc-bind
-            (tc-bind
-              (tc-bind
-                (tc-bind
-                  (tc-bind
-                    (tc-bind
-                      e19
-                      "file-read-chunk-status"
-                      (tc-fn2 (AstTyI64) (AstTyI64) (AstTyI64)))
-                    "file-write-status"
-                    (tc-fn2 (AstTyI64) (AstTyString) (AstTyI64)))
-                  "file-flush-status"
-                  (tc-fn1 (AstTyI64) (AstTyI64)))
-                "file-read-chunk-bytes"
-                (tc-fn1 (AstTyI64) (AstTyString)))
-              "file-read-chunk-eof?"
-              (tc-fn1 (AstTyI64) (AstTyBool)))
-            "cpuid"
-            (tc-fn2
-              (AstTyI64)
-              (AstTyI64)
-              (AstTyTuple
+          e6
+          "cpuid"
+          (tc-fn2
+            (AstTyI64)
+            (AstTyI64)
+            (AstTyTuple
+              (ast-type-cons
+                (AstTyI32)
                 (ast-type-cons
                   (AstTyI32)
                   (ast-type-cons
                     (AstTyI32)
-                    (ast-type-cons
-                      (AstTyI32)
-                      (ast-type-cons (AstTyI32) (AstTypeNil))))))))
-          "xgetbv"
-          (tc-fn1 (AstTyI64) (AstTyI64)))
+                    (ast-type-cons (AstTyI32) (AstTypeNil))))))))
+        "xgetbv"
+        (tc-fn1 (AstTyI64) (AstTyI64)))]
+    [e8 : TcTypeEnv
+      (tc-bind
+        e7
         "substring"
         (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))]
-    [e21 : TcTypeEnv
+    [e9 : TcTypeEnv
       (tc-bind
-        e20
+        e8
         "string-slice"
         (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))]
-    [e22 : TcTypeEnv
+    [e10 : TcTypeEnv
       (tc-bind
-        e21
+        e9
         "string-append"
         (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))]
-    [e23 : TcTypeEnv
+    [e11 : TcTypeEnv
       (tc-bind
-        e22
+        e10
         "string-concat"
         (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))]
-    [e24 : TcTypeEnv (tc-bind e23 "read-stdin-line" (tc-fn0 (AstTyString)))]
-    [e25 : TcTypeEnv
-      (tc-bind e24 "read-stdin-bytes" (tc-fn1 (AstTyI64) (AstTyString)))]
-    [e26 : TcTypeEnv (tc-bind e25 "stdin-eof?" (tc-fn0 (AstTyBool)))]
-    [e27 : TcTypeEnv (tc-bind e26 "flush-stdout" (tc-fn0 (AstTyUnit)))]
-    [e28 : TcTypeEnv (tc-bind e27 "panic" (tc-fn1 (AstTyString) (AstTyNever)))]
-    (tc-bind
-      (tc-bind
-        (tc-bind
-          (tc-bind
-            (tc-bind e28 "error" (tc-fn1 (AstTyString) (AstTyNever)))
-            "env-var-exists?"
-            (tc-fn1 (AstTyString) (AstTyBool)))
-          "env-var-value"
-          (tc-fn1 (AstTyString) (AstTyString)))
-        "env-path-separator"
-        (tc-fn0 (AstTyString)))
-      (tc-default-boundary-name)
-      (AstTyUnit))))
+    (tc-bind e11 (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -2583,13 +2477,7 @@
             (ErrTcUnit
               (tc-struct-cleanup-repr-c-message
                 (compiler-symbol-module-key (tc-context-module ctx) name)))
-            (if (ast-struct-repr-c? repr)
-              (match (tc-repr-c-struct-layout
-                ctx
-                (compiler-symbol-module-key (tc-context-module ctx) name))
-                [(OkTcReprCLayout _) OkTcUnit]
-                [(ErrTcReprCLayout message) (ErrTcUnit message)])
-              OkTcUnit))]
+            OkTcUnit)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
       (if (tc-lifetime-list-duplicates? lifetimes)
@@ -2600,13 +2488,7 @@
               (ErrTcUnit
                 (tc-struct-cleanup-repr-c-message
                   (compiler-symbol-module-key (tc-context-module ctx) name)))
-              (if (ast-struct-repr-c? repr)
-                (match (tc-repr-c-struct-layout
-                  ctx
-                  (compiler-symbol-module-key (tc-context-module ctx) name))
-                  [(OkTcReprCLayout _) OkTcUnit]
-                  [(ErrTcReprCLayout message) (ErrTcUnit message)])
-                OkTcUnit))]
+              OkTcUnit)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclIncludeStr _ _)
       (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
@@ -4330,39 +4212,7 @@
     [(string-eq name "string-slice") true]
     [(string-eq name "string-append") true]
     [(string-eq name "string-concat") true]
-    [(string-eq name "read-file") true]
-    [(string-eq name "read-file-status") true]
-    [(string-eq name "write-file") true]
-    [(string-eq name "write-file-status") true]
-    [(string-eq name "append-file-status") true]
-    [(string-eq name "file-exists?") true]
-    [(string-eq name "file-exists-status") true]
-    [(string-eq name "file-open-status") true]
-    [(string-eq name "file-close-status") true]
-    [(string-eq name "file-read-chunk-status") true]
-    [(string-eq name "file-write-status") true]
-    [(string-eq name "file-flush-status") true]
-    [(string-eq name "file-read-chunk-bytes") true]
-    [(string-eq name "file-read-chunk-eof?") true]
-    [(string-eq name "fs-mkdir-status") true]
-    [(string-eq name "fs-remove-file-status") true]
-    [(string-eq name "fs-remove-dir-status") true]
-    [(string-eq name "fs-rename-status") true]
-    [(string-eq name "fs-read-dir-status") true]
-    [(string-eq name "fs-read-dir") true]
-    [(string-eq name "fs-file-kind-status") true]
-    [(string-eq name "fs-file-size-status") true]
-    [(string-eq name "fs-file-size") true]
-    [(string-eq name "fs-process-id") true]
-    [(string-eq name "fs-current-dir-status") true]
-    [(string-eq name "fs-current-dir") true]
-    [(string-eq name "print-string") true]
-    [(string-eq name "print-str") true]
-    [(string-eq name "print-error") true]
-    [(string-eq name "panic") true]
-    [(string-eq name "error") true]
-    [(string-eq name "env-var-exists?") true]
-    [else (string-eq name "env-var-value")]))
+    [else false]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -5199,31 +5049,7 @@
     [(string-eq name "string-slice") true]
     [(string-eq name "string-append") true]
     [(string-eq name "string-concat") true]
-    [(string-eq name "read-file") true]
-    [(string-eq name "read-file-status") true]
-    [(string-eq name "write-file") true]
-    [(string-eq name "write-file-status") true]
-    [(string-eq name "append-file-status") true]
-    [(string-eq name "file-exists?") true]
-    [(string-eq name "file-exists-status") true]
-    [(string-eq name "file-open-status") true]
-    [(string-eq name "file-write-status") true]
-    [(string-eq name "fs-mkdir-status") true]
-    [(string-eq name "fs-remove-file-status") true]
-    [(string-eq name "fs-remove-dir-status") true]
-    [(string-eq name "fs-rename-status") true]
-    [(string-eq name "fs-read-dir-status") true]
-    [(string-eq name "fs-read-dir") true]
-    [(string-eq name "fs-file-kind-status") true]
-    [(string-eq name "fs-file-size-status") true]
-    [(string-eq name "fs-file-size") true]
-    [(string-eq name "print-string") true]
-    [(string-eq name "print-str") true]
-    [(string-eq name "print-error") true]
-    [(string-eq name "panic") true]
-    [(string-eq name "error") true]
-    [(string-eq name "env-var-exists?") true]
-    [else (string-eq name "env-var-value")]))
+    [else false]))
 
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
@@ -5239,51 +5065,7 @@
       (tc-string-i64-i64-builtin-call ctx env args (AstTyString))]
     [(or (string-eq name "string-append") (string-eq name "string-concat"))
       (tc-two-string-handle-builtin-call ctx env args (AstTyString))]
-    [(string-eq name "read-file")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyString))]
-    [(string-eq name "read-file-status")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "write-file")
-      (tc-two-string-handle-builtin-call ctx env args (AstTyUnit))]
-    [(or
-        (string-eq name "write-file-status")
-        (string-eq name "append-file-status"))
-      (tc-two-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "file-exists?")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyBool))]
-    [(string-eq name "file-exists-status")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "file-open-status")
-      (tc-string-i64-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "file-write-status")
-      (tc-i64-string-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "fs-rename-status")
-      (tc-two-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "fs-read-dir-status")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(string-eq name "fs-read-dir")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyString))]
-    [(or
-        (string-eq name "fs-mkdir-status")
-        (or
-          (string-eq name "fs-remove-file-status")
-          (or
-            (string-eq name "fs-remove-dir-status")
-            (or
-              (string-eq name "fs-file-kind-status")
-              (or
-                (string-eq name "fs-file-size-status")
-                (string-eq name "fs-file-size"))))))
-      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(or
-        (string-eq name "print-string")
-        (or (string-eq name "print-str") (string-eq name "print-error")))
-      (tc-one-string-handle-builtin-call ctx env args (AstTyUnit))]
-    [(or (string-eq name "panic") (string-eq name "error"))
-      (tc-one-string-handle-builtin-call ctx env args (AstTyNever))]
-    [(string-eq name "env-var-exists?")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyBool))]
-    [else (tc-one-string-handle-builtin-call ctx env args (AstTyString))]))
+    [else (ErrTcType "typecheck: unknown borrowed string builtin")]))
 
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
 ;; String plus any integer index, yielding `char`. The parser emits this as an
@@ -5475,7 +5257,9 @@
         [decls : AstDeclList (box-get decls-box)]
         (clone-field-type-able?
           (tc-type-without-regions (tc-resolve-type ctx ty))
-          (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil)))))]))
+          (clone-fixpoint
+            decls
+            (clone-all-type-names decls (clone-name-set-empty)))))]))
 
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
@@ -8467,35 +8251,43 @@
 (define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
   (tc-repr-c-struct-layout-with-seen ctx struct-name TcStringNil))
 
-(define (tc-ctfe-layout-fields [fields : TcReprCFieldLayoutList]) : CtfeLayoutFieldList
+(define (tc-ctfe-inline-layout-fields [fields : TcInlineFieldLayoutList]) : CtfeLayoutFieldList
   (match fields
-    [(TcReprCFieldLayoutNil) CtfeLayoutFieldNil]
-    [(TcReprCFieldLayoutCons field rest)
+    [(TcInlineFieldLayoutNil) CtfeLayoutFieldNil]
+    [(TcInlineFieldLayoutCons field rest)
       (match field
-        [(TcReprCFieldLayout name _ offset)
+        [(TcInlineFieldLayout name _ offset)
           (CtfeLayoutFieldCons
             (CtfeLayoutField name offset)
-            (tc-ctfe-layout-fields rest))])]))
+            (tc-ctfe-inline-layout-fields rest))])]))
 
-(define (tc-ctfe-struct-layout-info
-  [ctx : TcContext]
-  [struct-name : String]
-  [repr : AstStructRepr]) : CtfeLayoutInfo
-  (if (ast-struct-repr-c? repr)
-    (match (tc-repr-c-struct-layout ctx struct-name)
-      [(OkTcReprCLayout layout)
-        (CtfeLayoutInfo
-          struct-name
-          true
-          (tc-repr-c-layout-size layout)
-          (tc-repr-c-layout-align layout)
-          (tc-ctfe-layout-fields (tc-repr-c-layout-fields layout)))]
-      [(ErrTcReprCLayout _)
-        (CtfeLayoutInfo struct-name true 8 8 CtfeLayoutFieldNil)])
-    (CtfeLayoutInfo struct-name false 8 8 CtfeLayoutFieldNil)))
+(define (tc-ctfe-inline-aggregate-layout-info
+  [name : String]
+  [layout : TcInlineAggregateLayout]) : CtfeLayoutInfo
+  (match layout
+    [(TcInlineStructLayout size align fields)
+      (CtfeLayoutInfo
+        name
+        true
+        size
+        align
+        (tc-ctfe-inline-layout-fields fields))]
+    [(TcInlineEnumLayout size align _)
+      (CtfeLayoutInfo name false size align CtfeLayoutFieldNil)]))
 
-(define (tc-ctfe-type-layout-info [type-name : String]) : CtfeLayoutInfo
-  (CtfeLayoutInfo type-name false 8 8 CtfeLayoutFieldNil))
+(define (tc-ctfe-struct-layout-info [ctx : TcContext] [struct-name : String]) : CtfeLayoutInfo
+  (match (tc-inline-aggregate-layout-for ctx struct-name)
+    [(OkTcInlineAggregateLayout layout)
+      (tc-ctfe-inline-aggregate-layout-info struct-name layout)]
+    [(ErrTcInlineAggregateLayout _)
+      (CtfeLayoutInfo struct-name false 8 8 CtfeLayoutFieldNil)]))
+
+(define (tc-ctfe-type-layout-info [ctx : TcContext] [type-name : String]) : CtfeLayoutInfo
+  (match (tc-inline-aggregate-layout-for ctx type-name)
+    [(OkTcInlineAggregateLayout layout)
+      (tc-ctfe-inline-aggregate-layout-info type-name layout)]
+    [(ErrTcInlineAggregateLayout _)
+      (CtfeLayoutInfo type-name false 8 8 CtfeLayoutFieldNil)]))
 
 (define (tc-ctfe-layout-add-alias
   [layouts : CtfeLayoutInfoList]
@@ -8532,19 +8324,19 @@
         (match decl
           [(AstDeclModule next-module)
             (tc-ctfe-layouts-from-decls ctx rest next-module layouts)]
-          [(AstDeclDefStruct name repr _ _)
+          [(AstDeclDefStruct name _ _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
+              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclDefStructLifetimes name _ repr _ _)
+          [(AstDeclDefStructLifetimes name _ _ _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
+              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
@@ -8553,7 +8345,7 @@
           [(AstDeclDefEnum name _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
@@ -8562,7 +8354,7 @@
           [(AstDeclDefEnumLifetimes name _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
@@ -8572,21 +8364,19 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefStruct name repr _ _)
+                [(AstDeclDefStruct name _ _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo
-                      (tc-ctfe-struct-layout-info ctx key repr)]
+                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
-                [(AstDeclDefStructLifetimes name _ repr _ _)
+                [(AstDeclDefStructLifetimes name _ _ _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo
-                      (tc-ctfe-struct-layout-info ctx key repr)]
+                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
@@ -8595,7 +8385,7 @@
                 [(AstDeclDefEnum name _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
@@ -8604,7 +8394,7 @@
                 [(AstDeclDefEnumLifetimes name _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest

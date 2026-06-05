@@ -45,7 +45,7 @@ table.
 | Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are owned by #1033/#1034/#1035. |
 | Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker work is owned by #806. Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
-| Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value `repr c` states are rejected. See sections 3.5, 4.6, and 5.13. |
+| Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value aggregate states are rejected. See sections 3.5, 4.6, and 5.13. |
 | Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
 | Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code. Runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17; reflection surface owner is #970. |
 | Valid comptime-generated runtime values | Defined result | Accepted generated declarations and values have ordinary valid runtime representations and follow the same safe-code contract as hand-written declarations. See sections 3.7 and 5.17; reflection surface owner is #970. |
@@ -289,7 +289,7 @@ write through, offset, or cast raw pointers.
 `(Box T)` is an explicit, safe, arena-owned indirection type. A box value is a
 pointer-shaped owning handle to storage that contains one `T`, allocated in the
 active arena. It is the source-level escape hatch for recursive aggregate
-layouts once structs and enums can opt into Rust-like inline representation.
+layouts under the default inline aggregate contract.
 
 `(Box T)` is distinct from every other pointer-like surface:
 
@@ -388,48 +388,51 @@ Examples:
 - Structs are heap-allocated when returned from functions (same rule as enums).
 - Not valid as global variables.
 
-#### 3.5.3 C-compatible `repr c` structs (specified, selfhost pending)
+#### 3.5.3 Default inline aggregate layout and `(:repr c)` compatibility (specified, selfhost metadata implemented)
 
-Default TypeLisp struct layout is compiler-owned and may use aggregate-handle
-rules that are not a C ABI contract. FFI-facing structs must opt into a stable
-C-compatible layout with metadata immediately after the struct name and before
-the first field:
+Ordinary TypeLisp structs use a stable C-compatible inline field layout by
+default. Fields are stored in declaration order. Each field starts at the next
+offset aligned to that field's natural alignment, and the total struct size is
+rounded up to the maximum field alignment. Empty structs have size 0 and
+alignment 1.
 
-```lisp test=ignore name=repr-c-struct-syntax reason="selfhost repr c parsing is tracked by #987"
+```lisp test=ignore name=default-struct-layout-syntax reason="layout query lowering is selfhost metadata"
 (defstruct Stat
+  (size i64)
+  (mtime i64))
+```
+
+The metadata form `(:repr c)` may still appear immediately after a struct name
+and before the first field:
+
+```lisp test=ignore name=repr-c-struct-compat-syntax reason="compatibility metadata"
+(defstruct CompatStat
   (:repr c)
   (size i64)
   (mtime i64))
 ```
 
-For layout, v1 accepts only the metadata form `(:repr c)`. Omitting it
-preserves the default TypeLisp layout. Metadata forms must appear before all
-fields; a metadata form after a field is rejected. Duplicate `:repr` metadata
-is rejected. Unknown metadata keys and unknown representation names are
-rejected. Cleanup ownership metadata is specified separately in section 4.6 and
-is not a layout contract. `packed`, `(:repr packed)`, and equivalent
-packed-layout spellings are reserved and rejected until an unsafe packed-field
-slice exists.
+For struct layout, `(:repr c)` is a compatibility/ABI-intent marker and does
+not change field offsets, size, or alignment. Omitting it no longer selects a
+different default layout. Metadata forms must appear before all fields; a
+metadata form after a field is rejected. Duplicate `:repr` metadata is
+rejected. Unknown metadata keys and unknown representation names are rejected.
+Cleanup ownership metadata is specified separately in section 4.6 and is not a
+layout contract. `packed`, `(:repr packed)`, and equivalent packed-layout
+spellings are reserved and rejected until an unsafe packed-field slice exists.
 
-V1 `repr c` fields are restricted to ABI-safe types:
+TypeLisp enum layout is a tagged union by default. The tag is an 8-byte integer
+at offset 0. Variant payload storage starts at offset 8; payloads are placed in
+variant declaration order using the same natural-alignment rule as struct
+fields. The enum size and alignment are the maximum aligned storage needed by
+any variant. Payload offsets are available to compiler layout logic through the
+inline layout query path.
 
-- Fixed-width scalar types supported by the backend: `i8`, `u8`, `i16`, `u16`,
-  `i32`, `u32`, `i64`, `u64`, `f64`, `f32`, `bool`, and `char`.
-- Raw pointer types once the raw-pointer surface is implemented (#809/#896).
-- Nested structs that are themselves marked `repr c`.
-
-Default-layout structs, strings, dynamic arrays, enums, tuples, fixed arrays,
-functions/closures, safe references, region-tagged references, unresolved
-types, and any other aggregate handle are not ABI-safe `repr c` fields in v1.
-They must be rejected with a source-located diagnostic rather than silently
-lowered as C-compatible storage.
-
-Recursive by-value `repr c` struct cycles are rejected. Recursive structures
-through raw pointers can be accepted only after raw pointers exist.
-
-`repr c` layout uses declaration order. Each field starts at the next offset
-aligned for that field. The total size is rounded up to the maximum field
-alignment. Empty `repr c` structs are rejected in v1.
+Layout queries use these default inline layouts for ordinary structs and enums.
+Target C ABI call/return lowering for by-value aggregate externs is separate:
+the backend must still validate the target ABI classes it supports before
+lowering an extern call or return. A source layout being stable does not by
+itself mean every aggregate shape is accepted in every external ABI position.
 
 Supported v1 targets use an x86_64 data model: fixed-width integer and floating
 types use their explicit sizes; `bool` and `char` are one byte; raw pointers are
@@ -917,8 +920,8 @@ Lifetime metadata has these declaration-site rules:
   lifetime parameters or the reserved `program` lifetime. Other names are
   rejected as unknown lifetime parameters.
 - `(:lifetimes ...)` is compatible with ordinary default-layout structs and
-  enums. It is rejected with `(:repr c)` in v1 because safe references and
-  default aggregate handles are not C ABI fields.
+  enums. It is rejected with `(:repr c)` in v1 because safe references are not
+  C ABI fields.
 - Lifetime metadata is independent from cleanup ownership metadata. A future
   cleanup-owning struct may also have lifetime parameters, but cleanup-owning
   enum metadata remains reserved as described in section 4.6.1.
@@ -1701,6 +1704,8 @@ bodies; assertion helpers in `stdlib/test.tl` panic on failure.
 
 Example:
 ```lisp test=check name=inline-test-declaration
+(import "stdlib/io.tl")
+
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (test inc-basic
@@ -2128,12 +2133,11 @@ use-after-move.
 
 #### 4.6.3 Recursive aggregate layout and boxed recursion (specified; finite analysis implemented)
 
-Today, default TypeLisp structs and enums are pointer-shaped aggregate handles,
-so directly recursive enum payloads are finite in the current implementation.
-That is an implementation detail, not the long-term source contract. When an
-aggregate opts into Rust-like inline representation, the compiler must reject
-recursive-by-value storage cycles and require explicit indirection through
-`(Box T)`.
+Ordinary TypeLisp structs and enums have a default inline layout contract.
+Recursive-by-value aggregate cycles are therefore infinite source layouts and
+must use explicit indirection through `(Box T)`, a raw pointer, or a reference
+edge. The current lowering implementation may still carry some aggregate values
+through heap handles, but that is not the source layout contract.
 
 The finite-layout rule is structural:
 
@@ -2147,25 +2151,24 @@ The finite-layout rule is structural:
 - Mutually recursive inline aggregates are checked the same way: every cycle in
   the aggregate layout graph must cross an explicit indirection edge.
 
-This rule does not switch default struct/enum layout by itself. It defines the
-source-level indirection required before later issues can add opt-in inline
-layout and migrate selfhost recursive data structures. The selfhost typechecker
-has a reusable finite-layout analysis for this future inline-layout opt-in; the
-default handle-layout path still accepts today's recursive aggregate programs.
+The selfhost typechecker has reusable finite-layout analysis, and full
+enforcement for every default aggregate declaration is staged separately so
+existing selfhost recursive data structures can migrate to explicit boxes in
+focused slices.
 
-```lisp test=ignore name=box-recursive-list-layout-ok reason="requires future inline aggregate layout mode"
+```lisp test=ignore name=box-recursive-list-layout-ok reason="positive recursive aggregate layout example"
 (defenum ListI64
   (ListNil)
   (ListCons i64 (Box ListI64)))
 ```
 
-```lisp test=ignore name=box-recursive-tree-layout-ok reason="requires future inline aggregate layout mode"
+```lisp test=ignore name=box-recursive-tree-layout-ok reason="positive recursive aggregate layout example"
 (defenum Tree
   (Leaf i64)
   (Node (Box Tree) (Box Tree)))
 ```
 
-```lisp test=ignore name=box-reject-unboxed-recursion reason="negative example for future inline aggregate cycle checks"
+```lisp test=ignore name=box-reject-unboxed-recursion reason="negative example for inline aggregate cycle checks"
 (defenum BadList
   (BadNil)
   (BadCons i64 BadList))
@@ -2692,9 +2695,7 @@ nesting `with-arena` forms.
   (with-arena r
     (let
       [s : String (int->string 42)]
-      (begin
-        (print-string s)
-        0))))
+      (string-length s))))
 ```
 
 **Static escape checking:** Values allocated inside a region are typed as
@@ -2864,13 +2865,12 @@ V1 exclusions:
   and type-erased dispatch are not part of this surface.
 - Reflection metadata strings are not runtime `String` allocation hooks.
 
-### 5.18 Layout queries (specified, selfhost pending)
+### 5.18 Layout queries (specified, selfhost metadata implemented)
 
 The selfhost FFI layout surface reserves three comptime-only query forms:
 
-```lisp test=ignore name=repr-c-layout-query-syntax reason="layout queries are tracked by #989"
+```lisp test=ignore name=default-layout-query-syntax reason="layout query lowering is selfhost metadata"
 (defstruct Stat
-  (:repr c)
   (size i64)
   (mtime i64))
 
@@ -2882,21 +2882,22 @@ The selfhost FFI layout surface reserves three comptime-only query forms:
 - `(size-of type-expr)` returns the byte size as `i64`.
 - `(align-of type-expr)` returns the ABI alignment as `i64`.
 - `(offset-of type-expr field-name)` returns the byte offset of `field-name`
-  inside a `repr c` struct as `i64`; `field-name` is a bare field identifier,
-  not a string and not an evaluated expression.
+  inside a struct as `i64`; `field-name` is a bare field identifier, not a
+  string and not an evaluated expression.
 
 `type-expr` must evaluate at compile time to a type value, usually from
-`(type T)` or a comptime type parameter. `offset-of` requires a `repr c` struct
-type and a field that exists on that struct. All three forms are valid only in
-compile-time-required contexts such as comptime parameters, generated
-declaration evaluation, and explicit `(comptime expr)` folds. To use a query
-result at runtime, the program must fold it through normal comptime evaluation
-and store the resulting `i64`; the compiler must not expose type or layout
-metadata as a runtime value.
+`(type T)` or a comptime type parameter. `offset-of` requires a struct type and
+a field that exists on that struct. `size-of` and `align-of` also work for enum
+types using the TypeLisp tagged-union layout from section 3.5.3. All three
+forms are valid only in compile-time-required contexts such as comptime
+parameters, generated declaration evaluation, and explicit `(comptime expr)`
+folds. To use a query result at runtime, the program must fold it through normal
+comptime evaluation and store the resulting `i64`; the compiler must not expose
+type or layout metadata as a runtime value.
 
 Queries reject wrong arity, missing or runtime-only type operands, non-type
-operands, non-`repr c` structs where a C layout is required, unsupported field
-types, invalid field names, and use outside a compile-time-required context.
+operands, non-struct `offset-of` operands, invalid field names, and use outside
+a compile-time-required context.
 
 ---
 
@@ -3741,6 +3742,8 @@ satisfy any expected type and can merge with concrete `if` branch or `match` arm
 result types.
 
 ```lisp test=compile name=panic-never-branch
+(import "stdlib/io.tl")
+
 (define (parse-or-zero [ok : bool]) : i64
   (if ok
     1
@@ -3751,6 +3754,8 @@ The older dummy-value style also remains valid, but it is no longer required
 for builtin `panic`/`error`:
 
 ```lisp test=compile name=panic-dummy-value
+(import "stdlib/io.tl")
+
 (define (parse-or-zero-compat [ok : bool]) : i64
   (if ok
     1
@@ -3899,6 +3904,8 @@ an error variant, and its internal bottom type can still inhabit a
 result-returning branch:
 
 ```lisp test=compile name=panic-vs-result
+(import "stdlib/io.tl")
+
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -4021,9 +4028,10 @@ declarations.
 
 ### 11.3 Data layout
 
-Default TypeLisp layout is the compiler's internal representation. It is stable
-enough for TypeLisp code generation, but it is not the C FFI contract. Use
-`repr c` only when a struct must be shared with external ABI code.
+Default TypeLisp aggregate layout is stable source metadata. Structs use
+declaration-order inline storage with natural alignment. Enums use a TypeLisp
+tagged-union layout: an 8-byte tag at offset 0 plus max-aligned payload
+storage. Target C ABI call/return lowering is a separate backend contract.
 
 | Type | Size | Alignment |
 |------|------|-----------|
@@ -4032,19 +4040,22 @@ enough for TypeLisp code generation, but it is not the C FFI contract. Use
 | `i32`/`u32` | 4 | 4 |
 | `i64`/`u64`/`f64`/func ptr | 8 | 8 |
 | `(Ptr T)` / `(MutPtr T)` | 8 | 8 |
-| `String`/`DynArray`/`Enum`/`Struct` values | 8 | 8 |
+| `String`/`DynArray`/`Box`/reference-like handles | 8 | 8 |
+| Struct values | declaration-dependent | declaration-dependent |
+| Enum values | declaration-dependent | declaration-dependent |
 
-- Structs: sequential layout with natural alignment per field. No padding minimization (fields are placed in declaration order).
-- Enums: tag word (8 bytes) + max payload size, aligned to 8 bytes.
-- `String`, dynamic-array, enum, and struct values are pointers in IR/ABI
-  slots. Their pointed-to inline storage is larger: strings and dynamic arrays
-  are 16-byte `{ptr,len}` records; structs and enum payload storage depend on
-  their declared fields.
-
-For `repr c` structs, field layout follows section 3.4.3 instead of the
-aggregate-handle rule. A by-value nested `repr c` struct contributes its C
-layout size and alignment, not a TypeLisp pointer-sized handle. Unsupported
-fields are rejected before lowering.
+- Structs: sequential layout with natural alignment per field. There is no
+  padding minimization; fields are placed in declaration order.
+- Enums: tag word (8 bytes) plus max payload storage. Each variant payload is
+  laid out from offset 8 using natural alignment for each payload position.
+- `String` and dynamic-array source values are handle-sized in this layout;
+  their backing storage is larger implementation-owned data.
+- The current IR/ABI may still carry aggregate values through pointer-shaped
+  heap handles in positions not covered by layout queries. That is an
+  implementation detail and not the source layout contract.
+- `(:repr c)` is accepted as struct compatibility/ABI-intent metadata and does
+  not change default struct field offsets. Backend extern lowering validates
+  target C ABI aggregate classes separately.
 
 ---
 
@@ -4110,6 +4121,8 @@ fields are rejected before lowering.
 ```
 
 ```lisp test=run name=print-string exit=0 stdout="hello\n"
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-string "hello\n")

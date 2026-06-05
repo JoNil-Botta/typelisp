@@ -155,6 +155,10 @@
   (OkLowerValue CompilerIrValue)
   (ErrLowerValue CompilerDiagnostic))
 
+(defenum ResultLowerSize
+  (OkLowerSize i64)
+  (ErrLowerSize String))
+
 (defenum ResultLowerFunction
   (OkLowerFunction CompilerIrFunctionList CompilerSourceSpans)
   (ErrLowerFunction CompilerDiagnostic))
@@ -3547,6 +3551,62 @@
             (+ src-offset chunk)
             (- size chunk))]))))
 
+(define (lower-inline-aggregate-copy-size [ctx : TcContext] [ty : AstType]) : ResultLowerSize
+  (match (tc-inline-aggregate-type-layout ctx ty)
+    [(OkTcLayoutInfo info)
+      (match info
+        [(TcLayoutInfo size _) (OkLowerSize size)])]
+    [(ErrTcLayoutInfo message) (ErrLowerSize message)]))
+
+(define (lower-copy-inline-aggregate-to-inline
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (lower-inline-aggregate-copy-size ctx ty)
+    [(OkLowerSize size)
+      (match (lower-reserve-inline-storage state size ty)
+        [(LowerExpr copy-state copy-value _)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-copy-bytes copy-state copy-value 0 value 0 size)
+              copy-value
+              ty))])]
+    [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
+
+(define (lower-copy-inline-aggregate-to-heap
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (lower-inline-aggregate-copy-size ctx ty)
+    [(OkLowerSize size)
+      (match (lower-reserve-heap-storage state size ty)
+        [(LowerExpr copy-state copy-value _)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-copy-bytes copy-state copy-value 0 value 0 size)
+              copy-value
+              ty))])]
+    [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
+
+(define (lower-inline-aggregate-abi-copy-needed?
+  [ctx : TcContext]
+  [state : LowerState]
+  [ty : AstType]) : bool
+  (and
+    (lower-mode-inline-aggregates? (lower-state-mode state))
+    (lower-type-contains-inline-aggregate? ctx ty)))
+
+(define (lower-return-abi-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (if (lower-inline-aggregate-abi-copy-needed? ctx state ty)
+    (lower-copy-inline-aggregate-to-heap ctx state value ty)
+    (OkLowerExpr (LowerExpr state value ty))))
+
 (define (lower-raw-pointer-ir-type [ty : AstType]) : AstType
   (match (tc-type-strip-region ty)
     [(AstTyPtr _) (AstTyU64)]
@@ -5383,62 +5443,63 @@
     (lower-param-list-contains-unsupported-reference? ctx params)
     (tc-type-contains-reference? (tc-resolve-type ctx ret)))
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
-    (if (and
-      (lower-mode-inline-aggregates? mode)
-      (or
-        (lower-param-list-contains-inline-aggregate? ctx params)
-        (lower-type-contains-inline-aggregate? ctx ret)))
-      (ErrLowerFunction (lower-diagnostic (lower-inline-aggregate-abi-message)))
-      (let
-        [param-count : i64 (+ 1 (lower-param-count params))]
-        [function-spans : CompilerSourceSpans
-          (lower-record-function-span spans logical-name body)]
-        [state : LowerState
-          (LowerState
-            param-count
-            0
-            0
-            "entry"
-            IrInstrNil
-            IrBlockNil
-            IrFunctionNil
-            logical-name
-            function-spans
-            names
-            type-cache
-            mode)]
-        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-        (match (lower-load-captures
-          state
-          (IrValueVar 0)
-          captures
-          (sym-i64-empty)
-          (tc-bind-return-type top-env ret-ty))
-          [(OkLowerEnv captured-state captured-env captured-type-env)
-            (let
-              [env : SymI64Env (lower-bind-params params 1 captured-env)]
-              [type-env : TcTypeEnv
-                (tc-bind-params ctx captured-type-env params)]
-              (match (lower-tail-expr
-                ctx
-                captured-state
-                env
-                type-env
-                body
-                ret-ty)
-                [(OkLowerState final-state)
-                  (OkLowerFunction
-                    (compiler-ir-function-cons
-                      (IrFunction
-                        logical-name
-                        (lower-captured-param-list ctx params)
-                        ret-ty
-                        (lower-state-next-var final-state)
-                        (lower-state-build-blocks final-state))
-                      (lower-state-functions final-state))
-                    (lower-state-spans final-state))]
-                [(ErrLowerState message) (ErrLowerFunction message)]))]
-          [(ErrLowerEnv message) (ErrLowerFunction message)])))))
+    (let
+      [param-count : i64 (+ 1 (lower-param-count params))]
+      [function-spans : CompilerSourceSpans
+        (lower-record-function-span spans logical-name body)]
+      [state : LowerState
+        (LowerState
+          param-count
+          0
+          0
+          "entry"
+          IrInstrNil
+          IrBlockNil
+          IrFunctionNil
+          logical-name
+          function-spans
+          names
+          type-cache
+          mode)]
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+      (match (lower-load-captures
+        state
+        (IrValueVar 0)
+        captures
+        (sym-i64-empty)
+        (tc-bind-return-type top-env ret-ty))
+        [(OkLowerEnv captured-state captured-env captured-type-env)
+          (let
+            [env : SymI64Env (lower-bind-params params 1 captured-env)]
+            [type-env : TcTypeEnv (tc-bind-params ctx captured-type-env params)]
+            (match (lower-copy-inline-aggregate-params
+              ctx
+              captured-state
+              env
+              type-env
+              params)
+              [(OkLowerEnv abi-state abi-env abi-type-env)
+                (match (lower-tail-expr
+                  ctx
+                  abi-state
+                  abi-env
+                  abi-type-env
+                  body
+                  ret-ty)
+                  [(OkLowerState final-state)
+                    (OkLowerFunction
+                      (compiler-ir-function-cons
+                        (IrFunction
+                          logical-name
+                          (lower-captured-param-list ctx params)
+                          ret-ty
+                          (lower-state-next-var final-state)
+                          (lower-state-build-blocks final-state))
+                        (lower-state-functions final-state))
+                      (lower-state-spans final-state))]
+                  [(ErrLowerState message) (ErrLowerFunction message)])]
+              [(ErrLowerEnv message) (ErrLowerFunction message)]))]
+        [(ErrLowerEnv message) (ErrLowerFunction message)]))))
 
 (define (lower-lambda-noncapturing
   [ctx : TcContext]
@@ -5767,17 +5828,23 @@
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr value-state value-ir _)
-              (match (lower-emit-active-exits value-state env type-env)
-                [(OkLowerState cleanup-state)
-                  (OkLowerExpr
-                    (LowerExpr
-                      (lower-state-emit-at-expr
-                        cleanup-state
-                        (IrInstrReturn (lower-return-maybe value-ir return-ty))
-                        origin)
-                      IrValueUnit
-                      (AstTyNever)))]
-                [(ErrLowerState message) (ErrLowerExpr message)])])]
+              (match (lower-return-abi-value ctx value-state value-ir return-ty)
+                [(OkLowerExpr return-copy)
+                  (match return-copy
+                    [(LowerExpr return-state return-value _)
+                      (match (lower-emit-active-exits return-state env type-env)
+                        [(OkLowerState cleanup-state)
+                          (OkLowerExpr
+                            (LowerExpr
+                              (lower-state-emit-at-expr
+                                cleanup-state
+                                (IrInstrReturn
+                                  (lower-return-maybe return-value return-ty))
+                                origin)
+                              IrValueUnit
+                              (AstTyNever)))]
+                        [(ErrLowerState message) (ErrLowerExpr message)])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(ErrTcType _)
       (ErrLowerExpr
@@ -16301,10 +16368,15 @@
         [(LowerExpr body-state value expr-ty)
           (if (tc-never-type? expr-ty)
             (OkLowerState body-state)
-            (OkLowerState
-              (lower-state-emit
-                body-state
-                (IrInstrReturn (lower-return-maybe value ret-ty)))))])]
+            (match (lower-return-abi-value ctx body-state value ret-ty)
+              [(OkLowerExpr return-copy)
+                (match return-copy
+                  [(LowerExpr return-state return-value _)
+                    (OkLowerState
+                      (lower-state-emit
+                        return-state
+                        (IrInstrReturn (lower-return-maybe return-value ret-ty))))])]
+              [(ErrLowerExpr message) (ErrLowerState message)]))])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
 (define (lower-tail-call
@@ -16316,7 +16388,9 @@
   [args : AstExprList]
   [ret-ty : AstType]
   [origin : AstExpr]) : ResultLowerState
-  (if (lower-tail-call-target? state env callee)
+  (if (and
+    (lower-tail-call-target? state env callee)
+    (not (lower-mode-inline-aggregates? (lower-state-mode state))))
     (match (lower-args ctx state env type-env args)
       [(OkLowerArgs args-state values)
         (OkLowerState
@@ -16682,11 +16756,74 @@
                 idx)
               (lower-param-list ctx rest (+ idx 1)))]))]))
 
+(define (lower-copy-inline-aggregate-param
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [ty : AstType]) : ResultLowerEnv
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (if (lower-inline-aggregate-abi-copy-needed? ctx state resolved)
+      (match (sym-i64-lookup env name)
+        [(SomeI64 var-id)
+          (match (lower-copy-inline-aggregate-to-inline
+            ctx
+            state
+            (IrValueVar var-id)
+            resolved)
+            [(OkLowerExpr copied)
+              (match copied
+                [(LowerExpr copy-state copy-value _)
+                  (match copy-value
+                    [(IrValueVar copy-var)
+                      (OkLowerEnv
+                        copy-state
+                        (sym-i64-bind env name copy-var)
+                        type-env)]
+                    [_
+                      (ErrLowerEnv
+                        (lower-diagnostic
+                          "lower: aggregate ABI param copy expected local value"))])])]
+            [(ErrLowerExpr message) (ErrLowerEnv message)])]
+        [(NoneI64)
+          (ErrLowerEnv
+            (lower-diagnostic
+              (string-append "lower: missing aggregate ABI param " name)))])
+      (OkLowerEnv state env type-env))))
+
+(define (lower-copy-inline-aggregate-params
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]) : ResultLowerEnv
+  (match params
+    [(AstParamNil) (OkLowerEnv state env type-env)]
+    [(AstParamCons param rest)
+      (let
+        [rest : AstParamList (box-get rest)]
+        (match param
+          [(AstParam name ty _)
+            (match (lower-copy-inline-aggregate-param
+              ctx
+              state
+              env
+              type-env
+              name
+              ty)
+              [(OkLowerEnv param-state param-env param-type-env)
+                (lower-copy-inline-aggregate-params
+                  ctx
+                  param-state
+                  param-env
+                  param-type-env
+                  rest)]
+              [(ErrLowerEnv message) (ErrLowerEnv message)])]))]))
+
 (define (lower-supported-function-param-type? [ctx : TcContext] [ty : AstType]) : bool
   (lower-supported-reference-type? ctx ty))
-
-(define (lower-inline-aggregate-abi-message) : String
-  "lower: inline aggregate mode does not support aggregate function params or returns (#1724)")
 
 (define (lower-type-contains-inline-aggregate? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -16760,52 +16897,60 @@
     (lower-param-list-contains-unsupported-reference? ctx params)
     (not (lower-supported-reference-type? ctx ret)))
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
-    (if (and
-      (lower-mode-inline-aggregates? mode)
-      (or
-        (lower-param-list-contains-inline-aggregate? ctx params)
-        (lower-type-contains-inline-aggregate? ctx ret)))
-      (ErrLowerFunction (lower-diagnostic (lower-inline-aggregate-abi-message)))
-      (let
-        [param-count : i64 (lower-param-count params)]
-        [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
-        [type-env : TcTypeEnv
-          (tc-bind-return-type
-            (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
-            (tc-type-without-regions (tc-resolve-type ctx ret)))]
-        [function-spans : CompilerSourceSpans
-          (lower-record-function-span spans logical-name body)]
-        [state : LowerState
-          (LowerState
-            param-count
-            0
-            0
-            "entry"
-            IrInstrNil
-            IrBlockNil
-            IrFunctionNil
-            logical-name
-            function-spans
-            names
-            type-cache
-            mode)]
-        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-        (if (lower-supported-function-return-type? ctx ret-ty)
-          (match (lower-tail-expr ctx state env type-env body ret-ty)
-            [(OkLowerState final-state)
-              (OkLowerFunction
-                (compiler-ir-function-cons
-                  (IrFunction
-                    logical-name
-                    (lower-param-list ctx params 0)
-                    ret-ty
-                    (lower-state-next-var final-state)
-                    (lower-state-build-blocks final-state))
-                  (lower-state-functions final-state))
-                (lower-state-spans final-state))]
-            [(ErrLowerState message) (ErrLowerFunction message)])
-          (ErrLowerFunction
-            (lower-diagnostic-at-expr body "lower: unsupported expression")))))))
+    (let
+      [param-count : i64 (lower-param-count params)]
+      [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
+      [type-env : TcTypeEnv
+        (tc-bind-return-type
+          (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
+          (tc-type-without-regions (tc-resolve-type ctx ret)))]
+      [function-spans : CompilerSourceSpans
+        (lower-record-function-span spans logical-name body)]
+      [state : LowerState
+        (LowerState
+          param-count
+          0
+          0
+          "entry"
+          IrInstrNil
+          IrBlockNil
+          IrFunctionNil
+          logical-name
+          function-spans
+          names
+          type-cache
+          mode)]
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+      (if (lower-supported-function-return-type? ctx ret-ty)
+        (match (lower-copy-inline-aggregate-params
+          ctx
+          state
+          env
+          type-env
+          params)
+          [(OkLowerEnv abi-state abi-env abi-type-env)
+            (match (lower-tail-expr
+              ctx
+              abi-state
+              abi-env
+              abi-type-env
+              body
+              ret-ty)
+              [(OkLowerState final-state)
+                (OkLowerFunction
+                  (compiler-ir-function-cons
+                    (IrFunction
+                      logical-name
+                      (lower-param-list ctx params 0)
+                      ret-ty
+                      (lower-state-next-var final-state)
+                      (lower-state-build-blocks final-state))
+                    (lower-state-functions final-state))
+                  (lower-state-spans final-state))]
+              [(ErrLowerState message) (ErrLowerFunction message)])]
+          [(ErrLowerEnv message) (ErrLowerFunction message)])
+        (ErrLowerFunction
+          (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 
 (define (lower-global-value [names : LowerNameCache] [expr : AstExpr]) : ResultLowerValue
   (match expr

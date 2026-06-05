@@ -22,7 +22,7 @@
 
 (defenum LowerNameEnv
   (LowerNameNil)
-  (LowerNameBind String String LowerNameEnv))
+  (LowerNameBind String String (Box LowerNameEnv)))
 
 (defstruct LowerNameCache
   (ids StringI64Map)
@@ -34,7 +34,7 @@
 
 (defenum LowerStringSet
   (LowerStringNil)
-  (LowerStringCons String LowerStringSet))
+  (LowerStringCons String (Box LowerStringSet)))
 
 (defenum LowerReachState
   (LowerReachState StringI64Map LowerStringSet))
@@ -102,7 +102,7 @@
 
 (defenum LowerCaptureList
   (LowerCaptureNil)
-  (LowerCaptureCons LowerCapture LowerCaptureList))
+  (LowerCaptureCons LowerCapture (Box LowerCaptureList)))
 
 (defenum LowerCapturePlan
   (LowerCapturePlan LowerCaptureList i64))
@@ -212,7 +212,7 @@
 
 (defenum LowerCleanupList
   (LowerCleanupNil)
-  (LowerCleanupCons LowerCleanup LowerCleanupList))
+  (LowerCleanupCons LowerCleanup (Box LowerCleanupList)))
 
 (defenum LowerResourceBindings
   (LowerResourceBindings LowerState SymI64Env TcTypeEnv LowerCleanupList))
@@ -383,7 +383,7 @@
     [(LowerNameBind source logical rest)
       (if (string-eq source source-name)
         (TcSomeString logical)
-        (lower-name-env-lookup rest source-name))]))
+        (lower-name-env-lookup (box-get rest) source-name))]))
 
 (define (lower-name-env-resolve [names : LowerNameEnv] [source-name : String]) : String
   (match (lower-name-env-lookup names source-name)
@@ -393,7 +393,7 @@
 (define (lower-name-env-count [names : LowerNameEnv]) : i64
   (match names
     [(LowerNameNil) 0]
-    [(LowerNameBind _ _ rest) (+ 1 (lower-name-env-count rest))]))
+    [(LowerNameBind _ _ rest) (+ 1 (lower-name-env-count (box-get rest)))]))
 
 (define (lower-name-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -423,7 +423,7 @@
     [(LowerNameNil) cache]
     [(LowerNameBind source logical rest)
       (lower-name-cache-from-env-into
-        rest
+        (box-get rest)
         (lower-name-cache-add cache source logical))]))
 
 (define (lower-name-cache-from-env [names : LowerNameEnv]) : LowerNameCache
@@ -521,7 +521,7 @@
   [logical-name : String]) : LowerNameEnv
   (match (lower-name-env-lookup names source-name)
     [(TcSomeString _) names]
-    [(TcNoString) (LowerNameBind source-name logical-name names)]))
+    [(TcNoString) (LowerNameBind source-name logical-name (box names))]))
 
 (define (lower-name-env-add-module-binding
   [names : LowerNameEnv]
@@ -529,11 +529,11 @@
   [source-name : String]
   [logical-name : String]) : LowerNameEnv
   (if (string-eq module "")
-    (LowerNameBind source-name logical-name names)
+    (LowerNameBind source-name logical-name (box names))
     (LowerNameBind
       (compiler-symbol-module-key module source-name)
       logical-name
-      names)))
+      (box names))))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
   (if (>= (string-length name) 6)
@@ -872,19 +872,19 @@
       (LowerNameBind
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
-        names)]
+        (box names))]
     [(AstDeclDefFn name _ _ _)
       (LowerNameBind
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
-        names)]
+        (box names))]
     [(AstDeclDefDispatch name _)
       (LowerNameBind
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
-        names)]
+        (box names))]
     [(AstDeclExtern name _ _)
-      (LowerNameBind (compiler-symbol-module-key alias name) name names)]
+      (LowerNameBind (compiler-symbol-module-key alias name) name (box names))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -1079,22 +1079,22 @@
       (LowerNameBind
         name
         (lower-current-decl-logical-name-cache name-cache module name)
-        names)]
+        (box names))]
     [(AstDeclDefFn name _ _ _)
       (LowerNameBind
         name
         (lower-current-decl-logical-name-cache name-cache module name)
-        names)]
+        (box names))]
     [(AstDeclDefDispatch name _)
       (LowerNameBind
         name
         (lower-current-decl-logical-name names module name)
-        names)]
+        (box names))]
     [(AstDeclExtern name _ _)
       (LowerNameBind
         name
         (lower-current-decl-logical-name-cache name-cache module name)
-        names)]
+        (box names))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1242,12 +1242,12 @@
     [(LowerStringCons item rest)
       (if (string-eq item name)
         true
-        (lower-string-set-contains? rest name))]))
+        (lower-string-set-contains? (box-get rest) name))]))
 
 (define (lower-string-set-insert [items : LowerStringSet] [name : String]) : LowerStringSet
   (if (lower-string-set-contains? items name)
     items
-    (LowerStringCons name items)))
+    (LowerStringCons name (box items))))
 
 (define (lower-function-set-from-decls-in-module
   [decls : AstDeclList]
@@ -1441,7 +1441,7 @@
           state
           (LowerReachState
             (string-i64-map-put reachable logical-name 1)
-            (LowerStringCons logical-name worklist)))
+            (LowerStringCons logical-name (box worklist))))
         state)]))
 
 (define (lower-reach-add-source
@@ -2781,7 +2781,8 @@
         [(LowerStringNil) state]
         [(LowerStringCons name rest)
           (let
-            [popped : LowerReachState (LowerReachState reachable rest)]
+            [popped : LowerReachState
+              (LowerReachState reachable (box-get rest))]
             (match (lower-function-body-index-find body-index name)
               [(LowerSomeFunctionBody body)
                 (lower-reach-process
@@ -4964,7 +4965,12 @@
         [(LowerCapture capture-name _ _ _)
           (if (string-eq capture-name name)
             true
-            (lower-capture-list-contains-name? rest name))])]))
+            (lower-capture-list-contains-name? (box-get rest) name))])]))
+
+(define (lower-capture-list-count [captures : LowerCaptureList]) : i64
+  (match captures
+    [(LowerCaptureNil) 0]
+    [(LowerCaptureCons _ rest) (+ 1 (lower-capture-list-count (box-get rest)))]))
 
 (define (lower-unsupported-capture-message) : String
   "lower: unsupported lambda capture type (#1553)")
@@ -5524,7 +5530,7 @@
                     (+ offset (lower-type-size ctx slot-ty))
                     (LowerCaptureCons
                       (LowerCapture name var-id capture-ty offset)
-                      captures)
+                      (box captures))
                     origin))
                 (ErrLowerCapturePlan
                   (lower-diagnostic-at-expr
@@ -5581,7 +5587,7 @@
                     env
                     type-env
                     env-value
-                    rest)])]
+                    (box-get rest))])]
             [(ErrLowerExpr message) (ErrLowerState message)])])]))
 
 (define (lower-store-capturing-lambda-descriptor
@@ -5656,7 +5662,7 @@
                   (lower-load-captures
                     loaded-state
                     env-value
-                    rest
+                    (box-get rest)
                     (sym-i64-bind env name loaded-var)
                     (tc-bind type-env name capture-ty))]
                 [_
@@ -5966,8 +5972,13 @@
         [(LowerCleanup hidden-name cleanup-name)
           (match (lower-emit-cleanup-call state env hidden-name cleanup-name)
             [(OkLowerState next-state)
-              (lower-emit-cleanup-list next-state env rest)]
+              (lower-emit-cleanup-list next-state env (box-get rest))]
             [(ErrLowerState message) (ErrLowerState message)])])]))
+
+(define (lower-cleanup-list-count [cleanups : LowerCleanupList]) : i64
+  (match cleanups
+    [(LowerCleanupNil) 0]
+    [(LowerCleanupCons _ rest) (+ 1 (lower-cleanup-list-count (box-get rest)))]))
 
 (define (lower-emit-active-exits
   [state : LowerState]
@@ -13021,7 +13032,7 @@
                                     rest
                                     (LowerCleanupCons
                                       (LowerCleanup hidden-name cleanup-name)
-                                      cleanups)))]))]
+                                      (box cleanups))))]))]
                         [(ErrTcString message)
                           (ErrLowerResourceBindings
                             (lower-diagnostic-at-expr cleanup message))])])]
@@ -23164,10 +23175,52 @@
                                     (lower-test-decl-list-count no-main-kept)
                                     2)))))))]))])])])))
 
+(define (compiler-lower-boxed-helper-lists-ok?) : bool
+  (let
+    [names : LowerNameEnv
+      (LowerNameBind
+        "source-a"
+        "logical-a"
+        (box (LowerNameBind "source-b" "logical-b" (box LowerNameNil))))]
+    [strings : LowerStringSet
+      (lower-string-set-insert
+        (lower-string-set-insert LowerStringNil "helper-a")
+        "helper-b")]
+    [captures : LowerCaptureList
+      (LowerCaptureCons
+        (LowerCapture "cap-a" 1 (AstTyI64) 0)
+        (box
+          (LowerCaptureCons
+            (LowerCapture "cap-b" 2 (AstTyBool) 8)
+            (box LowerCaptureNil))))]
+    [cleanups : LowerCleanupList
+      (LowerCleanupCons
+        (LowerCleanup "hidden-a" "cleanup-a")
+        (box
+          (LowerCleanupCons
+            (LowerCleanup "hidden-b" "cleanup-b")
+            (box LowerCleanupNil))))]
+    (and
+      (= (lower-name-env-count names) 2)
+      (and
+        (string-eq (lower-name-env-resolve names "source-b") "logical-b")
+        (and
+          (lower-string-set-contains? strings "helper-a")
+          (and
+            (lower-string-set-contains? strings "helper-b")
+            (and
+              (= (lower-capture-list-count captures) 2)
+              (and
+                (lower-capture-list-contains-name? captures "cap-b")
+                (= (lower-cleanup-list-count cleanups) 2)))))))))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
     (begin
+      (if (compiler-lower-boxed-helper-lists-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-module-specialize-ok?)
         unit
         (set! ok false))

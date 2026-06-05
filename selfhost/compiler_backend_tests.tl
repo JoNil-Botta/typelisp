@@ -3579,10 +3579,11 @@
   (CompilerBackendGlobalTypeCons
     "g_next"
     (AstTyI64)
-    (CompilerBackendGlobalTypeCons
-      "g_cap"
-      (AstTyI64)
-      (CompilerBackendGlobalTypeNil))))
+    (box
+      (CompilerBackendGlobalTypeCons
+        "g_cap"
+        (AstTyI64)
+        (box CompilerBackendGlobalTypeNil)))))
 
 (define (compiler-backend-global-compare-binop-ok?) : bool
   (match (compiler-backend-emit-binop
@@ -4083,7 +4084,9 @@
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
-      (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
+      (and
+        (compiler-backend-global-type-list-boxed-ok?)
+        (compiler-backend-target-model-ok? (compiler-backend-smoke-source)))
       (compiler-backend-array-access-asm-ok?)
       (compiler-backend-make-array-ok?)
       (compiler-backend-source-ok? (compiler-backend-smoke-source))

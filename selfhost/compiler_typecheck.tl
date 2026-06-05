@@ -3544,19 +3544,59 @@
 ;; `comptime` cannot reference a runtime variable, and a comptime result that
 ;; disagrees with the surrounding type is rejected like any other mismatch.
 ;; Type-literal and comptime-parameter rules (#1540, migrated from
-;; src/typechecker.rs): a scalar `comptime` parameter type-checks/specializes,
-;; and a `(type ...)` literal is compile-time only — it cannot be observed as a
-;; runtime value. (Type-valued comptime parameters / `type` kind positions remain
-;; rejected as source-level type parameters pending the comptime-generation work
-;; in #893; covering their accepted-specialization shape is a #893 follow-up.)
+;; src/typechecker.rs): scalar `comptime` parameters type-check/specialize,
+;; `(type ...)` literals are compile-time only, source-level `type` positions
+;; stay rejected, and type-valued comptime parameters specialize through
+;; reflection when called with a type literal.
+(define (compiler-typecheck-unknown-type-policy-message [name : String]) : String
+  (string-append
+    "typecheck: unknown type "
+    (string-append
+      name
+      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
+
+(define (compiler-typecheck-type-valued-comptime-source) : String
+  "(defstruct Point (x i64))
+(define (field-count [comptime T : type]) : i64
+  (comptime (struct-field-count (type T))))
+(define (main) : i64 (field-count (type Point)))")
+
+(define (compiler-typecheck-type-valued-comptime-scalar-arg-source) : String
+  "(defstruct Point (x i64))
+(define (field-count [comptime T : type]) : i64
+  (comptime (struct-field-count (type T))))
+(define (main) : i64 (field-count 1))")
+
 (define (compiler-typecheck-type-literal-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
       "(define (twice [comptime n : i64]) : i64 (* n 2))
 (define (main) : i64 (twice 21))")
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type i64) 0))"
-      "type value i64 is compile-time only")))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (main) : i64 (begin (type i64) 0))"
+          "type value i64 is compile-time only")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (main) : type (type i64))"
+            (compiler-typecheck-unknown-type-policy-message "type"))
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f [value : type]) : i64 0)"
+              (compiler-typecheck-unknown-type-policy-message "type"))
+            (and
+              (compiler-typecheck-error-ok?
+                "(define value : type (type i64))"
+                (compiler-typecheck-unknown-type-policy-message "type"))
+              (and
+                (compiler-typecheck-error-ok?
+                  "(define (main) : i64 (begin (type Missing) 0))"
+                  (compiler-typecheck-unknown-type-policy-message "Missing"))
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-type-valued-comptime-scalar-arg-source)
+                  "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))))))))
 
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and

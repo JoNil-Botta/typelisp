@@ -197,6 +197,36 @@ check_stage1_compile_cli() {
     run_stage1_cli_capture stage1-check "$STAGE1_BIN" check "$STAGE1_CLI_SRC" --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/stage1-check.stdout" "Type checking passed!"
 
+    NO_ROOT_DIR="$WORKDIR/stage1-no-root-stdlib"
+    mkdir -p "$NO_ROOT_DIR"
+    cat > "$NO_ROOT_DIR/main.tl" <<'EOF'
+(import "stdlib/string.tl")
+(define (main) : i64 (string-length "abc"))
+EOF
+    (
+        cd "$NO_ROOT_DIR"
+        unset TYPELISP_STDLIB_ROOT
+        run_stage1_cli_capture stage1-check-embedded-stdlib "$STAGE1_BIN" check main.tl
+    )
+    assert_contains "$WORKDIR/stage1-check-embedded-stdlib.stdout" "Type checking passed!"
+
+    ENV_ROOT="$WORKDIR/stage1-env-stdlib"
+    mkdir -p "$ENV_ROOT"
+    cat > "$ENV_ROOT/string.tl" <<'EOF'
+(define (custom-root-sentinel) : i64 7)
+EOF
+    cat > "$NO_ROOT_DIR/env-root.tl" <<'EOF'
+(import "stdlib/string.tl")
+(define (main) : i64 (custom-root-sentinel))
+EOF
+    (
+        cd "$NO_ROOT_DIR"
+        TYPELISP_STDLIB_ROOT="$ENV_ROOT"
+        export TYPELISP_STDLIB_ROOT
+        run_stage1_cli_capture stage1-check-env-stdlib-root "$STAGE1_BIN" check env-root.tl
+    )
+    assert_contains "$WORKDIR/stage1-check-env-stdlib-root.stdout" "Type checking passed!"
+
     run_stage1_cli_capture stage1-debug-check "$STAGE1_BIN" debug check "$STAGE1_CLI_SRC" --stdlib-root "$ROOT/stdlib"
     if ! cmp -s "$WORKDIR/stage1-check.stdout" "$WORKDIR/stage1-debug-check.stdout"; then
         echo "stage1 debug check differs from top-level check" >&2

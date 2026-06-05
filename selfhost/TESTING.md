@@ -154,6 +154,9 @@ stage with `clang --target=x86_64-pc-windows-msvc -c`, links `stage1.exe` and
 the Windows `stage2.s` and `stage3.s` outputs. Local Windows prerequisites are
 Clang, Visual Studio/MSVC `link.exe`, and a Windows SDK; set
 `TYPELISP_WINDOWS_CLANG` or `TYPELISP_WINDOWS_LINK` to override discovery.
+The stage1 CLI smoke also runs from a scratch directory without a colocated
+`stdlib/` to verify embedded stdlib fallback, then checks that
+`TYPELISP_STDLIB_ROOT` still overrides embedded contents.
 
 Run it from Git Bash with:
 

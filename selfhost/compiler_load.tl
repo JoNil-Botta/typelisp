@@ -9,7 +9,11 @@
 
 (import "sym_i64_env.tl")
 
+(import "../stdlib/env.tl")
+
 (import "../stdlib/fs.tl")
+
+(import "compiler_embedded_stdlib.tl")
 
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
@@ -131,7 +135,25 @@
           (string-append root suffix)
           (string-append root (string-append "/" suffix)))))))
 
-(define (compiler-load-resolve-stdlib-root
+(define (compiler-load-root-list-append
+  [roots : CompilerLoadRootList]
+  [root : String]) : CompilerLoadRootList
+  (match roots
+    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootCons head rest)
+      (CompilerLoadRootCons head (compiler-load-root-list-append rest root))]))
+
+(define (compiler-load-roots-with-env [roots : CompilerLoadRootList]) : CompilerLoadRootList
+  (let
+    [name : String "TYPELISP_STDLIB_ROOT"]
+    (match (env-get (& name))
+      [(EnvNoString) roots]
+      [(EnvSomeString root)
+        (if (= (string-length root) 0)
+          roots
+          (compiler-load-root-list-append roots root))])))
+
+(define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
   [roots : CompilerLoadRootList]) : CompilerLoadMaybePath
   (if (compiler-load-safe-relative? suffix)
@@ -142,8 +164,31 @@
           [candidate : String (compiler-load-join-root-path root suffix)]
           (if (file-exists? candidate)
             (CompilerLoadSomePath candidate)
-            (compiler-load-resolve-stdlib-root suffix rest)))])
+            (compiler-load-resolve-stdlib-root-raw suffix rest)))])
     (CompilerLoadNoPath)))
+
+(define (compiler-load-resolve-stdlib-root
+  [suffix : String]
+  [roots : CompilerLoadRootList]) : CompilerLoadMaybePath
+  (compiler-load-resolve-stdlib-root-raw
+    suffix
+    (compiler-load-roots-with-env roots)))
+
+(define (compiler-load-embedded-stdlib-source [suffix : String]) : CompilerEmbeddedStdlibSource
+  (if (compiler-load-safe-relative? suffix)
+    (compiler-embedded-stdlib-lookup suffix)
+    (CompilerEmbeddedStdlibNoSource)))
+
+(define (compiler-load-embedded-stdlib-path [suffix : String]) : CompilerLoadMaybePath
+  (match (compiler-load-embedded-stdlib-source suffix)
+    [(CompilerEmbeddedStdlibSomeSource _)
+      (CompilerLoadSomePath (string-append "stdlib/" suffix))]
+    [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoPath)]))
+
+(define (compiler-load-embedded-stdlib-source-for-path [path : String]) : CompilerEmbeddedStdlibSource
+  (if (compiler-load-stdlib-import? path)
+    (compiler-load-embedded-stdlib-source (compiler-load-stdlib-suffix path))
+    (CompilerEmbeddedStdlibNoSource)))
 
 (define (compiler-load-resolve-import
   [importer-path : String]
@@ -177,14 +222,16 @@
         (if (file-exists? primary)
           primary
           (if (compiler-load-stdlib-import? import-path)
-            (match (compiler-load-resolve-stdlib-root
-              (compiler-load-stdlib-suffix import-path)
-              stdlib-roots)
-              [(CompilerLoadSomePath root-path) root-path]
-              [(CompilerLoadNoPath)
-                (if (file-exists? import-path)
-                  import-path
-                  primary)])
+            (let
+              [suffix : String (compiler-load-stdlib-suffix import-path)]
+              (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
+                [(CompilerLoadSomePath root-path) root-path]
+                [(CompilerLoadNoPath)
+                  (if (file-exists? import-path)
+                    import-path
+                    (match (compiler-load-embedded-stdlib-path suffix)
+                      [(CompilerLoadSomePath embedded-path) embedded-path]
+                      [(CompilerLoadNoPath) primary]))]))
             primary))]
       (OkPkgResolve resolved))))
 
@@ -218,8 +265,15 @@
   (if (file-exists? resolved)
     (OkCompilerLoadInclude
       (compiler-load-include-str-def name (read-file resolved)))
-    (ErrCompilerLoadInclude
-      (compiler-load-include-str-read-error importer-path include-path resolved))))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (OkCompilerLoadInclude (compiler-load-include-str-def name source))]
+      [(CompilerEmbeddedStdlibNoSource)
+        (ErrCompilerLoadInclude
+          (compiler-load-include-str-read-error
+            importer-path
+            include-path
+            resolved))])))
 
 (define (compiler-load-expand-include-str
   [importer-path : String]
@@ -829,10 +883,23 @@
           expected-module
           cfgs)]
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-    (ErrCompilerLoadWithPaths
-      (compiler-diagnostic-at-start
-        path
-        (string-append "compiler-load: cannot read import " path)))))
+    (match (compiler-load-embedded-stdlib-source-for-path path)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
+          [(OkAstProgramDiagnostic program)
+            (compiler-load-program-with-paths-and-roots-expect-cfg
+              path
+              program
+              seen
+              stdlib-roots
+              expected-module
+              cfgs)]
+          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+      [(CompilerEmbeddedStdlibNoSource)
+        (ErrCompilerLoadWithPaths
+          (compiler-diagnostic-at-start
+            path
+            (string-append "compiler-load: cannot read import " path)))])))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))
@@ -1366,10 +1433,25 @@
           deps
           cfgs)]
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-    (ErrCompilerLoadWithPaths
-      (compiler-diagnostic-at-start
-        path
-        (string-append "compiler-load: cannot read import " path)))))
+    (match (compiler-load-embedded-stdlib-source-for-path path)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
+          [(OkAstProgramDiagnostic program)
+            (compiler-load-package-program-with-paths-and-roots-expect
+              path
+              program
+              seen
+              stdlib-roots
+              expected-module
+              manifest-dir
+              deps
+              cfgs)]
+          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+      [(CompilerEmbeddedStdlibNoSource)
+        (ErrCompilerLoadWithPaths
+          (compiler-diagnostic-at-start
+            path
+            (string-append "compiler-load: cannot read import " path)))])))
 
 (define (compiler-load-package-file-with-paths-and-roots
   [path : String]
@@ -1845,6 +1927,29 @@
             (= (compiler-load-decl-list-count decls) 2)
             (compiler-load-first-string-def? decls "payload" payload))]
         [(ErrCompilerLoadWithPaths _) false]))))
+
+(define (compiler-load-embedded-stdlib-lookup-ok?) : bool
+  (match (compiler-load-embedded-stdlib-source "string.tl")
+    [(CompilerEmbeddedStdlibSomeSource source)
+      (match (compiler-load-source-with-paths-and-roots
+        "stdlib/string.tl"
+        source
+        (sym-i64-empty)
+        CompilerLoadRootNil)
+        [(OkCompilerLoadWithPaths decls _ _ _)
+          (> (compiler-load-decl-list-count decls) 0)]
+        [(ErrCompilerLoadWithPaths _) false])]
+    [(CompilerEmbeddedStdlibNoSource) false]))
+
+(define (compiler-load-embedded-stdlib-missing-ok?) : bool
+  (match (compiler-load-embedded-stdlib-source "definitely_missing_xyz.tl")
+    [(CompilerEmbeddedStdlibNoSource) true]
+    [(CompilerEmbeddedStdlibSomeSource _) false]))
+
+(define (compiler-load-embedded-stdlib-escape-rejected-ok?) : bool
+  (match (compiler-load-embedded-stdlib-source "../string.tl")
+    [(CompilerEmbeddedStdlibNoSource) true]
+    [(CompilerEmbeddedStdlibSomeSource _) false]))
 
 ;; A parse error inside an imported file surfaces a diagnostic whose path is the
 ;; imported file (not the importer), preserving imported-file provenance (#1074).
@@ -2815,6 +2920,24 @@
       (return
         (begin
           (panic "compiler-load: include-str raw text smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-embedded-stdlib-lookup-ok?)
+      (return
+        (begin
+          (panic "compiler-load: embedded stdlib lookup smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-embedded-stdlib-missing-ok?)
+      (return
+        (begin
+          (panic "compiler-load: embedded stdlib missing smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-embedded-stdlib-escape-rejected-ok?)
+      (return
+        (begin
+          (panic "compiler-load: embedded stdlib escape smoke mismatch")
           0)))
     (unless
       (compiler-load-imported-parse-error-path-ok?)

@@ -76,19 +76,19 @@
   ;; CTFE values, not as a source-level type parameter.
   (AstTyExpr)
   (AstTyExprList)
-  (AstTyFunc AstTypeList AstType)
+  (AstTyFunc AstTypeList (Box AstType))
   (AstTyTuple AstTypeList)
-  (AstTyArray AstType i64)
-  (AstTyDynArray AstType)
-  (AstTyBox AstType)
-  (AstTyRegion String AstType)
-  (AstTyRef String AstType)
-  (AstTyMutRef String AstType)
+  (AstTyArray (Box AstType) i64)
+  (AstTyDynArray (Box AstType))
+  (AstTyBox (Box AstType))
+  (AstTyRegion String (Box AstType))
+  (AstTyRef String (Box AstType))
+  (AstTyMutRef String (Box AstType))
   (AstTyEnum String)
   (AstTyStruct String)
   (AstTyVar String)
-  (AstTyPtr AstType)
-  (AstTyMutPtr AstType))
+  (AstTyPtr (Box AstType))
+  (AstTyMutPtr (Box AstType)))
 
 (defenum AstTypeList
   (AstTypeNil)
@@ -339,6 +339,33 @@
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
   (AstTypeCons head (box rest)))
+
+(define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
+  (AstTyFunc args (box ret)))
+
+(define (ast-ty-array [elem : AstType] [count : i64]) : AstType
+  (AstTyArray (box elem) count))
+
+(define (ast-ty-dyn-array [elem : AstType]) : AstType
+  (AstTyDynArray (box elem)))
+
+(define (ast-ty-box [elem : AstType]) : AstType
+  (AstTyBox (box elem)))
+
+(define (ast-ty-region [region : String] [inner : AstType]) : AstType
+  (AstTyRegion region (box inner)))
+
+(define (ast-ty-ref [region : String] [inner : AstType]) : AstType
+  (AstTyRef region (box inner)))
+
+(define (ast-ty-mut-ref [region : String] [inner : AstType]) : AstType
+  (AstTyMutRef region (box inner)))
+
+(define (ast-ty-ptr [elem : AstType]) : AstType
+  (AstTyPtr (box elem)))
+
+(define (ast-ty-mut-ptr [elem : AstType]) : AstType
+  (AstTyMutPtr (box elem)))
 
 (define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
   (AstParamCons head (box rest)))
@@ -617,7 +644,28 @@
     [string-ty : AstType (AstTyString)]
     [arg-tys : AstTypeList
       (ast-type-cons i64-ty (ast-type-cons string-ty AstTypeNil))]
-    [fn-ty : AstType (AstTyFunc arg-tys i64-ty)]
+    [ret-ty : AstType (ast-ty-ref "r" (ast-ty-ptr (ast-ty-array i64-ty 4)))]
+    [fn-ty : AstType (ast-ty-func arg-tys ret-ty)]
+    [nested-ty-ok? : bool
+      (match fn-ty
+        [(AstTyFunc _ ret)
+          (match (box-get ret)
+            [(AstTyRef region ptr)
+              (and
+                (string-eq region "r")
+                (match (box-get ptr)
+                  [(AstTyPtr array)
+                    (match (box-get array)
+                      [(AstTyArray elem count)
+                        (and
+                          (= count 4)
+                          (match (box-get elem)
+                            [(AstTyI64) true]
+                            [_ false]))]
+                      [_ false])]
+                  [_ false]))]
+            [_ false])]
+        [_ false])]
     [lit : AstLiteral (AstLitInt 41)]
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
     [expr : AstExpr (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
@@ -627,4 +675,6 @@
     [program : AstProgram (AstProgram (ast-decl-cons decl AstDeclNil))]
     (match program
       [(AstProgram _)
-        (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))])))
+        (if nested-ty-ok?
+          (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))
+          0)])))

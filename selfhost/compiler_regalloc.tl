@@ -385,9 +385,15 @@
       (compiler-reg-var-type-insert types dst (AstTyBool))]
     [(IrInstrEntryArgc dst) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrEntryArgv dst)
-      (compiler-reg-var-type-insert types dst (AstTyPtr (AstTyPtr (AstTyU8))))]
+      (compiler-reg-var-type-insert
+        types
+        dst
+        (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
     [(IrInstrEntryEnvp dst)
-      (compiler-reg-var-type-insert types dst (AstTyPtr (AstTyPtr (AstTyU8))))]
+      (compiler-reg-var-type-insert
+        types
+        dst
+        (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
     [(IrInstrCpuId dst _ _ _)
       (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrXgetbv dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
@@ -1771,7 +1777,7 @@
             (compiler-ir-instr-cons
               (IrInstrMov 3 (IrValueVar 0) (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrMov 4 (IrValueUnit) (AstTyDynArray (AstTyI64)))
+                (IrInstrMov 4 (IrValueUnit) (ast-ty-dyn-array (AstTyI64)))
                 (compiler-ir-instr-cons
                   (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons

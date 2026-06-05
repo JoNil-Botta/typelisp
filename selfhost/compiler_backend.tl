@@ -1637,7 +1637,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (compiler-backend-type-size inner)]
+    [(AstTyRegion _ inner) (compiler-backend-type-size (box-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
@@ -4228,7 +4228,7 @@
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
-                (CompilerBackendSomeSignature args ret-ty)]
+                (CompilerBackendSomeSignature args (box-get ret-ty))]
               [_ (CompilerBackendNoSignature)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
@@ -5571,13 +5571,13 @@
           assignments
           dst
           ".L_tl_argv"
-          (AstTyPtr (AstTyPtr (AstTyU8))))]
+          (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
       [(IrInstrEntryEnvp dst)
         (compiler-backend-emit-entry-load
           assignments
           dst
           ".L_tl_envp"
-          (AstTyPtr (AstTyPtr (AstTyU8))))]
+          (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
       [(IrInstrCpuId dst leaf subleaf reg-index)
         (compiler-backend-emit-cpuid assignments dst leaf subleaf reg-index)]
       [(IrInstrXgetbv dst index)
@@ -18830,7 +18830,9 @@ tl_windows_sdk_registry_install:
                 (compiler-ir-extern-cons
                   (compiler-ir-extern-default
                     "tl_process_output"
-                    (AstTyFunc (ast-type-cons (AstTyI64) AstTypeNil) (AstTyI64)))
+                    (ast-ty-func
+                      (ast-type-cons (AstTyI64) AstTypeNil)
+                      (AstTyI64)))
                   (compiler-ir-extern-cons
                     (compiler-ir-extern-default
                       "tl_random_system_seed"

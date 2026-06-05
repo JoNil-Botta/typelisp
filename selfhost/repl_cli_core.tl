@@ -180,7 +180,9 @@
         "(->"
         (string-append
           (repl-type-list-render-spaced args)
-          (string-append " " (string-append (repl-type-render ret) ")"))))]
+          (string-append
+            " "
+            (string-append (repl-type-render (box-get ret)) ")"))))]
     [(AstTyTuple elems)
       (string-append
         "(Tuple"
@@ -189,34 +191,48 @@
       (string-append
         "(Array "
         (string-append
-          (repl-type-render elem)
+          (repl-type-render (box-get elem))
           (string-append " " (string-append (int->string count) ")"))))]
     [(AstTyDynArray elem)
-      (string-append "(Array " (string-append (repl-type-render elem) ")"))]
+      (string-append
+        "(Array "
+        (string-append (repl-type-render (box-get elem)) ")"))]
     [(AstTyBox elem)
-      (string-append "(Box " (string-append (repl-type-render elem) ")"))]
+      (string-append
+        "(Box "
+        (string-append (repl-type-render (box-get elem)) ")"))]
     [(AstTyPtr elem)
-      (string-append "(Ptr " (string-append (repl-type-render elem) ")"))]
+      (string-append
+        "(Ptr "
+        (string-append (repl-type-render (box-get elem)) ")"))]
     [(AstTyMutPtr elem)
-      (string-append "(MutPtr " (string-append (repl-type-render elem) ")"))]
+      (string-append
+        "(MutPtr "
+        (string-append (repl-type-render (box-get elem)) ")"))]
     [(AstTyRef region inner)
       (string-append
         "(& "
         (string-append
           region
-          (string-append " " (string-append (repl-type-render inner) ")"))))]
+          (string-append
+            " "
+            (string-append (repl-type-render (box-get inner)) ")"))))]
     [(AstTyMutRef region inner)
       (string-append
         "(&mut "
         (string-append
           region
-          (string-append " " (string-append (repl-type-render inner) ")"))))]
+          (string-append
+            " "
+            (string-append (repl-type-render (box-get inner)) ")"))))]
     [(AstTyRegion region inner)
       (string-append
         "(in "
         (string-append
           region
-          (string-append " " (string-append (repl-type-render inner) ")"))))]
+          (string-append
+            " "
+            (string-append (repl-type-render (box-get inner)) ")"))))]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) (string-append "'" (string-append name "'"))]))

@@ -395,10 +395,12 @@
     [(BackendTargetWindows) "_write"]))
 
 (define (tltest-print-runtime-write-type) : AstType
-  (AstTyFunc
+  (ast-ty-func
     (ast-type-cons
       (AstTyI32)
-      (ast-type-cons (AstTyPtr (AstTyU8)) (ast-type-cons (AstTyI32) AstTypeNil)))
+      (ast-type-cons
+        (ast-ty-ptr (AstTyU8))
+        (ast-type-cons (AstTyI32) AstTypeNil)))
     (AstTyI32)))
 
 (define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl

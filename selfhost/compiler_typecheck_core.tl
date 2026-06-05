@@ -403,16 +403,16 @@
   (ast-type-cons a (ast-type-cons b (ast-type-cons c AstTypeNil))))
 
 (define (tc-fn0 [ret : AstType]) : AstType
-  (AstTyFunc AstTypeNil ret))
+  (ast-ty-func AstTypeNil ret))
 
 (define (tc-fn1 [a : AstType] [ret : AstType]) : AstType
-  (AstTyFunc (tc-type-list1 a) ret))
+  (ast-ty-func (tc-type-list1 a) ret))
 
 (define (tc-fn2 [a : AstType] [b : AstType] [ret : AstType]) : AstType
-  (AstTyFunc (tc-type-list2 a b) ret))
+  (ast-ty-func (tc-type-list2 a b) ret))
 
 (define (tc-fn3 [a : AstType] [b : AstType] [c : AstType] [ret : AstType]) : AstType
-  (AstTyFunc (tc-type-list3 a b c) ret))
+  (ast-ty-func (tc-type-list3 a b c) ret))
 
 (define (tc-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -453,32 +453,34 @@
       (tc-cat3
         "(-> "
         (tc-type-list-render args)
-        (string-append " " (string-append (tc-type-render ret) ")")))]
+        (string-append " " (string-append (tc-type-render (box-get ret)) ")")))]
     [(AstTyTuple elems) (tc-cat3 "(Tuple " (tc-type-list-render elems) ")")]
     [(AstTyArray elem count)
       (tc-cat3
         "(Array "
-        (tc-type-render elem)
+        (tc-type-render (box-get elem))
         (tc-cat3 " " (int->string count) ")"))]
-    [(AstTyDynArray elem) (tc-cat3 "(Array " (tc-type-render elem) ")")]
-    [(AstTyBox elem) (tc-cat3 "(Box " (tc-type-render elem) ")")]
-    [(AstTyPtr elem) (tc-cat3 "(Ptr " (tc-type-render elem) ")")]
-    [(AstTyMutPtr elem) (tc-cat3 "(MutPtr " (tc-type-render elem) ")")]
+    [(AstTyDynArray elem)
+      (tc-cat3 "(Array " (tc-type-render (box-get elem)) ")")]
+    [(AstTyBox elem) (tc-cat3 "(Box " (tc-type-render (box-get elem)) ")")]
+    [(AstTyPtr elem) (tc-cat3 "(Ptr " (tc-type-render (box-get elem)) ")")]
+    [(AstTyMutPtr elem)
+      (tc-cat3 "(MutPtr " (tc-type-render (box-get elem)) ")")]
     [(AstTyRef region inner)
       (tc-cat3
         "(& "
         region
-        (string-append " " (string-append (tc-type-render inner) ")")))]
+        (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
     [(AstTyMutRef region inner)
       (tc-cat3
         "(&mut "
         region
-        (string-append " " (string-append (tc-type-render inner) ")")))]
+        (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
     [(AstTyRegion region inner)
       (tc-cat3
         "(Region "
         region
-        (string-append " " (string-append (tc-type-render inner) ")")))]
+        (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) name]))
@@ -967,7 +969,7 @@
 
 (define (tc-type-strip-region [ty : AstType]) : AstType
   (match ty
-    [(AstTyRegion _ inner) (tc-type-strip-region inner)]
+    [(AstTyRegion _ inner) (tc-type-strip-region (box-get inner))]
     [_ ty]))
 
 (define (tc-type-list-without-regions [types : AstTypeList]) : AstTypeList
@@ -983,19 +985,23 @@
 (define (tc-type-without-regions [ty : AstType]) : AstType
   (match ty
     [(AstTyFunc args ret)
-      (AstTyFunc
+      (ast-ty-func
         (tc-type-list-without-regions args)
-        (tc-type-without-regions ret))]
+        (tc-type-without-regions (box-get ret)))]
     [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
-    [(AstTyArray elem len) (AstTyArray (tc-type-without-regions elem) len)]
-    [(AstTyDynArray elem) (AstTyDynArray (tc-type-without-regions elem))]
-    [(AstTyBox elem) (AstTyBox (tc-type-without-regions elem))]
-    [(AstTyPtr elem) (AstTyPtr (tc-type-without-regions elem))]
-    [(AstTyMutPtr elem) (AstTyMutPtr (tc-type-without-regions elem))]
-    [(AstTyRef region inner) (AstTyRef region (tc-type-without-regions inner))]
+    [(AstTyArray elem len)
+      (ast-ty-array (tc-type-without-regions (box-get elem)) len)]
+    [(AstTyDynArray elem)
+      (ast-ty-dyn-array (tc-type-without-regions (box-get elem)))]
+    [(AstTyBox elem) (ast-ty-box (tc-type-without-regions (box-get elem)))]
+    [(AstTyPtr elem) (ast-ty-ptr (tc-type-without-regions (box-get elem)))]
+    [(AstTyMutPtr elem)
+      (ast-ty-mut-ptr (tc-type-without-regions (box-get elem)))]
+    [(AstTyRef region inner)
+      (ast-ty-ref region (tc-type-without-regions (box-get inner)))]
     [(AstTyMutRef region inner)
-      (AstTyMutRef region (tc-type-without-regions inner))]
-    [(AstTyRegion _ inner) (tc-type-without-regions inner)]
+      (ast-ty-mut-ref region (tc-type-without-regions (box-get inner)))]
+    [(AstTyRegion _ inner) (tc-type-without-regions (box-get inner))]
     [_ ty]))
 
 (define (tc-type-list-contains-region [types : AstTypeList] [region : String]) : bool
@@ -1013,19 +1019,25 @@
     [(AstTyFunc args ret)
       (or
         (tc-type-list-contains-region args region)
-        (tc-type-contains-region ret region))]
+        (tc-type-contains-region (box-get ret) region))]
     [(AstTyTuple elems) (tc-type-list-contains-region elems region)]
-    [(AstTyArray elem _) (tc-type-contains-region elem region)]
-    [(AstTyDynArray elem) (tc-type-contains-region elem region)]
-    [(AstTyBox elem) (tc-type-contains-region elem region)]
-    [(AstTyPtr elem) (tc-type-contains-region elem region)]
-    [(AstTyMutPtr elem) (tc-type-contains-region elem region)]
+    [(AstTyArray elem _) (tc-type-contains-region (box-get elem) region)]
+    [(AstTyDynArray elem) (tc-type-contains-region (box-get elem) region)]
+    [(AstTyBox elem) (tc-type-contains-region (box-get elem) region)]
+    [(AstTyPtr elem) (tc-type-contains-region (box-get elem) region)]
+    [(AstTyMutPtr elem) (tc-type-contains-region (box-get elem) region)]
     [(AstTyRef name inner)
-      (or (string-eq name region) (tc-type-contains-region inner region))]
+      (or
+        (string-eq name region)
+        (tc-type-contains-region (box-get inner) region))]
     [(AstTyMutRef name inner)
-      (or (string-eq name region) (tc-type-contains-region inner region))]
+      (or
+        (string-eq name region)
+        (tc-type-contains-region (box-get inner) region))]
     [(AstTyRegion name inner)
-      (or (string-eq name region) (tc-type-contains-region inner region))]
+      (or
+        (string-eq name region)
+        (tc-type-contains-region (box-get inner) region))]
     [_ false]))
 
 (define (tc-type-list-contains-any-region [types : AstTypeList]) : bool
@@ -1043,13 +1055,13 @@
     [(AstTyFunc args ret)
       (or
         (tc-type-list-contains-any-region args)
-        (tc-type-contains-any-region ret))]
+        (tc-type-contains-any-region (box-get ret)))]
     [(AstTyTuple elems) (tc-type-list-contains-any-region elems)]
-    [(AstTyArray elem _) (tc-type-contains-any-region elem)]
-    [(AstTyDynArray elem) (tc-type-contains-any-region elem)]
-    [(AstTyBox elem) (tc-type-contains-any-region elem)]
-    [(AstTyPtr elem) (tc-type-contains-any-region elem)]
-    [(AstTyMutPtr elem) (tc-type-contains-any-region elem)]
+    [(AstTyArray elem _) (tc-type-contains-any-region (box-get elem))]
+    [(AstTyDynArray elem) (tc-type-contains-any-region (box-get elem))]
+    [(AstTyBox elem) (tc-type-contains-any-region (box-get elem))]
+    [(AstTyPtr elem) (tc-type-contains-any-region (box-get elem))]
+    [(AstTyMutPtr elem) (tc-type-contains-any-region (box-get elem))]
     [(AstTyRef _ _) true]
     [(AstTyMutRef _ _) true]
     [(AstTyRegion _ _) true]
@@ -1070,16 +1082,16 @@
     [(AstTyFunc args ret)
       (or
         (tc-type-list-contains-reference? args)
-        (tc-type-contains-reference? ret))]
+        (tc-type-contains-reference? (box-get ret)))]
     [(AstTyTuple elems) (tc-type-list-contains-reference? elems)]
-    [(AstTyArray elem _) (tc-type-contains-reference? elem)]
-    [(AstTyDynArray elem) (tc-type-contains-reference? elem)]
-    [(AstTyBox elem) (tc-type-contains-reference? elem)]
-    [(AstTyPtr elem) (tc-type-contains-reference? elem)]
-    [(AstTyMutPtr elem) (tc-type-contains-reference? elem)]
+    [(AstTyArray elem _) (tc-type-contains-reference? (box-get elem))]
+    [(AstTyDynArray elem) (tc-type-contains-reference? (box-get elem))]
+    [(AstTyBox elem) (tc-type-contains-reference? (box-get elem))]
+    [(AstTyPtr elem) (tc-type-contains-reference? (box-get elem))]
+    [(AstTyMutPtr elem) (tc-type-contains-reference? (box-get elem))]
     [(AstTyRef _ _) true]
     [(AstTyMutRef _ _) true]
-    [(AstTyRegion _ inner) (tc-type-contains-reference? inner)]
+    [(AstTyRegion _ inner) (tc-type-contains-reference? (box-get inner))]
     [_ false]))
 
 (define (tc-type-list-collect-reference-lifetimes
@@ -1100,23 +1112,29 @@
   (match ty
     [(AstTyFunc args ret)
       (tc-type-collect-reference-lifetimes-into
-        ret
+        (box-get ret)
         (tc-type-list-collect-reference-lifetimes args out))]
     [(AstTyTuple elems) (tc-type-list-collect-reference-lifetimes elems out)]
-    [(AstTyArray elem _) (tc-type-collect-reference-lifetimes-into elem out)]
-    [(AstTyDynArray elem) (tc-type-collect-reference-lifetimes-into elem out)]
-    [(AstTyBox elem) (tc-type-collect-reference-lifetimes-into elem out)]
-    [(AstTyPtr elem) (tc-type-collect-reference-lifetimes-into elem out)]
-    [(AstTyMutPtr elem) (tc-type-collect-reference-lifetimes-into elem out)]
+    [(AstTyArray elem _)
+      (tc-type-collect-reference-lifetimes-into (box-get elem) out)]
+    [(AstTyDynArray elem)
+      (tc-type-collect-reference-lifetimes-into (box-get elem) out)]
+    [(AstTyBox elem)
+      (tc-type-collect-reference-lifetimes-into (box-get elem) out)]
+    [(AstTyPtr elem)
+      (tc-type-collect-reference-lifetimes-into (box-get elem) out)]
+    [(AstTyMutPtr elem)
+      (tc-type-collect-reference-lifetimes-into (box-get elem) out)]
     [(AstTyRef lifetime inner)
       (tc-type-collect-reference-lifetimes-into
-        inner
+        (box-get inner)
         (tc-string-list-add out lifetime))]
     [(AstTyMutRef lifetime inner)
       (tc-type-collect-reference-lifetimes-into
-        inner
+        (box-get inner)
         (tc-string-list-add out lifetime))]
-    [(AstTyRegion _ inner) (tc-type-collect-reference-lifetimes-into inner out)]
+    [(AstTyRegion _ inner)
+      (tc-type-collect-reference-lifetimes-into (box-get inner) out)]
     [_ out]))
 
 (define (tc-type-collect-reference-lifetimes [ty : AstType]) : TcStringList
@@ -1191,19 +1209,27 @@
 (define (tc-type-collect-regions-into [ty : AstType] [out : TcStringList]) : TcStringList
   (match ty
     [(AstTyFunc args ret)
-      (tc-type-collect-regions-into ret (tc-type-list-collect-regions args out))]
+      (tc-type-collect-regions-into
+        (box-get ret)
+        (tc-type-list-collect-regions args out))]
     [(AstTyTuple elems) (tc-type-list-collect-regions elems out)]
-    [(AstTyArray elem _) (tc-type-collect-regions-into elem out)]
-    [(AstTyDynArray elem) (tc-type-collect-regions-into elem out)]
-    [(AstTyBox elem) (tc-type-collect-regions-into elem out)]
-    [(AstTyPtr elem) (tc-type-collect-regions-into elem out)]
-    [(AstTyMutPtr elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyArray elem _) (tc-type-collect-regions-into (box-get elem) out)]
+    [(AstTyDynArray elem) (tc-type-collect-regions-into (box-get elem) out)]
+    [(AstTyBox elem) (tc-type-collect-regions-into (box-get elem) out)]
+    [(AstTyPtr elem) (tc-type-collect-regions-into (box-get elem) out)]
+    [(AstTyMutPtr elem) (tc-type-collect-regions-into (box-get elem) out)]
     [(AstTyRef name inner)
-      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+      (tc-type-collect-regions-into
+        (box-get inner)
+        (tc-string-list-add out name))]
     [(AstTyMutRef name inner)
-      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+      (tc-type-collect-regions-into
+        (box-get inner)
+        (tc-string-list-add out name))]
     [(AstTyRegion name inner)
-      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+      (tc-type-collect-regions-into
+        (box-get inner)
+        (tc-string-list-add out name))]
     [_ out]))
 
 (define (tc-type-collect-regions [ty : AstType]) : TcStringList
@@ -1226,7 +1252,7 @@
 
 (define (tc-tag-region [region : String] [ty : AstType]) : AstType
   (if (tc-region-taggable-type? ty)
-    (AstTyRegion region ty)
+    (ast-ty-region region ty)
     ty))
 
 (define (tc-tag-active-region [env : TcTypeEnv] [ty : AstType]) : AstType
@@ -1482,18 +1508,23 @@
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
   (match ty
     [(AstTyFunc args ret)
-      (AstTyFunc (tc-resolve-type-list ctx args) (tc-resolve-type ctx ret))]
+      (ast-ty-func
+        (tc-resolve-type-list ctx args)
+        (tc-resolve-type ctx (box-get ret)))]
     [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
-    [(AstTyArray elem len) (AstTyArray (tc-resolve-type ctx elem) len)]
-    [(AstTyDynArray elem) (AstTyDynArray (tc-resolve-type ctx elem))]
-    [(AstTyBox elem) (AstTyBox (tc-resolve-type ctx elem))]
-    [(AstTyPtr elem) (AstTyPtr (tc-resolve-type ctx elem))]
-    [(AstTyMutPtr elem) (AstTyMutPtr (tc-resolve-type ctx elem))]
-    [(AstTyRef region inner) (AstTyRef region (tc-resolve-type ctx inner))]
+    [(AstTyArray elem len)
+      (ast-ty-array (tc-resolve-type ctx (box-get elem)) len)]
+    [(AstTyDynArray elem)
+      (ast-ty-dyn-array (tc-resolve-type ctx (box-get elem)))]
+    [(AstTyBox elem) (ast-ty-box (tc-resolve-type ctx (box-get elem)))]
+    [(AstTyPtr elem) (ast-ty-ptr (tc-resolve-type ctx (box-get elem)))]
+    [(AstTyMutPtr elem) (ast-ty-mut-ptr (tc-resolve-type ctx (box-get elem)))]
+    [(AstTyRef region inner)
+      (ast-ty-ref region (tc-resolve-type ctx (box-get inner)))]
     [(AstTyMutRef region inner)
-      (AstTyMutRef region (tc-resolve-type ctx inner))]
+      (ast-ty-mut-ref region (tc-resolve-type ctx (box-get inner)))]
     [(AstTyRegion region inner)
-      (AstTyRegion region (tc-resolve-type ctx inner))]
+      (ast-ty-region region (tc-resolve-type ctx (box-get inner)))]
     [(AstTyVar name) (tc-resolve-type-name ctx name)]
     [_ ty]))
 
@@ -1524,28 +1555,28 @@
   (match (tc-resolve-type ctx ty)
     [(AstTyFunc args ret)
       (match (tc-source-type-list-policy-ok ctx args)
-        [(OkTcUnit) (tc-source-type-policy-ok ctx ret)]
+        [(OkTcUnit) (tc-source-type-policy-ok ctx (box-get ret))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
-    [(AstTyArray elem _) (tc-source-type-policy-ok ctx elem)]
-    [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
-    [(AstTyBox elem) (tc-source-type-policy-ok ctx elem)]
-    [(AstTyPtr elem) (tc-source-type-policy-ok ctx elem)]
-    [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyArray elem _) (tc-source-type-policy-ok ctx (box-get elem))]
+    [(AstTyDynArray elem) (tc-source-type-policy-ok ctx (box-get elem))]
+    [(AstTyBox elem) (tc-source-type-policy-ok ctx (box-get elem))]
+    [(AstTyPtr elem) (tc-source-type-policy-ok ctx (box-get elem))]
+    [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx (box-get elem))]
     [(AstTyRef _ inner)
-      (match (tc-resolve-type ctx inner)
+      (match (tc-resolve-type ctx (box-get inner))
         [(AstTyStr) OkTcUnit]
-        [_ (tc-source-type-policy-ok ctx inner)])]
+        [_ (tc-source-type-policy-ok ctx (box-get inner))])]
     [(AstTyMutRef _ inner)
-      (match (tc-resolve-type ctx inner)
+      (match (tc-resolve-type ctx (box-get inner))
         [(AstTyStr) (ErrTcUnit (tc-source-str-mut-ref-policy-message))]
         [_
-          (match (tc-source-type-policy-ok ctx inner)
+          (match (tc-source-type-policy-ok ctx (box-get inner))
             [(OkTcUnit)
               (ErrTcUnit
                 "typecheck: mutable reference types require mutable borrow checker support (#806)")]
             [(ErrTcUnit message) (ErrTcUnit message)])])]
-    [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
+    [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx (box-get inner))]
     [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
@@ -1636,7 +1667,7 @@
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyEnum name) (string-eq name enum-name)]
     [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
-    [(AstTyArray elem _) (tc-type-mentions-enum? ctx elem enum-name)]
+    [(AstTyArray elem _) (tc-type-mentions-enum? ctx (box-get elem) enum-name)]
     [_ false]))
 
 (define (tc-type-mentions-enum-indirectly?
@@ -1645,7 +1676,7 @@
   [enum-name : String]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
-    [(AstTyArray elem _) (tc-type-mentions-enum? ctx elem enum-name)]
+    [(AstTyArray elem _) (tc-type-mentions-enum? ctx (box-get elem) enum-name)]
     [_ false]))
 
 (define (tc-recursive-enum-inline-message
@@ -2102,7 +2133,9 @@
     [(AstTyFunc a-args a-ret)
       (match b
         [(AstTyFunc b-args b-ret)
-          (and (tc-type-list-eq a-args b-args) (tc-type-eq a-ret b-ret))]
+          (and
+            (tc-type-list-eq a-args b-args)
+            (tc-type-eq (box-get a-ret) (box-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
@@ -2111,37 +2144,41 @@
     [(AstTyArray a-elem a-len)
       (match b
         [(AstTyArray b-elem b-len)
-          (and (= a-len b-len) (tc-type-eq a-elem b-elem))]
+          (and (= a-len b-len) (tc-type-eq (box-get a-elem) (box-get b-elem)))]
         [_ false])]
     [(AstTyDynArray a-elem)
       (match b
-        [(AstTyDynArray b-elem) (tc-type-eq a-elem b-elem)]
+        [(AstTyDynArray b-elem) (tc-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyBox a-elem)
       (match b
-        [(AstTyBox b-elem) (tc-type-eq a-elem b-elem)]
+        [(AstTyBox b-elem) (tc-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyPtr a-elem)
       (match b
-        [(AstTyPtr b-elem) (tc-type-eq a-elem b-elem)]
+        [(AstTyPtr b-elem) (tc-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyMutPtr a-elem)
       (match b
-        [(AstTyMutPtr b-elem) (tc-type-eq a-elem b-elem)]
+        [(AstTyMutPtr b-elem) (tc-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyRef a-region a-inner)
       (match b
         [(AstTyRef b-region b-inner)
-          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (tc-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
-          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (tc-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyRegion _ inner)
       (tc-type-eq-core
-        (tc-type-without-regions inner)
+        (tc-type-without-regions (box-get inner))
         (tc-type-without-regions b))]
     [(AstTyEnum a-name)
       (match b
@@ -2266,7 +2303,7 @@
     [(AstTyPtr _) (TcCopyable)]
     [(AstTyMutPtr _) (TcCopyable)]
     [(AstTyRef _ _) (TcCopyable)]
-    [(AstTyRegion _ inner) (tc-type-move-kind inner)]
+    [(AstTyRegion _ inner) (tc-type-move-kind (box-get inner))]
     [(AstTyString) (TcMoveOnly)]
     [(AstTyStr) (TcMoveOnly)]
     [(AstTyTuple _) (TcMoveOnly)]
@@ -2291,13 +2328,13 @@
 
 (define (tc-raw-pointer-elem [ty : AstType] [message : String]) : ResultTcType
   (match (tc-type-strip-region ty)
-    [(AstTyPtr elem) (OkTcType elem)]
-    [(AstTyMutPtr elem) (OkTcType elem)]
+    [(AstTyPtr elem) (OkTcType (box-get elem))]
+    [(AstTyMutPtr elem) (OkTcType (box-get elem))]
     [_ (ErrTcType message)]))
 
 (define (tc-mut-pointer-elem [ty : AstType] [message : String]) : ResultTcType
   (match (tc-type-strip-region ty)
-    [(AstTyMutPtr elem) (OkTcType elem)]
+    [(AstTyMutPtr elem) (OkTcType (box-get elem))]
     [_ (ErrTcType message)]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
@@ -2642,7 +2679,7 @@
             [_ (ErrTcType "typecheck: top-level value requires annotation")])])]
     [(AstDeclDefFn _ params ret _)
       (OkTcType
-        (AstTyFunc (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
+        (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
     [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
     [(AstDeclUnsafe inner) (tc-top-decl-type ctx inner)]
     [_ (ErrTcType "typecheck: declaration has no value type")]))
@@ -2698,7 +2735,7 @@
   [fields : AstTypeList]) : AstType
   (match fields
     [(AstTypeNil) (AstTyEnum enum-name)]
-    [_ (AstTyFunc (tc-resolve-type-list ctx fields) (AstTyEnum enum-name))]))
+    [_ (ast-ty-func (tc-resolve-type-list ctx fields) (AstTyEnum enum-name))]))
 
 (define (tc-bind-enum-variants
   [ctx : TcContext]
@@ -2830,7 +2867,7 @@
                   env
                   module
                   name
-                  (AstTyFunc
+                  (ast-ty-func
                     (tc-field-type-list
                       (tc-context-with-module ctx module)
                       fields)
@@ -2859,7 +2896,7 @@
                       env
                       module
                       name
-                      (AstTyFunc
+                      (ast-ty-func
                         (tc-field-type-list
                           (tc-context-with-module ctx module)
                           fields)
@@ -2948,7 +2985,7 @@
         (tc-bind
           env
           (compiler-symbol-module-key alias name)
-          (AstTyFunc
+          (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             (AstTyStruct (compiler-symbol-module-key module name)))))]
     [(AstDeclComptimeDecl template)
@@ -3145,7 +3182,7 @@
         (tc-bind
           env
           name
-          (AstTyFunc
+          (ast-ty-func
             (tc-field-type-list ctx fields)
             (AstTyStruct (compiler-symbol-module-key module name)))))]
     [(AstDeclComptimeDecl template)
@@ -3244,7 +3281,7 @@
     (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
       [(OkTcUnit)
         (match (tc-expr-list-with-expected-elements ctx env exprs elem-ty)
-          [(OkTcUnit) (OkTcType (AstTyArray elem-ty expected-len))]
+          [(OkTcUnit) (OkTcType (ast-ty-array elem-ty expected-len))]
           [(ErrTcUnit message) (ErrTcType message)])]
       [(ErrTcUnit message) (ErrTcType message)])
     (tc-expr ctx env (AstExprArray exprs))))
@@ -3389,7 +3426,12 @@
     [(AstExprArray exprs)
       (match (tc-type-strip-region expected)
         [(AstTyArray elem-ty len)
-          (tc-expr-array-with-expected-or-actual ctx env exprs elem-ty len)]
+          (tc-expr-array-with-expected-or-actual
+            ctx
+            env
+            exprs
+            (box-get elem-ty)
+            len)]
         [_ (tc-expr ctx env expr)])]
     [(AstExprTuple exprs)
       (match (tc-type-strip-region expected)
@@ -3754,17 +3796,22 @@
     [(OkTcType fn-ty)
       (match fn-ty
         [(AstTyFunc params ret)
-          (tc-call-function-type ctx env func args params ret)]
+          (tc-call-function-type ctx env func args params (box-get ret))]
         [(AstTyRegion _ inner)
-          (match inner
+          (match (box-get inner)
             [(AstTyFunc params ret)
               (match (tc-check-call-args ctx env args params false (AstNoType))
-                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                [(OkTcUnit) (OkTcType (tc-tag-active-region env (box-get ret)))]
                 [(ErrTcUnit message) (ErrTcType message)])]
             [(AstTyEnum enum-name)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr ctx env func enum-name inner)]
+                  (tc-nullary-variant-call-expr
+                    ctx
+                    env
+                    func
+                    enum-name
+                    (box-get inner))]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
         [(AstTyEnum enum-name)
@@ -3788,7 +3835,7 @@
 (define (tc-str-ref-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyRef _ inner)
-      (match (tc-type-strip-region inner)
+      (match (tc-type-strip-region (box-get inner))
         [(AstTyStr) true]
         [_ false])]
     [_ false]))
@@ -4815,12 +4862,14 @@
                                     (if (and
                                       (tc-spmd-varying? write-class)
                                       (not
-                                        (tc-spmd-lane-type-supported? elem-ty)))
+                                        (tc-spmd-lane-type-supported?
+                                          (box-get elem-ty))))
                                       (ErrTcSpmdExprInfo
                                         (string-append
                                           "typecheck: foreach varying array lane type is not supported: "
                                           (tc-type-render
-                                            (tc-type-strip-region elem-ty))))
+                                            (tc-type-strip-region
+                                              (box-get elem-ty)))))
                                       (tc-spmd-finish
                                         expr-ty
                                         TcSpmdUniform
@@ -4829,12 +4878,14 @@
                                     (if (and
                                       (tc-spmd-varying? write-class)
                                       (not
-                                        (tc-spmd-lane-type-supported? elem-ty)))
+                                        (tc-spmd-lane-type-supported?
+                                          (box-get elem-ty))))
                                       (ErrTcSpmdExprInfo
                                         (string-append
                                           "typecheck: foreach varying array lane type is not supported: "
                                           (tc-type-render
-                                            (tc-type-strip-region elem-ty))))
+                                            (tc-type-strip-region
+                                              (box-get elem-ty)))))
                                       (tc-spmd-finish
                                         expr-ty
                                         TcSpmdUniform
@@ -4864,12 +4915,13 @@
                           [(AstTyDynArray elem-ty)
                             (if (and
                               (tc-spmd-varying? write-class)
-                              (not (tc-spmd-lane-type-supported? elem-ty)))
+                              (not
+                                (tc-spmd-lane-type-supported? (box-get elem-ty))))
                               (ErrTcSpmdExprInfo
                                 (string-append
                                   "typecheck: foreach varying array lane type is not supported: "
                                   (tc-type-render
-                                    (tc-type-strip-region elem-ty))))
+                                    (tc-type-strip-region (box-get elem-ty)))))
                               (tc-spmd-finish expr-ty TcSpmdUniform value-env))]
                           [_ (tc-spmd-finish expr-ty TcSpmdUniform value-env)]))])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
@@ -6253,7 +6305,8 @@
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyTuple elems)
       (tc-inline-aggregate-type-list-finite-ok ctx elems stack)]
-    [(AstTyArray elem _) (tc-inline-aggregate-type-finite-ok ctx elem stack)]
+    [(AstTyArray elem _)
+      (tc-inline-aggregate-type-finite-ok ctx (box-get elem) stack)]
     [(AstTyEnum name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
     [(AstTyStruct name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
     [_ OkTcUnit]))
@@ -6563,14 +6616,17 @@
     [(AstTyMutRef _ _)
       (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyRegion _ inner)
-      (tc-inline-aggregate-type-layout-with-stack ctx inner stack)]
+      (tc-inline-aggregate-type-layout-with-stack ctx (box-get inner) stack)]
     [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyVar _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyTuple elems)
       (tc-inline-aggregate-type-list-layout-info ctx elems 0 0 stack)]
     [(AstTyArray elem count)
-      (match (tc-inline-aggregate-type-layout-with-stack ctx elem stack)
+      (match (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (box-get elem)
+        stack)
         [(OkTcLayoutInfo elem-info)
           (OkTcLayoutInfo
             (TcLayoutInfo
@@ -7163,10 +7219,10 @@
       (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
         [(AstTyArray elem-ty _)
           (OkTcBorrowPlace
-            (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
+            (TcBorrowPlace lifetime (tc-borrow-referent-type (box-get elem-ty))))]
         [(AstTyDynArray elem-ty)
           (OkTcBorrowPlace
-            (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
+            (TcBorrowPlace lifetime (tc-borrow-referent-type (box-get elem-ty))))]
         [_
           (ErrTcBorrowPlace "typecheck: array-ref borrow requires array place")])]))
 
@@ -7266,10 +7322,10 @@
         [(TcBorrowPlace inferred referent-ty)
           (match lifetime
             [(AstBorrowLifetimeInferred)
-              (OkTcType (AstTyRef inferred referent-ty))]
+              (OkTcType (ast-ty-ref inferred referent-ty))]
             [(AstBorrowLifetimeNamed requested)
               (if (string-eq requested inferred)
-                (OkTcType (AstTyRef inferred referent-ty))
+                (OkTcType (ast-ty-ref inferred referent-ty))
                 (ErrTcType "typecheck: borrow lifetime mismatch"))])])]
     [(ErrTcBorrowPlace message) (ErrTcType message)]))
 
@@ -8001,7 +8057,7 @@
       (match (tc-expr ctx env str)
         [(OkTcType str-ty)
           (if (tc-string-handle-type? str-ty)
-            (OkTcType (AstTyPtr (AstTyU8)))
+            (OkTcType (ast-ty-ptr (AstTyU8)))
             (ErrTcType "typecheck: string-data requires String"))]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcUnit message) (ErrTcType message)]))
@@ -8017,7 +8073,7 @@
         [(OkTcType ptr-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx ptr-ty))
             [(AstTyPtr elem)
-              (if (tc-type-compatible? elem (AstTyU8))
+              (if (tc-type-compatible? (box-get elem) (AstTyU8))
                 (match (tc-expr ctx env len)
                   [(OkTcType len-ty)
                     (if (tc-integer-type? len-ty)
@@ -8028,7 +8084,7 @@
                 (ErrTcType
                   "typecheck: string-from-bytes pointer must point at u8"))]
             [(AstTyMutPtr elem)
-              (if (tc-type-compatible? elem (AstTyU8))
+              (if (tc-type-compatible? (box-get elem) (AstTyU8))
                 (match (tc-expr ctx env len)
                   [(OkTcType len-ty)
                     (if (tc-integer-type? len-ty)
@@ -8053,15 +8109,17 @@
       (match (tc-expr ctx env array)
         [(OkTcType array-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
-            [(AstTyArray elem-ty _) (OkTcType (AstTyMutPtr elem-ty))]
-            [(AstTyDynArray elem-ty) (OkTcType (AstTyMutPtr elem-ty))]
+            [(AstTyArray elem-ty _)
+              (OkTcType (ast-ty-mut-ptr (box-get elem-ty)))]
+            [(AstTyDynArray elem-ty)
+              (OkTcType (ast-ty-mut-ptr (box-get elem-ty)))]
             [_ (ErrTcType "typecheck: array-data requires an array")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcUnit message) (ErrTcType message)]))
 
 (define (tc-program-entry-ptr-expr [env : TcTypeEnv] [name : String]) : ResultTcType
   (match (tc-require-unsafe env name)
-    [(OkTcUnit) (OkTcType (AstTyPtr (AstTyPtr (AstTyU8))))]
+    [(OkTcUnit) (OkTcType (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
     [(ErrTcUnit message) (ErrTcType message)]))
 
 (define (tc-cpuid-expr
@@ -8094,7 +8152,7 @@
     [(OkTcUnit)
       (match (tc-expr ctx env inner)
         [(OkTcType inner-ty)
-          (OkTcType (tc-tag-active-region env (AstTyBox inner-ty)))]
+          (OkTcType (tc-tag-active-region env (ast-ty-box inner-ty)))]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcUnit message) (ErrTcType message)]))
 
@@ -8106,7 +8164,8 @@
     [(OkTcType box-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstTyBox inner-ty)
-          (OkTcType (tc-project-from-region-container box-ty inner-ty))]
+          (OkTcType
+            (tc-project-from-region-container box-ty (box-get inner-ty)))]
         [_ (ErrTcType "typecheck: box-get requires Box type")])]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -8290,13 +8349,13 @@
                         "typecheck: lambda return type mismatch")
                         [(OkTcUnit)
                           (OkTcType
-                            (AstTyFunc
+                            (ast-ty-func
                               (tc-param-type-list ctx params)
                               (tc-resolve-type ctx ret)))]
                         [(ErrTcUnit message) (ErrTcType message)])]
                     [(AstNoType)
                       (OkTcType
-                        (AstTyFunc (tc-param-type-list ctx params) body-ty))]))]
+                        (ast-ty-func (tc-param-type-list ctx params) body-ty))]))]
               [(ErrTcType message) (ErrTcType message)]))]
         [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprTuple exprs)
@@ -8332,7 +8391,7 @@
                     (match (tc-check-array-rest ctx env rest first-ty)
                       [(OkTcUnit)
                         (OkTcType
-                          (AstTyArray first-ty (tc-expr-list-len exprs)))]
+                          (ast-ty-array first-ty (tc-expr-list-len exprs)))]
                       [(ErrTcUnit message) (ErrTcType message)])]
                   [(ErrTcType message) (ErrTcType message)]))])]
         [(ErrTcUnit message) (ErrTcType message)])]
@@ -8343,7 +8402,7 @@
           [(OkTcType len-ty)
             (if (tc-integer-type? len-ty)
               (if (tc-dyn-array-elem-supported? env elem)
-                (OkTcType (tc-tag-active-region env (AstTyDynArray elem)))
+                (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))
                 (ErrTcType
                   "typecheck: make-array element type is not supported"))
               (ErrTcType "typecheck: make-array length must be integer"))]
@@ -8357,10 +8416,14 @@
                 (match (tc-type-strip-region array-ty)
                   [(AstTyArray elem-ty _)
                     (OkTcType
-                      (tc-project-from-region-container array-ty elem-ty))]
+                      (tc-project-from-region-container
+                        array-ty
+                        (box-get elem-ty)))]
                   [(AstTyDynArray elem-ty)
                     (OkTcType
-                      (tc-project-from-region-container array-ty elem-ty))]
+                      (tc-project-from-region-container
+                        array-ty
+                        (box-get elem-ty)))]
                   [_ (ErrTcType "typecheck: array-ref requires array type")])
                 (ErrTcType "typecheck: array index must be integer"))]
             [(ErrTcType message) (ErrTcType message)])]
@@ -8377,11 +8440,11 @@
                       ctx
                       env
                       value
-                      elem-ty)
+                      (box-get elem-ty))
                       [(OkTcType value-ty)
                         (match (tc-expect
                           value-ty
-                          elem-ty
+                          (box-get elem-ty)
                           "typecheck: array-set! value type mismatch")
                           [(OkTcUnit)
                             (match (tc-ensure-cleanup-resource-not-stored-expr
@@ -8411,11 +8474,11 @@
                       ctx
                       env
                       value
-                      elem-ty)
+                      (box-get elem-ty))
                       [(OkTcType value-ty)
                         (match (tc-expect
                           value-ty
-                          elem-ty
+                          (box-get elem-ty)
                           "typecheck: array-set! value type mismatch")
                           [(OkTcUnit)
                             (match (tc-ensure-cleanup-resource-not-stored-expr
@@ -8449,11 +8512,15 @@
         [(OkTcType array-ty)
           (match (tc-type-strip-region array-ty)
             [(AstTyDynArray elem-ty)
-              (match (tc-expr-with-expected-or-actual ctx env value elem-ty)
+              (match (tc-expr-with-expected-or-actual
+                ctx
+                env
+                value
+                (box-get elem-ty))
                 [(OkTcType value-ty)
                   (match (tc-expect
                     value-ty
-                    elem-ty
+                    (box-get elem-ty)
                     "typecheck: array-push! value type mismatch")
                     [(OkTcUnit)
                       (match (tc-ensure-cleanup-resource-not-stored-expr
@@ -8826,9 +8893,10 @@
     [(AstTyFunc args ret)
       (match (tc-check-extern-arg-abi args)
         [(OkTcUnit)
-          (if (tc-extern-abi-value-type-ok? ret)
+          (if (tc-extern-abi-value-type-ok? (box-get ret))
             OkTcUnit
-            (ErrTcUnit (tc-extern-abi-unsupported-message "return" ret)))]
+            (ErrTcUnit
+              (tc-extern-abi-unsupported-message "return" (box-get ret))))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [_ (ErrTcUnit "typecheck: extern must have function type")]))
 

@@ -2214,7 +2214,9 @@
     [(AstTyFunc a-params a-ret)
       (match b
         [(AstTyFunc b-params b-ret)
-          (and (opt-type-list-eq a-params b-params) (opt-type-eq a-ret b-ret))]
+          (and
+            (opt-type-list-eq a-params b-params)
+            (opt-type-eq (box-get a-ret) (box-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-items)
       (match b
@@ -2223,38 +2225,44 @@
     [(AstTyArray a-item a-len)
       (match b
         [(AstTyArray b-item b-len)
-          (and (= a-len b-len) (opt-type-eq a-item b-item))]
+          (and (= a-len b-len) (opt-type-eq (box-get a-item) (box-get b-item)))]
         [_ false])]
     [(AstTyDynArray a-item)
       (match b
-        [(AstTyDynArray b-item) (opt-type-eq a-item b-item)]
+        [(AstTyDynArray b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
         [_ false])]
     [(AstTyBox a-item)
       (match b
-        [(AstTyBox b-item) (opt-type-eq a-item b-item)]
+        [(AstTyBox b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
         [_ false])]
     [(AstTyPtr a-item)
       (match b
-        [(AstTyPtr b-item) (opt-type-eq a-item b-item)]
+        [(AstTyPtr b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
         [_ false])]
     [(AstTyMutPtr a-item)
       (match b
-        [(AstTyMutPtr b-item) (opt-type-eq a-item b-item)]
+        [(AstTyMutPtr b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
         [_ false])]
     [(AstTyRef a-region a-inner)
       (match b
         [(AstTyRef b-region b-inner)
-          (and (string-eq a-region b-region) (opt-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (opt-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
-          (and (string-eq a-region b-region) (opt-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (opt-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
-          (and (string-eq a-region b-region) (opt-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (opt-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -7446,18 +7454,18 @@
       1
       "tl_alloc"
       (IrCallArgsOne (IrValueI64 16))
-      (AstTyArray (AstTyI64) 2))
+      (ast-ty-array (AstTyI64) 2))
     (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
       (compiler-ir-instr-cons
         (IrInstrStorePtr
           (IrValueVar 2)
           (IrValueVar 9)
-          (AstTyArray (AstTyI64) 2))
+          (ast-ty-array (AstTyI64) 2))
         (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
           (compiler-ir-instr-cons
-            (IrInstrLoad 4 (IrValueVar 3) (AstTyArray (AstTyI64) 2))
+            (IrInstrLoad 4 (IrValueVar 3) (ast-ty-array (AstTyI64) 2))
             (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 0)))
               IrInstrNil)))))))
@@ -7618,11 +7626,11 @@
         (IrInstrStorePtr
           (IrValueVar 2)
           (IrValueVar 9)
-          (AstTyArray (AstTyI64) 2))
+          (ast-ty-array (AstTyI64) 2))
         (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
           (compiler-ir-instr-cons
-            (IrInstrLoad 4 (IrValueVar 3) (AstTyArray (AstTyI64) 2))
+            (IrInstrLoad 4 (IrValueVar 3) (ast-ty-array (AstTyI64) 2))
             (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 0)))
               IrInstrNil)))))))

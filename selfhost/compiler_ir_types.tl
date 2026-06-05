@@ -704,40 +704,48 @@
       (compiler-ir-cat3
         "(-> "
         (compiler-ir-type-list-render args)
-        (string-append " " (string-append (compiler-ir-type-render ret) ")")))]
+        (string-append
+          " "
+          (string-append (compiler-ir-type-render (box-get ret)) ")")))]
     [(AstTyTuple elems)
       (compiler-ir-cat3 "(Tuple " (compiler-ir-type-list-render elems) ")")]
     [(AstTyArray elem count)
       (compiler-ir-cat3
         "(Array "
-        (compiler-ir-type-render elem)
+        (compiler-ir-type-render (box-get elem))
         (compiler-ir-cat3 " " (int->string count) ")"))]
     [(AstTyDynArray elem)
-      (compiler-ir-cat3 "(Array " (compiler-ir-type-render elem) ")")]
+      (compiler-ir-cat3 "(Array " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyBox elem)
-      (compiler-ir-cat3 "(Box " (compiler-ir-type-render elem) ")")]
+      (compiler-ir-cat3 "(Box " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyRegion region inner)
       (compiler-ir-cat3
         "(Region "
         region
-        (string-append " " (string-append (compiler-ir-type-render inner) ")")))]
+        (string-append
+          " "
+          (string-append (compiler-ir-type-render (box-get inner)) ")")))]
     [(AstTyRef region inner)
       (compiler-ir-cat3
         "(& "
         region
-        (string-append " " (string-append (compiler-ir-type-render inner) ")")))]
+        (string-append
+          " "
+          (string-append (compiler-ir-type-render (box-get inner)) ")")))]
     [(AstTyMutRef region inner)
       (compiler-ir-cat3
         "(&mut "
         region
-        (string-append " " (string-append (compiler-ir-type-render inner) ")")))]
+        (string-append
+          " "
+          (string-append (compiler-ir-type-render (box-get inner)) ")")))]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) name]
     [(AstTyPtr elem)
-      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-render elem) ")")]
+      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-render elem) ")")]))
+      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-render (box-get elem)) ")")]))
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
@@ -1734,33 +1742,48 @@
         "(->"
         (compiler-ir-type-list-name args)
         " "
-        (compiler-ir-cat3 (compiler-ir-type-name ret) ")" ""))]
+        (compiler-ir-cat3 (compiler-ir-type-name (box-get ret)) ")" ""))]
     [(AstTyTuple elems)
       (compiler-ir-cat3 "(Tuple" (compiler-ir-type-list-name elems) ")")]
     [(AstTyArray elem count)
       (compiler-ir-cat5
         "(Array "
-        (compiler-ir-type-name elem)
+        (compiler-ir-type-name (box-get elem))
         " "
         (int->string count)
         ")")]
     [(AstTyDynArray elem)
-      (compiler-ir-cat3 "(Array " (compiler-ir-type-name elem) ")")]
+      (compiler-ir-cat3 "(Array " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyBox elem)
-      (compiler-ir-cat3 "(Box " (compiler-ir-type-name elem) ")")]
+      (compiler-ir-cat3 "(Box " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyRegion region inner)
-      (compiler-ir-cat5 "(in " region " " (compiler-ir-type-name inner) ")")]
+      (compiler-ir-cat5
+        "(in "
+        region
+        " "
+        (compiler-ir-type-name (box-get inner))
+        ")")]
     [(AstTyRef region inner)
-      (compiler-ir-cat5 "(& " region " " (compiler-ir-type-name inner) ")")]
+      (compiler-ir-cat5
+        "(& "
+        region
+        " "
+        (compiler-ir-type-name (box-get inner))
+        ")")]
     [(AstTyMutRef region inner)
-      (compiler-ir-cat5 "(&mut " region " " (compiler-ir-type-name inner) ")")]
+      (compiler-ir-cat5
+        "(&mut "
+        region
+        " "
+        (compiler-ir-type-name (box-get inner))
+        ")")]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) (compiler-ir-cat3 "'" name "'")]
     [(AstTyPtr elem)
-      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name elem) ")")]
+      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-name elem) ")")]))
+      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-name (box-get elem)) ")")]))
 
 (define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String
   (compiler-ir-cat5

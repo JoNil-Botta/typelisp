@@ -800,24 +800,27 @@
 (define (ctfe-reflect-resolve-type [infos : CtfeReflectInfoList] [ty : AstType]) : AstType
   (match ty
     [(AstTyFunc args ret)
-      (AstTyFunc
+      (ast-ty-func
         (ctfe-reflect-resolve-type-list infos args)
-        (ctfe-reflect-resolve-type infos ret))]
+        (ctfe-reflect-resolve-type infos (box-get ret)))]
     [(AstTyTuple elems)
       (AstTyTuple (ctfe-reflect-resolve-type-list infos elems))]
     [(AstTyArray elem len)
-      (AstTyArray (ctfe-reflect-resolve-type infos elem) len)]
+      (ast-ty-array (ctfe-reflect-resolve-type infos (box-get elem)) len)]
     [(AstTyDynArray elem)
-      (AstTyDynArray (ctfe-reflect-resolve-type infos elem))]
-    [(AstTyBox elem) (AstTyBox (ctfe-reflect-resolve-type infos elem))]
-    [(AstTyPtr elem) (AstTyPtr (ctfe-reflect-resolve-type infos elem))]
-    [(AstTyMutPtr elem) (AstTyMutPtr (ctfe-reflect-resolve-type infos elem))]
+      (ast-ty-dyn-array (ctfe-reflect-resolve-type infos (box-get elem)))]
+    [(AstTyBox elem)
+      (ast-ty-box (ctfe-reflect-resolve-type infos (box-get elem)))]
+    [(AstTyPtr elem)
+      (ast-ty-ptr (ctfe-reflect-resolve-type infos (box-get elem)))]
+    [(AstTyMutPtr elem)
+      (ast-ty-mut-ptr (ctfe-reflect-resolve-type infos (box-get elem)))]
     [(AstTyRef region inner)
-      (AstTyRef region (ctfe-reflect-resolve-type infos inner))]
+      (ast-ty-ref region (ctfe-reflect-resolve-type infos (box-get inner)))]
     [(AstTyMutRef region inner)
-      (AstTyMutRef region (ctfe-reflect-resolve-type infos inner))]
+      (ast-ty-mut-ref region (ctfe-reflect-resolve-type infos (box-get inner)))]
     [(AstTyRegion region inner)
-      (AstTyRegion region (ctfe-reflect-resolve-type infos inner))]
+      (ast-ty-region region (ctfe-reflect-resolve-type infos (box-get inner)))]
     [(AstTyStruct name)
       (match (ctfe-reflect-info-lookup infos name)
         [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
@@ -874,41 +877,57 @@
         "fn_"
         (string-append
           (ctfe-type-list-key infos args)
-          (string-append "_to_" (ctfe-type-key-with-reflections infos ret))))]
+          (string-append
+            "_to_"
+            (ctfe-type-key-with-reflections infos (box-get ret)))))]
     [(AstTyTuple elems)
       (string-append "tuple_" (ctfe-type-list-key infos elems))]
     [(AstTyArray elem count)
       (string-append
         "array_"
         (string-append
-          (ctfe-type-key-with-reflections infos elem)
+          (ctfe-type-key-with-reflections infos (box-get elem))
           (string-append "_" (ctfe-int-key count))))]
     [(AstTyDynArray elem)
-      (string-append "dynarray_" (ctfe-type-key-with-reflections infos elem))]
+      (string-append
+        "dynarray_"
+        (ctfe-type-key-with-reflections infos (box-get elem)))]
     [(AstTyBox elem)
-      (string-append "box_" (ctfe-type-key-with-reflections infos elem))]
+      (string-append
+        "box_"
+        (ctfe-type-key-with-reflections infos (box-get elem)))]
     [(AstTyPtr elem)
-      (string-append "ptr_" (ctfe-type-key-with-reflections infos elem))]
+      (string-append
+        "ptr_"
+        (ctfe-type-key-with-reflections infos (box-get elem)))]
     [(AstTyMutPtr elem)
-      (string-append "mutptr_" (ctfe-type-key-with-reflections infos elem))]
+      (string-append
+        "mutptr_"
+        (ctfe-type-key-with-reflections infos (box-get elem)))]
     [(AstTyRef region inner)
       (string-append
         "ref_"
         (string-append
           region
-          (string-append "_" (ctfe-type-key-with-reflections infos inner))))]
+          (string-append
+            "_"
+            (ctfe-type-key-with-reflections infos (box-get inner)))))]
     [(AstTyMutRef region inner)
       (string-append
         "mutref_"
         (string-append
           region
-          (string-append "_" (ctfe-type-key-with-reflections infos inner))))]
+          (string-append
+            "_"
+            (ctfe-type-key-with-reflections infos (box-get inner)))))]
     [(AstTyRegion region inner)
       (string-append
         "region_"
         (string-append
           region
-          (string-append "_" (ctfe-type-key-with-reflections infos inner))))]
+          (string-append
+            "_"
+            (ctfe-type-key-with-reflections infos (box-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
     [(AstTyStruct name) (string-append "struct_" name)]
     [(AstTyVar name) (string-append "var_" name)]))
@@ -1171,7 +1190,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count)
       (let
-        [elem-size : i64 (ctfe-type-size layouts elem)]
+        [elem-size : i64 (ctfe-type-size layouts (box-get elem))]
         (if (< elem-size 0)
           -1
           (* elem-size count)))]
@@ -1181,7 +1200,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (ctfe-type-size layouts inner)]
+    [(AstTyRegion _ inner) (ctfe-type-size layouts (box-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyStruct name)
       (match (ctfe-layout-info-lookup layouts name)
@@ -1218,14 +1237,14 @@
     [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray elem _) (ctfe-type-align layouts elem)]
+    [(AstTyArray elem _) (ctfe-type-align layouts (box-get elem))]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (ctfe-type-align layouts inner)]
+    [(AstTyRegion _ inner) (ctfe-type-align layouts (box-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyStruct name)
       (match (ctfe-layout-info-lookup layouts name)
@@ -1306,7 +1325,7 @@
   (match ty
     [(AstTyStruct name) (ctfe-layout-info-lookup layouts name)]
     [(AstTyVar name) (ctfe-layout-info-lookup layouts name)]
-    [(AstTyRegion _ inner) (ctfe-layout-info-for-type layouts inner)]
+    [(AstTyRegion _ inner) (ctfe-layout-info-for-type layouts (box-get inner))]
     [_ (CtfeNoLayoutInfo)]))
 
 ;; Evaluate `(offset-of (type ReprCStruct) field)` to the field byte offset.
@@ -1516,8 +1535,10 @@
                               "enum-variant-count requires enum type"))])]
                     [(string-eq name "array-element-type")
                       (match ty
-                        [(AstTyArray elem _) (OkCtfe (CtfeType elem) arg-fuel)]
-                        [(AstTyDynArray elem) (OkCtfe (CtfeType elem) arg-fuel)]
+                        [(AstTyArray elem _)
+                          (OkCtfe (CtfeType (box-get elem)) arg-fuel)]
+                        [(AstTyDynArray elem)
+                          (OkCtfe (CtfeType (box-get elem)) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -1553,7 +1574,8 @@
                               "function-param-count requires function type"))])]
                     [(string-eq name "function-return-type")
                       (match ty
-                        [(AstTyFunc _ ret) (OkCtfe (CtfeType ret) arg-fuel)]
+                        [(AstTyFunc _ ret)
+                          (OkCtfe (CtfeType (box-get ret)) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -3709,7 +3731,9 @@
     [(AstTyFunc a-args a-ret)
       (match b
         [(AstTyFunc b-args b-ret)
-          (and (ctfe-type-list-eq a-args b-args) (ctfe-type-eq a-ret b-ret))]
+          (and
+            (ctfe-type-list-eq a-args b-args)
+            (ctfe-type-eq (box-get a-ret) (box-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
@@ -3718,38 +3742,47 @@
     [(AstTyArray a-elem a-count)
       (match b
         [(AstTyArray b-elem b-count)
-          (and (= a-count b-count) (ctfe-type-eq a-elem b-elem))]
+          (and
+            (= a-count b-count)
+            (ctfe-type-eq (box-get a-elem) (box-get b-elem)))]
         [_ false])]
     [(AstTyDynArray a-elem)
       (match b
-        [(AstTyDynArray b-elem) (ctfe-type-eq a-elem b-elem)]
+        [(AstTyDynArray b-elem)
+          (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyBox a-elem)
       (match b
-        [(AstTyBox b-elem) (ctfe-type-eq a-elem b-elem)]
+        [(AstTyBox b-elem) (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyPtr a-elem)
       (match b
-        [(AstTyPtr b-elem) (ctfe-type-eq a-elem b-elem)]
+        [(AstTyPtr b-elem) (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyMutPtr a-elem)
       (match b
-        [(AstTyMutPtr b-elem) (ctfe-type-eq a-elem b-elem)]
+        [(AstTyMutPtr b-elem) (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
         [_ false])]
     [(AstTyRef a-region a-inner)
       (match b
         [(AstTyRef b-region b-inner)
-          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (ctfe-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
-          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (ctfe-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
-          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+          (and
+            (string-eq a-region b-region)
+            (ctfe-type-eq (box-get a-inner) (box-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -3766,7 +3799,7 @@
 
 (define (compiler-ctfe-type-literal-ok?) : bool
   (let
-    [want : AstType (AstTyArray (AstTyI64) 4)]
+    [want : AstType (ast-ty-array (AstTyI64) 4)]
     (match (compiler-ctfe-eval
       (AstExprTypeLiteral want)
       (ctfe-env-empty)
@@ -3810,8 +3843,8 @@
   (match (compiler-ctfe-eval
     (AstExprBinary
       (AstBinEq)
-      (AstExprTypeLiteral (AstTyPtr (AstTyI64)))
-      (AstExprTypeLiteral (AstTyPtr (AstTyI64))))
+      (AstExprTypeLiteral (ast-ty-ptr (AstTyI64)))
+      (AstExprTypeLiteral (ast-ty-ptr (AstTyI64))))
     (ctfe-env-empty)
     (ctfe-fuel-limit))
     [(OkCtfe same _)
@@ -3820,8 +3853,8 @@
           (match (compiler-ctfe-eval
             (AstExprBinary
               (AstBinEq)
-              (AstExprTypeLiteral (AstTyPtr (AstTyI64)))
-              (AstExprTypeLiteral (AstTyMutPtr (AstTyI64))))
+              (AstExprTypeLiteral (ast-ty-ptr (AstTyI64)))
+              (AstExprTypeLiteral (ast-ty-mut-ptr (AstTyI64))))
             (ctfe-env-empty)
             (ctfe-fuel-limit))
             [(OkCtfe different _)
@@ -3986,12 +4019,12 @@
     [env : CtfeEnv (compiler-ctfe-reflection-env)]
     [point-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Point"))]
     [maybe-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Maybe"))]
-    [array-ty : AstExpr (AstExprTypeLiteral (AstTyArray (AstTyI64) 4))]
-    [dyn-array-ty : AstExpr (AstExprTypeLiteral (AstTyDynArray (AstTyBool)))]
-    [str-ref-ty : AstExpr (AstExprTypeLiteral (AstTyRef "r" (AstTyStr)))]
+    [array-ty : AstExpr (AstExprTypeLiteral (ast-ty-array (AstTyI64) 4))]
+    [dyn-array-ty : AstExpr (AstExprTypeLiteral (ast-ty-dyn-array (AstTyBool)))]
+    [str-ref-ty : AstExpr (AstExprTypeLiteral (ast-ty-ref "r" (AstTyStr)))]
     [fn-ty : AstExpr
       (AstExprTypeLiteral
-        (AstTyFunc
+        (ast-ty-func
           (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))
           (AstTyString)))]
     [ok : bool true]

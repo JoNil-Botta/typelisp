@@ -314,30 +314,38 @@
         "fn_"
         (string-append
           (spec-type-list-key args)
-          (string-append "_to_" (spec-type-key ret))))]
+          (string-append "_to_" (spec-type-key (box-get ret)))))]
     [(AstTyTuple elems) (string-append "tuple_" (spec-type-list-key elems))]
     [(AstTyArray elem count)
       (string-append
         "array_"
         (string-append
-          (spec-type-key elem)
+          (spec-type-key (box-get elem))
           (string-append "_" (spec-int-key count))))]
-    [(AstTyDynArray elem) (string-append "dynarray_" (spec-type-key elem))]
-    [(AstTyBox elem) (string-append "box_" (spec-type-key elem))]
-    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key elem))]
-    [(AstTyMutPtr elem) (string-append "mutptr_" (spec-type-key elem))]
+    [(AstTyDynArray elem)
+      (string-append "dynarray_" (spec-type-key (box-get elem)))]
+    [(AstTyBox elem) (string-append "box_" (spec-type-key (box-get elem)))]
+    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key (box-get elem)))]
+    [(AstTyMutPtr elem)
+      (string-append "mutptr_" (spec-type-key (box-get elem)))]
     [(AstTyRef region inner)
       (string-append
         "ref_"
-        (string-append region (string-append "_" (spec-type-key inner))))]
+        (string-append
+          region
+          (string-append "_" (spec-type-key (box-get inner)))))]
     [(AstTyMutRef region inner)
       (string-append
         "mutref_"
-        (string-append region (string-append "_" (spec-type-key inner))))]
+        (string-append
+          region
+          (string-append "_" (spec-type-key (box-get inner)))))]
     [(AstTyRegion region inner)
       (string-append
         "region_"
-        (string-append region (string-append "_" (spec-type-key inner))))]
+        (string-append
+          region
+          (string-append "_" (spec-type-key (box-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
     [(AstTyStruct name) (string-append "struct_" name)]
     [(AstTyVar name) (string-append "var_" name)]))
@@ -548,22 +556,24 @@
 (define (spec-substitute-type [ty : AstType] [subs : SpecTypeSubst]) : AstType
   (match ty
     [(AstTyFunc args ret)
-      (AstTyFunc
+      (ast-ty-func
         (spec-substitute-type-list args subs)
-        (spec-substitute-type ret subs))]
+        (spec-substitute-type (box-get ret) subs))]
     [(AstTyTuple elems) (AstTyTuple (spec-substitute-type-list elems subs))]
     [(AstTyArray elem count)
-      (AstTyArray (spec-substitute-type elem subs) count)]
-    [(AstTyDynArray elem) (AstTyDynArray (spec-substitute-type elem subs))]
-    [(AstTyBox elem) (AstTyBox (spec-substitute-type elem subs))]
-    [(AstTyPtr elem) (AstTyPtr (spec-substitute-type elem subs))]
-    [(AstTyMutPtr elem) (AstTyMutPtr (spec-substitute-type elem subs))]
+      (ast-ty-array (spec-substitute-type (box-get elem) subs) count)]
+    [(AstTyDynArray elem)
+      (ast-ty-dyn-array (spec-substitute-type (box-get elem) subs))]
+    [(AstTyBox elem) (ast-ty-box (spec-substitute-type (box-get elem) subs))]
+    [(AstTyPtr elem) (ast-ty-ptr (spec-substitute-type (box-get elem) subs))]
+    [(AstTyMutPtr elem)
+      (ast-ty-mut-ptr (spec-substitute-type (box-get elem) subs))]
     [(AstTyRef region inner)
-      (AstTyRef region (spec-substitute-type inner subs))]
+      (ast-ty-ref region (spec-substitute-type (box-get inner) subs))]
     [(AstTyMutRef region inner)
-      (AstTyMutRef region (spec-substitute-type inner subs))]
+      (ast-ty-mut-ref region (spec-substitute-type (box-get inner) subs))]
     [(AstTyRegion region inner)
-      (AstTyRegion region (spec-substitute-type inner subs))]
+      (ast-ty-region region (spec-substitute-type (box-get inner) subs))]
     [(AstTyVar name)
       (match (spec-type-subst-lookup subs name)
         [(SpecSomeString _) (spec-type-subst-type subs name)]
@@ -2441,14 +2451,14 @@
   (let
     [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
-      (string-eq (spec-type-key (AstTyPtr (AstTyI64))) "ptr_i64")
+      (string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
       (and
         (string-eq
-          (spec-type-key (AstTyMutPtr (AstTyPtr (AstTyU8))))
+          (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
           "mutptr_ptr_u8")
         (ctfe-type-eq
-          (spec-substitute-type (AstTyMutPtr (AstTyVar "T")) subs)
-          (AstTyMutPtr (AstTyI64)))))))
+          (spec-substitute-type (ast-ty-mut-ptr (AstTyVar "T")) subs)
+          (ast-ty-mut-ptr (AstTyI64)))))))
 
 ;: Deterministic specialized name + stable specialization key (#1043, mirrors
 ;: src/specialize.rs deterministic-names / stable-keys coverage). The mangling
@@ -2559,18 +2569,19 @@
         "i64")
       (and
         (string-eq
-          (spec-type-key (spec-substitute-type (AstTyPtr (AstTyVar "T")) subs))
+          (spec-type-key
+            (spec-substitute-type (ast-ty-ptr (AstTyVar "T")) subs))
           "ptr_i64")
         (and
           (string-eq
             (spec-type-key
-              (spec-substitute-type (AstTyDynArray (AstTyVar "T")) subs))
+              (spec-substitute-type (ast-ty-dyn-array (AstTyVar "T")) subs))
             "dynarray_i64")
           (and
             (string-eq
               (spec-type-key
                 (spec-substitute-type
-                  (AstTyFunc
+                  (ast-ty-func
                     (ast-type-cons (AstTyVar "T") AstTypeNil)
                     (AstTyVar "T"))
                   subs))

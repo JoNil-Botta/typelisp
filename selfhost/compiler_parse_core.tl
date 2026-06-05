@@ -237,7 +237,7 @@
 (define (compiler-cfg-merge [base : SymI64Env] [cfgs : SymI64Env]) : SymI64Env
   (match cfgs
     [(SymI64Nil) base]
-    [(SymI64Bind name value rest)
+    [(SymI64Bind name value _ _ rest)
       (sym-i64-bind (compiler-cfg-merge base (box-get rest)) name value)]))
 
 (define (compiler-cfg-enabled? [dispatch : SymI64Env] [name : String]) : bool

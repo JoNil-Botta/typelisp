@@ -1290,7 +1290,7 @@
 (define (compiler-typecheck-inline-boxed-sym-i64-env-source) : String
   "(defenum SymI64Env
   (SymI64Nil)
-  (SymI64Bind String i64 (Box SymI64Env)))")
+  (SymI64Bind String i64 i64 i64 (Box SymI64Env)))")
 
 (define (compiler-typecheck-inline-boxed-loader-helper-source) : String
   "(defenum CompilerLoadRootList

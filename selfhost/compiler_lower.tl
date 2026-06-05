@@ -5413,7 +5413,7 @@
   [bound : TcStringList]) : bool
   (match outer-env
     [(SymI64Nil) false]
-    [(SymI64Bind name _ rest)
+    [(SymI64Bind name _ _ _ rest)
       (if (tc-expr-uses-free-name? body name bound)
         true
         (lower-lambda-captures-env? (box-get rest) body bound))]))
@@ -5975,7 +5975,7 @@
     [(SymI64Nil)
       (OkLowerCapturePlan
         (LowerCapturePlan captures (lower-capture-env-size cursor)))]
-    [(SymI64Bind name var-id rest)
+    [(SymI64Bind name var-id _ _ rest)
       (if (or
         (lower-capture-list-contains-name? captures name)
         (not (tc-expr-uses-free-name? body name bound)))

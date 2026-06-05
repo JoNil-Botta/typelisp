@@ -5109,6 +5109,60 @@
   "(define (branch-move [flag : bool] [s : String]) : String
   (begin (if flag (let [t : String s] t) (let [u : String s] u)) s))")
 
+(define (compiler-typecheck-move-ordinary-sharing-source) : String
+  "(defstruct OrdinaryPacket
+  (name String)
+  (count i64))
+(defstruct OrdinaryWrapper
+  (packet OrdinaryPacket))
+(defenum MaybeCount (SomeCount i64) (NoCount))
+(define (inspect-packet [p : OrdinaryPacket]) : i64 (struct-get p count))
+(define (ordinary-sharing [p : OrdinaryPacket] [m : MaybeCount]) : i64
+  (begin
+    (inspect-packet p)
+    (let [w : OrdinaryWrapper (OrdinaryWrapper p)]
+      (begin
+        (match m [(SomeCount v) v] [NoCount 0])
+        (+ (struct-get p count) (struct-get (struct-get w packet) count))))))")
+
+(define (compiler-typecheck-move-owner-call-ok-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (valid-owner-call [h : FileHandle]) : unit (take-handle h))")
+
+(define (compiler-typecheck-move-owner-call-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-call [h : FileHandle]) : i64
+  (begin (take-handle h) (struct-get h fd)))")
+
+(define (compiler-typecheck-move-owner-constructor-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (bad-owner-constructor [h : FileHandle]) : i64
+  (let [holder : Holder (Holder h 1)]
+    (struct-get h fd)))")
+
+(define (compiler-typecheck-move-owner-return-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-return [h : FileHandle]) : FileHandle
+  (begin (return h) h))")
+
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
   (if flag (let [t : String s] t) s))")
@@ -5141,31 +5195,68 @@
               (tc-moved-contains? removed "beta"))))))))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
-;; branch that moves on every arm), while a single move, copyable reuse, and
-;; branch/deferred-body isolation pass.
+;; branch that moves on every arm), while a single move, copyable reuse, ordinary
+;; aggregate sharing, one-shot owner transfers, and branch/deferred-body
+;; isolation pass.
 (define (compiler-typecheck-move-tests-ok?) : bool
-  (and
-    (compiler-typecheck-moved-set-metrics-ok?)
-    (and
-      (compiler-typecheck-error-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-moved-set-metrics-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-use-after-move-source)
         "typecheck: use of moved value `s`")
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-move-single-move-source))
-        (and
-          (compiler-typecheck-ok? (compiler-typecheck-move-copyable-source))
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-move-branch-source)
-              "typecheck: use of moved value `s`")
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-move-branch-arm-isolated-source))
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-move-lambda-body-discard-source))
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-move-while-body-discard-source))))))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-move-single-move-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-move-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-branch-source)
+        "typecheck: use of moved value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-ordinary-sharing-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-call-ok-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-call-reuse-source)
+        "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-constructor-reuse-source)
+        "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-return-reuse-source)
+        "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-branch-arm-isolated-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-lambda-body-discard-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-while-body-discard-source))
+        unit
+        (set! ok false))
+      ok)))
 
 ;; --- defdispatch frontend model (#1908) ------------------------------------
 (define (compiler-typecheck-defdispatch-full-source) : String

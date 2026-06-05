@@ -11829,18 +11829,13 @@
 ;; --- whole-local move checker (#1048) ---------------------------------------
 ;;
 ;; Reject use-after-move for move-only whole locals/parameters in source
-;; evaluation order. This first slice is deliberately SOUND (it never reports a
-;; false positive) by under-approximating: it tracks only the unambiguous move
-;; sites for whole places -- `let` initialization from a move-only variable and
-;; `set!` of a move-only variable into another slot -- and flags a later read of
-;; a definitely-moved place. Every position where move/borrow state is uncertain
-;; (function-call arguments, loop-carried state, match scrutinees, aggregate
-;; paths) is treated as "not moved", deferring those move sites to follow-up
-;; slices (#1049 path moves, #1050 move-while-borrowed) rather than risking a
-;; spurious rejection of existing valid code. Reads never move; branches merge by
-;; union (a place moved on any arm is moved afterward); loops and lambdas discard
-;; their body's moves for the post-state because they may run zero times or be
-;; deferred. Reassigning a slot with `set!` clears its moved mark.
+;; evaluation order. The staged owner-only policy keeps ordinary aggregate
+;; sharing compatible, while consuming only by-value sites whose target is an
+;; owner today: cleanup-owning structs and Box values. Reads never move; branches
+;; merge by union (a place moved on any arm is moved afterward); loops and
+;; lambdas discard their body's moves for the post-state because they may run
+;; zero times or be deferred. Reassigning a slot with `set!` clears its moved
+;; mark. Aggregate path moves remain split to #1049.
 (defstruct TcMovedSet
   (map StringI64Map))
 
@@ -11906,6 +11901,22 @@
     [(OkTcType ty) (tc-type-move-only? ty)]
     [(ErrTcType _) false]))
 
+(define (tc-type-consuming-by-value-now? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyBox _) true]
+      [(AstTyStruct _) (tc-cleanup-owning-struct-type? ctx resolved)]
+      [(AstTyStructArgs _ _) (tc-cleanup-owning-struct-type? ctx resolved)]
+      [_ false])))
+
+;; Cleanup-owning enum metadata is not represented yet, so match scrutinees stay
+;; compatibility-non-consuming until that owner shape exists.
+(define (tc-type-consuming-match-scrutinee-now?
+  [ctx : TcContext]
+  [ty : AstType]) : bool
+  false)
+
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.
 (define (tc-move-bare-var [expr : AstExpr]) : TcMaybeString
@@ -11959,6 +11970,80 @@
         (tc-moved-add moved v)
         moved)]
     [(TcNoString) moved]))
+
+(define (tc-move-after-consuming-value
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : AstExpr]
+  [target-ty : AstType]) : TcMovedSet
+  (match (tc-move-bare-var expr)
+    [(TcSomeString v)
+      (if (and
+        (tc-moved-contains? locals v)
+        (tc-type-consuming-by-value-now? ctx target-ty))
+        (tc-moved-add moved v)
+        moved)]
+    [(TcNoString) moved]))
+
+(define (tc-move-after-match-scrutinee
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : AstExpr]
+  [scrut-ty : AstType]) : TcMovedSet
+  (match (tc-move-bare-var expr)
+    [(TcSomeString v)
+      (if (and
+        (tc-moved-contains? locals v)
+        (tc-type-consuming-match-scrutinee-now? ctx scrut-ty))
+        (tc-moved-add moved v)
+        moved)]
+    [(TcNoString) moved]))
+
+(define (tc-move-check-exprs-with-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : TcMoveResult
+  (match exprs
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkTcMove moved)]
+        [_ (ErrTcMove "typecheck: arity mismatch")])]
+    [(AstExprCons head rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-move-check-expr ctx env locals moved head)
+                [(OkTcMove moved1)
+                  (tc-move-check-exprs-with-types
+                    ctx
+                    env
+                    locals
+                    (tc-move-after-consuming-value ctx locals moved1 head ty)
+                    rest
+                    rest-types)]
+                [(ErrTcMove message) (ErrTcMove message)]))]
+          [(AstTypeNil) (ErrTcMove "typecheck: arity mismatch")]))]))
+
+(define (tc-move-call-param-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : ResultTcTypeList
+  (match (tc-expr ctx env func)
+    [(OkTcType fn-ty)
+      (match (tc-type-strip-region fn-ty)
+        [(AstTyFunc params _) (OkTcTypeList params)]
+        [(AstTyEnum _) (OkTcTypeList AstTypeNil)]
+        [(AstTyEnumArgs _ _) (OkTcTypeList AstTypeNil)]
+        [_ (ErrTcTypeList "typecheck: call target is not a function")])]
+    [(ErrTcType message) (ErrTcTypeList message)]))
 
 (define (tc-move-check-exprs
   [ctx : TcContext]
@@ -12074,7 +12159,18 @@
       (let
         [func : AstExpr (box-get func-box)]
         (match (tc-move-check-expr ctx env locals moved func)
-          [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 args)]
+          [(OkTcMove moved1)
+            (match (tc-move-call-param-types ctx env func)
+              [(OkTcTypeList params)
+                (tc-move-check-exprs-with-types
+                  ctx
+                  env
+                  locals
+                  moved1
+                  args
+                  params)]
+              [(ErrTcTypeList _)
+                (tc-move-check-exprs ctx env locals moved1 args)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
@@ -12123,12 +12219,20 @@
           body)
           [(OkTcMove _) (OkTcMove moved)]
           [(ErrTcMove message) (ErrTcMove message)]))]
-    [(AstExprTuple exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprTuple exprs)
+      (match (tc-expr-list-types ctx env exprs)
+        [(OkTcTypeList types)
+          (tc-move-check-exprs-with-types ctx env locals moved exprs types)]
+        [(ErrTcTypeList _) (tc-move-check-exprs ctx env locals moved exprs)])]
     [(AstExprTupleRef inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-check-expr ctx env locals moved inner))]
-    [(AstExprArray exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprArray exprs)
+      (match (tc-expr-list-types ctx env exprs)
+        [(OkTcTypeList types)
+          (tc-move-check-exprs-with-types ctx env locals moved exprs types)]
+        [(ErrTcTypeList _) (tc-move-check-exprs ctx env locals moved exprs)])]
     [(AstExprMakeArray _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -12207,7 +12311,21 @@
       (let
         [scrut : AstExpr (box-get scrut-box)]
         (match (tc-move-check-expr ctx env locals moved scrut)
-          [(OkTcMove moveds) (tc-move-check-arms ctx env locals moveds arms)]
+          [(OkTcMove moveds)
+            (match (tc-expr ctx env scrut)
+              [(OkTcType scrut-ty)
+                (tc-move-check-arms
+                  ctx
+                  env
+                  locals
+                  (tc-move-after-match-scrutinee
+                    ctx
+                    locals
+                    moveds
+                    scrut
+                    scrut-ty)
+                  arms)]
+              [(ErrTcType _) (tc-move-check-arms ctx env locals moveds arms)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
@@ -12281,7 +12399,19 @@
     [(AstExprReturn inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (match (tc-move-check-expr ctx env locals moved inner)
+          [(OkTcMove moved1)
+            (match (tc-current-return-type env)
+              [(OkTcType return-ty)
+                (OkTcMove
+                  (tc-move-after-consuming-value
+                    ctx
+                    locals
+                    moved1
+                    inner
+                    return-ty))]
+              [(ErrTcType _) (OkTcMove moved1)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprPtrNull _) (OkTcMove moved)]
     [(AstExprPtrNullCheck inner-box)
       (let

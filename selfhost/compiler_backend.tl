@@ -12591,18 +12591,62 @@ fflush:
 getenv:
     pushq %rbp
     movq %rsp, %rbp
-    subq $48, %rsp
-    leaq tl_getenv_buf(%rip), %rdx
-    movl $4096, %r8d
-    call GetEnvironmentVariableA
-    testl %eax, %eax
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    subq $32, %rsp
+    movq %rcx, %rbx
+    call GetEnvironmentStringsA
+    movq %rax, %r12
+.L_tl_ge_entry:
+    cmpb $0, (%r12)
     je .L_tl_ge_null
-    leaq tl_getenv_buf(%rip), %rax
+    movq %rbx, %r13
+    movq %r12, %r14
+.L_tl_ge_cmp:
+    movb (%r13), %al
+    testb %al, %al
+    je .L_tl_ge_name_end
+    movb (%r14), %cl
+    cmpb $65, %al
+    jb .L_tl_ge_al_lc
+    cmpb $90, %al
+    ja .L_tl_ge_al_lc
+    addb $32, %al
+.L_tl_ge_al_lc:
+    cmpb $65, %cl
+    jb .L_tl_ge_cl_lc
+    cmpb $90, %cl
+    ja .L_tl_ge_cl_lc
+    addb $32, %cl
+.L_tl_ge_cl_lc:
+    cmpb %al, %cl
+    jne .L_tl_ge_skip
+    incq %r13
+    incq %r14
+    jmp .L_tl_ge_cmp
+.L_tl_ge_name_end:
+    cmpb $61, (%r14)
+    jne .L_tl_ge_skip
+    leaq 1(%r14), %rax
     jmp .L_tl_ge_ret
+.L_tl_ge_skip:
+    cmpb $0, (%r12)
+    je .L_tl_ge_skipnull
+    incq %r12
+    jmp .L_tl_ge_skip
+.L_tl_ge_skipnull:
+    incq %r12
+    jmp .L_tl_ge_entry
 .L_tl_ge_null:
     xorq %rax, %rax
 .L_tl_ge_ret:
-    movq %rbp, %rsp
+    addq $32, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
     popq %rbp
     ret
 

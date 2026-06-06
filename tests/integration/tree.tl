@@ -1,24 +1,21 @@
 ; Recursive enum payloads (refs #13/#27): a tree-shaped expression AST.
-; `EAdd` carries two `Expr` children, each represented as an 8-byte heap
-; pointer, so the layout is finite. Building the tree heap-allocates every
-; node (`mk` returns an `Expr`, so all constructors escape via the return and
-; are promoted onto the heap), and a recursive `eval` folds it. This is the
-; keystone that lets a TypeLisp compiler build a real Expr tree.
+; `EAdd` carries two explicitly boxed `Expr` children, so the layout is finite.
+; Building the tree allocates boxes for both child nodes, and a recursive `eval`
+; folds it. This is the keystone that lets a TypeLisp compiler build a real Expr
+; tree.
 (defenum Expr
   (ENum i64)
-  (EAdd Expr Expr))
+  (EAdd (Box Expr) (Box Expr)))
 
-; Build (1 + 2) as a heap-allocated tree. Returning the `EAdd` node promotes
-; all three nodes (EAdd + the two ENum leaves) onto the heap.
+; Build (1 + 2) as a boxed tree.
 (define (mk) : Expr
-  (EAdd (ENum 1) (ENum 2)))
+  (EAdd (box (ENum 1)) (box (ENum 2))))
 
-; Recursively fold the tree to an integer. A bound recursive payload (`l`/`r`)
-; is a pointer to the child enum, passed straight back into `eval`.
+; Recursively fold the tree to an integer.
 (define (eval [e : Expr]) : i64
   (match e
     [(ENum n) n]
-    [(EAdd l r) (+ (eval l) (eval r))]))
+    [(EAdd l r) (+ (eval (box-get l)) (eval (box-get r)))]))
 
 (define (main) : i64
   (eval (mk)))

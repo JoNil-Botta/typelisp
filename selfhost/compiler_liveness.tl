@@ -10,15 +10,15 @@
 
 (defenum CompilerLiveI64Set
   (CompilerLiveI64Nil)
-  (CompilerLiveI64Cons i64 CompilerLiveI64Set))
+  (CompilerLiveI64Cons i64 (Box CompilerLiveI64Set)))
 
 (defenum CompilerLiveLabelSet
   (CompilerLiveLabelNil)
-  (CompilerLiveLabelCons String CompilerLiveLabelSet))
+  (CompilerLiveLabelCons String (Box CompilerLiveLabelSet)))
 
 (defenum CompilerLiveIndexSet
   (CompilerLiveIndexNil)
-  (CompilerLiveIndexCons i64 CompilerLiveIndexSet))
+  (CompilerLiveIndexCons i64 (Box CompilerLiveIndexSet)))
 
 (defenum CompilerLiveInstrSetList
   (CompilerLiveInstrSetNil)
@@ -118,7 +118,7 @@
           (not (= (bit-and bits mask) 0))
           (if (> head-index word-index)
             false
-            (compiler-live-set-contains-word? rest word-index mask))))]))
+            (compiler-live-set-contains-word? (box-get rest) word-index mask))))]))
 
 (define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
   (if (< value 0)
@@ -136,7 +136,7 @@
     [(CompilerLiveI64Nil)
       (CompilerLiveI64Cons
         (compiler-live-set-pack-word word-index mask)
-        CompilerLiveI64Nil)]
+        (box CompilerLiveI64Nil))]
     [(CompilerLiveI64Cons chunk rest)
       (let
         [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
@@ -150,10 +150,11 @@
           (if (> head-index word-index)
             (CompilerLiveI64Cons
               (compiler-live-set-pack-word word-index mask)
-              set)
+              (box set))
             (CompilerLiveI64Cons
               chunk
-              (compiler-live-set-insert-word rest word-index mask)))))]))
+              (box
+                (compiler-live-set-insert-word (box-get rest) word-index mask))))))]))
 
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
@@ -177,7 +178,7 @@
           (let
             [next-bits : i64 (bit-and bits (bit-xor mask -1))]
             (if (= next-bits 0)
-              rest
+              (box-get rest)
               (if (= next-bits bits)
                 set
                 (CompilerLiveI64Cons
@@ -187,7 +188,8 @@
             set
             (CompilerLiveI64Cons
               chunk
-              (compiler-live-set-remove-word rest word-index mask)))))]))
+              (box
+                (compiler-live-set-remove-word (box-get rest) word-index mask))))))]))
 
 (define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
@@ -218,14 +220,17 @@
                   (compiler-live-set-pack-word
                     left-index
                     (bit-or left-bits right-bits))
-                  (compiler-live-set-union left-rest right-rest))
+                  (box
+                    (compiler-live-set-union
+                      (box-get left-rest)
+                      (box-get right-rest))))
                 (if (< left-index right-index)
                   (CompilerLiveI64Cons
                     left-chunk
-                    (compiler-live-set-union left-rest right))
+                    (box (compiler-live-set-union (box-get left-rest) right)))
                   (CompilerLiveI64Cons
                     right-chunk
-                    (compiler-live-set-union left right-rest)))))]))]))
+                    (box (compiler-live-set-union left (box-get right-rest)))))))]))]))
 
 (define (compiler-live-set-union-into
   [left : CompilerLiveI64Set]
@@ -252,15 +257,20 @@
                 (let
                   [next-bits : i64 (bit-and left-bits (bit-xor right-bits -1))]
                   (if (= next-bits 0)
-                    (compiler-live-set-minus left-rest right-rest)
+                    (compiler-live-set-minus
+                      (box-get left-rest)
+                      (box-get right-rest))
                     (CompilerLiveI64Cons
                       (compiler-live-set-pack-word left-index next-bits)
-                      (compiler-live-set-minus left-rest right-rest))))
+                      (box
+                        (compiler-live-set-minus
+                          (box-get left-rest)
+                          (box-get right-rest))))))
                 (if (< left-index right-index)
                   (CompilerLiveI64Cons
                     left-chunk
-                    (compiler-live-set-minus left-rest right))
-                  (compiler-live-set-minus left right-rest))))]))]))
+                    (box (compiler-live-set-minus (box-get left-rest) right)))
+                  (compiler-live-set-minus left (box-get right-rest)))))]))]))
 
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
@@ -289,8 +299,8 @@
               [(CompilerLiveI64Cons right-chunk right-rest)
                 (if (= left-chunk right-chunk)
                   (begin
-                    (set! left-cur left-rest)
-                    (set! right-cur right-rest))
+                    (set! left-cur (box-get left-rest))
+                    (set! right-cur (box-get right-rest)))
                   (begin
                     (set! same false)
                     (set! done true)))])]))
@@ -313,7 +323,7 @@
         (compiler-live-set-word-count-bits
           (compiler-live-set-chunk-bits chunk)
           0)
-        (compiler-live-set-count rest))]))
+        (compiler-live-set-count (box-get rest)))]))
 
 (define (compiler-live-set-score-word-desc
   [bits : i64]
@@ -340,7 +350,7 @@
           (compiler-live-set-chunk-word-index chunk)
           (compiler-live-set-word-bits))
         (- (compiler-live-set-word-bits) 1)
-        (compiler-live-set-score rest))]))
+        (compiler-live-set-score (box-get rest)))]))
 
 (define (compiler-live-set1 [a : i64]) : CompilerLiveI64Set
   (compiler-live-set-insert (compiler-live-set-empty) a))
@@ -420,19 +430,20 @@
     [(CompilerLiveLabelCons head rest)
       (if (string-eq head value)
         true
-        (compiler-live-label-set-contains? rest value))]))
+        (compiler-live-label-set-contains? (box-get rest) value))]))
 
 (define (compiler-live-label-set-insert
   [set : CompilerLiveLabelSet]
   [value : String]) : CompilerLiveLabelSet
   (if (compiler-live-label-set-contains? set value)
     set
-    (CompilerLiveLabelCons value set)))
+    (CompilerLiveLabelCons value (box set))))
 
 (define (compiler-live-label-set-count [set : CompilerLiveLabelSet]) : i64
   (match set
     [(CompilerLiveLabelNil) 0]
-    [(CompilerLiveLabelCons _ rest) (+ 1 (compiler-live-label-set-count rest))]))
+    [(CompilerLiveLabelCons _ rest)
+      (+ 1 (compiler-live-label-set-count (box-get rest)))]))
 
 (define (compiler-live-value-vars [value : CompilerIrValue]) : CompilerLiveI64Set
   (match value
@@ -618,10 +629,10 @@
         [(CompilerLiveSomeInstr instr)
           (match instr
             [(IrInstrJump target)
-              (CompilerLiveLabelCons target CompilerLiveLabelNil)]
+              (CompilerLiveLabelCons target (box CompilerLiveLabelNil))]
             [(IrInstrBranch _ true-label false-label)
               (compiler-live-label-set-insert
-                (CompilerLiveLabelCons true-label CompilerLiveLabelNil)
+                (CompilerLiveLabelCons true-label (box CompilerLiveLabelNil))
                 false-label)]
             [_ CompilerLiveLabelNil])])]))
 
@@ -709,9 +720,10 @@
     [(CompilerLiveLabelCons label rest)
       (let
         [rest-indexes : CompilerLiveIndexSet
-          (compiler-live-label-set-to-index-set rest ids)]
+          (compiler-live-label-set-to-index-set (box-get rest) ids)]
         (match (string-i64-map-get ids label)
-          [(StringI64MapFound index) (CompilerLiveIndexCons index rest-indexes)]
+          [(StringI64MapFound index)
+            (CompilerLiveIndexCons index (box rest-indexes))]
           [(StringI64MapMissing) rest-indexes]))]))
 
 (define (compiler-live-block-graph-fill-successors!
@@ -751,7 +763,7 @@
     [(CompilerLiveIndexCons index rest)
       (let
         [rest-live : CompilerLiveI64Set
-          (compiler-live-successor-live-out-graph rest graph)]
+          (compiler-live-successor-live-out-graph (box-get rest) graph)]
         (match (array-ref (struct-get graph blocks) index)
           [(CompilerLiveBlock _ _ _ live-in _ _ _)
             (compiler-live-set-union live-in rest-live)]))]))
@@ -786,7 +798,7 @@
     [(CompilerLiveLabelCons label rest)
       (let
         [rest-live : CompilerLiveI64Set
-          (compiler-live-successor-live-out rest blocks)]
+          (compiler-live-successor-live-out (box-get rest) blocks)]
         (match (compiler-live-find-block blocks label)
           [(CompilerLiveSomeBlock block)
             (match block

@@ -19,8 +19,7 @@
 ;; AST representation (refs #13/#27): a REAL recursive `Expr` tree.
 ;; --------------------------------------------------------------------------
 ;; The AST is the natural recursive enum
-;;   (defenum Expr (ENum i64) (EAdd Expr Expr) (ESub Expr Expr)
-;;                 (EMul Expr Expr) (EDiv Expr Expr))
+;;   (defenum Expr (ENum i64) (EAdd (Box Expr) (Box Expr)) ...)
 ;; where each binary variant's payload holds two `Expr` children. Recursive enum
 ;; payloads landed in #111 (heap-pointer indirection, refs #13): each `Expr`
 ;; child is an 8-byte heap pointer, so the layout is finite and every
@@ -59,10 +58,10 @@
 ;; sub-expressions for each of the four arithmetic operators.
 (defenum Expr
   (ENum i64)
-  (EAdd Expr Expr)
-  (ESub Expr Expr)
-  (EMul Expr Expr)
-  (EDiv Expr Expr))
+  (EAdd (Box Expr) (Box Expr))
+  (ESub (Box Expr) (Box Expr))
+  (EMul (Box Expr) (Box Expr))
+  (EDiv (Box Expr) (Box Expr)))
 
 ;; Numeric tag for a token kind, matching the lexer's encoding so a parser fed by
 ;; the lexer would agree on kinds. Exercises `match` over every Token variant.
@@ -197,10 +196,10 @@
         (if (= (current-tag tags cur) (tag-star))
           (begin
             (advance cur)
-            (set! acc (EMul acc (parse-factor tags vals cur))))
+            (set! acc (EMul (box acc) (box (parse-factor tags vals cur)))))
           (begin
             (advance cur)
-            (set! acc (EDiv acc (parse-factor tags vals cur))))))
+            (set! acc (EDiv (box acc) (box (parse-factor tags vals cur)))))))
       acc)))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
@@ -222,10 +221,10 @@
         (if (= (current-tag tags cur) (tag-plus))
           (begin
             (advance cur)
-            (set! acc (EAdd acc (parse-term tags vals cur))))
+            (set! acc (EAdd (box acc) (box (parse-term tags vals cur)))))
           (begin
             (advance cur)
-            (set! acc (ESub acc (parse-term tags vals cur))))))
+            (set! acc (ESub (box acc) (box (parse-term tags vals cur)))))))
       acc)))
 
 ;; ---- Evaluator: a recursive tree walk over the real `Expr` AST. ----
@@ -236,10 +235,10 @@
 (define (eval [e : Expr]) : i64
   (match e
     [(ENum n) n]
-    [(EAdd a b) (+ (eval a) (eval b))]
-    [(ESub a b) (- (eval a) (eval b))]
-    [(EMul a b) (* (eval a) (eval b))]
-    [(EDiv a b) (/ (eval a) (eval b))]))
+    [(EAdd a b) (+ (eval (box-get a)) (eval (box-get b)))]
+    [(ESub a b) (- (eval (box-get a)) (eval (box-get b)))]
+    [(EMul a b) (* (eval (box-get a)) (eval (box-get b)))]
+    [(EDiv a b) (/ (eval (box-get a)) (eval (box-get b)))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel arrays directly so

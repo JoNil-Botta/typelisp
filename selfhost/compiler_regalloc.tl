@@ -748,7 +748,7 @@
             (compiler-live-set-chunk-word-index chunk)
             (compiler-live-set-word-bits))
           point)
-        (compiler-reg-extend-set starts ends rest point))]))
+        (compiler-reg-extend-set starts ends (box-get rest) point))]))
 
 (define (compiler-reg-extend-set-word-bits
   [starts : (Array i64)]

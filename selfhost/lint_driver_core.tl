@@ -14,7 +14,7 @@
 ;; enforcing mode was requested (exit non-zero when findings are present).
 (defenum SelfhostLintPathList
   (SelfhostLintPathNil)
-  (SelfhostLintPathCons String SelfhostLintPathList))
+  (SelfhostLintPathCons String (Box SelfhostLintPathList)))
 
 (defenum SelfhostLintConfig
   (SelfhostLintConfig SelfhostLintPathList CompilerLoadRootList bool))
@@ -46,14 +46,18 @@
   [paths : SelfhostLintPathList]
   [path : String]) : SelfhostLintPathList
   (match paths
-    [(SelfhostLintPathNil) (SelfhostLintPathCons path SelfhostLintPathNil)]
+    [(SelfhostLintPathNil)
+      (SelfhostLintPathCons path (box SelfhostLintPathNil))]
     [(SelfhostLintPathCons head rest)
-      (SelfhostLintPathCons head (selfhost-lint-path-list-append rest path))]))
+      (SelfhostLintPathCons
+        head
+        (box (selfhost-lint-path-list-append (box-get rest) path)))]))
 
 (define (selfhost-lint-path-list-count [paths : SelfhostLintPathList]) : i64
   (match paths
     [(SelfhostLintPathNil) 0]
-    [(SelfhostLintPathCons _ rest) (+ 1 (selfhost-lint-path-list-count rest))]))
+    [(SelfhostLintPathCons _ rest)
+      (+ 1 (selfhost-lint-path-list-count (box-get rest)))]))
 
 (define (selfhost-lint-parse-options
   [idx : i64]
@@ -343,7 +347,7 @@
               unit)
             (selfhost-lint-file input-path stdlib-roots enforcing))]
         (selfhost-lint-files
-          rest
+          (box-get rest)
           stdlib-roots
           enforcing
           print-headers

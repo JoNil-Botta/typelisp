@@ -445,8 +445,8 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
-    [(TcTypeCache _ _ _ rest) (lower-type-env-count rest)]
-    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count rest))]))
+    [(TcTypeCache _ _ _ rest) (lower-type-env-count (box-get rest))]
+    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -475,9 +475,12 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
-    [(TcTypeCache _ _ _ rest) (lower-type-cache-from-env-into rest cache)]
+    [(TcTypeCache _ _ _ rest)
+      (lower-type-cache-from-env-into (box-get rest) cache)]
     [(TcTypeBind name ty rest)
-      (lower-type-cache-from-env-into rest (lower-type-cache-add cache name ty))]))
+      (lower-type-cache-from-env-into
+        (box-get rest)
+        (lower-type-cache-add cache name ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -1404,7 +1407,7 @@
           ctx
           decls
           able
-          (CloneNameCons helper-name roots)
+          (CloneNameCons helper-name (box roots))
           helper-name))
       roots)))
 
@@ -3044,7 +3047,7 @@
       (lower-reach-add-clone-root-helpers
         all-functions
         names
-        rest
+        (box-get rest)
         (lower-reach-add-source
           all-functions
           names
@@ -4329,7 +4332,7 @@
                   stored-state
                   base
                   (box-get rest-values)
-                  rest-fields))])]
+                  (box-get rest-fields)))])]
         [(TcReprCFieldLayoutNil)
           (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]))
 
@@ -4833,7 +4836,7 @@
         [(TcReprCFieldLayout name ty offset)
           (if (string-eq name field-name)
             (OkLowerFieldInfo (LowerFieldInfo offset ty))
-            (lower-field-info-from-repr-c-list rest field-name))])]))
+            (lower-field-info-from-repr-c-list (box-get rest) field-name))])]))
 
 (define (lower-struct-field-info
   [ctx : TcContext]
@@ -5998,7 +6001,8 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ _ rest) (lower-emit-active-exits state env rest)]
+    [(TcTypeCache _ _ _ rest)
+      (lower-emit-active-exits state env (box-get rest))]
     [(TcTypeBind key ty rest)
       (if (string-eq key (lower-cleanup-marker-name))
         (match ty
@@ -6028,24 +6032,32 @@
                                         (lower-emit-active-exits
                                           next-state
                                           env
-                                          rest)]
+                                          (box-get rest))]
                                       [(ErrLowerState message)
                                         (ErrLowerState message)])]
-                                  [_ (lower-emit-active-exits state env rest)])]
-                              [_ (lower-emit-active-exits state env rest)]))]
-                        [_ (lower-emit-active-exits state env rest)])]
-                    [_ (lower-emit-active-exits state env rest)]))]
-              [_ (lower-emit-active-exits state env rest)])]
-          [_ (lower-emit-active-exits state env rest)])
+                                  [_
+                                    (lower-emit-active-exits
+                                      state
+                                      env
+                                      (box-get rest))])]
+                              [_
+                                (lower-emit-active-exits
+                                  state
+                                  env
+                                  (box-get rest))]))]
+                        [_ (lower-emit-active-exits state env (box-get rest))])]
+                    [_ (lower-emit-active-exits state env (box-get rest))]))]
+              [_ (lower-emit-active-exits state env (box-get rest))])]
+          [_ (lower-emit-active-exits state env (box-get rest))])
         (if (string-eq key (lower-region-reset-marker-name))
           (match ty
             [(AstTyVar hidden-name)
               (match (lower-emit-region-reset state env hidden-name)
                 [(OkLowerState next-state)
-                  (lower-emit-active-exits next-state env rest)]
+                  (lower-emit-active-exits next-state env (box-get rest))]
                 [(ErrLowerState message) (ErrLowerState message)])]
-            [_ (lower-emit-active-exits state env rest)])
-          (lower-emit-active-exits state env rest)))]))
+            [_ (lower-emit-active-exits state env (box-get rest))])
+          (lower-emit-active-exits state env (box-get rest))))]))
 
 (define (lower-emit-active-cleanups
   [state : LowerState]
@@ -6053,7 +6065,8 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ _ rest) (lower-emit-active-cleanups state env rest)]
+    [(TcTypeCache _ _ _ rest)
+      (lower-emit-active-cleanups state env (box-get rest))]
     [(TcTypeBind key ty rest)
       (if (string-eq key (lower-cleanup-marker-name))
         (match ty
@@ -6083,17 +6096,25 @@
                                         (lower-emit-active-cleanups
                                           next-state
                                           env
-                                          rest)]
+                                          (box-get rest))]
                                       [(ErrLowerState message)
                                         (ErrLowerState message)])]
                                   [_
-                                    (lower-emit-active-cleanups state env rest)])]
-                              [_ (lower-emit-active-cleanups state env rest)]))]
-                        [_ (lower-emit-active-cleanups state env rest)])]
-                    [_ (lower-emit-active-cleanups state env rest)]))]
-              [_ (lower-emit-active-cleanups state env rest)])]
-          [_ (lower-emit-active-cleanups state env rest)])
-        (lower-emit-active-cleanups state env rest))]))
+                                    (lower-emit-active-cleanups
+                                      state
+                                      env
+                                      (box-get rest))])]
+                              [_
+                                (lower-emit-active-cleanups
+                                  state
+                                  env
+                                  (box-get rest))]))]
+                        [_
+                          (lower-emit-active-cleanups state env (box-get rest))])]
+                    [_ (lower-emit-active-cleanups state env (box-get rest))]))]
+              [_ (lower-emit-active-cleanups state env (box-get rest))])]
+          [_ (lower-emit-active-cleanups state env (box-get rest))])
+        (lower-emit-active-cleanups state env (box-get rest)))]))
 
 (define (lower-return-form
   [ctx : TcContext]
@@ -9534,7 +9555,7 @@
         (lower-c-abi-integer-field-type?
           ctx
           (tc-inline-field-layout-type field))
-        (lower-c-abi-inline-fields-integer-only? ctx rest))]))
+        (lower-c-abi-inline-fields-integer-only? ctx (box-get rest)))]))
 
 (define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
   (cond
@@ -17548,7 +17569,7 @@
   (pair (Tuple String String)))
 (defenum StringList
   (SNil)
-  (SCons String StringList))
+  (SCons String (Box StringList)))
 (define (clone-tuple [items : (Array String)]) : i64
   (let [pair : (Tuple String (Array String)) (clone (tuple \"tuple\" items))]
     (string-length (tuple-ref pair 0))))
@@ -19610,7 +19631,7 @@
 (define (compiler-lower-module-function-returning-struct-source) : String
   "(module data)
 (defstruct Candidate (number i64))
-(defenum CandList (CandNil) (CandCons Candidate CandList))
+(defenum CandList (CandNil) (CandCons Candidate (Box CandList)))
 (define (cand-nth [cands : CandList]) : Candidate
   (match cands
     [(CandNil) (Candidate 0)]
@@ -19626,7 +19647,7 @@
 (module main)
 (define (main) : i64
   (let [c : data/Candidate
-    (data/cand-nth (data/CandCons (data/Candidate 7) (data/CandNil)))]
+    (data/cand-nth (data/CandCons (data/Candidate 7) (box (data/CandNil))))]
     (struct-get c number)))")
 
 (define (compiler-lower-module-function-returning-struct-ok?) : bool

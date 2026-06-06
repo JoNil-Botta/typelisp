@@ -15,20 +15,20 @@
 (defenum Expr
   (EInt i64)
   (EVar String)
-  (EBin BinOp Expr Expr)
-  (ENot Expr)
-  (ELet String Expr Expr)
-  (EIf Expr Expr Expr)
-  (EWhile Expr Expr)
-  (ECall String ExprList)
+  (EBin BinOp (Box Expr) (Box Expr))
+  (ENot (Box Expr))
+  (ELet String (Box Expr) (Box Expr))
+  (EIf (Box Expr) (Box Expr) (Box Expr))
+  (EWhile (Box Expr) (Box Expr))
+  (ECall String (Box ExprList))
   (EStr String)
-  (EPrint Expr)
-  (ESet String Expr)
-  (EBegin ExprList))
+  (EPrint (Box Expr))
+  (ESet String (Box Expr))
+  (EBegin (Box ExprList)))
 
 (defenum ExprList
   (ELNil)
-  (ELCons Expr ExprList))
+  (ELCons Expr (Box ExprList)))
 
 (defenum ResultExpr
   (OkExpr Expr)
@@ -40,7 +40,7 @@
 
 (defenum StrList
   (SLNil)
-  (SLCons String StrList))
+  (SLCons String (Box StrList)))
 
 (defenum ResultStrList
   (OkStrList StrList)
@@ -55,7 +55,7 @@
 
 (defenum ItemList
   (ILNil)
-  (ILCons Item ItemList))
+  (ILCons Item (Box ItemList)))
 
 (defenum ParsedProgram
   (PProgram ItemList Expr))

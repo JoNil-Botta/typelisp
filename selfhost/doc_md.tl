@@ -14,14 +14,14 @@
 
 (defenum MdStringList
   (MdStringNil)
-  (MdStringCons String MdStringList))
+  (MdStringCons String (Box MdStringList)))
 
 (defenum MdTableRow
   (MdTableRow MdStringList))
 
 (defenum MdTableRowList
   (MdTableRowNil)
-  (MdTableRowCons MdTableRow MdTableRowList))
+  (MdTableRowCons MdTableRow (Box MdTableRowList)))
 
 (defenum MdBlock
   (MdHeading i64 String)
@@ -35,7 +35,7 @@
 
 (defenum MdBlockList
   (MdBlockNil)
-  (MdBlockCons MdBlock MdBlockList))
+  (MdBlockCons MdBlock (Box MdBlockList)))
 
 (defenum MdScanBlock
   (MdScanBlock i64 MdBlock))
@@ -57,7 +57,7 @@
   (match items
     [(MdStringNil) acc]
     [(MdStringCons head rest)
-      (md-string-list-reverse-into rest (MdStringCons head acc))]))
+      (md-string-list-reverse-into (box-get rest) (MdStringCons head (box acc)))]))
 
 (define (md-string-list-reverse [items : MdStringList]) : MdStringList
   (md-string-list-reverse-into items MdStringNil))
@@ -68,7 +68,9 @@
   (match items
     [(MdTableRowNil) acc]
     [(MdTableRowCons head rest)
-      (md-table-row-list-reverse-into rest (MdTableRowCons head acc))]))
+      (md-table-row-list-reverse-into
+        (box-get rest)
+        (MdTableRowCons head (box acc)))]))
 
 (define (md-table-row-list-reverse [items : MdTableRowList]) : MdTableRowList
   (md-table-row-list-reverse-into items MdTableRowNil))
@@ -77,7 +79,7 @@
   (match items
     [(MdBlockNil) acc]
     [(MdBlockCons head rest)
-      (md-block-list-reverse-into rest (MdBlockCons head acc))]))
+      (md-block-list-reverse-into (box-get rest) (MdBlockCons head (box acc)))]))
 
 (define (md-block-list-reverse [items : MdBlockList]) : MdBlockList
   (md-block-list-reverse-into items MdBlockNil))
@@ -85,7 +87,7 @@
 (define (md-string-list-count [items : MdStringList]) : i64
   (match items
     [(MdStringNil) 0]
-    [(MdStringCons _ rest) (+ 1 (md-string-list-count rest))]))
+    [(MdStringCons _ rest) (+ 1 (md-string-list-count (box-get rest)))]))
 
 (define (md-string-list-ref [items : MdStringList] [index : i64]) : MdMaybeString
   (if (< index 0)
@@ -95,7 +97,7 @@
       [(MdStringCons head rest)
         (if (= index 0)
           (MdSomeString head)
-          (md-string-list-ref rest (- index 1)))])))
+          (md-string-list-ref (box-get rest) (- index 1)))])))
 
 (define (md-string-list-ref-eq?
   [items : MdStringList]
@@ -118,7 +120,7 @@
 (define (md-table-row-list-count [items : MdTableRowList]) : i64
   (match items
     [(MdTableRowNil) 0]
-    [(MdTableRowCons _ rest) (+ 1 (md-table-row-list-count rest))]))
+    [(MdTableRowCons _ rest) (+ 1 (md-table-row-list-count (box-get rest)))]))
 
 (define (md-table-row-eq2?
   [row : MdTableRow]
@@ -135,13 +137,13 @@
     [(MdTableRowNil) false]
     [(MdTableRowCons row rest)
       (and
-        (= (md-table-row-list-count rest) 0)
+        (= (md-table-row-list-count (box-get rest)) 0)
         (md-table-row-eq2? row first second))]))
 
 (define (md-block-list-count [items : MdBlockList]) : i64
   (match items
     [(MdBlockNil) 0]
-    [(MdBlockCons _ rest) (+ 1 (md-block-list-count rest))]))
+    [(MdBlockCons _ rest) (+ 1 (md-block-list-count (box-get rest)))]))
 
 (define (md-block-list-ref [items : MdBlockList] [index : i64]) : MdMaybeBlock
   (if (< index 0)
@@ -151,7 +153,7 @@
       [(MdBlockCons head rest)
         (if (= index 0)
           (MdSomeBlock head)
-          (md-block-list-ref rest (- index 1)))])))
+          (md-block-list-ref (box-get rest) (- index 1)))])))
 
 (define (md-check-heading?
   [blocks : MdBlockList]
@@ -537,14 +539,14 @@
               items
               (MdStringCons
                 (md-trim (substring body segment-start (- i segment-start)))
-                items))
+                (box items)))
             (set! segment-start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (md-string-list-reverse
         (MdStringCons
           (md-trim (substring body segment-start (- n segment-start)))
-          items)))))
+          (box items))))))
 
 (define (md-block-start-at? [src : String] [pos : i64] [n : i64]) : bool
   (let
@@ -599,7 +601,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-blockquote-start? line)
             (begin
-              (set! items (MdStringCons (md-blockquote-text line) items))
+              (set! items (MdStringCons (md-blockquote-text line) (box items)))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock scan-pos (MdBlockquote (md-string-list-reverse items))))))
@@ -617,7 +619,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-bullet-start? line)
             (begin
-              (set! items (MdStringCons (md-bullet-text line) items))
+              (set! items (MdStringCons (md-bullet-text line) (box items)))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock scan-pos (MdBulletList (md-string-list-reverse items))))))
@@ -635,7 +637,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-numbered-start? line)
             (begin
-              (set! items (MdStringCons (md-numbered-text line) items))
+              (set! items (MdStringCons (md-numbered-text line) (box items)))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock scan-pos (MdNumberedList (md-string-list-reverse items))))))
@@ -655,7 +657,9 @@
             (begin
               (set!
                 rows
-                (MdTableRowCons (MdTableRow (md-split-pipe-row line)) rows))
+                (MdTableRowCons
+                  (MdTableRow (md-split-pipe-row line))
+                  (box rows)))
               (set! scan-pos next))
             (set! done true))))
       (MdScanRows scan-pos (md-table-row-list-reverse rows)))))
@@ -720,7 +724,7 @@
         (match (md-scan-block-at src pos n)
           [(MdScanBlock next block)
             (begin
-              (set! blocks (MdBlockCons block blocks))
+              (set! blocks (MdBlockCons block (box blocks)))
               (set! pos next))]))
       (md-block-list-reverse blocks))))
 
@@ -858,13 +862,13 @@
   (match lines
     [(MdStringNil) ""]
     [(MdStringCons head rest)
-      (match rest
+      (match (box-get rest)
         [(MdStringNil) (md-render-inline head)]
         [_
           (doc-html-cat3
             (md-render-inline head)
             "<br>\n"
-            (md-render-inline-lines rest))])]))
+            (md-render-inline-lines (box-get rest)))])]))
 
 (define (md-render-blockquote [lines : MdStringList]) : String
   (doc-html-cat5
@@ -882,7 +886,7 @@
         "<li>"
         (md-render-inline head)
         "</li>\n"
-        (md-render-list-items rest))]))
+        (md-render-list-items (box-get rest)))]))
 
 (define (md-render-bullet-list [items : MdStringList]) : String
   (doc-html-cat3 "<ul>\n" (md-render-list-items items) "</ul>\n"))
@@ -901,7 +905,7 @@
         "<th>"
         (md-render-inline head)
         "</th>"
-        (md-render-table-header-cells rest))]))
+        (md-render-table-header-cells (box-get rest)))]))
 
 (define (md-render-table-data-cells [cells : MdStringList]) : String
   (match cells
@@ -911,7 +915,7 @@
         "<td>"
         (md-render-inline head)
         "</td>"
-        (md-render-table-data-cells rest))]))
+        (md-render-table-data-cells (box-get rest)))]))
 
 (define (md-render-table-row [row : MdTableRow]) : String
   (match row
@@ -922,7 +926,9 @@
   (match rows
     [(MdTableRowNil) ""]
     [(MdTableRowCons row rest)
-      (string-append (md-render-table-row row) (md-render-table-rows rest))]))
+      (string-append
+        (md-render-table-row row)
+        (md-render-table-rows (box-get rest)))]))
 
 (define (md-render-table [header : MdStringList] [rows : MdTableRowList]) : String
   (doc-html-cat5
@@ -947,7 +953,7 @@
   (match blocks
     [(MdBlockNil) ""]
     [(MdBlockCons head rest)
-      (string-append (md-render-block head) (md-render-blocks rest))]))
+      (string-append (md-render-block head) (md-render-blocks (box-get rest)))]))
 
 (define (md-render-html [src : String]) : String
   (md-render-blocks (md-scan-blocks src)))

@@ -2960,37 +2960,6 @@
                   ".extern tl_env_var_exists\n"))))))]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-windows-sdk-registry-runtime-source) : String
-  "(extern tl_windows_sdk_registry_install : (-> i64))
-(define (main) : i64 (tl_windows_sdk_registry_install))")
-
-(define (compiler-backend-windows-sdk-registry-runtime-ok?) : bool
-  (match (compiler-backend-emit-source
-    (compiler-backend-windows-sdk-registry-runtime-source))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains?
-          asm
-          "tl_windows_sdk_registry_install:")
-        (and
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_windows_registry_unsupported_msg:")
-          (and
-            (compiler-backend-string-contains?
-              asm
-              "    call tl_windows_sdk_registry_install")
-            (and
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_windows_sdk_registry_install"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "_tl_tl_windows_sdk_registry_install"))))))]
-    [(ErrCompilerBackend _) false]))
-
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
     "(extern append-file-status (:symbol \"tl_append_file_status\") : (->
@@ -4633,12 +4602,10 @@
                                   (compiler-backend-aggregate-storage-shape-ok?)
                                   (compiler-backend-shift-guard-ok?)
                                   (and
-                                    (compiler-backend-windows-sdk-registry-runtime-ok?)
+                                    (compiler-backend-windows-runtime-guard-ok?)
                                     (and
-                                      (compiler-backend-windows-runtime-guard-ok?)
-                                      (and
-                                        (compiler-backend-simd-vector-ok?)
-                                        (compiler-backend-dispatch-variant-mode-ok?))))))))))))))))))))
+                                      (compiler-backend-simd-vector-ok?)
+                                      (compiler-backend-dispatch-variant-mode-ok?)))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

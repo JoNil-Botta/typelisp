@@ -118,16 +118,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   for append-heavy private sequences and keep recursive enum lists for AST/list
   structures where the cons shape is the modeled data. Import it with
   `(import "stdlib/vector.tl")`.
-- `windows_registry.tl`: narrow Windows Kits registry lookup used by SDK
-  discovery. Import it with `(import "stdlib/windows_registry.tl")`.
-- `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
-  MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
-- `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery
-  data model and structured runtime result API. Import it with
-  `(import "stdlib/windows_setup.tl")`.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
-  environment) from a configured Developer Command Prompt, or from the newest
-  usable SetupConfiguration instance plus Windows SDK discovery. Import it with
+  environment) from a configured Developer Command Prompt. Import it with
   `(import "stdlib/msvc.tl")`.
 
 ## Arena Allocation Policy
@@ -200,10 +192,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads host entropy through the backend, normalizes the returned seed, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; `assert-string-eq` borrows compared text inputs while assertion messages remain owned `String` values for the current `panic` API. |
 | `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` materializes the final owned `String`. |
-| `windows-registry-*` helpers | The SDK registry probe allocates returned root/version strings and result aggregates in the active arena. It reads only `HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots`, the `KitsRoot10` string value, and version subkeys; unsupported hosts and registry failures return structured errors. |
-| `windows-sdk-*` helpers | Non-owning root/version/path inputs are borrowed `str` values. SDK layout structs/errors allocate in the active arena; path assembly returns owned strings, and path probes copy borrowed paths while the lower-level `io/fs` APIs still take owned `String`. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry discovery uses the narrow `windows-registry-sdk-install` probe, then validates the same include/lib/bin layout before returning it. |
-| `windows-setup-*` helpers | Non-owning package-id probes use borrowed `str` values. Helpers that store package/component identifiers copy borrowed inputs into owned active-arena strings, while runtime discovery returns owned strings, package/component lists, and instance lists. `windows-setup-instances` returns structured unsupported/unavailable/query-failed errors when the runtime cannot enumerate SetupConfiguration. |
-| `msvc-*` helpers | Non-owning target/tool/version/path inputs are borrowed `str` values. Discovery results store owned executable, PATH, LIB, and INCLUDE strings; setup candidate selection copies the chosen version string before storing it. Some internal path probes copy borrowed paths until the lower-level `io/fs` APIs are fully borrowed. |
+| `msvc-*` helpers | Non-owning target/tool/version/path inputs are borrowed `str` values. Discovery results store owned executable, PATH, LIB, and INCLUDE strings. Some internal path probes copy borrowed paths until the lower-level `io/fs` APIs are fully borrowed. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public
 `IoError` model. Common not-found, permission, invalid-path, interrupted, and
@@ -264,8 +253,6 @@ Stdlib modules are imported explicitly:
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/text_buf.tl")
-(import "stdlib/windows_sdk.tl")
-(import "stdlib/windows_setup.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path

@@ -218,9 +218,6 @@ test.tl
 text_buf.tl
 text_buf_borrowed.tl
 vector.tl
-windows_registry.tl
-windows_sdk.tl
-windows_setup.tl
 EOF
 }
 
@@ -261,12 +258,8 @@ stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-|-|requires-stage0-symbol:tl_random_system_seed
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/vector_api.tl|42|-|-
-stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
-stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
-stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size,tl_windows_sdk_registry_install
 EOF
 }
 

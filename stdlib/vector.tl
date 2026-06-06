@@ -250,6 +250,58 @@
       (i64-vec-reverse-range! (i64-vec-slots v) 0 (- (i64-vec-len v) 1))
       v)))
 
+;: Fold live elements at or after `index`, passing the accumulator and current
+;: element to `step` and threading the returned accumulator forward.
+(comptime-decl
+  (:generated vector-family i64-vec-fold-from "i64")
+  (define (i64-vec-fold-from
+    [v : I64Vec]
+    [index : i64]
+    [acc : i64]
+    [step : (-> i64 i64 i64)]) : i64
+    (if (>= index (i64-vec-len v))
+      acc
+      (i64-vec-fold-from
+        v
+        (+ index 1)
+        (step acc (array-ref (i64-vec-slots v) index))
+        step))))
+
+;: Fold all live elements from left to right.
+(comptime-decl
+  (:generated vector-family i64-vec-fold "i64")
+  (define (i64-vec-fold [v : I64Vec] [acc : i64] [step : (-> i64 i64 i64)]) : i64
+    (i64-vec-fold-from v 0 acc step)))
+
+;: Build a mapped vector by pushing mapped elements from `index` onward onto
+;: `out`. Kept separate so public map helpers reuse the normal growth path.
+(comptime-decl
+  (:generated vector-family i64-vec-map-build-from "i64")
+  (define (i64-vec-map-build-from
+    [v : I64Vec]
+    [index : i64]
+    [out : I64Vec]
+    [mapper : (-> i64 i64)]) : I64Vec
+    (if (>= index (i64-vec-len v))
+      out
+      (i64-vec-map-build-from
+        v
+        (+ index 1)
+        (i64-vec-push out (mapper (array-ref (i64-vec-slots v) index)))
+        mapper))))
+
+;: Map live elements at or after `index` into a fresh vector, preserving order.
+(comptime-decl
+  (:generated vector-family i64-vec-map-from "i64")
+  (define (i64-vec-map-from [v : I64Vec] [index : i64] [mapper : (-> i64 i64)]) : I64Vec
+    (i64-vec-map-build-from v index (i64-vec-new) mapper)))
+
+;: Map all live elements into a fresh vector, preserving order.
+(comptime-decl
+  (:generated vector-family i64-vec-map "i64")
+  (define (i64-vec-map [v : I64Vec] [mapper : (-> i64 i64)]) : I64Vec
+    (i64-vec-map-from v 0 mapper)))
+
 ;: Sum of the live elements, accumulated from `index`.
 (comptime-decl
   (:generated vector-family i64-vec-sum-from "i64")
@@ -262,8 +314,7 @@
         (+ acc (array-ref (i64-vec-slots v) index))))))
 
 ;: Sum of the live elements (0 for an empty vector). A concrete monomorphic
-;: reduction standing in for a generic fold until first-class function
-;: arguments are available.
+;: convenience reduction retained alongside the higher-order fold helpers.
 (comptime-decl
   (:generated vector-family i64-vec-sum "i64")
   (define (i64-vec-sum [v : I64Vec]) : i64

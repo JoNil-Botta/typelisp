@@ -114,10 +114,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `*-vec-with-capacity` / `-new` / `-push` / `-pop` / `-get` / `-last` /
   `-set!` / `-len` / `-capacity`, with doubling growth, bounds-checked reads,
   and conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
-  `-reverse!` / `-contains?`; `I64Vec` also keeps `-sum`. Use generated vectors
-  for append-heavy private sequences and keep recursive enum lists for AST/list
-  structures where the cons shape is the modeled data. Import it with
-  `(import "stdlib/vector.tl")`.
+  `-reverse!` / `-contains?`; `I64Vec` also keeps `-sum` and adds owned-vector
+  higher-order `i64-vec-fold*` / `i64-vec-map*` helpers that take function
+  values. Use generated vectors for append-heavy private sequences and keep
+  recursive enum lists for AST/list structures where the cons shape is the
+  modeled data. Import it with `(import "stdlib/vector.tl")`.
 - `vector_slice.tl`: lifetime-scoped `I64Slice` views over `I64Vec` and
   `(Array i64)` live prefixes. Slice constructors take the backing handle plus a
   matching owner borrow such as `(& v)` / `(& items)`, return empty views for
@@ -126,6 +127,54 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
   environment) from a configured Developer Command Prompt. Import it with
   `(import "stdlib/msvc.tl")`.
+
+## Backend Runtime Helper Ownership
+
+The backend runtime plan is a compatibility boundary, not a place for new
+stdlib APIs by default. The checked inventory in
+`selfhost/compiler_backend.tl` (`compiler-backend-runtime-helper-owner`) is the
+authoritative ownership table for symbols accepted by
+`compiler-backend-plan-provides?`; that function rejects unclassified helper
+names so runtime-plan additions must be assigned an owner first.
+
+- **Core runtime:** allocator, traps, arena control, and ABI-level abort helpers:
+  `tl_alloc`, `tl_oob_abort`, `tl_div_abort`, `tl_shift_abort`, `.L_tl_abort`,
+  `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_current`,
+  `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`.
+- **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
+  wrappers around OS/process/profile surfaces: `tl_process_output`,
+  `tl_process_start`, `tl_process_wait`, `tl_profile_now_ms`,
+  `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
+  `tl_profile_alloc_reset_peak`, `.L_tl_fs_read_dir_status`,
+  `.L_tl_fs_read_dir`, `.L_tl_fs_file_kind_status`,
+  `.L_tl_fs_file_size_status`, `.L_tl_fs_file_size`. The fs read-dir and
+  metadata probes are tracked by #2047.
+- **Stdlib TypeLisp migration target:** compatibility runtime helpers whose
+  preferred long-term owner is TypeLisp stdlib code or a narrower stdlib FFI
+  boundary: `tl_substring`, `tl_string_concat`, `tl_string_concat3`,
+  `tl_string_concat4`, `tl_string_concat5`, `tl_string_eq`,
+  `tl_string_to_int`, `tl_int_to_string`, `tl_hash_string`, `.L_tl_read_file`,
+  `.L_tl_write_file`, `.L_tl_file_exists`, `.L_tl_read_file_status`,
+  `.L_tl_write_file_status`, `.L_tl_append_file_status`,
+  `.L_tl_file_exists_status`, `.L_tl_file_open_status`,
+  `.L_tl_file_close_status`, `.L_tl_file_read_chunk_status`,
+  `.L_tl_file_write_status`, `.L_tl_file_flush_status`,
+  `.L_tl_file_read_chunk_bytes`, `.L_tl_file_read_chunk_eof`,
+  `.L_tl_read_stdin_line`, `.L_tl_read_stdin_bytes`, `.L_tl_stdin_eof`,
+  `.L_tl_flush_stdout`, `tl_env_var_exists`, `tl_env_var_value`,
+  `env-path-separator`. String migrations are tracked by #2036/#2037; env
+  migration is tracked by #1729.
+- **Compatibility alias:** legacy public spellings that remain only so existing
+  extern callers link: `tl_print_err`, `tl_print_str`, `tl_print_string`,
+  `tl_print_char`, `tl_print_f64`, `.L_tl_arg_count`, `tl_arg_count`,
+  `.L_tl_arg`, `tl_arg`.
+- **Deprecated/delete candidate:** no current runtime-plan symbols are in this
+  category. Add symbols here only with a linked removal owner.
+
+The broader runtime-core boundary tracker is #1897. New stdlib features should
+prefer TypeLisp implementations or focused stdlib FFI wrappers; new backend
+helpers need an explicit ownership entry and a focused migration or retention
+issue when they are not core runtime.
 
 ## Arena Allocation Policy
 
@@ -188,7 +237,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `ffi-c-string-*` helpers | Non-allocating inspection and copying into caller-owned `(MutPtr u8)` storage. `ffi-c-string-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed text without copying it. |
-| `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, and `to-array` allocate backing arrays in the active arena. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, and `contains?` are non-allocating aside from caller-provided fallback/value storage. |
+| `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `json-*` helpers | Parser, lookup, and escaping helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, and list/member spines allocate owned results in the active arena. |

@@ -1593,6 +1593,22 @@ assert_stderr_empty
 assert_contains "$out" "Doc tests passed: 0 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs_empty.tl"
 
+cat > "$WORKDIR/docs_second.tl" <<'EOF'
+;# Second docs file.
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
+EOF
+run_cmd doc-test-multiple "$COMPILER" doc --test "$WORKDIR/docs.tl" "$WORKDIR/docs_second.tl"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "--- $(native_arg_path "$WORKDIR/docs.tl")"
+assert_contains "$out" "--- $(native_arg_path "$WORKDIR/docs_second.tl")"
+assert_contains "$out" "Doc tests passed: 2 example(s)"
+assert_contains "$out" "Doc tests passed: 1 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs.tl"
+assert_doctest_temp_cleaned "$WORKDIR/docs_second.tl"
+
 DOC_STDLIB_ROOT="$WORKDIR/doc-test-stdlib-root/repo-stdlib"
 mkdir -p "$DOC_STDLIB_ROOT"
 cat > "$DOC_STDLIB_ROOT/docfixture.tl" <<'EOF'
@@ -1626,6 +1642,11 @@ if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
     assert_contains "$err" "error[E0200]"
 fi
 assert_doctest_temp_cleaned "$WORKDIR/docs_bad.tl"
+
+run_cmd doc-test-manifest-input-error "$COMPILER" doc --test "$WORKDIR/docs.tl" --manifest-path typelisp.pkg
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "doc: cannot combine input paths with --manifest-path"
 
 run_cmd doc-usage-missing "$COMPILER" doc
 assert_failure
@@ -1672,6 +1693,13 @@ EOF
     assert_contains "$out" "Generated:"
     assert_contains "$WORKDIR/doc_source.md" "Module docs."
     assert_contains "$WORKDIR/doc_source.md" "answer"
+
+    run_cmd doc-generate-positional "$COMPILER" doc "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source_positional.md"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $(native_arg_path "$WORKDIR/doc_source_positional.md")"
+    assert_contains "$WORKDIR/doc_source_positional.md" "Module docs."
+    assert_contains "$WORKDIR/doc_source_positional.md" "answer"
 
     DOC_CUSTOM_DIR="$WORKDIR/custom-doc-output"
     DOC_CUSTOM_OUT="$DOC_CUSTOM_DIR/custom.md"
@@ -1741,6 +1769,16 @@ EOF
     [ "$DOC_GRAPH_ENTRY_LINE" -lt "$DOC_GRAPH_LOCAL_LINE" ] &&
         [ "$DOC_GRAPH_LOCAL_LINE" -lt "$DOC_GRAPH_STDLIB_LINE" ] ||
         fail "doc module graph did not preserve loader source order"
+
+    DOC_GRAPH_EXPLICIT_OUT="$DOC_GRAPH_DIR/explicit.md"
+    run_cmd doc-generate-explicit-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" "$DOC_GRAPH_LOCAL" "$DOC_GRAPH_STDLIB_SOURCE" "$DOC_GRAPH_EXPLICIT_OUT"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $(native_arg_path "$DOC_GRAPH_EXPLICIT_OUT")"
+    assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "## Modules"
+    assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Entry module docs."
+    assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Local module docs."
+    assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Stdlib module docs."
 
     DOC_TOOL="$WORKDIR/selfhost-doc-tool$HOST_EXE_SUFFIX"
     if [ "$HOST_OS" = linux ]; then

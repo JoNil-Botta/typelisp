@@ -32,9 +32,10 @@ Coverage notes:
   helpers: empty/single lists, count, reverse, append, build-onto order, and
   array conversion with count clamping.
 - `vector_api.tl` covers the generated concrete vector family: `I64Vec`
-  compatibility, `StringVec` growth/mutation/pop/snapshot/reverse paths, and a
-  fixture-local generated enum-payload vector witness for nominal element
-  metadata.
+  compatibility, higher-order `I64Vec` fold/map helpers with named functions
+  and scalar-capturing lambdas, `StringVec` growth/mutation/pop/snapshot/reverse
+  paths, and a fixture-local generated enum-payload vector witness for nominal
+  element metadata.
 - `vector_slice_check.tl` covers the lifetime-scoped `I64Slice` view API,
   including vector and array constructors, invalid ranges producing empty views,
   sub-slicing, fallback reads, and explicit array/vector copy boundaries.

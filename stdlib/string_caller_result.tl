@@ -1,8 +1,8 @@
-;# Check-only lifetime-preserving string caller-result APIs (#1913).
+;# Lifetime-preserving string caller-result APIs (#1913/#1962).
 ;#
-;# This module is separate from `string.tl` because reference-typed aggregate
-;# values are not lowerable yet. It exposes the checked source shape for helpers
-;# that may return caller-provided text without copying.
+;# This module stays separate from `string.tl` while the compatibility wrapper
+;# keeps the owned `String` API. It exposes helpers that may return
+;# caller-provided text without copying.
 (import "string.tl")
 
 ;: Result for lifetime-preserving string replacement.

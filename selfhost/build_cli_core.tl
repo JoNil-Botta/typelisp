@@ -67,18 +67,16 @@
   (manifest-path String)
   (manifest CompilerPkgManifest))
 
-(defenum BuildPackageGraphNodeList
-  (BuildPackageGraphNodeNil)
-  (BuildPackageGraphNodeCons
-    BuildPackageGraphNode
-    (Box BuildPackageGraphNodeList)))
+(defstruct BuildPackageGraphNodeVec
+  (slots (Array BuildPackageGraphNode))
+  (len i64))
 
 (defstruct BuildPackageGraph
-  (order BuildPackageGraphNodeList))
+  (order BuildPackageGraphNodeVec))
 
 (defstruct BuildPackageGraphState
   (seen StringI64Map)
-  (order BuildPackageGraphNodeList))
+  (order BuildPackageGraphNodeVec))
 
 (defenum ResultBuildPackageGraph
   (OkBuildPackageGraph BuildPackageGraph)
@@ -176,15 +174,13 @@
   (OkBuildPackageGraphWorker BuildPackageGraphWorker)
   (ErrBuildPackageGraphWorker String))
 
-(defenum BuildPackageGraphWorkerList
-  (BuildPackageGraphWorkerNil)
-  (BuildPackageGraphWorkerCons
-    BuildPackageGraphWorker
-    (Box BuildPackageGraphWorkerList)))
+(defstruct BuildPackageGraphWorkerVec
+  (slots (Array BuildPackageGraphWorker))
+  (len i64))
 
 (defstruct BuildPackageSchedulePass
   (scheduled StringI64Map)
-  (workers BuildPackageGraphWorkerList))
+  (workers BuildPackageGraphWorkerVec))
 
 (defenum ResultBuildPackageSchedulePass
   (OkBuildPackageSchedulePass BuildPackageSchedulePass)
@@ -1754,16 +1750,69 @@
       (build-package-path-list-render stack)
       (string-append " -> " manifest-path))))
 
-(define (build-package-graph-node-list-append-one
-  [items : BuildPackageGraphNodeList]
-  [node : BuildPackageGraphNode]) : BuildPackageGraphNodeList
-  (match items
-    [(BuildPackageGraphNodeNil)
-      (BuildPackageGraphNodeCons node (box BuildPackageGraphNodeNil))]
-    [(BuildPackageGraphNodeCons head rest)
-      (BuildPackageGraphNodeCons
-        head
-        (box (build-package-graph-node-list-append-one (box-get rest) node)))]))
+(define (build-package-graph-node-vec-len [v : BuildPackageGraphNodeVec]) : i64
+  (struct-get v len))
+
+(define (build-package-graph-node-vec-capacity [v : BuildPackageGraphNodeVec]) : i64
+  (array-length (struct-get v slots)))
+
+(define (build-package-graph-node-vec-with-capacity [capacity : i64]) : BuildPackageGraphNodeVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (BuildPackageGraphNodeVec (make-array BuildPackageGraphNode cap) 0)))
+
+(define (build-package-graph-node-vec-new) : BuildPackageGraphNodeVec
+  (build-package-graph-node-vec-with-capacity 4))
+
+(define (build-package-graph-node-vec-at
+  [v : BuildPackageGraphNodeVec]
+  [index : i64]) : BuildPackageGraphNode
+  (array-ref (struct-get v slots) index))
+
+(define (build-package-graph-node-vec-copy-range!
+  [dst : (Array BuildPackageGraphNode)]
+  [src : (Array BuildPackageGraphNode)]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
+  (let
+    [count : i64 (build-package-graph-node-vec-len v)]
+    [bigger : (Array BuildPackageGraphNode)
+      (make-array
+        BuildPackageGraphNode
+        (* (build-package-graph-node-vec-capacity v) 2))]
+    (begin
+      (build-package-graph-node-vec-copy-range!
+        bigger
+        (struct-get v slots)
+        count)
+      (BuildPackageGraphNodeVec bigger count))))
+
+(define (build-package-graph-node-vec-push
+  [v : BuildPackageGraphNodeVec]
+  [node : BuildPackageGraphNode]) : BuildPackageGraphNodeVec
+  (if (<
+    (build-package-graph-node-vec-len v)
+    (build-package-graph-node-vec-capacity v))
+    (let
+      [slots : (Array BuildPackageGraphNode) (struct-get v slots)]
+      (begin
+        (array-set! slots (build-package-graph-node-vec-len v) node)
+        (BuildPackageGraphNodeVec
+          slots
+          (+ (build-package-graph-node-vec-len v) 1))))
+    (build-package-graph-node-vec-push
+      (build-package-graph-node-vec-grow v)
+      node)))
 
 (define (build-package-graph-state-mark
   [state : BuildPackageGraphState]
@@ -1778,7 +1827,7 @@
   [node : BuildPackageGraphNode]) : BuildPackageGraphState
   (BuildPackageGraphState
     (struct-get state seen)
-    (build-package-graph-node-list-append-one (struct-get state order) node)))
+    (build-package-graph-node-vec-push (struct-get state order) node)))
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
@@ -1890,7 +1939,7 @@
           (string-i64-map-with-capacity 32)
           root-path
           build-package-visit-visiting)
-        BuildPackageGraphNodeNil)]
+        (build-package-graph-node-vec-new))]
     [stack : BuildPackagePathList
       (BuildPackagePathCons root-path (box BuildPackagePathNil))]
     (match (build-package-graph-add-deps
@@ -1957,16 +2006,123 @@
       target)))
 
 (define (build-package-graph-link-libs
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [profile : BuildProfile]
   [target : CompilerBackendTarget]) : ProcessStringList
-  (match nodes
-    [(BuildPackageGraphNodeNil) (process-args-empty)]
-    [(BuildPackageGraphNodeCons node rest)
+  (let
+    [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
+    [libs : ProcessStringList (process-args-empty)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            libs
+            (process-args-append
+              libs
+              (process-args-single
+                (build-package-graph-node-artifact-path
+                  (build-package-graph-node-vec-at nodes index)
+                  profile
+                  target))))
+          (set! index (- index 1))))
+      libs)))
+
+(define (build-package-graph-test-manifest [name : String]) : CompilerPkgManifest
+  (CompilerPkgManifest
+    name
+    "0.1.0"
+    (CompilerPkgKindLib)
+    "src/lib.tl"
+    CompilerPkgDepNil))
+
+(define (build-package-graph-test-manifest-with-deps
+  [name : String]
+  [deps : CompilerPkgDepList]) : CompilerPkgManifest
+  (CompilerPkgManifest name "0.1.0" (CompilerPkgKindLib) "src/lib.tl" deps))
+
+(define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
+  (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
+
+(define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : ProcessStringList
+  (process-args-single
+    (build-package-graph-node-artifact-path
+      node
+      (BuildProfileRelease)
+      (BackendTargetLinux))))
+
+(define (build-package-graph-vector-smoke-ok?) : bool
+  (let
+    [first : BuildPackageGraphNode
+      (build-package-graph-test-node "root/first/typelisp.pkg" "first")]
+    [second : BuildPackageGraphNode
+      (build-package-graph-test-node "root/second/typelisp.pkg" "second")]
+    [third : BuildPackageGraphNode
+      (build-package-graph-test-node "root/third/typelisp.pkg" "third")]
+    [nodes : BuildPackageGraphNodeVec
+      (build-package-graph-node-vec-push
+        (build-package-graph-node-vec-push
+          (build-package-graph-node-vec-push
+            (build-package-graph-node-vec-with-capacity 1)
+            first)
+          second)
+        third)]
+    [libs : ProcessStringList
+      (build-package-graph-link-libs
+        nodes
+        (BuildProfileRelease)
+        (BackendTargetLinux))]
+    [expected : ProcessStringList
       (process-args-append
-        (build-package-graph-link-libs (box-get rest) profile target)
-        (process-args-single
-          (build-package-graph-node-artifact-path node profile target)))]))
+        (process-args-append
+          (build-package-graph-test-link-arg third)
+          (build-package-graph-test-link-arg second))
+        (build-package-graph-test-link-arg first))]
+    (and
+      (= (build-package-graph-node-vec-len nodes) 3)
+      (and
+        (string-eq
+          (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
+          "root/first/typelisp.pkg")
+        (source-tool-string-list-eq? libs expected)))))
+
+(define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
+  (let
+    [dep : CompilerPkgDep (CompilerPkgDep "dep" "../dep")]
+    [deps : CompilerPkgDepList (CompilerPkgDepCons dep (box CompilerPkgDepNil))]
+    [node : BuildPackageGraphNode
+      (BuildPackageGraphNode
+        "root/app/typelisp.pkg"
+        (build-package-graph-test-manifest-with-deps "app" deps))]
+    [nodes : BuildPackageGraphNodeVec
+      (build-package-graph-node-vec-push
+        (build-package-graph-node-vec-new)
+        node)]
+    (match (build-package-schedule-pass
+      nodes
+      (string-i64-map-with-capacity 4)
+      (string-i64-map-with-capacity 4)
+      (BackendTargetLinux)
+      0
+      (BuildProfileRelease)
+      (BackendModeScalar)
+      CompilerLoadRootNil
+      (build-package-graph-worker-vec-new))
+      [(ErrBuildPackageSchedulePass _) false]
+      [(OkBuildPackageSchedulePass pass)
+        (and
+          (build-package-graph-worker-vec-empty? (struct-get pass workers))
+          (not
+            (build-package-node-scheduled?
+              (struct-get pass scheduled)
+              "root/app/typelisp.pkg")))])))
+
+(test
+  build-package-graph-vector-smoke
+  (unless
+    (and
+      (build-package-graph-vector-smoke-ok?)
+      (build-package-graph-scheduler-no-progress-smoke-ok?))
+    (panic "build package graph vector smoke failed")))
 
 (define (build-package-emit-one
   [manifest-path : String]
@@ -2199,22 +2355,74 @@
     [(StringI64MapFound _) true]
     [(StringI64MapMissing) false]))
 
-(define (build-package-graph-worker-list-append-one
-  [items : BuildPackageGraphWorkerList]
-  [worker : BuildPackageGraphWorker]) : BuildPackageGraphWorkerList
-  (match items
-    [(BuildPackageGraphWorkerNil)
-      (BuildPackageGraphWorkerCons worker (box BuildPackageGraphWorkerNil))]
-    [(BuildPackageGraphWorkerCons head rest)
-      (BuildPackageGraphWorkerCons
-        head
-        (box (build-package-graph-worker-list-append-one (box-get rest) worker)))]))
+(define (build-package-graph-worker-vec-len [v : BuildPackageGraphWorkerVec]) : i64
+  (struct-get v len))
 
-(define (build-package-graph-worker-list-empty?
-  [items : BuildPackageGraphWorkerList]) : bool
-  (match items
-    [(BuildPackageGraphWorkerNil) true]
-    [(BuildPackageGraphWorkerCons _ _) false]))
+(define (build-package-graph-worker-vec-capacity
+  [v : BuildPackageGraphWorkerVec]) : i64
+  (array-length (struct-get v slots)))
+
+(define (build-package-graph-worker-vec-with-capacity [capacity : i64]) : BuildPackageGraphWorkerVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (BuildPackageGraphWorkerVec (make-array BuildPackageGraphWorker cap) 0)))
+
+(define (build-package-graph-worker-vec-new) : BuildPackageGraphWorkerVec
+  (build-package-graph-worker-vec-with-capacity 4))
+
+(define (build-package-graph-worker-vec-at
+  [v : BuildPackageGraphWorkerVec]
+  [index : i64]) : BuildPackageGraphWorker
+  (array-ref (struct-get v slots) index))
+
+(define (build-package-graph-worker-vec-copy-range!
+  [dst : (Array BuildPackageGraphWorker)]
+  [src : (Array BuildPackageGraphWorker)]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (build-package-graph-worker-vec-grow [v : BuildPackageGraphWorkerVec]) : BuildPackageGraphWorkerVec
+  (let
+    [count : i64 (build-package-graph-worker-vec-len v)]
+    [bigger : (Array BuildPackageGraphWorker)
+      (make-array
+        BuildPackageGraphWorker
+        (* (build-package-graph-worker-vec-capacity v) 2))]
+    (begin
+      (build-package-graph-worker-vec-copy-range!
+        bigger
+        (struct-get v slots)
+        count)
+      (BuildPackageGraphWorkerVec bigger count))))
+
+(define (build-package-graph-worker-vec-push
+  [v : BuildPackageGraphWorkerVec]
+  [worker : BuildPackageGraphWorker]) : BuildPackageGraphWorkerVec
+  (if (<
+    (build-package-graph-worker-vec-len v)
+    (build-package-graph-worker-vec-capacity v))
+    (let
+      [slots : (Array BuildPackageGraphWorker) (struct-get v slots)]
+      (begin
+        (array-set! slots (build-package-graph-worker-vec-len v) worker)
+        (BuildPackageGraphWorkerVec
+          slots
+          (+ (build-package-graph-worker-vec-len v) 1))))
+    (build-package-graph-worker-vec-push
+      (build-package-graph-worker-vec-grow v)
+      worker)))
+
+(define (build-package-graph-worker-vec-empty?
+  [items : BuildPackageGraphWorkerVec]) : bool
+  (<= (build-package-graph-worker-vec-len items) 0))
 
 (define (build-package-start-worker
   [node : BuildPackageGraphNode]
@@ -2247,7 +2455,7 @@
               (string-append "`: " (process-error-message error)))))])))
 
 (define (build-package-schedule-pass
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [scheduled : StringI64Map]
   [built : StringI64Map]
   [target : CompilerBackendTarget]
@@ -2255,68 +2463,71 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
-  [workers : BuildPackageGraphWorkerList]) : ResultBuildPackageSchedulePass
-  (match nodes
-    [(BuildPackageGraphNodeNil)
-      (OkBuildPackageSchedulePass (BuildPackageSchedulePass scheduled workers))]
-    [(BuildPackageGraphNodeCons node rest)
-      (let
-        [manifest-path : String (struct-get node manifest-path)]
-        (if (build-package-node-scheduled? scheduled manifest-path)
-          (build-package-schedule-pass
-            (box-get rest)
-            scheduled
-            built
-            target
-            opt-level
-            profile
-            mode
-            stdlib-roots
-            workers)
-          (if (build-package-node-ready? node built)
-            (match (build-package-start-worker
-              node
-              target
-              opt-level
-              profile
-              mode
-              stdlib-roots)
-              [(ErrBuildPackageGraphWorker message)
-                (ErrBuildPackageSchedulePass message)]
-              [(OkBuildPackageGraphWorker worker)
-                (build-package-schedule-pass
-                  (box-get rest)
-                  (string-i64-map-put scheduled manifest-path 1)
-                  built
+  [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
+  (let
+    [index : i64 0]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
+    [next-scheduled : StringI64Map scheduled]
+    [next-workers : BuildPackageGraphWorkerVec workers]
+    [ok : bool true]
+    [error-message : String ""]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [node : BuildPackageGraphNode
+            (build-package-graph-node-vec-at nodes index)]
+          [manifest-path : String (struct-get node manifest-path)]
+          (begin
+            (if (build-package-node-scheduled? next-scheduled manifest-path)
+              unit
+              (if (build-package-node-ready? node built)
+                (match (build-package-start-worker
+                  node
                   target
                   opt-level
                   profile
                   mode
-                  stdlib-roots
-                  (build-package-graph-worker-list-append-one workers worker))])
-            (build-package-schedule-pass
-              (box-get rest)
-              scheduled
-              built
-              target
-              opt-level
-              profile
-              mode
-              stdlib-roots
-              workers))))]))
+                  stdlib-roots)
+                  [(ErrBuildPackageGraphWorker message)
+                    (begin
+                      (set! ok false)
+                      (set! error-message message))]
+                  [(OkBuildPackageGraphWorker worker)
+                    (begin
+                      (set!
+                        next-scheduled
+                        (string-i64-map-put next-scheduled manifest-path 1))
+                      (set!
+                        next-workers
+                        (build-package-graph-worker-vec-push
+                          next-workers
+                          worker)))])
+                unit))
+            (set! index (+ index 1)))))
+      (if ok
+        (OkBuildPackageSchedulePass
+          (BuildPackageSchedulePass next-scheduled next-workers))
+        (ErrBuildPackageSchedulePass error-message)))))
 
 (define (build-package-all-built?
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [built : StringI64Map]) : bool
-  (match nodes
-    [(BuildPackageGraphNodeNil) true]
-    [(BuildPackageGraphNodeCons node rest)
-      (let
-        [manifest-path : String (struct-get node manifest-path)]
-        (match (string-i64-map-get built manifest-path)
-          [(StringI64MapFound _)
-            (build-package-all-built? (box-get rest) built)]
-          [(StringI64MapMissing) false]))]))
+  (let
+    [index : i64 0]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
+    [all-built : bool true]
+    (begin
+      (while (and all-built (< index count))
+        (let
+          [node : BuildPackageGraphNode
+            (build-package-graph-node-vec-at nodes index)]
+          [manifest-path : String (struct-get node manifest-path)]
+          (begin
+            (match (string-i64-map-get built manifest-path)
+              [(StringI64MapFound _) unit]
+              [(StringI64MapMissing) (set! all-built false)])
+            (set! index (+ index 1)))))
+      all-built)))
 
 (define (build-package-failure-status [failed-status : i64] [status : i64]) : i64
   (if (= failed-status 0)
@@ -2324,65 +2535,73 @@
     failed-status))
 
 (define (build-package-wait-workers-with
-  [workers : BuildPackageGraphWorkerList]
+  [workers : BuildPackageGraphWorkerVec]
   [built : StringI64Map]
   [failed-status : i64]) : ResultBuildPackageWait
-  (match workers
-    [(BuildPackageGraphWorkerNil)
-      (if (= failed-status 0)
-        (OkBuildPackageWait built)
-        (ErrBuildPackageWait failed-status))]
-    [(BuildPackageGraphWorkerCons worker rest)
-      (let
-        [node : BuildPackageGraphNode (struct-get worker node)]
-        [manifest-path : String (struct-get node manifest-path)]
-        [manifest : CompilerPkgManifest (struct-get node manifest)]
-        [name : String (struct-get manifest name)]
-        [result : ResultProcessOutput (process-wait (struct-get worker child))]
-        (match result
-          [(OkProcessOutput output)
-            (begin
-              (source-tool-forward-output output)
-              (if (process-success? output)
-                (build-package-wait-workers-with
-                  (box-get rest)
-                  (string-i64-map-put built manifest-path 1)
-                  failed-status)
-                (let
-                  [status : i64 (process-output-status output)]
-                  (begin
-                    (print-error
-                      (string-append
-                        "build: package dependency `"
-                        (string-append
-                          name
+  (let
+    [index : i64 0]
+    [count : i64 (build-package-graph-worker-vec-len workers)]
+    [next-built : StringI64Map built]
+    [next-failed-status : i64 failed-status]
+    (begin
+      (while (< index count)
+        (let
+          [worker : BuildPackageGraphWorker
+            (build-package-graph-worker-vec-at workers index)]
+          [node : BuildPackageGraphNode (struct-get worker node)]
+          [manifest-path : String (struct-get node manifest-path)]
+          [manifest : CompilerPkgManifest (struct-get node manifest)]
+          [name : String (struct-get manifest name)]
+          [result : ResultProcessOutput
+            (process-wait (struct-get worker child))]
+          (begin
+            (match result
+              [(OkProcessOutput output)
+                (begin
+                  (source-tool-forward-output output)
+                  (if (process-success? output)
+                    (set!
+                      next-built
+                      (string-i64-map-put next-built manifest-path 1))
+                    (let
+                      [status : i64 (process-output-status output)]
+                      (begin
+                        (print-error
                           (string-append
-                            "` failed with status "
-                            (int->string status)))))
-                    (build-package-wait-workers-with
-                      (box-get rest)
-                      built
-                      (build-package-failure-status failed-status status))))))]
-          [(ErrProcessOutput error)
-            (begin
-              (print-error
-                (string-append
-                  "build: failed to wait for package dependency `"
-                  (string-append
-                    name
-                    (string-append "`: " (process-error-message error)))))
-              (build-package-wait-workers-with
-                (box-get rest)
-                built
-                (build-package-failure-status failed-status 1)))]))]))
+                            "build: package dependency `"
+                            (string-append
+                              name
+                              (string-append
+                                "` failed with status "
+                                (int->string status)))))
+                        (set!
+                          next-failed-status
+                          (build-package-failure-status
+                            next-failed-status
+                            status))))))]
+              [(ErrProcessOutput error)
+                (begin
+                  (print-error
+                    (string-append
+                      "build: failed to wait for package dependency `"
+                      (string-append
+                        name
+                        (string-append "`: " (process-error-message error)))))
+                  (set!
+                    next-failed-status
+                    (build-package-failure-status next-failed-status 1)))])
+            (set! index (+ index 1)))))
+      (if (= next-failed-status 0)
+        (OkBuildPackageWait next-built)
+        (ErrBuildPackageWait next-failed-status)))))
 
 (define (build-package-wait-workers
-  [workers : BuildPackageGraphWorkerList]
+  [workers : BuildPackageGraphWorkerVec]
   [built : StringI64Map]) : ResultBuildPackageWait
   (build-package-wait-workers-with workers built 0))
 
 (define (build-package-emit-graph-nodes-parallel-loop
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
@@ -2401,15 +2620,16 @@
       profile
       mode
       stdlib-roots
-      BuildPackageGraphWorkerNil)
+      (build-package-graph-worker-vec-with-capacity
+        (build-package-graph-node-vec-len nodes)))
       [(ErrBuildPackageSchedulePass message)
         (begin
           (print-error message)
           1)]
       [(OkBuildPackageSchedulePass pass)
         (let
-          [workers : BuildPackageGraphWorkerList (struct-get pass workers)]
-          (if (build-package-graph-worker-list-empty? workers)
+          [workers : BuildPackageGraphWorkerVec (struct-get pass workers)]
+          (if (build-package-graph-worker-vec-empty? workers)
             (begin
               (print-error
                 "build: package dependency scheduler made no progress")
@@ -2428,7 +2648,7 @@
                   next-built)])))])))
 
 (define (build-package-emit-graph-nodes-parallel
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
@@ -2445,47 +2665,49 @@
     (string-i64-map-with-capacity 32)))
 
 (define (build-package-emit-graph-nodes-serial
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (match nodes
-    [(BuildPackageGraphNodeNil) 0]
-    [(BuildPackageGraphNodeCons node rest)
-      (let
-        [manifest-path : String (struct-get node manifest-path)]
-        [manifest : CompilerPkgManifest (struct-get node manifest)]
-        [status : i64
-          (build-package-emit-one
-            manifest-path
-            manifest
-            target
-            opt-level
-            profile
-            mode
-            stdlib-roots
-            (process-args-empty))]
-        (if (= status 0)
-          (build-package-emit-graph-nodes-serial
-            (box-get rest)
-            target
-            opt-level
-            profile
-            mode
-            stdlib-roots)
-          (begin
-            (print-error
-              (string-append
-                "build: package dependency `"
+  (let
+    [index : i64 0]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
+    [status : i64 0]
+    (begin
+      (while (and (= status 0) (< index count))
+        (let
+          [node : BuildPackageGraphNode
+            (build-package-graph-node-vec-at nodes index)]
+          [manifest-path : String (struct-get node manifest-path)]
+          [manifest : CompilerPkgManifest (struct-get node manifest)]
+          [node-status : i64
+            (build-package-emit-one
+              manifest-path
+              manifest
+              target
+              opt-level
+              profile
+              mode
+              stdlib-roots
+              (process-args-empty))]
+          (if (= node-status 0)
+            (set! index (+ index 1))
+            (begin
+              (print-error
                 (string-append
-                  (struct-get manifest name)
-                  (string-append "` failed with status " (int->string status)))))
-            status)))]))
+                  "build: package dependency `"
+                  (string-append
+                    (struct-get manifest name)
+                    (string-append
+                      "` failed with status "
+                      (int->string node-status)))))
+              (set! status node-status)))))
+      status)))
 
 (define (build-package-emit-graph-nodes
-  [nodes : BuildPackageGraphNodeList]
+  [nodes : BuildPackageGraphNodeVec]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
@@ -2540,7 +2762,7 @@
                   1)]
               [(OkBuildPackageGraph graph)
                 (let
-                  [nodes : BuildPackageGraphNodeList (struct-get graph order)]
+                  [nodes : BuildPackageGraphNodeVec (struct-get graph order)]
                   [dep-status : i64
                     (build-package-emit-graph-nodes
                       nodes

@@ -768,7 +768,8 @@ contains|_tl_eval_seq_result:
 contains|_colon_colonstring_eq
 contains|string_append_borrowed
 contains|substring_copy_checked
-contains|tl_int_to_string:
+not-contains|call tl_int_to_string
+not-contains|tl_int_to_string:
 contains|string__gtint
 contains|print_string:
 contains|.string "lambda"
@@ -900,7 +901,8 @@ end
 case|selfhost_parse|selfhost/parse.tl|assembly|exactly-one|direct
 contains|_tl_parse:
 contains|_tl_emit_program:
-contains|tl_int_to_string:
+not-contains|call tl_int_to_string
+not-contains|tl_int_to_string:
 contains|parse: malformed begin
 end
 

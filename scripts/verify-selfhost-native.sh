@@ -470,7 +470,10 @@ verify_compiler_driver_stdlib_string_runtime() {
     [joined : String (string-append "foo" "bar")]
     [extended : String (string-concat joined "!")]
     [borrowed : String (string-append-borrowed (& extended) (& joined))]
-    (if (string-eq borrowed "foobar!foobar")
+    [digits : String (int->string -42)]
+    (if (and
+      (string-eq borrowed "foobar!foobar")
+      (string-eq digits "-42"))
       42
       1)))
 EOF
@@ -479,6 +482,8 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-stdlib-string-runtime "$_src" "$_asm"
     assert_not_contains "$_asm" "call tl_string_concat" compiler-driver-stdlib-string-runtime
     assert_not_contains "$_asm" "tl_string_concat:" compiler-driver-stdlib-string-runtime
+    assert_not_contains "$_asm" "call tl_int_to_string" compiler-driver-stdlib-string-runtime
+    assert_not_contains "$_asm" "tl_int_to_string:" compiler-driver-stdlib-string-runtime
     assemble_link_run_asm compiler-driver-stdlib-string-runtime "$_asm" 42 - - 1
 }
 

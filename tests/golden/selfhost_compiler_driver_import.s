@@ -32,8 +32,8 @@ _tl_helper_u2etl_colon_colonhelper:
     subq $16, %rsp
 .Lf0_entry:
     movq $38, %rax
-    movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx
-    addq %rbx, %rax
+    movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
+    addq %r8, %rax
     movq %rax, -16(%rbp)
     movq -16(%rbp), %rax
     leave
@@ -48,8 +48,8 @@ main:
     call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax
-    movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx
-    addq %rbx, %rax
+    movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
+    addq %r8, %rax
     movq %rax, -16(%rbp)
     movq -16(%rbp), %rax
     leave

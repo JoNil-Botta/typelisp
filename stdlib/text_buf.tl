@@ -183,6 +183,8 @@
 (define (text-buf-batched-write-threshold) : i64
   1048576)
 
+;: Write `items` to `raw` in rendered batches no larger than `batch-limit`
+;: bytes, stopping at the first file-write error status.
 (define (text-buf-write-array-batches
   [raw : i64]
   [items : (Array String)]
@@ -214,6 +216,8 @@
                 (text-buf-chunks-render-array-range items start index))))))
       status)))
 
+;: Write chunked buffer contents to `raw` by first flattening chunk order into
+;: an array, then emitting bounded batches.
 (define (text-buf-write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
   (let
     [count : i64 (text-buf-chunk-count chunks 0)]

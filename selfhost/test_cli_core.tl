@@ -444,7 +444,8 @@
     (AstExternMetadata
       (AstExternAbiC)
       (tltest-print-runtime-write-symbol target)
-      AstExternLinkInputNil)
+      AstExternLinkInputNil
+      true)
     (tltest-print-runtime-write-type)))
 
 (define (tltest-text-param-list) : AstParamList

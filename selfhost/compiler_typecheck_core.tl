@@ -12097,8 +12097,8 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata abi _ _)
-      (if (ast-extern-abi-c? abi)
+    [(AstExternMetadata abi _ _ explicit-abi)
+      (if (and explicit-abi (ast-extern-abi-c? abi))
         (let
           [resolved : AstType (tc-resolve-type ctx ty)]
           (match (tc-check-extern-c-abi resolved)
@@ -12109,7 +12109,7 @@
                   resolved)
                 OkTcUnit)]
             [(ErrTcUnit message) (ErrTcUnit message)]))
-        (ErrTcUnit "typecheck: unsupported extern ABI"))]))
+        OkTcUnit)]))
 
 (define (tc-summary-add-decl
   [summary : CompilerTypecheckSummary]

@@ -1180,7 +1180,8 @@
       (AstExternMetadata
         (AstExternAbiC)
         (compiler-load-package-user-symbol logical)
-        AstExternLinkInputNil)
+        AstExternLinkInputNil
+        false)
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl

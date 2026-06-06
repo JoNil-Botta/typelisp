@@ -5406,14 +5406,21 @@
     [(IrInstrBoundsCheck _ _ _) true]
     [_ false]))
 
-(define (compiler-backend-instrs-need-outgoing-space?
-  [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-needs-outgoing-space? instr)
-        true
-        (compiler-backend-instrs-need-outgoing-space? (box-get rest)))]))
+(define (compiler-backend-instr-seq-need-outgoing-space?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (if (compiler-backend-instr-needs-outgoing-space? (array-ref slots index))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
 
 (define (compiler-backend-blocks-need-outgoing-space?
   [blocks : CompilerIrBlockList]) : bool
@@ -5422,8 +5429,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-backend-instrs-need-outgoing-space?
-            (compiler-ir-instr-seq-to-list instrs))
+          (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
             true
             (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]))
 
@@ -5434,17 +5440,24 @@
       (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
 
-(define (compiler-backend-instrs-outgoing-stack-space
-  [instrs : CompilerIrInstrList]
+(define (compiler-backend-instr-seq-outgoing-stack-space
+  [instrs : CompilerIrInstrSeq]
   [max-space : i64]) : i64
-  (match instrs
-    [(IrInstrNil) max-space]
-    [(IrInstrCons instr rest)
-      (compiler-backend-instrs-outgoing-stack-space
-        (box-get rest)
-        (compiler-reg-max
-          max-space
-          (compiler-backend-instr-outgoing-stack-space instr)))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : i64 max-space]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out
+            (compiler-reg-max
+              out
+              (compiler-backend-instr-outgoing-stack-space
+                (array-ref slots index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-blocks-outgoing-stack-space
   [blocks : CompilerIrBlockList]
@@ -5456,8 +5469,8 @@
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
             (box-get rest)
-            (compiler-backend-instrs-outgoing-stack-space
-              (compiler-ir-instr-seq-to-list instrs)
+            (compiler-backend-instr-seq-outgoing-stack-space
+              instrs
               max-space))])]))
 
 (define (compiler-backend-outgoing-frame-space
@@ -5897,14 +5910,20 @@
     [(IrInstrReturn _) 1]
     [_ 0]))
 
-(define (compiler-backend-instr-list-return-count
-  [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(IrInstrNil) 0]
-    [(IrInstrCons instr rest)
-      (+
-        (compiler-backend-instr-return-count instr)
-        (compiler-backend-instr-list-return-count (box-get rest)))]))
+(define (compiler-backend-instr-seq-return-count
+  [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out
+            (+ out (compiler-backend-instr-return-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-block-list-return-count
   [blocks : CompilerIrBlockList]) : i64
@@ -5914,8 +5933,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (compiler-backend-instr-list-return-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-instr-seq-return-count instrs)
             (compiler-backend-block-list-return-count (box-get rest)))])]))
 
 (define (compiler-backend-use-shared-return?
@@ -6921,15 +6939,19 @@
       (compiler-backend-count-phi-input-uses counts inputs)]
     [_ unit]))
 
-(define (compiler-backend-count-instr-list-uses
+(define (compiler-backend-count-instr-seq-uses
   [counts : (Array i64)]
-  [instrs : CompilerIrInstrList]) : unit
-  (match instrs
-    [(IrInstrNil) unit]
-    [(IrInstrCons instr rest)
-      (begin
-        (compiler-backend-count-instr-uses counts instr)
-        (compiler-backend-count-instr-list-uses counts (box-get rest)))]))
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-backend-count-instr-uses counts (array-ref slots index))
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-backend-count-block-uses
   [counts : (Array i64)]
@@ -6940,9 +6962,7 @@
       (match block
         [(IrBlock _ instrs)
           (begin
-            (compiler-backend-count-instr-list-uses
-              counts
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-count-instr-seq-uses counts instrs)
             (compiler-backend-count-block-uses counts (box-get rest)))])]))
 
 (define (compiler-backend-function-use-counts
@@ -10000,15 +10020,23 @@
       (compiler-backend-collect-value-collections collections index)]
     [_ collections]))
 
-(define (compiler-backend-collect-instr-list-collections
+(define (compiler-backend-collect-instr-seq-collections
   [collections : CompilerBackendProgramCollections]
-  [instrs : CompilerIrInstrList]) : CompilerBackendProgramCollections
-  (match instrs
-    [(IrInstrNil) collections]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-collections
-        (compiler-backend-collect-instr-collections collections instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerBackendProgramCollections
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerBackendProgramCollections collections]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out
+            (compiler-backend-collect-instr-collections
+              out
+              (array-ref slots index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-collect-block-collections
   [collections : CompilerBackendProgramCollections]
@@ -10019,9 +10047,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-collections
-            (compiler-backend-collect-instr-list-collections
-              collections
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-collect-instr-seq-collections collections instrs)
             (box-get rest))])]))
 
 (define (compiler-backend-collect-function-collections
@@ -10355,51 +10381,6 @@
             link-symbol
             (compiler-backend-extern-list-link-symbol (box-get rest) name))])]))
 
-(define (compiler-backend-instr-calls?
-  [instr : CompilerIrInstr]
-  [name : String]) : bool
-  (match instr
-    [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
-    [(IrInstrTailCall call-name _ _) (string-eq call-name name)]
-    [(IrInstrBoundsCheck _ _ _) (string-eq name "tl_oob_abort")]
-    [_ false]))
-
-(define (compiler-backend-instr-list-calls?
-  [instrs : CompilerIrInstrList]
-  [name : String]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-calls? instr name)
-        true
-        (compiler-backend-instr-list-calls? (box-get rest) name))]))
-
-(define (compiler-backend-block-list-calls?
-  [blocks : CompilerIrBlockList]
-  [name : String]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-calls?
-            (compiler-ir-instr-seq-to-list instrs)
-            name)
-            true
-            (compiler-backend-block-list-calls? (box-get rest) name))])]))
-
-(define (compiler-backend-function-list-calls?
-  [functions : CompilerIrFunctionList]
-  [name : String]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-block-list-calls? blocks name)
-            true
-            (compiler-backend-function-list-calls? (box-get rest) name))])]))
-
 (define (compiler-backend-binop-needs-div-abort?
   [op : CompilerIrBinOp]
   [ty : AstType]) : bool
@@ -10419,81 +10400,6 @@
       [(IrBinShl) true]
       [(IrBinShr) true]
       [_ false])))
-
-(define (compiler-backend-instr-needs-div-abort? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(IrInstrBinOp _ op _ _ ty) (compiler-backend-binop-needs-div-abort? op ty)]
-    [_ false]))
-
-(define (compiler-backend-instr-needs-shift-abort? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(IrInstrBinOp _ op _ _ ty)
-      (compiler-backend-binop-needs-shift-abort? op ty)]
-    [_ false]))
-
-(define (compiler-backend-instr-list-needs-div-abort?
-  [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-needs-div-abort? instr)
-        true
-        (compiler-backend-instr-list-needs-div-abort? (box-get rest)))]))
-
-(define (compiler-backend-instr-list-needs-shift-abort?
-  [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-needs-shift-abort? instr)
-        true
-        (compiler-backend-instr-list-needs-shift-abort? (box-get rest)))]))
-
-(define (compiler-backend-block-list-needs-div-abort?
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-needs-div-abort?
-            (compiler-ir-instr-seq-to-list instrs))
-            true
-            (compiler-backend-block-list-needs-div-abort? (box-get rest)))])]))
-
-(define (compiler-backend-block-list-needs-shift-abort?
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-needs-shift-abort?
-            (compiler-ir-instr-seq-to-list instrs))
-            true
-            (compiler-backend-block-list-needs-shift-abort? (box-get rest)))])]))
-
-(define (compiler-backend-function-list-needs-div-abort?
-  [functions : CompilerIrFunctionList]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-block-list-needs-div-abort? blocks)
-            true
-            (compiler-backend-function-list-needs-div-abort? (box-get rest)))])]))
-
-(define (compiler-backend-function-list-needs-shift-abort?
-  [functions : CompilerIrFunctionList]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-block-list-needs-shift-abort? blocks)
-            true
-            (compiler-backend-function-list-needs-shift-abort? (box-get rest)))])]))
 
 (define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
   (CompilerBackendRuntimeIndex
@@ -10603,15 +10509,21 @@
           with-div))]
     [_ index]))
 
-(define (compiler-backend-runtime-index-instrs
+(define (compiler-backend-runtime-index-instr-seq
   [index : CompilerBackendRuntimeIndex]
-  [instrs : CompilerIrInstrList]) : CompilerBackendRuntimeIndex
-  (match instrs
-    [(IrInstrNil) index]
-    [(IrInstrCons instr rest)
-      (compiler-backend-runtime-index-instrs
-        (compiler-backend-runtime-index-instr index instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerBackendRuntimeIndex
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [i : i64 0]
+    [out : CompilerBackendRuntimeIndex index]
+    (begin
+      (while (< i count)
+        (begin
+          (set! out
+            (compiler-backend-runtime-index-instr out (array-ref slots i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-runtime-index-blocks
   [index : CompilerBackendRuntimeIndex]
@@ -10622,9 +10534,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-runtime-index-blocks
-            (compiler-backend-runtime-index-instrs
-              index
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-runtime-index-instr-seq index instrs)
             (box-get rest))])]))
 
 (define (compiler-backend-runtime-index-functions
@@ -11384,11 +11294,9 @@
     [calls-fs-file-kind-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_kind_status")]
     [calls-fs-file-size-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_fs_file_size_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size_status")]
     [calls-fs-file-size : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_fs_file_size")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size")]
     [calls-fs-process-id : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
     [calls-fs-read-dir-status : bool

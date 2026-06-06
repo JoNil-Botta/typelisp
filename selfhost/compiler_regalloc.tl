@@ -459,30 +459,6 @@
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))
 
-(define (compiler-reg-instr-list-types
-  [instrs : CompilerIrInstrList]
-  [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (match instrs
-    [(IrInstrNil) types]
-    [(IrInstrCons instr rest)
-      (compiler-reg-instr-list-types
-        (box-get rest)
-        (compiler-reg-instr-def-type types instr))]))
-
-(define (compiler-reg-block-list-types
-  [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (match blocks
-    [(IrBlockNil) types]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-reg-block-list-types
-            (box-get rest)
-            (compiler-reg-instr-list-types
-              (compiler-ir-instr-seq-to-list instrs)
-              types))])]))
-
 (define (compiler-reg-var-type-array-set!
   [present : (Array i64)]
   [types : (Array AstType)]
@@ -532,16 +508,23 @@
       (compiler-reg-var-type-array-set! present types dst ty)]
     [_ unit]))
 
-(define (compiler-reg-instr-list-types-array!
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-instr-seq-types-array!
+  [instrs : CompilerIrInstrSeq]
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
-  (match instrs
-    [(IrInstrNil) unit]
-    [(IrInstrCons instr rest)
-      (begin
-        (compiler-reg-instr-def-type-array! instr present types)
-        (compiler-reg-instr-list-types-array! (box-get rest) present types))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-instr-def-type-array!
+            (array-ref slots index)
+            present
+            types)
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-reg-block-list-types-array!
   [blocks : CompilerIrBlockList]
@@ -553,10 +536,7 @@
       (match block
         [(IrBlock _ instrs)
           (begin
-            (compiler-reg-instr-list-types-array!
-              (compiler-ir-instr-seq-to-list instrs)
-              present
-              types)
+            (compiler-reg-instr-seq-types-array! instrs present types)
             (compiler-reg-block-list-types-array! (box-get rest) present types))])]))
 
 (define (compiler-reg-var-type-arrays-to-list
@@ -643,15 +623,20 @@
     [(IrInstrPhi dst inputs _) (compiler-reg-phi-input-moves dst inputs moves)]
     [_ moves]))
 
-(define (compiler-reg-instr-list-moves
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-instr-seq-moves
+  [instrs : CompilerIrInstrSeq]
   [moves : CompilerRegMoveList]) : CompilerRegMoveList
-  (match instrs
-    [(IrInstrNil) moves]
-    [(IrInstrCons instr rest)
-      (compiler-reg-instr-moves
-        instr
-        (compiler-reg-instr-list-moves (box-get rest) moves))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [index : i64 (- (struct-get instrs len) 1)]
+    [out : CompilerRegMoveList moves]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set! out
+            (compiler-reg-instr-moves (array-ref slots index) out))
+          (set! index (- index 1))))
+      out)))
 
 (define (compiler-reg-block-list-moves
   [blocks : CompilerIrBlockList]
@@ -663,9 +648,7 @@
         [(IrBlock _ instrs)
           (compiler-reg-block-list-moves
             (box-get rest)
-            (compiler-reg-instr-list-moves
-              (compiler-ir-instr-seq-to-list instrs)
-              moves))])]))
+            (compiler-reg-instr-seq-moves instrs moves))])]))
 
 (define (compiler-reg-function-moves [func : CompilerIrFunction]) : CompilerRegMoveList
   (match func
@@ -787,39 +770,41 @@
     (compiler-reg-extend-set starts ends (compiler-live-instr-uses instr) point)
     (compiler-reg-extend-set starts ends live-after (+ point 1))))
 
-(define (compiler-reg-live-intervals-instrs
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-live-intervals-instr-seq
+  [instrs : CompilerIrInstrSeq]
   [live-afters : CompilerLiveInstrSetList]
   [point : i64]
   [starts : (Array i64)]
   [ends : (Array i64)]) : i64
-  (match instrs
-    [(IrInstrNil) point]
-    [(IrInstrCons instr rest)
-      (match live-afters
-        [(CompilerLiveInstrSetCons live-after rest-after)
-          (begin
-            (compiler-reg-extend-instr starts ends live-after point instr)
-            (compiler-reg-live-intervals-instrs
-              (box-get rest)
-              (box-get rest-after)
-              (+ point 2)
-              starts
-              ends))]
-        [(CompilerLiveInstrSetNil)
-          (begin
-            (compiler-reg-extend-instr
-              starts
-              ends
-              (compiler-live-set-empty)
-              point
-              instr)
-            (compiler-reg-live-intervals-instrs
-              (box-get rest)
-              CompilerLiveInstrSetNil
-              (+ point 2)
-              starts
-              ends))])]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out-point : i64 point]
+    [afters : CompilerLiveInstrSetList live-afters]
+    (begin
+      (while (< index count)
+        (begin
+          (match afters
+            [(CompilerLiveInstrSetCons live-after rest-after)
+              (begin
+                (compiler-reg-extend-instr
+                  starts
+                  ends
+                  live-after
+                  out-point
+                  (array-ref slots index))
+                (set! afters (box-get rest-after)))]
+            [(CompilerLiveInstrSetNil)
+              (compiler-reg-extend-instr
+                starts
+                ends
+                (compiler-live-set-empty)
+                out-point
+                (array-ref slots index))])
+          (set! out-point (+ out-point 2))
+          (set! index (+ index 1))))
+      out-point)))
 
 (define (compiler-reg-live-intervals-find-afters
   [live-blocks : CompilerLiveBlockList]
@@ -873,8 +858,8 @@
               (box-get rest)
               (compiler-reg-live-intervals-next-live-blocks live-blocks label)
               all-live-blocks
-              (compiler-reg-live-intervals-instrs
-                (compiler-ir-instr-seq-to-list instrs)
+              (compiler-reg-live-intervals-instr-seq
+                instrs
                 live-afters
                 point
                 starts
@@ -974,15 +959,21 @@
     [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
-(define (compiler-reg-ineligible-instrs
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-ineligible-instr-seq
+  [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match instrs
-    [(IrInstrNil) set]
-    [(IrInstrCons instr rest)
-      (compiler-reg-ineligible-instrs
-        (box-get rest)
-        (compiler-reg-ineligible-instr instr set))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out
+            (compiler-reg-ineligible-instr (array-ref slots index) out))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-reg-ineligible-memory
   [blocks : CompilerIrBlockList]
@@ -994,37 +985,37 @@
         [(IrBlock _ instrs)
           (compiler-reg-ineligible-memory
             (box-get rest)
-            (compiler-reg-ineligible-instrs
-              (compiler-ir-instr-seq-to-list instrs)
-              set))])]))
+            (compiler-reg-ineligible-instr-seq instrs set))])]))
 
-(define (compiler-reg-call-live-instrs
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-call-live-instr-seq
+  [instrs : CompilerIrInstrSeq]
   [liveness : CompilerFunctionLiveness]
   [label : String]
-  [index : i64]
+  [start-index : i64]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match instrs
-    [(IrInstrNil) set]
-    [(IrInstrCons instr rest)
-      (let
-        [next-set : CompilerLiveI64Set
-          (match instr
-            [(IrInstrCall _ _ _ _)
-              (compiler-live-set-union
-                set
-                (compiler-live-after liveness label index))]
-            [(IrInstrTailCall _ _ _)
-              (compiler-live-set-union
-                set
-                (compiler-live-after liveness label index))]
-            [_ set])]
-        (compiler-reg-call-live-instrs
-          (box-get rest)
-          liveness
-          label
-          (+ index 1)
-          next-set))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [instr-index : i64 start-index]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out
+            (match (array-ref slots index)
+              [(IrInstrCall _ _ _ _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-after liveness label instr-index))]
+              [(IrInstrTailCall _ _ _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-after liveness label instr-index))]
+              [_ out]))
+          (set! instr-index (+ instr-index 1))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-reg-call-live-blocks
   [blocks : CompilerIrBlockList]
@@ -1038,27 +1029,33 @@
           (compiler-reg-call-live-blocks
             (box-get rest)
             liveness
-            (compiler-reg-call-live-instrs
-              (compiler-ir-instr-seq-to-list instrs)
+            (compiler-reg-call-live-instr-seq
+              instrs
               liveness
               label
               0
               set))])]))
 
-(define (compiler-reg-call-arg-vars-instrs
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-call-arg-vars-instr-seq
+  [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match instrs
-    [(IrInstrNil) set]
-    [(IrInstrCons instr rest)
-      (compiler-reg-call-arg-vars-instrs
-        (box-get rest)
-        (match instr
-          [(IrInstrCall _ _ args _)
-            (compiler-live-set-union set (compiler-live-call-args-vars args))]
-          [(IrInstrTailCall _ args _)
-            (compiler-live-set-union set (compiler-live-call-args-vars args))]
-          [_ set]))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out
+            (match (array-ref slots index)
+              [(IrInstrCall _ _ args _)
+                (compiler-live-set-union out (compiler-live-call-args-vars args))]
+              [(IrInstrTailCall _ args _)
+                (compiler-live-set-union out (compiler-live-call-args-vars args))]
+              [_ out]))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-reg-call-arg-vars-blocks
   [blocks : CompilerIrBlockList]
@@ -1070,9 +1067,7 @@
         [(IrBlock _ instrs)
           (compiler-reg-call-arg-vars-blocks
             (box-get rest)
-            (compiler-reg-call-arg-vars-instrs
-              (compiler-ir-instr-seq-to-list instrs)
-              set))])]))
+            (compiler-reg-call-arg-vars-instr-seq instrs set))])]))
 
 (define (compiler-reg-ineligible-vars
   [func : CompilerIrFunction]
@@ -1167,17 +1162,29 @@
     [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
-(define (compiler-reg-vector-mask-defs-instrs
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-vector-mask-defs-instr-seq
+  [instrs : CompilerIrInstrSeq]
   [vector-set : CompilerLiveI64Set]
   [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
-  (match instrs
-    [(IrInstrNil) (CompilerLiveUseDef vector-set mask-set)]
-    [(IrInstrCons instr rest)
-      (compiler-reg-vector-mask-defs-instrs
-        (box-get rest)
-        (compiler-reg-vector-defs-instr instr vector-set)
-        (compiler-reg-mask-defs-instr instr mask-set))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out-vector : CompilerLiveI64Set vector-set]
+    [out-mask : CompilerLiveI64Set mask-set]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out-vector
+            (compiler-reg-vector-defs-instr
+              (array-ref slots index)
+              out-vector))
+          (set! out-mask
+            (compiler-reg-mask-defs-instr
+              (array-ref slots index)
+              out-mask))
+          (set! index (+ index 1))))
+      (CompilerLiveUseDef out-vector out-mask))))
 
 (define (compiler-reg-vector-mask-defs-blocks
   [blocks : CompilerIrBlockList]
@@ -1188,8 +1195,8 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (match (compiler-reg-vector-mask-defs-instrs
-            (compiler-ir-instr-seq-to-list instrs)
+          (match (compiler-reg-vector-mask-defs-instr-seq
+            instrs
             vector-set
             mask-set)
             [(CompilerLiveUseDef next-vector next-mask)

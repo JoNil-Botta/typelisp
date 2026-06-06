@@ -5414,6 +5414,24 @@
     (take-handle (array-ref items 0))
     (struct-get (array-ref items 0) fd)))")
 
+(define (compiler-typecheck-move-owner-dyn-array-ref-call-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-dyn-array-ref-call [items : (Array FileHandle)] [i : i64]) : unit
+  (take-handle (array-ref items i)))")
+
+(define (compiler-typecheck-move-owner-dyn-array-ref-bind-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-dyn-array-ref-bind [items : (Array FileHandle)] [i : i64]) : i64
+  (let [h : FileHandle (array-ref items i)]
+    (struct-get h fd)))")
+
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
   (if flag (let [t : String s] t) s))")
@@ -5517,6 +5535,16 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-reuse-source)
         "typecheck: use of moved value `items`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-dyn-array-ref-call-source)
+        "typecheck: cannot move owner-consuming value out of dynamic array element")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-dyn-array-ref-bind-source)
+        "typecheck: cannot move owner-consuming value out of dynamic array element")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

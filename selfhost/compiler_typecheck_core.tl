@@ -12148,6 +12148,50 @@
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
+(define (tc-move-dynamic-array-element-message) : String
+  "typecheck: cannot move owner-consuming value out of dynamic array element")
+
+(define (tc-move-dynamic-array-element-projection?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx env inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx env inner))]
+    [(AstExprStructGet inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx env inner))]
+    [(AstExprTupleRef inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx env inner))]
+    [(AstExprArrayRef array-box _)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (match (tc-expr ctx env array)
+          [(OkTcType array-ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+              [(AstTyDynArray _) true]
+              [_ (tc-move-dynamic-array-element-projection? ctx env array)])]
+          [(ErrTcType _)
+            (tc-move-dynamic-array-element-projection? ctx env array)]))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx env inner))]
+    [_ false]))
+
 (define (tc-move-binding-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12180,39 +12224,44 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
-  [init : AstExpr]) : TcMovedSet
+  [init : AstExpr]) : TcMoveResult
   (match (tc-move-bare-var init)
     [(TcSomeString v)
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
-        (tc-moved-add moved v)
-        moved)]
+        (OkTcMove (tc-moved-add moved v))
+        (OkTcMove moved))]
     [(TcNoString)
       (match (tc-expr ctx env init)
         [(OkTcType init-ty)
           (if (tc-type-consuming-by-value-now? ctx init-ty)
-            (match (tc-move-root-projection-var init)
-              [(TcSomeString root)
-                (if (tc-moved-contains? locals root)
-                  (tc-moved-add moved root)
-                  moved)]
-              [(TcNoString) moved])
-            moved)]
-        [(ErrTcType _) moved])]))
+            (if (tc-move-dynamic-array-element-projection? ctx env init)
+              (ErrTcMove (tc-move-dynamic-array-element-message))
+              (match (tc-move-root-projection-var init)
+                [(TcSomeString root)
+                  (if (tc-moved-contains? locals root)
+                    (OkTcMove (tc-moved-add moved root))
+                    (OkTcMove moved))]
+                [(TcNoString) (OkTcMove moved)]))
+            (OkTcMove moved))]
+        [(ErrTcType _) (OkTcMove moved)])]))
 
 (define (tc-move-after-consuming-value
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [expr : AstExpr]
-  [target-ty : AstType]) : TcMovedSet
+  [target-ty : AstType]) : TcMoveResult
   (if (tc-type-consuming-by-value-now? ctx target-ty)
-    (match (tc-move-root-projection-var expr)
-      [(TcSomeString root)
-        (if (tc-moved-contains? locals root)
-          (tc-moved-add moved root)
-          moved)]
-      [(TcNoString) moved])
-    moved))
+    (if (tc-move-dynamic-array-element-projection? ctx env expr)
+      (ErrTcMove (tc-move-dynamic-array-element-message))
+      (match (tc-move-root-projection-var expr)
+        [(TcSomeString root)
+          (if (tc-moved-contains? locals root)
+            (OkTcMove (tc-moved-add moved root))
+            (OkTcMove moved))]
+        [(TcNoString) (OkTcMove moved)]))
+    (OkTcMove moved)))
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
@@ -12252,18 +12301,22 @@
               [rest-types : AstTypeList (box-get rest-types)]
               (match (tc-move-check-expr ctx env locals moved head-expr)
                 [(OkTcMove moved1)
-                  (tc-move-check-exprs-with-types
+                  (match (tc-move-after-consuming-value
                     ctx
                     env
                     locals
-                    (tc-move-after-consuming-value
-                      ctx
-                      locals
-                      moved1
-                      head-expr
-                      ty)
-                    rest
-                    rest-types)]
+                    moved1
+                    head-expr
+                    ty)
+                    [(OkTcMove moved2)
+                      (tc-move-check-exprs-with-types
+                        ctx
+                        env
+                        locals
+                        moved2
+                        rest
+                        rest-types)]
+                    [(ErrTcMove message) (ErrTcMove message)])]
                 [(ErrTcMove message) (ErrTcMove message)]))]
           [(AstTypeNil) (ErrTcMove "typecheck: arity mismatch")]))]))
 
@@ -12313,17 +12366,18 @@
               [init : AstExpr (box-get init-box)]
               (match (tc-move-check-expr ctx env locals moved init)
                 [(OkTcMove moved1)
-                  (tc-move-check-let-bindings
-                    ctx
-                    (tc-bind
-                      env
-                      name
-                      (tc-move-binding-type ctx env maybe-ty init))
-                    (tc-moved-add locals name)
-                    (tc-moved-remove
-                      (tc-move-after-bind ctx env locals moved1 init)
-                      name)
-                    rest)]
+                  (match (tc-move-after-bind ctx env locals moved1 init)
+                    [(OkTcMove moved2)
+                      (tc-move-check-let-bindings
+                        ctx
+                        (tc-bind
+                          env
+                          name
+                          (tc-move-binding-type ctx env maybe-ty init))
+                        (tc-moved-add locals name)
+                        (tc-moved-remove moved2 name)
+                        rest)]
+                    [(ErrTcMove message) (ErrTcMoveBindings message)])]
                 [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
 
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
@@ -12528,10 +12582,9 @@
         [rhs : AstExpr (box-get rhs-box)]
         (match (tc-move-check-expr ctx env locals moved rhs)
           [(OkTcMove moved1)
-            (OkTcMove
-              (tc-moved-remove
-                (tc-move-after-bind ctx env locals moved1 rhs)
-                name))]
+            (match (tc-move-after-bind ctx env locals moved1 rhs)
+              [(OkTcMove moved2) (OkTcMove (tc-moved-remove moved2 name))]
+              [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprAnn inner-box _)
       (let
@@ -12641,13 +12694,13 @@
           [(OkTcMove moved1)
             (match (tc-current-return-type env)
               [(OkTcType return-ty)
-                (OkTcMove
-                  (tc-move-after-consuming-value
-                    ctx
-                    locals
-                    moved1
-                    inner
-                    return-ty))]
+                (tc-move-after-consuming-value
+                  ctx
+                  env
+                  locals
+                  moved1
+                  inner
+                  return-ty)]
               [(ErrTcType _) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprPtrNull _) (OkTcMove moved)]

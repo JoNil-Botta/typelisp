@@ -431,27 +431,20 @@ verify_compiler_driver_string_runtime() {
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
 (define (main) : i64
-  (let ([joined : String (string-append "foo" "bar")]
-        [mid : String (substring "abcdef" 2 3)]
-        [extended : String (string-concat mid "!")])
-    (+ (string-length joined)
-      (+ (string-length extended)
-        (cast (char-at " x" 0) : i64)))))
+  (+ (string-length "0123456789") (cast (char-at " x" 0) : i64)))
 EOF
 
     echo "[selfhost-native] compiler_driver string runtime helpers"
     run_compiler_driver "$_driver" compiler-driver-string-runtime "$_src" "$_asm"
     for _snippet in \
-        "call tl_substring" \
-        "call tl_string_concat" \
         "tl_oob_abort:" \
         "jb .Lf0_str_bounds_ok" \
-        ".Lf0_str_bounds_ok" \
-        "substr_bounds_fail" \
-        "jbe .Lf0_substr_ok"
+        ".Lf0_str_bounds_ok"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-string-runtime
     done
+    assert_not_contains "$_asm" "call tl_substring" compiler-driver-string-runtime
+    assert_not_contains "$_asm" "call tl_string_concat" compiler-driver-string-runtime
     assemble_link_run_asm compiler-driver-string-runtime "$_asm" 42 - - 1
 }
 

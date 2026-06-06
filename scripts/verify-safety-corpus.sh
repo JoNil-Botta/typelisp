@@ -145,7 +145,7 @@ assemble_link_windows() {
         fail "$_label assemble failed"
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" \
-        -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+        -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
         >> "$_out" 2>> "$_err"; then
         show_stream_if_nonempty stderr "$_err"
         fail "$_label link failed"
@@ -195,7 +195,7 @@ build_selfhost_checker() {
             show_stream_if_nonempty stderr "$err"
             fail "selfhost/check.tl assemble failed"
         fi
-        if ! ld "$obj" -o "$CHECK_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        if ! ld "$obj" -o "$CHECK_BIN" -static \
             >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
             fail "selfhost/check.tl link failed"
@@ -263,7 +263,7 @@ build_case_program() {
             show_stream_if_nonempty stderr "$build_err"
             fail "$case_id assemble failed"
         fi
-        if ! ld "$obj" -o "$program" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        if ! ld "$obj" -o "$program" -static \
             >> "$build_out" 2>> "$build_err"; then
             show_stream_if_nonempty stdout "$build_out"
             show_stream_if_nonempty stderr "$build_err"

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-no-rust-stage0.sh - CI/local no-Rust compiler gate.
+# ci-verify.sh - CI/local no-Rust compiler gate.
 #
 # This script intentionally does not build the Rust compiler. It fetches the
 # published stage0 artifact when TYPELISP_BIN is unset, guards against
@@ -15,7 +15,7 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-no-rust-stage0.sh
+usage: scripts/ci-verify.sh
 
 Runs the repository's no-Rust verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
@@ -265,7 +265,7 @@ stage1_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
         return 1
     fi
-    if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+    if ! ld "$obj" -o "$bin" -static \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[no-rust-stage0] stage1 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true
@@ -318,7 +318,7 @@ stage1_can_compile_native_windows() {
         return 1
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
-        -SUBSYSTEM:CONSOLE msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+        -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
         > "$probe_dir/link.out" 2>&1; then
         echo "[no-rust-stage0] windows stage1 compile-native probe link failed"
         sed 's/^/  /' "$probe_dir/link.out" >&2 || true
@@ -349,6 +349,11 @@ if [ "$HOST_OS" = windows ]; then
 fi
 run_gate "fresh selfhost cli build" scripts/build-stage0.sh "$SEED_TYPELISP_BIN" "$SELFHOST_CLI_BIN"
 ensure_executable "fresh selfhost cli" "$SELFHOST_CLI_BIN"
+
+# The freshly self-built compiler (and the programs it builds) must depend on
+# no C runtime: kernel32 only on Windows, nothing dynamic on Linux.
+run_with_compiler "$SELFHOST_CLI_BIN" "no-libc dependency guard" scripts/verify-no-libc.sh
+
 SELFHOST_CLI_REFRESHED_PATH_FILE="$ROOT/target/no-rust-stage0-cli/refreshed.path"
 rm -f "$SELFHOST_CLI_REFRESHED_PATH_FILE"
 TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE=$SELFHOST_CLI_REFRESHED_PATH_FILE

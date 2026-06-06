@@ -241,7 +241,7 @@ build_linux_cli_tool() {
     assert_success
     assert_stdout_empty
     assert_stderr_empty
-    run_cmd "$_case-link" ld "$_obj" -o "$_output" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+    run_cmd "$_case-link" ld "$_obj" -o "$_output" -static
     assert_success
     assert_stdout_empty
     assert_stderr_empty

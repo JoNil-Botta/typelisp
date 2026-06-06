@@ -71,6 +71,6 @@ jobs:
               ;;
           esac
 
-      - name: Stage0 verification
+      - name: CI verification
         shell: bash
-        run: scripts/verify-no-rust-stage0.sh
+        run: scripts/ci-verify.sh

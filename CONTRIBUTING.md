@@ -11,7 +11,7 @@ Thanks for your interest! This is a learning project — all contributions welco
    (Windows).
 3. You also need a native toolchain: `as` + `ld` on Linux, or `clang` + MSVC
    `link.exe` + a Windows SDK on Windows, for build/run.
-4. Run the verification gate: `scripts/verify-no-rust-stage0.sh`.
+4. Run the verification gate: `scripts/ci-verify.sh`.
 
 TypeLisp is **fully self-hosted**: the compiler compiles itself. There is no
 Rust (or other-language) compiler — see the self-perpetuating bootstrap in
@@ -78,7 +78,7 @@ Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 
 - `$TYPELISP_BIN fmt --check <files>` — format your TypeLisp source
 - `TYPELISP_BIN=$TYPELISP_BIN scripts/check-tl-lint.sh` — fix lint findings
-- `scripts/verify-no-rust-stage0.sh` — run the full verification gate CI uses
+- `scripts/ci-verify.sh` — run the full verification gate CI uses
 - For selfhost compiler changes, follow [`selfhost/TESTING.md`](selfhost/TESTING.md)
   when choosing module self-tests, smoke drivers, inline tests, and integration
   coverage.

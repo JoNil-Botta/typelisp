@@ -381,21 +381,22 @@ assemble_and_link_windows() {
     if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
         repro_arg=/Brepro
     fi
-    echo "[native-link] link $label with MSVC link.exe"
+    echo "[native-link] link $label with MSVC link.exe (freestanding: no CRT)"
+    # Freestanding Win32: the backend emits its own entry (_tl_start) plus
+    # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use, so
+    # the binary links against no C runtime (no vcruntime140/ucrt/msvcrt).
+    # /NODEFAULTLIB keeps link.exe from pulling a default CRT for the entry.
     MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
         /NOLOGO \
         ${repro_arg:+"$repro_arg"} \
         "$obj_win" \
         "/OUT:$bin_win" \
         /SUBSYSTEM:CONSOLE \
+        /ENTRY:_tl_start \
+        /NODEFAULTLIB \
         /DYNAMICBASE:NO \
         "/STACK:$NL_WINDOWS_STACK_RESERVE" \
-        msvcrt.lib \
-        legacy_stdio_definitions.lib \
-        kernel32.lib \
-        advapi32.lib \
-        ole32.lib \
-        oleaut32.lib
+        kernel32.lib
 }
 
 assemble_and_link() {
@@ -409,7 +410,11 @@ assemble_and_link() {
     else
         echo "[native-link] assemble $label with as"
         as "$asm" -o "$obj"
-        echo "[native-link] link $label with ld"
-        ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+        echo "[native-link] link $label with ld (freestanding: no libc, no loader)"
+        # The runtime is pure syscalls and the backend emits its own libc-ABI
+        # shims (write/read/open/getenv/...), so the compiler links static with
+        # no `-lc` and no dynamic loader -- the produced binary depends on no
+        # shared library. See compiler-backend-runtime-linux-libc-shim-functions.
+        ld -static "$obj" -o "$bin"
     fi
 }

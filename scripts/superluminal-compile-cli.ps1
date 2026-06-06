@@ -275,17 +275,12 @@ function Invoke-DebugRelink {
         /DEBUG:FULL `
         /INCREMENTAL:NO `
         /SUBSYSTEM:CONSOLE `
+        /ENTRY:_tl_start `
+        /NODEFAULTLIB `
         /DYNAMICBASE:NO `
         "/STACK:$stackReserve" `
-        "/LIBPATH:$(Join-Path $msvcRoot "lib\x64")" `
-        "/LIBPATH:$(Join-Path $sdkLibRoot "ucrt\x64")" `
         "/LIBPATH:$(Join-Path $sdkLibRoot "um\x64")" `
-        msvcrt.lib `
-        legacy_stdio_definitions.lib `
-        kernel32.lib `
-        advapi32.lib `
-        ole32.lib `
-        oleaut32.lib
+        kernel32.lib
     if ($LASTEXITCODE -ne 0) {
         throw "debug relink failed with exit code $LASTEXITCODE"
     }

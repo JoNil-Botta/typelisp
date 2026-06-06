@@ -94,7 +94,7 @@ compile_linux_binary() {
         sed 's/^/  /' "$_err" >&2 || true
         fail "$_source did not assemble"
     fi
-    if ! ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+    if ! ld "$_obj" -o "$_bin" -static \
         >>"$_out" 2>>"$_err"; then
         echo "$_label link failed:" >&2
         sed 's/^/  /' "$_err" >&2 || true

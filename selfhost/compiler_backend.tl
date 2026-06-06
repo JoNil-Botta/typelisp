@@ -5262,6 +5262,25 @@
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
   (ErrCompilerBackendSymbolValidation (compiler-diagnostic-at-start "" message)))
 
+(define (compiler-backend-validate-global-symbols-into
+  [globals : CompilerIrGlobalList]
+  [seen : StringI64Map]) : ResultCompilerBackendSymbolValidation
+  (match globals
+    [(IrGlobalNil) (OkCompilerBackendSymbolValidation seen)]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal name _ _)
+          (let
+            [symbol : String (compiler-backend-user-symbol name)]
+            (if (string-i64-map-contains? seen symbol)
+              (compiler-backend-symbol-validation-error
+                (string-append
+                  "backend: duplicate emitted global symbol "
+                  symbol))
+              (compiler-backend-validate-global-symbols-into
+                (box-get rest)
+                (string-i64-map-put seen symbol 1))))])]))
+
 (define (compiler-backend-validate-function-symbols-into
   [functions : CompilerIrFunctionList]
   [_plan : CompilerBackendRuntimePlan]
@@ -5296,15 +5315,28 @@
                   (string-i64-map-put seen symbol 1))]))])]))
 
 (define (compiler-backend-validate-function-symbols
+  [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
-  (compiler-backend-validate-function-symbols-into
-    functions
-    plan
-    index
+  (match (compiler-backend-validate-global-symbols-into
+    globals
     (string-i64-map-with-capacity
-      (+ (* (compiler-backend-function-list-count functions) 2) 1))))
+      (+
+        (*
+          (+
+            (compiler-ir-global-list-count globals)
+            (compiler-backend-function-list-count functions))
+          2)
+        1)))
+    [(OkCompilerBackendSymbolValidation seen)
+      (compiler-backend-validate-function-symbols-into
+        functions
+        plan
+        index
+        seen)]
+    [(ErrCompilerBackendSymbolValidation message)
+      (ErrCompilerBackendSymbolValidation message)]))
 
 (define (compiler-backend-signature
   [functions : CompilerIrFunctionList]
@@ -18626,6 +18658,7 @@ tl_process_output:
                               compile-profile
                               (compiler-backend-profile-start))
                             (match (compiler-backend-validate-function-symbols
+                              globals
                               entry-functions
                               plan
                               program-index)

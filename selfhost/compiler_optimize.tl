@@ -7763,7 +7763,7 @@
 
 ;; Block-count ceiling for the super-linear dominator-based passes (GVN, LICM,
 ;; induction, global GVN). Functions with more basic blocks than this skip those
-;; passes at opt-level 3 so a few huge self-host functions cannot blow up compile
+;; passes at opt-level 2 so a few huge self-host functions cannot blow up compile
 ;; time; the linear passes and register allocation still run on them.
 (define (opt-heavy-pass-block-limit) : i64 64)
 

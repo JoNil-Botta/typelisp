@@ -26,9 +26,9 @@ usage: scripts/benchmark-compile-cli.sh [typelisp-seed]
 Environment:
   TYPELISP_BIN                         Seed compiler when no argument is given.
   TYPELISP_COMPILE_BENCH_OUT           Output root (default target/compile-cli-benchmark).
-  TYPELISP_COMPILE_BENCH_OPT_LEVELS    Space- or comma-separated opt levels (default "2 3").
-  TYPELISP_COMPILE_BENCH_CHECK         Set to 1 to enforce the opt3/opt2 ratio limit.
-  TYPELISP_COMPILE_BENCH_RATIO_LIMIT   Integer opt3/opt2 limit for check mode (default 2).
+  TYPELISP_COMPILE_BENCH_OPT_LEVELS    Space- or comma-separated opt levels (default "0 1 2").
+  TYPELISP_COMPILE_BENCH_CHECK         Set to 1 to enforce the opt2/opt1 ratio limit.
+  TYPELISP_COMPILE_BENCH_RATIO_LIMIT   Integer opt2/opt1 limit for check mode (default 2).
 EOF
 }
 

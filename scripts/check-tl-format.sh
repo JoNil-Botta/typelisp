@@ -100,6 +100,16 @@ build_current_cli_for_format() {
 git ls-files '*.tl' | grep -v '^tests/format_golden/' | sort > "$ALL_FILES"
 
 xargs grep -lE '\(:(symbol|abi|link-lib|link-search|link-arg)([[:space:]]|\)|$)|\(unsafe([[:space:]]|\)|$)' < "$ALL_FILES" > "$METADATA_FILES" || true
+
+# The published seed formatter tokenizes real variadic macro ellipses as three
+# dot atoms. Keep these files under the current-source formatter until the
+# published seed is refreshed with the ellipsis lexer fix.
+if grep -F -x 'stdlib/core_macros.tl' "$ALL_FILES" >/dev/null 2>&1; then
+    printf '%s\n' 'stdlib/core_macros.tl' >> "$METADATA_FILES"
+fi
+sort -u "$METADATA_FILES" > "$WORKDIR/current-syntax-files.sorted"
+mv "$WORKDIR/current-syntax-files.sorted" "$METADATA_FILES"
+
 if [ -s "$METADATA_FILES" ]; then
     grep -F -x -v -f "$METADATA_FILES" "$ALL_FILES" > "$CHECK_FILES"
 else

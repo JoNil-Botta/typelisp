@@ -70,6 +70,22 @@ assert_contains() {
     fi
 }
 
+assert_contains_any() {
+    _file=$1
+    _label=$2
+    shift 2
+    for _snippet in "$@"; do
+        if grep -F "$_snippet" "$_file" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    echo "FAIL: $_label missing any snippet:" >&2
+    for _snippet in "$@"; do
+        echo "  $_snippet" >&2
+    done
+    exit 1
+}
+
 assert_not_contains() {
     _file=$1
     _snippet=$2
@@ -559,7 +575,9 @@ EOF
 
     echo "[selfhost-native] compiler_driver recursive Box list"
     run_compiler_driver "$_driver" compiler-driver-recursive-box-list "$_src" "$_asm"
-    assert_contains "$_asm" "call tl_alloc" compiler-driver-recursive-box-list
+    assert_contains_any "$_asm" compiler-driver-recursive-box-list \
+        "call tl_alloc" \
+        "call .L_tl_alloc8"
     assemble_link_run_asm compiler-driver-recursive-box-list "$_asm" 42 - - 1
 }
 

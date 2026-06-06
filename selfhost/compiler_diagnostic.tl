@@ -306,18 +306,28 @@
     (compiler-diagnostic-secondary-spans diag)
     (compiler-diagnostic-notes diag)))
 
+(define (compiler-diagnostic-render-notes [notes : CompilerDiagnosticNoteList]) : String
+  (match notes
+    [(CompilerDiagnosticNoteNil) ""]
+    [(CompilerDiagnosticNoteCons note rest)
+      (string-append
+        "\nnote: "
+        (string-append note (compiler-diagnostic-render-notes (box-get rest))))]))
+
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
   (string-append
-    (compiler-diagnostic-path diag)
     (string-append
-      ":"
+      (compiler-diagnostic-path diag)
       (string-append
-        (int->string (compiler-diagnostic-line diag))
+        ":"
         (string-append
-          ":"
+          (int->string (compiler-diagnostic-line diag))
           (string-append
-            (int->string (compiler-diagnostic-col diag))
-            (string-append ": " (compiler-diagnostic-message diag))))))))
+            ":"
+            (string-append
+              (int->string (compiler-diagnostic-col diag))
+              (string-append ": " (compiler-diagnostic-message diag)))))))
+    (compiler-diagnostic-render-notes (compiler-diagnostic-notes diag))))
 
 (define (compiler-diagnostic-level-render [level : CompilerDiagnosticLevel]) : String
   (match level
@@ -465,6 +475,18 @@
       (compiler-diagnostic-cat3 "   = help: " text "\n")]
     [CompilerDiagnosticNoString ""]))
 
+(define (compiler-diagnostic-render-source-notes
+  [notes : CompilerDiagnosticNoteList]) : String
+  (match notes
+    [(CompilerDiagnosticNoteNil) ""]
+    [(CompilerDiagnosticNoteCons note rest)
+      (compiler-diagnostic-cat3
+        "   = note: "
+        note
+        (string-append
+          "\n"
+          (compiler-diagnostic-render-source-notes (box-get rest))))]))
+
 (define (compiler-diagnostic-render-source-with-metadata
   [diag : CompilerDiagnostic]
   [source : String]
@@ -479,7 +501,10 @@
         "   |\n"
         (string-append
           (compiler-diagnostic-render-source-snippet diag source)
-          (compiler-diagnostic-render-help help))))))
+          (string-append
+            (compiler-diagnostic-render-help help)
+            (compiler-diagnostic-render-source-notes
+              (compiler-diagnostic-notes diag))))))))
 
 (define (compiler-diagnostic-render-source
   [diag : CompilerDiagnostic]
@@ -552,6 +577,21 @@
       out
       "warning: heads up\n  --> lib.tl:1:1\n   |\n 1 | x\n   | ^\n")))
 
+(define (compiler-diagnostic-note-render-ok?) : bool
+  (let
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-with-note
+        (compiler-diagnostic-simple "note.tl" 2 3 "has note")
+        "generated identity: generated:demo")]
+    [source-out : String (compiler-diagnostic-render-source diag "a\nb\n")]
+    (and
+      (string-eq
+        (compiler-diagnostic-render diag)
+        "note.tl:2:3: has note\nnote: generated identity: generated:demo")
+      (compiler-diagnostic-string-eq?
+        source-out
+        "error: has note\n  --> note.tl:2:3\n   |\n 2 | b\n   |   ^\n   = note: generated identity: generated:demo\n"))))
+
 (define (compiler-diagnostic-end-span-ok?) : bool
   (let
     [diag : CompilerDiagnostic
@@ -621,6 +661,7 @@
     (unless (compiler-diagnostic-rewrite-ok?) (return 3))
     (unless (compiler-diagnostic-source-render-ok?) (return 4))
     (unless (compiler-diagnostic-source-render-minimal-ok?) (return 4))
+    (unless (compiler-diagnostic-note-render-ok?) (return 4))
     (unless (compiler-diagnostic-end-span-ok?) (return 4))
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
     42))

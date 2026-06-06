@@ -1,7 +1,7 @@
 param(
     [string]$BenchmarkDir = $(Join-Path $PSScriptRoot "..\target\compile-cli-benchmark"),
     [string]$OutDir = $(Join-Path $PSScriptRoot "..\target\superluminal"),
-    [int]$OptLevel = 2,
+    [int]$OptLevel = 1,
     [int]$FrequencyHz = 8190,
     [switch]$SkipBenchmark,
     [switch]$SkipCapture,

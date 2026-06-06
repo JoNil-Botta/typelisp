@@ -561,12 +561,12 @@ echo "[host-action-cli] test --check"
 (test inc-basic
   (assert-i64-eq (inc 41) 42 "inc result"))
 EOF
-    run_capture test-check "$COMPILER" test --check "$TEST_SRC" --target linux-x86_64 --opt-level 3 --stdlib-root "$ROOT/stdlib"
+    run_capture test-check "$COMPILER" test --check "$TEST_SRC" --target linux-x86_64 --opt-level 2 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-check.stderr"
     assert_contains "$WORKDIR/test-check.stdout" "TypeLisp test typecheck passed: 1 test(s)"
 
     echo "[host-action-cli] test"
-    run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 2 --stdlib-root "$ROOT/stdlib"
+    run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 1 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-run.stdout"
     assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
     assert_contains "$WORKDIR/test-run.stderr" "ok inc-basic"

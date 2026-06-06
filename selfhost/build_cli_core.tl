@@ -199,7 +199,7 @@
   (ErrBuildProfile String))
 
 (define build-default-opt-level : i64
-  2)
+  1)
 
 (define build-package-visit-visiting : i64
   1)

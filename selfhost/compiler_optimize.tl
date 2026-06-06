@@ -199,13 +199,13 @@
   compiler-optimize-level-default)
 
 (define (compiler-optimize-level-valid? [level : i64]) : bool
-  (and (>= level 0) (<= level 3)))
+  (and (>= level 0) (<= level 2)))
 
 (define (compiler-optimize-parse-level [value : String]) : ResultCompilerOptimizeLevel
   (if (= (string-length value) 1)
     (let
       [c : char (string-ref value 0)]
-      (if (or (= c #0') (or (= c #1') (or (= c #2') (= c #3'))))
+      (if (or (= c #0') (or (= c #1') (= c #2')))
         (OkCompilerOptimizeLevel (string->int value))
         (ErrCompilerOptimizeLevel)))
     (ErrCompilerOptimizeLevel)))
@@ -3991,8 +3991,102 @@
               entry-label
               all-reachable))])]))
 
-(define (opt-cfg-dominators-step-entry
+;; Predecessor map (#perf): the dominator fixpoint previously recomputed every
+;; block's predecessors with opt-cfg-predecessors (an O(blocks*instrs) rescan of
+;; the whole function) once per block per iteration, making dominators
+;; O(blocks^3 * instrs) and the opt-level-3 optimizer pathologically slow on the
+;; large self-host functions. The predecessor relation is loop-invariant, so we
+;; build it ONCE (one pass over the edges, O(edges)) into a label->index hashmap
+;; plus an array of predecessor label-sets, and the fixpoint then looks
+;; predecessors up in O(1).
+(defstruct OptPredMap
+  (ids StringI64Map)
+  (preds (Array OptLabelSet)))
+
+(define (opt-pred-map-capacity [count : i64]) : i64
+  (if (< count 4)
+    8
+    (* count 2)))
+
+(define (opt-pred-map-build-ids
   [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [index : i64]) : StringI64Map
+  (match blocks
+    [(IrBlockNil) ids]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (opt-pred-map-build-ids
+            (box-get rest)
+            (string-i64-map-put ids label index)
+            (+ index 1))])]))
+
+(define (opt-pred-map-fill-empty! [preds : (Array OptLabelSet)] [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! preds i (OptLabelNil))
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-pred-map-add-succs!
+  [preds : (Array OptLabelSet)]
+  [ids : StringI64Map]
+  [label : String]
+  [succs : OptLabelSet]) : unit
+  (match succs
+    [(OptLabelNil) unit]
+    [(OptLabelCons s rest)
+      (begin
+        (match (string-i64-map-get ids s)
+          [(StringI64MapFound idx)
+            (array-set! preds idx (opt-label-add (array-ref preds idx) label))]
+          [(StringI64MapMissing) unit])
+        (opt-pred-map-add-succs! preds ids label (box-get rest)))]))
+
+(define (opt-pred-map-fill!
+  [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [preds : (Array OptLabelSet)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (begin
+            (opt-pred-map-add-succs!
+              preds
+              ids
+              label
+              (opt-cfg-block-successors-with-next
+                block
+                (opt-cfg-entry-label (box-get rest))))
+            (opt-pred-map-fill! (box-get rest) ids preds))])]))
+
+(define (opt-pred-map-build [blocks : CompilerIrBlockList]) : OptPredMap
+  (let
+    [count : i64 (compiler-ir-block-list-count blocks)]
+    [ids : StringI64Map
+      (opt-pred-map-build-ids
+        blocks
+        (string-i64-map-with-capacity (opt-pred-map-capacity count))
+        0)]
+    [preds : (Array OptLabelSet) (make-array OptLabelSet count)]
+    (begin
+      (opt-pred-map-fill-empty! preds count)
+      (opt-pred-map-fill! blocks ids preds)
+      (OptPredMap ids preds))))
+
+(define (opt-pred-map-lookup [map : OptPredMap] [label : String]) : OptLabelSet
+  (match (string-i64-map-get (struct-get map ids) label)
+    [(StringI64MapFound idx) (array-ref (struct-get map preds) idx)]
+    [(StringI64MapMissing) (OptLabelNil)]))
+
+(define (opt-cfg-dominators-step-entry
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
   [old : OptDomTable]
@@ -4004,14 +4098,14 @@
         (let
           [preds : OptLabelSet
             (opt-label-intersection
-              (opt-cfg-predecessors blocks label)
+              (opt-pred-map-lookup pred-map label)
               reachable)]
           (OptDomEntry
             label
             (opt-label-add (opt-dom-intersect-preds old preds) label))))]))
 
 (define (opt-cfg-dominators-step
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
   [old : OptDomTable]
@@ -4020,17 +4114,17 @@
     [(OptDomNil) (OptDomNil)]
     [(OptDomCons entry rest)
       (OptDomCons
-        (opt-cfg-dominators-step-entry blocks reachable entry-label old entry)
+        (opt-cfg-dominators-step-entry pred-map reachable entry-label old entry)
         (box
           (opt-cfg-dominators-step
-            blocks
+            pred-map
             reachable
             entry-label
             old
             (box-get rest))))]))
 
 (define (opt-cfg-dominators-fixed
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
   [table : OptDomTable]
@@ -4039,11 +4133,11 @@
     table
     (let
       [next : OptDomTable
-        (opt-cfg-dominators-step blocks reachable entry-label table table)]
+        (opt-cfg-dominators-step pred-map reachable entry-label table table)]
       (if (opt-dom-table-eq? table next)
         next
         (opt-cfg-dominators-fixed
-          blocks
+          pred-map
           reachable
           entry-label
           next
@@ -4053,10 +4147,11 @@
   (let
     [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
     [entry-label : String (opt-cfg-entry-label blocks)]
+    [pred-map : OptPredMap (opt-pred-map-build blocks)]
     [initial : OptDomTable
       (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
     (opt-cfg-dominators-fixed
-      blocks
+      pred-map
       reachable
       entry-label
       initial
@@ -7664,6 +7759,13 @@
         (optimize-block-fast block)
         (optimize-block-list-fast (box-get rest)))]))
 
+;; Block-count ceiling for the super-linear dominator-based passes (GVN, LICM,
+;; induction, global GVN). Functions with more basic blocks than this skip those
+;; passes at opt-level 2 so a few huge self-host functions cannot blow up compile
+;; time; the linear passes and register allocation still run on them.
+(define (opt-heavy-pass-block-limit) : i64
+  64)
+
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
@@ -7683,14 +7785,33 @@
               (IrFunction name params ret-ty promoted-frame promoted-blocks))
               [(IrFunction _ _ _ _ sroa-blocks)
                 (let
+                  ;; #perf: the dominator-based passes (GVN, LICM, induction,
+                  ;; global GVN) are super-linear in block count (their dominance
+                  ;; queries walk string label-sets), so on the handful of huge
+                  ;; self-host functions (hundreds of blocks) they dominate
+                  ;; compile time. Gate them off above a block-count threshold —
+                  ;; register allocation and the linear cleanups still run, so
+                  ;; only the incremental redundancy elimination is skipped on
+                  ;; those few functions, which bounds opt-level-3 compile time.
+                  [run-heavy? : bool
+                    (<=
+                      (compiler-ir-block-list-count sroa-blocks)
+                      (opt-heavy-pass-block-limit))]
                   [gvn : CompilerIrBlockList
-                    (opt-gvn-blocks params sroa-blocks)]
+                    (if run-heavy?
+                      (opt-gvn-blocks params sroa-blocks)
+                      sroa-blocks)]
                   [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
                   [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
                   [licm : CompilerIrFunction
-                    (opt-licm-function
+                    (if run-heavy?
+                      (opt-licm-function
+                        (IrFunction name params ret-ty promoted-frame cfg))
                       (IrFunction name params ret-ty promoted-frame cfg))]
-                  [induction : CompilerIrFunction (opt-induction-function licm)]
+                  [induction : CompilerIrFunction
+                    (if run-heavy?
+                      (opt-induction-function licm)
+                      licm)]
                   [induction-frame : i64 (opt-function-frame induction)]
                   [induction-blocks : CompilerIrBlockList
                     (opt-function-blocks induction)]
@@ -7699,7 +7820,14 @@
                   ;; the post-stack-promotion frame so its slots stay
                   ;; consistent with the promoted blocks.
                   [global : CompilerIrFunction
-                    (opt-global-value-number-function
+                    (if run-heavy?
+                      (opt-global-value-number-function
+                        (IrFunction
+                          name
+                          params
+                          ret-ty
+                          induction-frame
+                          induction-blocks))
                       (IrFunction
                         name
                         params
@@ -7775,11 +7903,15 @@
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
   (optimize-function-fixed func (optimize-function-max-iterations)))
 
+;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
+;; path), 2 = the full optimizer + scalar register allocation + inlining (the
+;; quality "ship" build). The old four-level scheme (with a redundant -fast level
+;; between 0 and the cheap level) was collapsed: old level 2 became level 1 and
+;; old level 3 became level 2.
 (define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
   (cond
     [(= level 0) func]
-    [(= level 1) (optimize-function-once-fast func)]
-    [(= level 2) (optimize-function-once-level2 func)]
+    [(= level 1) (optimize-function-once-level2 func)]
     [else (optimize-function func)]))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
@@ -7922,6 +8054,393 @@
     [(StringI64MapFound slot)
       (OptSomeFunction (array-ref (struct-get index values) slot))]
     [(StringI64MapMissing) (OptNoFunction)]))
+
+;; ---------------------------------------------------------------------------
+;; Function inlining (opt level 2 only). Splices the body of small single-block
+;; leaf callees into their call sites, removing call/return overhead and exposing
+;; the callee's instructions to the caller's folding/DCE/GVN and to register
+;; allocation. Reserved for opt2 (the quality build) so the cheap opt1
+;; self-compile path pays nothing for it.
+;;
+;; Determinism: fresh var ids are minted from the caller function's `vars`
+;; counter (the same per-function sequential scheme lowering uses), callee bodies
+;; are walked in list order, and callees are resolved through the deterministic
+;; OptFunctionIndex. Param var ids (0..nparams-1) are substituted with the call's
+;; argument values; other callee var ids are shifted by the caller's var count.
+;; ---------------------------------------------------------------------------
+(defenum OptInlineState
+  (OptInlineState CompilerIrInstrList i64))
+
+(defenum OptInlineBlocks
+  (OptInlineBlocks CompilerIrBlockList i64))
+
+(define (opt-inline-max-body) : i64
+  8)
+
+(define (opt-inline-param-count [params : CompilerIrParamList]) : i64
+  (match params
+    [(IrParamNil) 0]
+    [(IrParamCons _ rest) (+ 1 (opt-inline-param-count (box-get rest)))]))
+
+(define (opt-inline-params-sequential? [params : CompilerIrParamList] [i : i64]) : bool
+  (match params
+    [(IrParamNil) true]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ vid)
+          (if (= vid i)
+            (opt-inline-params-sequential? (box-get rest) (+ i 1))
+            false)])]))
+
+(define (opt-inline-is-return? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrReturn _) true]
+    [_ false]))
+
+(define (opt-inline-body-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (>= dst np)]
+    [(IrInstrGep dst _ _ _) (>= dst np)]
+    [(IrInstrLoad dst _ _) (>= dst np)]
+    [(IrInstrCast dst _ _ _) (>= dst np)]
+    [(IrInstrBinOp dst _ _ _ _) (>= dst np)]
+    [(IrInstrUnOp dst _ _ _) (>= dst np)]
+    [(IrInstrCall dst _ _ _) (>= dst np)]
+    [(IrInstrCallIndirect dst _ _ _) (>= dst np)]
+    ;; IrInstrBoundsCheck carries a backend label in its String field; copying it
+    ;; into a call site duplicates that label (assembler "symbol already defined"),
+    ;; so callees containing one are not inlinable.
+    [(IrInstrStorePtr _ _ _) true]
+    [_ false]))
+
+(define (opt-inline-seq-ok? [instrs : CompilerIrInstrList] [np : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil) (opt-inline-is-return? instr)]
+        [_
+          (if (opt-inline-body-instr-ok? instr np)
+            (opt-inline-seq-ok? (box-get rest) np)
+            false)])]))
+
+(define (opt-inline-single-block-ok? [blocks : CompilerIrBlockList] [np : i64]) : bool
+  (match blocks
+    [(IrBlockCons block rest)
+      (match (box-get rest)
+        [(IrBlockNil)
+          (match block
+            [(IrBlock _ seq)
+              (let
+                [n : i64 (compiler-ir-instr-seq-count seq)]
+                (if (< n 1)
+                  false
+                  (if (> (- n 1) (opt-inline-max-body))
+                    false
+                    (opt-inline-seq-ok? (compiler-ir-instr-seq-to-list seq) np))))])]
+        [_ false])]
+    [_ false]))
+
+(define (opt-inline-callee-ok?
+  [callee : CompilerIrFunction]
+  [caller-name : String]) : bool
+  (match callee
+    [(IrFunction cname cparams _ _ cblocks)
+      (if (string-eq cname caller-name)
+        false
+        (if (opt-inline-params-sequential? cparams 0)
+          (opt-inline-single-block-ok? cblocks (opt-inline-param-count cparams))
+          false))]))
+
+(define (opt-inline-arity-ok? [args : CompilerIrCallArgs] [np : i64]) : bool
+  (match args
+    [(IrCallArgsNil) (= np 0)]
+    [(IrCallArgsOne _) (= np 1)]
+    [(IrCallArgsTwo _ _) (= np 2)]
+    [(IrCallArgsArray arr) (= np (array-length arr))]))
+
+(define (opt-inline-clone-arg-at [sa : CompilerIrCallArgs] [id : i64]) : CompilerIrValue
+  (match sa
+    [(IrCallArgsNil) (IrValueUnit)]
+    [(IrCallArgsOne a) (compiler-ir-clone-value a)]
+    [(IrCallArgsTwo a b)
+      (if (= id 0)
+        (compiler-ir-clone-value a)
+        (compiler-ir-clone-value b))]
+    [(IrCallArgsArray arr) (compiler-ir-clone-value (array-ref arr id))]))
+
+(define (opt-inline-remap-value
+  [v : CompilerIrValue]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrValue
+  (match v
+    [(IrValueVar id)
+      (if (< id np)
+        (opt-inline-clone-arg-at sa id)
+        (IrValueVar (+ id base)))]
+    [(IrValueGlobal name) (IrValueGlobal (clone name))]
+    [(IrValueGlobalAddr name) (IrValueGlobalAddr (clone name))]
+    [(IrValueFunction name) (IrValueFunction (clone name))]
+    [(IrValueI64 n) (IrValueI64 n)]
+    [(IrValueF64 s) (IrValueF64 (clone s))]
+    [(IrValueBool b) (IrValueBool b)]
+    [(IrValueChar c) (IrValueChar c)]
+    [(IrValueString s) (IrValueString (clone s))]
+    [(IrValueUnit) (IrValueUnit)]))
+
+(define (opt-inline-remap-args
+  [a : CompilerIrCallArgs]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrCallArgs
+  (match a
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne x) (IrCallArgsOne (opt-inline-remap-value x sa np base))]
+    [(IrCallArgsTwo x y)
+      (IrCallArgsTwo
+        (opt-inline-remap-value x sa np base)
+        (opt-inline-remap-value y sa np base))]
+    [(IrCallArgsArray arr)
+      (let
+        [n : i64 (array-length arr)]
+        [out : (Array CompilerIrValue) (make-array CompilerIrValue n)]
+        [i : i64 0]
+        (begin
+          (while (< i n)
+            (begin
+              (array-set!
+                out
+                i
+                (opt-inline-remap-value (array-ref arr i) sa np base))
+              (set! i (+ i 1))))
+          (IrCallArgsArray out)))]))
+
+(define (opt-inline-clone-instr
+  [instr : CompilerIrInstr]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst src ty)
+      (IrInstrMov
+        (+ dst base)
+        (opt-inline-remap-value src sa np base)
+        (clone ty))]
+    [(IrInstrGep dst b o ty)
+      (IrInstrGep
+        (+ dst base)
+        (opt-inline-remap-value b sa np base)
+        (opt-inline-remap-value o sa np base)
+        (clone ty))]
+    [(IrInstrLoad dst src ty)
+      (IrInstrLoad
+        (+ dst base)
+        (opt-inline-remap-value src sa np base)
+        (clone ty))]
+    [(IrInstrCast dst src from to)
+      (IrInstrCast
+        (+ dst base)
+        (opt-inline-remap-value src sa np base)
+        (clone from)
+        (clone to))]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp
+        (+ dst base)
+        op
+        (opt-inline-remap-value lhs sa np base)
+        (opt-inline-remap-value rhs sa np base)
+        (clone ty))]
+    [(IrInstrUnOp dst op src ty)
+      (IrInstrUnOp
+        (+ dst base)
+        op
+        (opt-inline-remap-value src sa np base)
+        (clone ty))]
+    [(IrInstrBoundsCheck idx len msg)
+      (IrInstrBoundsCheck
+        (opt-inline-remap-value idx sa np base)
+        (opt-inline-remap-value len sa np base)
+        (clone msg))]
+    [(IrInstrStorePtr d s ty)
+      (IrInstrStorePtr
+        (opt-inline-remap-value d sa np base)
+        (opt-inline-remap-value s sa np base)
+        (clone ty))]
+    [(IrInstrCall dst name a ty)
+      (IrInstrCall
+        (+ dst base)
+        (clone name)
+        (opt-inline-remap-args a sa np base)
+        (clone ty))]
+    [(IrInstrCallIndirect dst callee a ty)
+      (IrInstrCallIndirect
+        (+ dst base)
+        (opt-inline-remap-value callee sa np base)
+        (opt-inline-remap-args a sa np base)
+        (clone ty))]
+    [_ instr]))
+
+(define (opt-inline-return->mov
+  [instr : CompilerIrInstr]
+  [dst : i64]
+  [ret : AstType]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstr
+  (match instr
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue v)
+          (IrInstrMov dst (opt-inline-remap-value v sa np base) (clone ret))]
+        [(IrNoValue) (IrInstrMov dst (IrValueUnit) (clone ret))])]
+    [_ (IrInstrMov dst (IrValueUnit) (clone ret))]))
+
+(define (opt-inline-expand-instrs
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [ret : AstType]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) IrInstrNil]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil)
+          (compiler-ir-instr-cons
+            (opt-inline-return->mov instr dst ret sa np base)
+            IrInstrNil)]
+        [_
+          (compiler-ir-instr-cons
+            (opt-inline-clone-instr instr sa np base)
+            (opt-inline-expand-instrs (box-get rest) dst ret sa np base))])]))
+
+(define (opt-inline-single-block-instrs [blocks : CompilerIrBlockList]) : CompilerIrInstrList
+  (match blocks
+    [(IrBlockCons block _)
+      (match block
+        [(IrBlock _ seq) (compiler-ir-instr-seq-to-list seq)])]
+    [_ IrInstrNil]))
+
+(define (opt-inline-append [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : CompilerIrInstrList
+  (match a
+    [(IrInstrNil) b]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons instr (opt-inline-append (box-get rest) b))]))
+
+(define (opt-inline-lookup-inlinable
+  [index : OptFunctionIndex]
+  [cname : String]
+  [caller-name : String]) : OptMaybeFunction
+  (match (opt-function-index-find index cname)
+    [(OptSomeFunction callee)
+      (if (opt-inline-callee-ok? callee caller-name)
+        (OptSomeFunction callee)
+        (OptNoFunction))]
+    [(OptNoFunction) (OptNoFunction)]))
+
+(define (opt-inline-try
+  [instr : CompilerIrInstr]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineState
+  (match instr
+    [(IrInstrCall dst cname cargs cret)
+      (match (opt-inline-lookup-inlinable index cname func-name)
+        [(OptSomeFunction callee)
+          (match callee
+            [(IrFunction _ cparams _ cvars cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (opt-inline-arity-ok? cargs np)
+                  (OptInlineState
+                    (opt-inline-expand-instrs
+                      (opt-inline-single-block-instrs cblocks)
+                      dst
+                      cret
+                      cargs
+                      np
+                      vars)
+                    (+ vars cvars))
+                  (OptInlineState
+                    (compiler-ir-instr-cons
+                      (IrInstrCall dst cname cargs cret)
+                      IrInstrNil)
+                    vars)))])]
+        [(OptNoFunction)
+          (OptInlineState
+            (compiler-ir-instr-cons
+              (IrInstrCall dst cname cargs cret)
+              IrInstrNil)
+            vars)])]
+    [_ (OptInlineState (compiler-ir-instr-cons instr IrInstrNil) vars)]))
+
+(define (opt-inline-walk-instrs
+  [instrs : CompilerIrInstrList]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineState
+  (match instrs
+    [(IrInstrNil) (OptInlineState IrInstrNil vars)]
+    [(IrInstrCons instr rest)
+      (match (opt-inline-try instr index func-name vars)
+        [(OptInlineState expanded vars2)
+          (match (opt-inline-walk-instrs (box-get rest) index func-name vars2)
+            [(OptInlineState rest-list vars3)
+              (OptInlineState (opt-inline-append expanded rest-list) vars3)])])]))
+
+(define (opt-inline-blocks
+  [blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineBlocks
+  (match blocks
+    [(IrBlockNil) (OptInlineBlocks IrBlockNil vars)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label seq)
+          (match (opt-inline-walk-instrs
+            (compiler-ir-instr-seq-to-list seq)
+            index
+            func-name
+            vars)
+            [(OptInlineState new-instrs vars2)
+              (match (opt-inline-blocks (box-get rest) index func-name vars2)
+                [(OptInlineBlocks rest-blocks vars3)
+                  (OptInlineBlocks
+                    (compiler-ir-block-cons
+                      (compiler-ir-block label new-instrs)
+                      rest-blocks)
+                    vars3)])])])]))
+
+(define (opt-inline-function
+  [func : CompilerIrFunction]
+  [index : OptFunctionIndex]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret vars blocks)
+      (match (opt-inline-blocks blocks index name vars)
+        [(OptInlineBlocks new-blocks new-vars)
+          (IrFunction name params ret new-vars new-blocks)])]))
+
+(define (opt-inline-function-list
+  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) IrFunctionNil]
+    [(IrFunctionCons func rest)
+      (compiler-ir-function-cons
+        (opt-inline-function func index)
+        (opt-inline-function-list (box-get rest) index))]))
+
+;; Inline small single-block leaf callees across the whole program. Only at opt
+;; level 2 (the register-allocated quality build).
+(define (opt-inline-program-functions
+  [functions : CompilerIrFunctionList]
+  [level : i64]) : CompilerIrFunctionList
+  (if (< level 2)
+    functions
+    (opt-inline-function-list functions (opt-function-index-build functions))))
 
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
@@ -8166,7 +8685,18 @@
   [state : OptReachState]
   [global : CompilerIrGlobal]) : OptReachState
   (match global
-    [(IrGlobal _ _ value) (opt-reach-value index state value)]))
+    [(IrGlobal name _ value)
+      ;; A global with a non-constant initializer is set up before main by a
+      ;; generated `__global_init_<name>` function (mirrors
+      ;; compiler-backend-global-init-name) that the backend calls from the
+      ;; startup sequence; it is NOT referenced from the global's IR value, so it
+      ;; must be added as a reachability root or the prune drops its definition
+      ;; (unresolved-symbol link failure). opt-reach-add-function no-ops when the
+      ;; function does not exist (constant-initialized globals).
+      (opt-reach-add-function
+        index
+        (opt-reach-value index state value)
+        (string-append "__global_init_" name))]))
 
 (define (opt-reach-globals
   [index : OptFunctionIndex]
@@ -8226,42 +8756,34 @@
     [(IrProgram globals functions externs)
       (if (= level 0)
         program
-        (if (= level 1)
-          (begin
-            (cfg compile-profile (compiler-opt-profile-start))
-            (let
-              [optimized-functions : CompilerIrFunctionList
-                (optimize-function-list-with-level functions level)]
-              (begin
-                (cfg compile-profile (compiler-opt-profile-finish "functions"))
-                (IrProgram globals optimized-functions externs))))
-          (begin
-            (cfg compile-profile (compiler-opt-profile-start))
-            (let
-              [reachable-functions : CompilerIrFunctionList functions]
-              (begin
-                (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
-                (cfg compile-profile (compiler-opt-profile-start))
-                (let
-                  [optimized-functions : CompilerIrFunctionList
-                    (optimize-function-list-with-level
-                      reachable-functions
-                      level)]
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-finish "functions"))
-                    (cfg compile-profile (compiler-opt-profile-start))
-                    (let
-                      [final-functions : CompilerIrFunctionList
-                        (opt-prune-unreachable-functions
-                          globals
-                          optimized-functions)]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-finish "post_prune"))
-                        (IrProgram globals final-functions externs))))))))))]))
+        ;; Levels 1 (cheap) and 2 (quality) both prune unreachable functions;
+        ;; inlining self-gates to level 2 inside opt-inline-program-functions.
+        (begin
+          (cfg compile-profile (compiler-opt-profile-start))
+          (let
+            [reachable-functions : CompilerIrFunctionList
+              (opt-inline-program-functions functions level)]
+            (begin
+              (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
+              (cfg compile-profile (compiler-opt-profile-start))
+              (let
+                [optimized-functions : CompilerIrFunctionList
+                  (optimize-function-list-with-level reachable-functions level)]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-finish "functions"))
+                  (cfg compile-profile (compiler-opt-profile-start))
+                  (let
+                    [final-functions : CompilerIrFunctionList
+                      (opt-prune-unreachable-functions
+                        globals
+                        optimized-functions)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-opt-profile-finish "post_prune"))
+                      (IrProgram globals final-functions externs)))))))))]))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -10409,7 +10931,7 @@
         (and
           (compiler-optimize-level-valid? 2)
           (and
-            (compiler-optimize-level-valid? 3)
+            (not (compiler-optimize-level-valid? 3))
             (and
               (not (compiler-optimize-level-valid? (- 0 1)))
               (and
@@ -10421,7 +10943,7 @@
                     (and
                       (opt-level-parse-ok? "2" 2)
                       (and
-                        (opt-level-parse-ok? "3" 3)
+                        (opt-level-parse-err? "3")
                         (and
                           (opt-level-parse-err? "")
                           (and
@@ -10434,34 +10956,31 @@
     [level0 : CompilerIrProgram (optimize-program-with-level program 0)]
     [level1 : CompilerIrProgram (optimize-program-with-level program 1)]
     [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
-    [level3 : CompilerIrProgram (optimize-program-with-level program 3)]
     [defaulted : CompilerIrProgram (optimize-program program)]
     [fixed-program : CompilerIrProgram
       (opt-test-program (opt-fixed-point-instrs))]
+    [level1-fixed : CompilerIrProgram
+      (optimize-program-with-level fixed-program 1)]
     [level2-fixed : CompilerIrProgram
       (optimize-program-with-level fixed-program 2)]
-    [level3-fixed : CompilerIrProgram
-      (optimize-program-with-level fixed-program 3)]
     [level0-instrs : CompilerIrInstrList (opt-program-first-instrs level0)]
     [level1-instrs : CompilerIrInstrList (opt-program-first-instrs level1)]
     [level2-instrs : CompilerIrInstrList (opt-program-first-instrs level2)]
-    [level3-instrs : CompilerIrInstrList (opt-program-first-instrs level3)]
+    [level1-fixed-instrs : CompilerIrInstrList
+      (opt-program-first-instrs level1-fixed)]
     [level2-fixed-instrs : CompilerIrInstrList
       (opt-program-first-instrs level2-fixed)]
-    [level3-fixed-instrs : CompilerIrInstrList
-      (opt-program-first-instrs level3-fixed)]
     (cond
       [(not (opt-program-eq program level0)) false]
       [(not (= (opt-count-arith-instrs level0-instrs) 1)) false]
-      [(not (= (opt-count-arith-instrs level1-instrs) 0)) false]
+      [(not (= (compiler-ir-instr-list-count level1-instrs) 0)) false]
       [(not (= (compiler-ir-instr-list-count level2-instrs) 0)) false]
-      [(not (= (compiler-ir-instr-list-count level3-instrs) 0)) false]
       [(not (opt-program-eq level1 defaulted)) false]
-      ;; Level 2 keeps a cheaper optimized pass; level 3 keeps fixed-point cleanup.
-      [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 4)) false]
-      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 3)) false]
-      [(not (= (compiler-ir-instr-list-count level3-fixed-instrs) 3)) false]
-      [(not (= (opt-count-arith-instrs level3-fixed-instrs) 2)) false]
+      ;; Level 1 keeps a cheaper optimized pass; level 2 adds fixed-point cleanup.
+      [(not (= (compiler-ir-instr-list-count level1-fixed-instrs) 4)) false]
+      [(not (= (opt-count-arith-instrs level1-fixed-instrs) 3)) false]
+      [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 3)) false]
+      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 2)) false]
       [else true])))
 
 (define (compiler-optimize-level-self-test) : i64
@@ -10514,25 +11033,27 @@
 (define (compiler-optimize-global-dce-ok?) : bool
   (let
     [program : CompilerIrProgram (opt-global-dce-program)]
+    ;; Level 0 keeps every function; level 1 (the cheap optimized build) prunes
+    ;; functions unreachable from the roots without inlining the survivors.
+    [level0 : CompilerIrProgram (optimize-program-with-level program 0)]
     [level1 : CompilerIrProgram (optimize-program-with-level program 1)]
-    [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
     [no-main : CompilerIrProgram
-      (optimize-program-with-level (opt-global-dce-no-main-program) 2)]
+      (optimize-program-with-level (opt-global-dce-no-main-program) 1)]
+    [level0-functions : CompilerIrFunctionList (opt-program-functions level0)]
     [level1-functions : CompilerIrFunctionList (opt-program-functions level1)]
-    [level2-functions : CompilerIrFunctionList (opt-program-functions level2)]
     [no-main-functions : CompilerIrFunctionList (opt-program-functions no-main)]
     (and
-      (= (compiler-ir-function-list-count level1-functions) 4)
+      (= (compiler-ir-function-list-count level0-functions) 4)
       (and
-        (= (compiler-ir-function-list-count level2-functions) 3)
+        (= (compiler-ir-function-list-count level1-functions) 3)
         (and
-          (opt-function-list-defines? level2-functions "main")
+          (opt-function-list-defines? level1-functions "main")
           (and
-            (opt-function-list-defines? level2-functions "helper")
+            (opt-function-list-defines? level1-functions "helper")
             (and
-              (opt-function-list-defines? level2-functions "callback-target")
+              (opt-function-list-defines? level1-functions "callback-target")
               (and
-                (not (opt-function-list-defines? level2-functions "dead"))
+                (not (opt-function-list-defines? level1-functions "dead"))
                 (= (compiler-ir-function-list-count no-main-functions) 2)))))))))
 
 (define (compiler-optimize-global-dce-self-test) : i64

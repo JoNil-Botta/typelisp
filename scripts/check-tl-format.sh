@@ -76,7 +76,7 @@ build_current_cli_for_format() {
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root selfhost \
-        --opt-level 2; then
+        --opt-level 1; then
         echo "Failed to compile current CLI for current-syntax-aware formatting." >&2
         sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDOUT" >&2 || true
         sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDERR" >&2 || true

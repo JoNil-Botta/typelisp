@@ -58,11 +58,11 @@ Usage:
     typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
-    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
+    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
@@ -87,7 +87,7 @@ Options for build:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --profile dev|release          Package build profile (default release)
     --release                      Alias for --profile release
-    --opt-level <0|1|2|3>          Package-build optimizer level (default 2; 0 skips it)
+    --opt-level <0|1|2>          Package-build optimizer level (default 1; 0 skips it)
 Options for clean:
     --dry-run                      List artifacts without deleting them
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
@@ -102,7 +102,7 @@ Options for lint:
 Options for test:
     --check                        Typecheck inline tests without running them
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
-    --opt-level <0|1|2|3>          Select selfhost test harness optimization
+    --opt-level <0|1|2>          Select selfhost test harness optimization
 Options for doc:
     --test [<file.tl>...]          Check TypeLisp fenced examples in docs
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs

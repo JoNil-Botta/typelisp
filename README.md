@@ -676,17 +676,17 @@ can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
 runtime helper policy, and the `clang` + `lld-link` toolchain.
 
 Source-file `typelisp build`/`typelisp run` and package build (`typelisp build
-[--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. Package builds
+[--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2`. Package builds
 also accept `--profile dev|release` and `--release`; the selected profile is
 visible in `target/typelisp/<profile>/<package-name>/`. When `--opt-level` is
 omitted, the release profile uses level 2 and the dev profile uses level 0.
 Explicit `--opt-level` overrides the profile default. `--opt-level 0` builds
-without the IR optimizer (faster compiles, larger/slower code) while `1|2|3` run
-it.
+without the IR optimizer (faster compiles, larger/slower code), level 1 runs the
+cheap stack-only optimizer path, and level 2 runs the full optimizer plus scalar
+register allocation and inlining.
 Higher levels may spend more compile time but must preserve program semantics —
 the exit/output of a program never depends on the level. The package-build flags
-report missing/duplicate/invalid diagnostics. The finer numeric meanings and a
-canonical default are reserved for the optimizer-policy work split from \#939.
+report missing/duplicate/invalid diagnostics.
 
 ## Status
 

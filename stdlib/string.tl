@@ -208,17 +208,32 @@
     [right-len : i64 (string-length right)]
     (if (not (= left-len right-len))
       false
-      (let
-        [i : i64 0]
-        [same : bool true]
-        (begin
-          (while (and same (< i left-len))
-            (if (=
-              (cast (string-ref left i) : i64)
-              (cast (string-ref right i) : i64))
-              (set! i (+ i 1))
-              (set! same false)))
-          same)))))
+      (unsafe
+        (let
+          [lp : (Ptr u8) (string-data left)]
+          [rp : (Ptr u8) (string-data right)]
+          [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+          [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+          [words : i64 (shr left-len 3)]
+          [i : i64 0]
+          [same : bool true]
+          (begin
+            (while (and same (< i words))
+              (if (= (ptr-read (ptr-offset lw i)) (ptr-read (ptr-offset rw i)))
+                (set! i (+ i 1))
+                (set! same false)))
+            (if same
+              (let
+                [j : i64 (* words 8)]
+                (begin
+                  (while (and same (< j left-len))
+                    (if (=
+                      (cast (ptr-read (ptr-offset lp j)) : i64)
+                      (cast (ptr-read (ptr-offset rp j)) : i64))
+                      (set! j (+ j 1))
+                      (set! same false)))
+                  same))
+              false)))))))
 
 ;: Compare two owned strings byte-for-byte without allocating.
 (define (string-eq [left : String] [right : String]) : bool

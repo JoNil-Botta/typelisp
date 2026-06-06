@@ -41,7 +41,8 @@ case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
 contains|_tl_lex:
 contains|_tl_ident_token:
 contains|call tl_alloc
-contains|tl_substring
+contains|substring_copy_checked
+not-contains|call tl_substring
 contains|lexer: unexpected character
 end
 
@@ -867,7 +868,8 @@ contains|_tl_lex:
 contains|_tl_lex_result:
 contains|_tl_token_tag:
 contains|1.5
-contains|call tl_substring
+contains|substring_copy_checked
+not-contains|call tl_substring
 contains|call tl_string_to_int
 contains|call tl_oob_abort
 contains|lexer: unterminated string literal

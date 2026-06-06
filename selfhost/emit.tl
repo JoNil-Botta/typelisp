@@ -16,7 +16,10 @@
 (import "emit_core.tl")
 
 (define (sample) : Expr
-  (EBin (OpAdd) (EInt 1) (EBin (OpMul) (EInt 2) (EInt 3))))
+  (EBin
+    (OpAdd)
+    (box (EInt 1))
+    (box (EBin (OpMul) (box (EInt 2)) (box (EInt 3))))))
 
 ;; main: emit and PRINT the COMPLETE runnable `.s` for the sample `(+ 1 (* 2 3))`.
 ;; The Linux-gated integration test assembles and links this printed text, then

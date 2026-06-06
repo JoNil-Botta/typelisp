@@ -80,9 +80,10 @@ Coverage notes:
   borrowed buffer that would outlive its chunk owner.
 - `string_caller_result_check.tl` typechecks the check-only
   `string_caller_result.tl` caller-result shape for borrowed no-match results,
-  owned replacement results, and explicit owned materialization. The escape
-  fixture verifies the checker rejects a borrowed no-match result tied to a
-  shorter-lived text owner.
+  owned replacement results, the branch-selecting `string-replace-result`
+  helper, and explicit owned materialization. The escape fixture verifies the
+  checker rejects a helper result that may borrow from a shorter-lived text
+  owner.
 - `io_caller_result_check.tl` typechecks the check-only `io_caller_result.tl`
   `read-file-or-result` surface for fallback-borrow and owned-result paths. The
   escape fixture verifies the checker rejects returning a fallback result whose

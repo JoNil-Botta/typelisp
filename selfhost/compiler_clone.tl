@@ -23,7 +23,7 @@
 
 (defenum CloneNameList
   (CloneNameNil)
-  (CloneNameCons String CloneNameList))
+  (CloneNameCons String (Box CloneNameList)))
 
 (define (clone-helper-name [type-name : String]) : String
   (string-append "clone$" type-name))
@@ -46,7 +46,7 @@
     [(CloneNameCons head rest)
       (if (string-eq head name)
         true
-        (clone-name-list-contains? rest name))]))
+        (clone-name-list-contains? (box-get rest) name))]))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
   (string-i64-map-len (clone-name-set-map names)))
@@ -665,7 +665,7 @@
         decls
         decls
         able
-        (CloneNameCons name roots)
+        (CloneNameCons name (box roots))
         name))
     roots))
 
@@ -700,13 +700,13 @@
           decls
           able
           (clone-root-add-name-deps decls decls able with-name name)
-          rest))]))
+          (box-get rest)))]))
 
 (define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
   (match names
     [(CloneNameNil) acc]
     [(CloneNameCons name rest)
-      (clone-name-list-to-set rest (clone-name-set-insert acc name))]))
+      (clone-name-list-to-set (box-get rest) (clone-name-set-insert acc name))]))
 
 ;; Append the generated clone$ helpers AFTER the program's decls, so the real
 ;; declarations keep their source paths (the generated helpers, being last, get

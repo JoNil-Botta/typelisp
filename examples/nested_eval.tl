@@ -21,44 +21,56 @@
 ;; outer `(+ 1 6)` to 7 - the result depends on the whole nested shape.
 (import "stdlib/io.tl")
 
+(defenum SexprAtom
+  (AInt i64)
+  (ASym String)
+  (AList (Box Sexpr)))
+
 (defenum Sexpr
-  (SInt i64)
-  (SSym String)
   (SNil)
-  (SCons Sexpr Sexpr))
+  (SCons SexprAtom (Box Sexpr)))
 
 ;; sexpr-head ("car") / sexpr-tail ("cdr"): argument-spine projections. These
 ;; remain single-level (the spine is a flat cons list); the symbol projection
 ;; that USED to be a third helper is now the nested pattern in `eval-sexpr`.
-(define (sexpr-head [s : Sexpr]) : Sexpr
+(define (sexpr-head [s : Sexpr]) : SexprAtom
   (match s
     [(SCons h _) h]
     [_
       (begin
         (panic "eval: car of a non-cons")
-        SNil)]))
+        (AInt 0))]))
 
 (define (sexpr-tail [s : Sexpr]) : Sexpr
   (match s
-    [(SCons _ t) t]
+    [(SCons _ t) (box-get t)]
     [_
       (begin
         (panic "eval: cdr of a non-cons")
         SNil)]))
 
+(define (eval-atom [a : SexprAtom]) : i64
+  (match a
+    [(AInt n) n]
+    [(AList nested) (eval-sexpr (box-get nested))]
+    [_
+      (begin
+        (panic "eval: not an evaluable atom")
+        0)]))
+
 ;; eval-sexpr: the tree-walking interpreter. The SCons arm uses the nested
 ;; pattern to bind the operator symbol `name` directly from the head's `SSym`.
 (define (eval-sexpr [s : Sexpr]) : i64
   (match s
-    [(SInt n) n]
     ;; Nested pattern: head must itself be `(SSym name)`. Binds `name : String`
     ;; (one level down) and `rest : Sexpr` together.
-    [(SCons (SSym name) rest)
+    [(SCons (ASym name) rest)
       (let
-        [arg1 : Sexpr (sexpr-head rest)]
-        [arg2 : Sexpr (sexpr-head (sexpr-tail rest))]
-        [a : i64 (eval-sexpr arg1)]
-        [b : i64 (eval-sexpr arg2)]
+        [args : Sexpr (box-get rest)]
+        [arg1 : SexprAtom (sexpr-head args)]
+        [arg2 : SexprAtom (sexpr-head (sexpr-tail args))]
+        [a : i64 (eval-atom arg1)]
+        [b : i64 (eval-atom arg2)]
         (cond
           [(string-eq name "+") (+ a b)]
           [(string-eq name "-") (- a b)]
@@ -83,6 +95,12 @@
 ;;         SNil)))
 (define (main) : i64
   (let
-    [inner : Sexpr (SCons (SSym "*") (SCons (SInt 2) (SCons (SInt 3) SNil)))]
-    [prog : Sexpr (SCons (SSym "+") (SCons (SInt 1) (SCons inner SNil)))]
+    [inner : Sexpr
+      (SCons
+        (ASym "*")
+        (box (SCons (AInt 2) (box (SCons (AInt 3) (box SNil))))))]
+    [prog : Sexpr
+      (SCons
+        (ASym "+")
+        (box (SCons (AInt 1) (box (SCons (AList (box inner)) (box SNil))))))]
     (eval-sexpr prog)))

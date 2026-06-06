@@ -94,9 +94,20 @@
       (string-append (substring s 0 index) new)
       (substring s (+ index olen) (- (- hlen index) olen)))))
 
-;: The checked replacement surface is currently branch-composed by callers:
-;: use `string-replace-find-index`; on `-1`, return
-;: `string-replace-borrowed-result`; otherwise build owned text with
-;: `string-replace-owned-at` and wrap it with `string-replace-owned-result-like`.
-;: The single branch-selecting helper waits for fuller reference-typed aggregate
-;: lowering and branch-unification support.
+;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
+;: tied to `text` or fresh active-arena owned text when a replacement is made.
+(define (string-replace-result
+  [text : (& text str)]
+  [old : (& old str)]
+  [new : (& replacement str)]) : (StringReplaceResult text old replacement)
+  (if (= (string-replace-find-index text old) -1)
+    (string-replace-borrowed-result text old new)
+    (string-replace-owned-result-like
+      text
+      old
+      new
+      (string-replace-owned-at
+        text
+        old
+        new
+        (string-replace-find-index text old)))))

@@ -25,12 +25,8 @@
   (DocNoString)
   (DocSomeString String))
 
-(defenum DocTestPathList
-  (DocTestPathNil)
-  (DocTestPathCons String (Box DocTestPathList)))
-
 (defenum DocTestCliConfig
-  (DocTestCliFileConfig DocTestPathList StringVec)
+  (DocTestCliFileConfig StringVec StringVec)
   (DocTestCliPackageConfig String bool StringVec))
 
 (defenum ResultDocTestCliConfig
@@ -38,7 +34,7 @@
   (ErrDocTestCliConfig String))
 
 (defenum DocDefaultCliConfig
-  (DocDefaultCliExplicitConfig DocTestPathList DocMaybeString StringVec)
+  (DocDefaultCliExplicitConfig StringVec DocMaybeString StringVec)
   (DocDefaultCliPackageConfig String bool String))
 
 (defenum ResultDocDefaultCliConfig
@@ -186,68 +182,37 @@
           (set! i (+ i 1))))
       roots)))
 
-(define (doc-test-path-list-empty? [paths : DocTestPathList]) : bool
-  (match paths
-    [(DocTestPathNil) true]
-    [(DocTestPathCons _ _) false]))
+(define (doc-modules-from-input-paths-before-last
+  [paths : StringVec]
+  [index : i64]
+  [last-index : i64]) : DocModuleList
+  (if (>= index last-index)
+    DocModuleNil
+    (let
+      [path : String (string-vec-get paths index "")]
+      (doc-cli-module-cons
+        (DocModule path (doc-extract-file path))
+        (doc-modules-from-input-paths-before-last paths (+ index 1) last-index)))))
 
-(define (doc-test-path-list-append [paths : DocTestPathList] [path : String]) : DocTestPathList
-  (match paths
-    [(DocTestPathNil) (DocTestPathCons path (box DocTestPathNil))]
-    [(DocTestPathCons head rest)
-      (DocTestPathCons
-        head
-        (box (doc-test-path-list-append (box-get rest) path)))]))
-
-(define (doc-test-path-list-count [paths : DocTestPathList]) : i64
-  (match paths
-    [(DocTestPathNil) 0]
-    [(DocTestPathCons _ rest) (+ 1 (doc-test-path-list-count (box-get rest)))]))
-
-(define (doc-test-path-list-first [paths : DocTestPathList]) : String
-  (match paths
-    [(DocTestPathNil) ""]
-    [(DocTestPathCons path _) path]))
-
-(define (doc-test-path-list-second [paths : DocTestPathList]) : String
-  (match paths
-    [(DocTestPathNil) ""]
-    [(DocTestPathCons _ rest) (doc-test-path-list-first (box-get rest))]))
-
-(define (doc-test-path-list-last [paths : DocTestPathList]) : String
-  (match paths
-    [(DocTestPathNil) ""]
-    [(DocTestPathCons path rest)
-      (match (box-get rest)
-        [(DocTestPathNil) path]
-        [_ (doc-test-path-list-last (box-get rest))])]))
-
-(define (doc-modules-from-doc-paths-before-last [paths : DocTestPathList]) : DocModuleList
-  (match paths
-    [(DocTestPathNil) DocModuleNil]
-    [(DocTestPathCons path rest)
-      (match (box-get rest)
-        [(DocTestPathNil) DocModuleNil]
-        [_
-          (doc-cli-module-cons
-            (DocModule path (doc-extract-file path))
-            (doc-modules-from-doc-paths-before-last (box-get rest)))])]))
-
-(define (doc-generate-module-graph-from-doc-paths [paths : DocTestPathList]) : i64
+(define (doc-generate-module-graph-from-input-paths [paths : StringVec]) : i64
   (let
-    [output-path : String (doc-test-path-list-last paths)]
-    [modules : DocModuleList (doc-modules-from-doc-paths-before-last paths)]
+    [output-path : String (string-vec-last paths "")]
+    [modules : DocModuleList
+      (doc-modules-from-input-paths-before-last
+        paths
+        0
+        (- (string-vec-len paths) 1))]
     (begin
       (write-file output-path (doc-render-module-graph-markdown modules))
       (doc-print-generated output-path)
       0)))
 
 (define (doc-test-config-finish
-  [input-paths : DocTestPathList]
+  [input-paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]) : ResultDocTestCliConfig
-  (if (doc-test-path-list-empty? input-paths)
+  (if (string-vec-is-empty? input-paths)
     (OkDocTestCliConfig
       (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
     (if has-manifest
@@ -258,7 +223,7 @@
 (define (doc-test-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : DocTestPathList]
+  [input-paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]) : ResultDocTestCliConfig
@@ -295,7 +260,7 @@
           (doc-test-parse-options
             (+ idx 1)
             count
-            (doc-test-path-list-append input-paths current)
+            (string-vec-push input-paths current)
             manifest-path
             has-manifest
             stdlib-roots)]))))
@@ -304,34 +269,43 @@
   (doc-test-parse-options
     (+ base 1)
     count
-    DocTestPathNil
+    (string-vec-new)
     ""
     false
     (string-vec-new)))
 
-(define (doc-test-files
-  [input-paths : DocTestPathList]
+(define (doc-test-files-from
+  [input-paths : StringVec]
+  [index : i64]
   [stdlib-roots : StringVec]
   [print-headers : bool]
   [status : i64]) : i64
-  (match input-paths
-    [(DocTestPathNil) status]
-    [(DocTestPathCons input-path rest)
-      (let
-        [file-status : i64
-          (begin
-            (if print-headers
-              (print-string
-                (string-append "--- " (string-append input-path "\n")))
-              unit)
-            (doc-test-file input-path stdlib-roots))]
-        (doc-test-files
-          (box-get rest)
-          stdlib-roots
-          print-headers
-          (if (= status 0)
-            file-status
-            status)))]))
+  (if (>= index (string-vec-len input-paths))
+    status
+    (let
+      [input-path : String (string-vec-get input-paths index "")]
+      [file-status : i64
+        (begin
+          (if print-headers
+            (print-string
+              (string-append "--- " (string-append input-path "\n")))
+            unit)
+          (doc-test-file input-path stdlib-roots))]
+      (doc-test-files-from
+        input-paths
+        (+ index 1)
+        stdlib-roots
+        print-headers
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (doc-test-files
+  [input-paths : StringVec]
+  [stdlib-roots : StringVec]
+  [print-headers : bool]
+  [status : i64]) : i64
+  (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
 
 (define (doc-test-package-files
   [input-paths : StringList]
@@ -366,12 +340,12 @@
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
 
 (define (doc-default-config-finish
-  [input-paths : DocTestPathList]
+  [input-paths : StringVec]
   [output-path : DocMaybeString]
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]) : ResultDocDefaultCliConfig
-  (if (doc-test-path-list-empty? input-paths)
+  (if (string-vec-is-empty? input-paths)
     (match output-path
       [(DocSomeString out)
         (OkDocDefaultCliConfig
@@ -390,7 +364,7 @@
 (define (doc-default-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : DocTestPathList]
+  [input-paths : StringVec]
   [output-path : DocMaybeString]
   [has-output : bool]
   [manifest-path : String]
@@ -452,7 +426,7 @@
           (doc-default-parse-options
             (+ idx 1)
             count
-            (doc-test-path-list-append input-paths current)
+            (string-vec-push input-paths current)
             output-path
             has-output
             manifest-path
@@ -463,7 +437,7 @@
   (doc-default-parse-options
     base
     count
-    DocTestPathNil
+    (string-vec-new)
     (DocNoString)
     false
     ""
@@ -486,27 +460,27 @@
     1))
 
 (define (doc-run-explicit-default
-  [input-paths : DocTestPathList]
+  [input-paths : StringVec]
   [output-path : DocMaybeString]
   [stdlib-roots : StringVec]) : i64
   (match output-path
     [(DocSomeString out)
-      (if (doc-test-path-list-empty? input-paths)
+      (if (string-vec-is-empty? input-paths)
         (doc-invalid-args)
         (doc-generate-loaded-file
-          (doc-test-path-list-first input-paths)
+          (string-vec-get input-paths 0 "")
           out
           stdlib-roots))]
     [(DocNoString)
       (let
-        [path-count : i64 (doc-test-path-list-count input-paths)]
+        [path-count : i64 (string-vec-len input-paths)]
         (cond
           [(= path-count 2)
             (doc-generate-file
-              (doc-test-path-list-first input-paths)
-              (doc-test-path-list-second input-paths))]
+              (string-vec-get input-paths 0 "")
+              (string-vec-get input-paths 1 ""))]
           [(> path-count 2)
-            (doc-generate-module-graph-from-doc-paths input-paths)]
+            (doc-generate-module-graph-from-input-paths input-paths)]
           [else (doc-invalid-args)]))]))
 
 (define (doc-command-kind-load [value : String]) : i64
@@ -536,7 +510,7 @@
           (doc-test-files
             input-paths
             stdlib-roots
-            (> (doc-test-path-list-count input-paths) 1)
+            (> (string-vec-len input-paths) 1)
             0)]
         [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
           (doc-test-package manifest-path has-manifest stdlib-roots)])]

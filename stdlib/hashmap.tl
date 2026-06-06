@@ -56,10 +56,12 @@
 (define (string-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
   (% (hash-normalize hash) capacity))
 
-;: Return the start bucket when `hash` is already in the public hash range.
+;: Return whether `capacity` is positive and a power of two.
 (define (string-i64-map-power-two-capacity? [capacity : i64]) : bool
   (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))
 
+;: Return the start bucket when `hash` is already in the public hash range.
+;: Power-of-two capacities use masking; other capacities use modulo.
 (define (string-i64-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
   (if (string-i64-map-power-two-capacity? capacity)
     (bit-and hash (- capacity 1))

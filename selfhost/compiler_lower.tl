@@ -3477,7 +3477,9 @@
           next-lambda
           next-label
           IrInstrNil
-          (compiler-ir-block-cons (IrBlock current-label block-instrs) blocks)
+          (compiler-ir-block-cons
+            (compiler-ir-block current-label block-instrs)
+            blocks)
           functions
           function
           spans
@@ -3490,7 +3492,9 @@
     [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
       (lower-block-list-reverse
         (compiler-ir-block-cons
-          (IrBlock current-label (lower-instr-list-reverse current-instrs))
+          (compiler-ir-block
+            current-label
+            (lower-instr-list-reverse current-instrs))
           blocks))]))
 
 (define (lower-state-add-functions
@@ -15864,7 +15868,7 @@
   [args : CompilerIrCallArgs]
   [ret-ty : AstType]
   [call-var : i64]) : CompilerIrBlock
-  (IrBlock
+  (compiler-ir-block
     "cached"
     (compiler-ir-instr-cons
       (IrInstrCallIndirect call-var (IrValueGlobal cache-name) args ret-ty)
@@ -15880,7 +15884,7 @@
   [args : CompilerIrCallArgs]
   [ret-ty : AstType]
   [call-var : i64]) : CompilerIrBlock
-  (IrBlock
+  (compiler-ir-block
     label
     (compiler-ir-instr-cons
       (IrInstrStore cache-name (IrValueFunction fn-name) fn-ty)
@@ -15895,7 +15899,7 @@
   [fn-ty : AstType]
   [cached-var : i64]
   [resolve-label : String]) : CompilerIrBlock
-  (IrBlock
+  (compiler-ir-block
     "entry"
     (compiler-ir-instr-cons
       (IrInstrBinOp
@@ -15933,7 +15937,7 @@
     [feature-mask-var : i64 (+ base 9)]
     [feature-ok-var : i64 (+ base 10)]
     (compiler-ir-block-cons
-      (IrBlock
+      (compiler-ir-block
         check-label
         (compiler-ir-instr-cons
           (IrInstrCpuId max-leaf-var (IrValueI64 0) (IrValueI64 0) 0)
@@ -15951,7 +15955,7 @@
                 fallback-label)
               IrInstrNil))))
       (compiler-ir-block-cons
-        (IrBlock
+        (compiler-ir-block
           osxsave-label
           (compiler-ir-instr-cons
             (IrInstrCpuId leaf1-ecx-var (IrValueI64 1) (IrValueI64 0) 2)
@@ -15976,7 +15980,7 @@
                     fallback-label)
                   IrInstrNil)))))
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             xcr0-label
             (compiler-ir-instr-cons
               (IrInstrXgetbv xcr0-var (IrValueI64 0))
@@ -16001,7 +16005,7 @@
                       fallback-label)
                     IrInstrNil)))))
           (compiler-ir-block-cons
-            (IrBlock
+            (compiler-ir-block
               leaf7-label
               (compiler-ir-instr-cons
                 (IrInstrCpuId leaf7-ebx-var (IrValueI64 7) (IrValueI64 0) 1)
@@ -18864,7 +18868,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-phi-count instrs)
+            (lower-test-instrs-phi-count (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-phi-count (box-get rest)))])]))
 
 (define (lower-test-blocks-load-count [blocks : CompilerIrBlockList]) : i64
@@ -18874,7 +18878,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-load-count instrs)
+            (lower-test-instrs-load-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-branch-count [blocks : CompilerIrBlockList]) : i64
@@ -18884,7 +18889,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-branch-count instrs)
+            (lower-test-instrs-branch-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-branch-count (box-get rest)))])]))
 
 (define (lower-test-blocks-bounds-count [blocks : CompilerIrBlockList]) : i64
@@ -18894,7 +18900,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-bounds-count instrs)
+            (lower-test-instrs-bounds-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-bounds-count (box-get rest)))])]))
 
 (define (lower-test-blocks-return-count [blocks : CompilerIrBlockList]) : i64
@@ -18904,7 +18911,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-return-count instrs)
+            (lower-test-instrs-return-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-return-count (box-get rest)))])]))
 
 (define (lower-test-blocks-call-count
@@ -18916,7 +18924,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-call-count instrs name)
+            (lower-test-instrs-call-count
+              (compiler-ir-instr-seq-to-list instrs)
+              name)
             (lower-test-blocks-call-count (box-get rest) name))])]))
 
 (define (lower-test-blocks-cpuid-count [blocks : CompilerIrBlockList]) : i64
@@ -18926,7 +18936,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-cpuid-count instrs)
+            (lower-test-instrs-cpuid-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-cpuid-count (box-get rest)))])]))
 
 (define (lower-test-blocks-xgetbv-count [blocks : CompilerIrBlockList]) : i64
@@ -18936,7 +18947,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-xgetbv-count instrs)
+            (lower-test-instrs-xgetbv-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-xgetbv-count (box-get rest)))])]))
 
 (define (lower-test-blocks-indirect-call-count [blocks : CompilerIrBlockList]) : i64
@@ -18946,7 +18958,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-indirect-call-count instrs)
+            (lower-test-instrs-indirect-call-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-indirect-call-count (box-get rest)))])]))
 
 (define (lower-test-blocks-indirect-unit-count [blocks : CompilerIrBlockList]) : i64
@@ -18956,7 +18969,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-indirect-unit-count instrs)
+            (lower-test-instrs-indirect-unit-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-indirect-unit-count (box-get rest)))])]))
 
 (define (lower-test-blocks-return-function-count
@@ -18968,7 +18982,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-return-function-count instrs function-name)
+            (lower-test-instrs-return-function-count
+              (compiler-ir-instr-seq-to-list instrs)
+              function-name)
             (lower-test-blocks-return-function-count
               (box-get rest)
               function-name))])]))
@@ -18983,7 +18999,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-indirect-callee-function-count
-              instrs
+              (compiler-ir-instr-seq-to-list instrs)
               function-name)
             (lower-test-blocks-indirect-callee-function-count
               (box-get rest)
@@ -19000,7 +19016,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-call-arg-function-count
-              instrs
+              (compiler-ir-instr-seq-to-list instrs)
               call-name
               function-name)
             (lower-test-blocks-call-arg-function-count
@@ -19017,7 +19033,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-tail-call-count instrs name)
+            (lower-test-instrs-tail-call-count
+              (compiler-ir-instr-seq-to-list instrs)
+              name)
             (lower-test-blocks-tail-call-count (box-get rest) name))])]))
 
 (define (lower-test-blocks-store-ptr-count [blocks : CompilerIrBlockList]) : i64
@@ -19027,7 +19045,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-store-ptr-count instrs)
+            (lower-test-instrs-store-ptr-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-store-ptr-count (box-get rest)))])]))
 
 (define (lower-test-blocks-alloc-count [blocks : CompilerIrBlockList]) : i64
@@ -19037,7 +19056,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-alloc-count instrs)
+            (lower-test-instrs-alloc-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-alloc-count (box-get rest)))])]))
 
 (define (lower-test-blocks-addr-of-count [blocks : CompilerIrBlockList]) : i64
@@ -19047,7 +19067,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-addr-of-count instrs)
+            (lower-test-instrs-addr-of-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-addr-of-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-load-count [blocks : CompilerIrBlockList]) : i64
@@ -19057,7 +19078,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-load-count instrs)
+            (lower-test-instrs-vector-load-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-vector-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-binop-count [blocks : CompilerIrBlockList]) : i64
@@ -19067,7 +19089,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-binop-count instrs)
+            (lower-test-instrs-vector-binop-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-vector-binop-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-reduce-count [blocks : CompilerIrBlockList]) : i64
@@ -19077,7 +19100,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-reduce-count instrs)
+            (lower-test-instrs-vector-reduce-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-vector-reduce-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-store-count [blocks : CompilerIrBlockList]) : i64
@@ -19087,7 +19111,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-store-count instrs)
+            (lower-test-instrs-vector-store-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-vector-store-count (box-get rest)))])]))
 
 (define (lower-test-blocks-predicated-load-count [blocks : CompilerIrBlockList]) : i64
@@ -19097,7 +19122,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-predicated-load-count instrs)
+            (lower-test-instrs-predicated-load-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-predicated-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-predicated-store-count
@@ -19108,7 +19134,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-predicated-store-count instrs)
+            (lower-test-instrs-predicated-store-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-predicated-store-count (box-get rest)))])]))
 
 (define (lower-test-blocks-tail-mask-count [blocks : CompilerIrBlockList]) : i64
@@ -19118,7 +19145,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-tail-mask-count instrs)
+            (lower-test-instrs-tail-mask-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-tail-mask-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-shape-count
@@ -19131,7 +19159,10 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-shape-count instrs lanes elem-ty)
+            (lower-test-instrs-vector-shape-count
+              (compiler-ir-instr-seq-to-list instrs)
+              lanes
+              elem-ty)
             (lower-test-blocks-vector-shape-count (box-get rest) lanes elem-ty))])]))
 
 (define (lower-test-blocks-u64-mov-count [blocks : CompilerIrBlockList]) : i64
@@ -19141,7 +19172,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-u64-mov-count instrs)
+            (lower-test-instrs-u64-mov-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-u64-mov-count (box-get rest)))])]))
 
 (define (lower-test-blocks-binop-op-count
@@ -19153,7 +19185,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-binop-op-count instrs op)
+            (lower-test-instrs-binop-op-count
+              (compiler-ir-instr-seq-to-list instrs)
+              op)
             (lower-test-blocks-binop-op-count (box-get rest) op))])]))
 
 (define (lower-test-blocks-cast-count [blocks : CompilerIrBlockList]) : i64
@@ -19163,7 +19197,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-cast-count instrs)
+            (lower-test-instrs-cast-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-cast-count (box-get rest)))])]))
 
 (define (lower-test-blocks-store-global-count
@@ -19175,7 +19210,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-store-global-count instrs name)
+            (lower-test-instrs-store-global-count
+              (compiler-ir-instr-seq-to-list instrs)
+              name)
             (lower-test-blocks-store-global-count (box-get rest) name))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
@@ -20208,7 +20245,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-i64-mov-count instrs want)
+            (lower-test-instrs-i64-mov-count
+              (compiler-ir-instr-seq-to-list instrs)
+              want)
             (lower-test-blocks-i64-mov-count (box-get rest) want))])]))
 
 (define (lower-test-blocks-binop-count [blocks : CompilerIrBlockList]) : i64
@@ -20218,7 +20257,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-binop-count instrs)
+            (lower-test-instrs-binop-count
+              (compiler-ir-instr-seq-to-list instrs))
             (lower-test-blocks-binop-count (box-get rest)))])]))
 
 (define (lower-test-blocks-gep-offset-count
@@ -20230,7 +20270,9 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-gep-offset-count instrs want)
+            (lower-test-instrs-gep-offset-count
+              (compiler-ir-instr-seq-to-list instrs)
+              want)
             (lower-test-blocks-gep-offset-count (box-get rest) want))])]))
 
 (define (lower-test-function-i64-mov-count

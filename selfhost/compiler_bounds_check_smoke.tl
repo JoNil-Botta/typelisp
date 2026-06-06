@@ -16,7 +16,7 @@
         (AstTyI64)
         4
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
               (IrInstrMov 0 (IrValueI64 0) (AstTyU64))

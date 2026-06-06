@@ -624,7 +624,8 @@
 (define (compiler-live-block-successors [block : CompilerIrBlock]) : CompilerLiveLabelSet
   (match block
     [(IrBlock _ instrs)
-      (match (compiler-live-instr-list-last instrs)
+      (match (compiler-live-instr-list-last
+        (compiler-ir-instr-seq-to-list instrs))
         [(CompilerLiveNoInstr) CompilerLiveLabelNil]
         [(CompilerLiveSomeInstr instr)
           (match instr
@@ -639,7 +640,8 @@
 (define (compiler-live-build-block [block : CompilerIrBlock]) : CompilerLiveBlock
   (match block
     [(IrBlock label instrs)
-      (match (compiler-live-block-use-def instrs)
+      (match (compiler-live-block-use-def
+        (compiler-ir-instr-seq-to-list instrs))
         [(CompilerLiveUseDef uses defs)
           (CompilerLiveBlock
             label
@@ -931,7 +933,9 @@
         [(CompilerLiveSomeIrBlock ir-block)
           (match ir-block
             [(IrBlock _ instrs)
-              (match (compiler-live-instr-scan instrs live-out)
+              (match (compiler-live-instr-scan
+                (compiler-ir-instr-seq-to-list instrs)
+                live-out)
                 [(CompilerLiveInstrScan instr-after _)
                   (CompilerLiveBlock
                     label
@@ -1047,7 +1051,7 @@
     (compiler-live-i64-ty)
     3
     (compiler-ir-block-cons
-      (IrBlock
+      (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 1) (compiler-live-i64-ty))
@@ -1070,19 +1074,19 @@
     (compiler-live-i64-ty)
     3
     (compiler-ir-block-cons
-      (IrBlock
+      (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
           (IrInstrBranch (IrValueVar 0) "then" "else")
           IrInstrNil))
       (compiler-ir-block-cons
-        (IrBlock
+        (compiler-ir-block
           "then"
           (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 1)))
             IrInstrNil))
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "else"
             (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 2)))
@@ -1096,25 +1100,25 @@
     (compiler-live-i64-ty)
     4
     (compiler-ir-block-cons
-      (IrBlock
+      (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
           (IrInstrBranch (IrValueVar 0) "left" "right")
           IrInstrNil))
       (compiler-ir-block-cons
-        (IrBlock
+        (compiler-ir-block
           "left"
           (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 10) (compiler-live-i64-ty))
             (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "right"
             (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueI64 20) (compiler-live-i64-ty))
               (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
           (compiler-ir-block-cons
-            (IrBlock
+            (compiler-ir-block
               "join"
               (compiler-ir-instr-cons
                 (IrInstrPhi

@@ -211,11 +211,12 @@ Stdlib macros are explicit imports, not an automatic prelude. The checked-in
 core macro module is available as
 `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, after
 which exported macros are called through the alias, for example `core/when` and
-`core/unless`. Unqualified built-in guard forms remain available during the
-transition to the final stdlib macro migration, but local macros named `when`
-or `unless` now take precedence before the compatibility guard desugaring runs.
-The legacy bracket-arm `cond` form remains compatibility parsed while a flat
-call-shaped `cond` can be used by macro migration tests.
+`core/unless`, plus boolean `core/and` and `core/or`. Unqualified built-in guard
+forms remain available during the transition to the final stdlib macro
+migration, but local macros named `when`, `unless`, `and`, or `or` now take
+precedence before the compatibility desugaring runs. The legacy bracket-arm
+`cond` form remains compatibility parsed while a flat call-shaped `cond` can be
+used by macro migration tests.
 
 `typelisp compile` accepts `--cfg <name>` to enable source-level conditional
 compilation flags. Source may wrap a top-level declaration as

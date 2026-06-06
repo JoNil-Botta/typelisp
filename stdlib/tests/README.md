@@ -35,7 +35,8 @@ Coverage notes:
   fixture-local generated enum-payload vector witness for nominal element
   metadata.
 - `core_macros_api.tl` covers explicit import of the stdlib core macro module
-  and the qualified `core/when` and `core/unless` guard macros.
+  and the qualified `core/when`, `core/unless`, `core/and`, and `core/or`
+  macros.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,

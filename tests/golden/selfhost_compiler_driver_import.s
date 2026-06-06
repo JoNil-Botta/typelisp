@@ -180,6 +180,11 @@ rename:
     movq $82, %rax
     syscall
     jmp .L_tl_shim_ret
+    .globl getrandom
+getrandom:
+    movq $318, %rax
+    syscall
+    jmp .L_tl_shim_ret
 .L_tl_shim_ret:
     cmpq $-4095, %rax
     jae .L_tl_shim_err

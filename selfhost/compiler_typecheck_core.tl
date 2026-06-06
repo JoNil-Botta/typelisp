@@ -12019,6 +12019,12 @@
         (tc-xgetbv-expr ctx env index))]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
+(define (tc-extern-abi-enum-aggregate-type? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ false]))
+
 (define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
     [(AstTyI64) true]
@@ -12039,16 +12045,20 @@
     [(AstTyMutPtr _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
-    [(AstTyEnum _) true]
-    [(AstTyEnumArgs _ _) true]
+    [(AstTyEnum _) false]
+    [(AstTyEnumArgs _ _) false]
     [(AstTyStruct _) true]
     [(AstTyStructArgs _ _) true]
     [_ false]))
 
 (define (tc-extern-abi-unsupported-message [position : String] [ty : AstType]) : String
-  (string-append
-    "typecheck: extern ABI c does not support "
-    (string-append position (string-append " type " (tc-type-render ty)))))
+  (if (tc-extern-abi-enum-aggregate-type? ty)
+    (string-append
+      "typecheck: extern ABI c does not support enum aggregate "
+      (string-append position (string-append " type " (tc-type-render ty))))
+    (string-append
+      "typecheck: extern ABI c does not support "
+      (string-append position (string-append " type " (tc-type-render ty))))))
 
 (define (tc-check-extern-arg-abi [args : AstTypeList]) : ResultTcUnit
   (match args

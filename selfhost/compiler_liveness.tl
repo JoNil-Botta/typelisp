@@ -613,6 +613,30 @@
     (compiler-live-set-empty)
     (compiler-live-set-empty)))
 
+(define (compiler-live-block-use-def-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [uses : CompilerLiveI64Set]
+  [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerLiveUseDef uses defs)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+      [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+      (compiler-live-block-use-def-seq-from
+        instrs
+        (+ index 1)
+        (compiler-live-set-union uses (compiler-live-set-minus instr-uses defs))
+        (compiler-live-set-union defs instr-defs)))))
+
+(define (compiler-live-block-use-def-seq [instrs : CompilerIrInstrSeq]) : CompilerLiveUseDef
+  (compiler-live-block-use-def-seq-from
+    instrs
+    0
+    (compiler-live-set-empty)
+    (compiler-live-set-empty)))
+
 (define (compiler-live-instr-list-last [instrs : CompilerIrInstrList]) : CompilerLiveMaybeInstr
   (match instrs
     [(IrInstrNil) CompilerLiveNoInstr]
@@ -621,11 +645,18 @@
         [(IrInstrNil) (CompilerLiveSomeInstr instr)]
         [_ (compiler-live-instr-list-last (box-get rest))])]))
 
+(define (compiler-live-instr-seq-last [instrs : CompilerIrInstrSeq]) : CompilerLiveMaybeInstr
+  (if (compiler-ir-instr-seq-empty? instrs)
+    CompilerLiveNoInstr
+    (CompilerLiveSomeInstr
+      (compiler-ir-instr-seq-ref
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1)))))
+
 (define (compiler-live-block-successors [block : CompilerIrBlock]) : CompilerLiveLabelSet
   (match block
     [(IrBlock _ instrs)
-      (match (compiler-live-instr-list-last
-        (compiler-ir-instr-seq-to-list instrs))
+      (match (compiler-live-instr-seq-last instrs)
         [(CompilerLiveNoInstr) CompilerLiveLabelNil]
         [(CompilerLiveSomeInstr instr)
           (match instr
@@ -640,8 +671,7 @@
 (define (compiler-live-build-block [block : CompilerIrBlock]) : CompilerLiveBlock
   (match block
     [(IrBlock label instrs)
-      (match (compiler-live-block-use-def
-        (compiler-ir-instr-seq-to-list instrs))
+      (match (compiler-live-block-use-def-seq instrs)
         [(CompilerLiveUseDef uses defs)
           (CompilerLiveBlock
             label
@@ -924,6 +954,30 @@
             (compiler-live-instr-set-cons live-after rest-after)
             (compiler-live-before-instr live-after instr))])]))
 
+(define (compiler-live-instr-seq-scan-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [live-after : CompilerLiveI64Set]
+  [out : CompilerLiveInstrSetList]) : CompilerLiveInstrScan
+  (if (< index 0)
+    (CompilerLiveInstrScan out live-after)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (compiler-live-instr-seq-scan-from
+        instrs
+        (- index 1)
+        (compiler-live-before-instr live-after instr)
+        (compiler-live-instr-set-cons live-after out)))))
+
+(define (compiler-live-instr-seq-scan
+  [instrs : CompilerIrInstrSeq]
+  [live-out : CompilerLiveI64Set]) : CompilerLiveInstrScan
+  (compiler-live-instr-seq-scan-from
+    instrs
+    (- (compiler-ir-instr-seq-count instrs) 1)
+    live-out
+    CompilerLiveInstrSetNil))
+
 (define (compiler-live-fill-instr-after-block
   [ir-blocks : CompilerIrBlockList]
   [block : CompilerLiveBlock]) : CompilerLiveBlock
@@ -933,9 +987,7 @@
         [(CompilerLiveSomeIrBlock ir-block)
           (match ir-block
             [(IrBlock _ instrs)
-              (match (compiler-live-instr-scan
-                (compiler-ir-instr-seq-to-list instrs)
-                live-out)
+              (match (compiler-live-instr-seq-scan instrs live-out)
                 [(CompilerLiveInstrScan instr-after _)
                   (CompilerLiveBlock
                     label

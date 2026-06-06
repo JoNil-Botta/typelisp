@@ -892,6 +892,21 @@
             new-instr
             (opt-fold-instrs new-env (box-get rest)))])]))
 
+(define (opt-fold-instr-seq-from
+  [env : OptConstEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (IrInstrNil)
+    (match (opt-fold-instr env (compiler-ir-instr-seq-ref instrs index))
+      [(OptInstrResult new-env new-instr)
+        (compiler-ir-instr-cons
+          new-instr
+          (opt-fold-instr-seq-from new-env instrs (+ index 1)))])))
+
+(define (opt-fold-instr-seq [env : OptConstEnv] [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-fold-instr-seq-from env instrs 0))
+
 (define (opt-strength-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(IrInstrMov dst value ty)
@@ -3609,6 +3624,21 @@
             new-instr
             (opt-copy-instrs new-env (box-get rest)))])]))
 
+(define (opt-copy-instr-seq-from
+  [env : OptCopyEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (IrInstrNil)
+    (match (opt-copy-instr env (compiler-ir-instr-seq-ref instrs index))
+      [(OptCopyResult new-env new-instr)
+        (compiler-ir-instr-cons
+          new-instr
+          (opt-copy-instr-seq-from new-env instrs (+ index 1)))])))
+
+(define (opt-copy-instr-seq [env : OptCopyEnv] [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-copy-instr-seq-from env instrs 0))
+
 ;; --- block-local redundant bounds-check elimination (#930) ------------------
 ;;
 ;; `IrInstrBoundsCheck index length ok-label` is a trapping side-effect: it must be kept
@@ -4309,6 +4339,20 @@
             [(OptVarSetErr) (OptVarSetErr)])]
         [(OptNoI64) (opt-verify-instr-def-set (box-get rest) set)])]))
 
+(define (opt-verify-instr-def-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [set : I64I64Map]) : OptVarSetResult
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptVarSetOk set)
+    (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+      [(OptSomeI64 var)
+        (match (opt-var-set-add-unique set var)
+          [(OptVarSetOk next)
+            (opt-verify-instr-def-seq-from instrs (+ index 1) next)]
+          [(OptVarSetErr) (OptVarSetErr)])]
+      [(OptNoI64) (opt-verify-instr-def-seq-from instrs (+ index 1) set)])))
+
 (define (opt-verify-block-def-set
   [blocks : CompilerIrBlockList]
   [set : I64I64Map]) : OptVarSetResult
@@ -4317,9 +4361,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (match (opt-verify-instr-def-set
-            (compiler-ir-instr-seq-to-list instrs)
-            set)
+          (match (opt-verify-instr-def-seq-from instrs 0 set)
             [(OptVarSetOk next) (opt-verify-block-def-set (box-get rest) next)]
             [(OptVarSetErr) (OptVarSetErr)])])]))
 
@@ -4367,6 +4409,34 @@
         [(OptNoI64)
           (opt-var-defs-from-instrs (box-get rest) block-label (+ pos 1) defs)])]))
 
+(define (opt-var-defs-from-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [block-label : String]
+  [index : i64]
+  [pos : i64]
+  [defs : OptVarDefList]) : OptVarDefList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    defs
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 var)
+          (opt-var-defs-from-instr-seq-from
+            instrs
+            block-label
+            (+ index 1)
+            (+ pos 1)
+            (OptVarDefCons
+              (OptVarDef var block-label (opt-instr-def-position instr pos))
+              (box defs)))]
+        [(OptNoI64)
+          (opt-var-defs-from-instr-seq-from
+            instrs
+            block-label
+            (+ index 1)
+            (+ pos 1)
+            defs)]))))
+
 (define (opt-var-defs-from-blocks
   [blocks : CompilerIrBlockList]
   [defs : OptVarDefList]) : OptVarDefList
@@ -4377,11 +4447,7 @@
         [(IrBlock label instrs)
           (opt-var-defs-from-blocks
             (box-get rest)
-            (opt-var-defs-from-instrs
-              (compiler-ir-instr-seq-to-list instrs)
-              label
-              1
-              defs))])]))
+            (opt-var-defs-from-instr-seq-from instrs label 0 1 defs))])]))
 
 (define (opt-var-defs-from-function
   [params : CompilerIrParamList]
@@ -4677,6 +4743,31 @@
         [(ErrCompilerOptimizeVerify message)
           (ErrCompilerOptimizeVerify message)])]))
 
+(define (opt-verify-instr-seq-uses-from
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [block-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [pos : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OkCompilerOptimizeVerify)
+    (match (opt-verify-instr-uses
+      defs
+      doms
+      block-label
+      pos
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OkCompilerOptimizeVerify)
+        (opt-verify-instr-seq-uses-from
+          defs
+          doms
+          block-label
+          instrs
+          (+ index 1)
+          (+ pos 1))]
+      [(ErrCompilerOptimizeVerify message) (ErrCompilerOptimizeVerify message)])))
+
 (define (opt-phi-input-labels [inputs : CompilerIrPhiInputList]) : OptLabelSet
   (match inputs
     [(IrPhiInputNil) (OptLabelNil)]
@@ -4723,6 +4814,32 @@
         [_
           (opt-verify-phi-predecessors-instrs blocks block-label (box-get rest))])]))
 
+(define (opt-verify-phi-predecessors-instr-seq-from
+  [blocks : CompilerIrBlockList]
+  [block-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OkCompilerOptimizeVerify)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrPhi _ inputs _)
+        (if (opt-phi-input-labels-match?
+          inputs
+          (opt-cfg-predecessors blocks block-label))
+          (opt-verify-phi-predecessors-instr-seq-from
+            blocks
+            block-label
+            instrs
+            (+ index 1))
+          (ErrCompilerOptimizeVerify
+            "optimizer verify: phi predecessor mismatch"))]
+      [_
+        (opt-verify-phi-predecessors-instr-seq-from
+          blocks
+          block-label
+          instrs
+          (+ index 1))])))
+
 (define (opt-verify-phi-predecessors-blocks
   [blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
@@ -4731,10 +4848,11 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (match (opt-verify-phi-predecessors-instrs
+          (match (opt-verify-phi-predecessors-instr-seq-from
             blocks
             label
-            (compiler-ir-instr-seq-to-list instrs))
+            instrs
+            0)
             [(OkCompilerOptimizeVerify)
               (opt-verify-phi-predecessors-blocks blocks (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
@@ -4749,12 +4867,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (match (opt-verify-instr-list-uses
-            defs
-            doms
-            label
-            (compiler-ir-instr-seq-to-list instrs)
-            1)
+          (match (opt-verify-instr-seq-uses-from defs doms label instrs 0 1)
             [(OkCompilerOptimizeVerify)
               (opt-verify-block-uses defs doms (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
@@ -7391,12 +7504,34 @@
         (opt-sccp-rewrite-instr env instr)
         (opt-sccp-rewrite-instrs env (box-get rest)))]))
 
+(define (opt-sccp-rewrite-instr-seq-from
+  [env : OptSccpEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [out : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    out
+    (opt-sccp-rewrite-instr-seq-from
+      env
+      instrs
+      (- index 1)
+      (compiler-ir-instr-cons
+        (opt-sccp-rewrite-instr env (compiler-ir-instr-seq-ref instrs index))
+        out))))
+
+(define (opt-sccp-rewrite-instr-seq
+  [env : OptSccpEnv]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-sccp-rewrite-instr-seq-from
+    env
+    instrs
+    (- (compiler-ir-instr-seq-count instrs) 1)
+    IrInstrNil))
+
 (define (opt-sccp-rewrite-block [env : OptSccpEnv] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-sccp-rewrite-instrs env (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-sccp-rewrite-instr-seq env instrs))]))
 
 (define (opt-sccp-rewrite-blocks
   [env : OptSccpEnv]
@@ -7550,6 +7685,21 @@
             acc
             (opt-gvn-defs-add acc dst))))]))
 
+(define (opt-gvn-sources-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : I64I64Map]) : I64I64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (let
+      [dst : i64 (opt-gvn-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      (opt-gvn-sources-instr-seq-from
+        instrs
+        (+ index 1)
+        (if (= dst (- 0 1))
+          acc
+          (opt-gvn-defs-add acc dst))))))
+
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
   [acc : I64I64Map]) : I64I64Map
@@ -7560,7 +7710,7 @@
         [(IrBlock _ instrs)
           (opt-gvn-sources-blocks
             (box-get rest)
-            (opt-gvn-sources-instrs (compiler-ir-instr-seq-to-list instrs) acc))])]))
+            (opt-gvn-sources-instr-seq-from instrs 0 acc))])]))
 
 ;; Record a `BinOp`/`UnOp` whose result and operands are all single-source as an
 ;; available value keyed by its expression and tagged with its defining block.
@@ -7600,6 +7750,25 @@
         (box-get rest)
         (opt-gvn-record instr label sources acc))]))
 
+(define (opt-gvn-build-map-instr-seq-from
+  [sources : I64I64Map]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : OptGvnMap]) : OptGvnMap
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-gvn-build-map-instr-seq-from
+      sources
+      label
+      instrs
+      (+ index 1)
+      (opt-gvn-record
+        (compiler-ir-instr-seq-ref instrs index)
+        label
+        sources
+        acc))))
+
 (define (opt-gvn-build-map-blocks
   [sources : I64I64Map]
   [blocks : CompilerIrBlockList]
@@ -7612,11 +7781,7 @@
           (opt-gvn-build-map-blocks
             sources
             (box-get rest)
-            (opt-gvn-build-map-instrs
-              sources
-              label
-              (compiler-ir-instr-seq-to-list instrs)
-              acc))])]))
+            (opt-gvn-build-map-instr-seq-from sources label instrs 0 acc))])]))
 
 ;; Find the result var of an available expression matching `key` whose defining
 ;; block strictly dominates `use-label`, or -1 if none qualifies.
@@ -7677,6 +7842,47 @@
         (opt-gvn-rewrite-instr table doms sources use-label instr)
         (opt-gvn-rewrite-instrs table doms sources use-label (box-get rest)))]))
 
+(define (opt-gvn-rewrite-instr-seq-from
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [sources : I64I64Map]
+  [use-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [out : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    out
+    (opt-gvn-rewrite-instr-seq-from
+      table
+      doms
+      sources
+      use-label
+      instrs
+      (- index 1)
+      (compiler-ir-instr-cons
+        (opt-gvn-rewrite-instr
+          table
+          doms
+          sources
+          use-label
+          (compiler-ir-instr-seq-ref instrs index))
+        out))))
+
+(define (opt-gvn-rewrite-instr-seq
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [sources : I64I64Map]
+  [use-label : String]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-gvn-rewrite-instr-seq-from
+    table
+    doms
+    sources
+    use-label
+    instrs
+    (- (compiler-ir-instr-seq-count instrs) 1)
+    IrInstrNil))
+
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
   [doms : OptDomTable]
@@ -7686,12 +7892,7 @@
     [(IrBlock label instrs)
       (compiler-ir-block
         label
-        (opt-gvn-rewrite-instrs
-          table
-          doms
-          sources
-          label
-          (compiler-ir-instr-seq-to-list instrs)))]))
+        (opt-gvn-rewrite-instr-seq table doms sources label instrs))]))
 
 (define (opt-gvn-rewrite-blocks
   [table : OptGvnMap]
@@ -7737,14 +7938,12 @@
                 (OptConstNil)
                 (opt-fold-instrs
                   (OptConstNil)
-                  (compiler-ir-instr-seq-to-list instrs)))))))]))
+                  (opt-fold-instr-seq (OptConstNil) instrs)))))))]))
 
 (define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-copy-instrs (OptCopyNil) (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-copy-instr-seq (OptCopyNil) instrs))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks

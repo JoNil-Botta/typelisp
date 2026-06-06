@@ -5871,6 +5871,47 @@
   "(define (foreach-copyable [n : i64] [x : i64]) : i64
   (begin (foreach ([i : i64 0 n]) (let [y : i64 x] unit)) x))")
 
+(define (compiler-typecheck-move-with-cleanup-owner-read-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (cleanup-file-handle [h : FileHandle]) : unit unit)
+(define (with-cleanup-owner-read [fd : i64]) : i64
+  (with ([h (FileHandle fd) cleanup-file-handle])
+    (struct-get h fd)))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-whole-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (cleanup-file-handle [h : FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-with-cleanup-owner-whole [fd : i64]) : i64
+  (with ([h (FileHandle fd) cleanup-file-handle])
+    (begin
+      (take-handle h)
+      0)))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-field-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (cleanup-file-handle [h : FileHandle]) : unit unit)
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (cleanup-holder [h : Holder]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-with-cleanup-owner-field [fd : i64]) : i64
+  (with ([h (Holder (FileHandle fd) 7) cleanup-holder])
+    (begin
+      (take-handle (struct-get h handle))
+      0)))")
+
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
     [empty : TcMovedSet (tc-moved-empty)]
@@ -6126,6 +6167,20 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-foreach-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-with-cleanup-owner-read-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-whole-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-field-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
         unit
         (set! ok false))
       ok)))

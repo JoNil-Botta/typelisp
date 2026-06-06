@@ -12347,12 +12347,12 @@ _write:
     movq %rax, %rcx
     movq %r12, %rdx
     movl %r13d, %r8d
-    leaq -8(%rbp), %r9
+    leaq -24(%rbp), %r9
     movq $0, 32(%rsp)
     call WriteFile
     testl %eax, %eax
     je .L_tl_write_err
-    movl -8(%rbp), %eax
+    movl -24(%rbp), %eax
     movslq %eax, %rax
     jmp .L_tl_write_ret
 .L_tl_write_err:
@@ -12377,12 +12377,12 @@ _read:
     movq %rax, %rcx
     movq %r12, %rdx
     movl %r13d, %r8d
-    leaq -8(%rbp), %r9
+    leaq -24(%rbp), %r9
     movq $0, 32(%rsp)
     call ReadFile
     testl %eax, %eax
     je .L_tl_read_err
-    movl -8(%rbp), %eax
+    movl -24(%rbp), %eax
     movslq %eax, %rax
     jmp .L_tl_read_ret
 .L_tl_read_err:
@@ -12406,12 +12406,12 @@ _lseeki64:
     call .L_tl_win_fd_handle
     movq %rax, %rcx
     movq %r12, %rdx
-    leaq -8(%rbp), %r8
+    leaq -24(%rbp), %r8
     movl %r13d, %r9d
     call SetFilePointerEx
     testl %eax, %eax
     je .L_tl_seek_err
-    movq -8(%rbp), %rax
+    movq -24(%rbp), %rax
     jmp .L_tl_seek_ret
 .L_tl_seek_err:
     movq $-1, %rax

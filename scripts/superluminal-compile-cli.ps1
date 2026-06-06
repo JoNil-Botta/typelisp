@@ -491,6 +491,196 @@ function Write-HotFunctionReport {
     Write-Host "[superluminal] wrote hot function report: $ReportPath"
 }
 
+function Convert-StackHtmlCellText([string]$Html) {
+    $text = [regex]::Replace($Html, "<[^>]+>", "")
+    $text = [System.Net.WebUtility]::HtmlDecode($text)
+    $text = [regex]::Replace($text, "\s+", " ")
+    return $text.Trim()
+}
+
+function Convert-SymbolToSafeFileName([string]$Symbol) {
+    $safe = [regex]::Replace($Symbol, "[^A-Za-z0-9_.-]", "_")
+    if ($safe.Length -gt 140) {
+        return $safe.Substring(0, 140)
+    }
+    return $safe
+}
+
+function Get-StackRelatedSymbol([string]$Text) {
+    $name = $Text
+    $name = [regex]::Replace($name, "^(-->|<--)\s*", "")
+    $bang = $name.LastIndexOf("!")
+    if ($bang -ge 0) {
+        return $name.Substring($bang + 1)
+    }
+    return $name
+}
+
+function Read-XperfStackRows {
+    param(
+        [string]$HtmlPath,
+        [string]$ProfileSymbol,
+        [string]$FunctionName,
+        [string]$StackHtmlName,
+        [hashtable]$SymbolMap
+    )
+
+    $rows = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $HtmlPath -PathType Leaf)) {
+        return $rows
+    }
+
+    $html = [System.IO.File]::ReadAllText($HtmlPath)
+    $targetPattern = "<tr><td><a id='#[^']+' href='#[^']+'>stage2-profile\.exe</a>!" +
+        [regex]::Escape($ProfileSymbol) + "</td>"
+    $targetBlock = ""
+    foreach ($match in [regex]::Matches($html, "<tbody>.*?</tbody>", "Singleline")) {
+        $block = $match.Value
+        if ([regex]::IsMatch($block, $targetPattern)) {
+            $targetBlock = $block
+            break
+        }
+    }
+
+    if ($targetBlock.Length -eq 0) {
+        return $rows
+    }
+
+    foreach ($row in [regex]::Matches(
+        $targetBlock,
+        "<tr class='(fu|fd|fi)'><td>(.*?)</td><td>([0-9]+)</td><td>(.*?)</td><td>(.*?)</td>",
+        "Singleline")) {
+        $kind = $row.Groups[1].Value
+        $relation = if ($kind -eq "fu") {
+            "caller"
+        } elseif ($kind -eq "fd") {
+            "callee"
+        } else {
+            "self"
+        }
+        $text = Convert-StackHtmlCellText $row.Groups[2].Value
+        $hits = $row.Groups[3].Value
+        $totalPercent = Convert-StackHtmlCellText $row.Groups[4].Value
+        $edgePercent = Convert-StackHtmlCellText $row.Groups[5].Value
+        $relatedSymbol = Get-StackRelatedSymbol $text
+        $relatedFunction = if ($relatedSymbol -eq "***itself***") {
+            $FunctionName
+        } else {
+            Resolve-ProfileFunctionName $relatedSymbol $SymbolMap
+        }
+        $rows.Add(
+            "$ProfileSymbol`t$FunctionName`t$relation`t$hits`t$totalPercent`t$edgePercent`t$relatedSymbol`t$relatedFunction`t$StackHtmlName")
+    }
+
+    return $rows
+}
+
+function Invoke-XperfHotStackExport {
+    param(
+        [string]$Xperf,
+        [string]$EtlPath,
+        [string]$OutDir,
+        [string]$HotPath,
+        [string]$MapPath,
+        [int]$TopCount
+    )
+
+    if (-not (Test-Path -LiteralPath $HotPath -PathType Leaf)) {
+        return
+    }
+
+    $symbolMap = Read-ProfileSymbolMap $MapPath
+    $rows = New-Object System.Collections.Generic.List[string]
+    $rows.Add("profile_symbol`tfunction`trelation`thits`ttotal_percent`tedge_percent`trelated_symbol`trelated_function`tstack_html")
+
+    $hotRows = New-Object System.Collections.Generic.List[object]
+    foreach ($line in [System.IO.File]::ReadLines($HotPath)) {
+        if (($line.Length -eq 0) -or ($line.StartsWith("weight`t"))) {
+            continue
+        }
+        if ($line.StartsWith("stage2_")) {
+            break
+        }
+        $parts = $line -split "`t", 4
+        if ($parts.Count -eq 4) {
+            $hotRows.Add([pscustomobject]@{
+                Symbol = $parts[2]
+                Function = $parts[3]
+            })
+        }
+        if ($hotRows.Count -ge $TopCount) {
+            break
+        }
+    }
+
+    $oldSymbolPath = ${env:_NT_SYMBOL_PATH}
+    $oldSymcachePath = ${env:_NT_SYMCACHE_PATH}
+    try {
+        $env:_NT_SYMBOL_PATH = $OutDir
+        $env:_NT_SYMCACHE_PATH = Join-Path $OutDir "xperf-symcache"
+        foreach ($hotRow in $hotRows) {
+            $safe = Convert-SymbolToSafeFileName $hotRow.Symbol
+            $htmlName = "stage2-profile.stack-$safe.html"
+            $htmlPath = Join-Path $OutDir $htmlName
+            $logPath = Join-Path $OutDir "stage2-profile.stack-$safe.log"
+            $symbolRegex = [regex]::Escape($hotRow.Symbol)
+
+            $oldErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                $output = & $Xperf `
+                    -i $EtlPath `
+                    -symbols verbose `
+                    -o $htmlPath `
+                    -a stack `
+                    -butterfly 1 `
+                    -process stage2-profile.exe `
+                    -symbol $symbolRegex 2>&1
+                $exitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $oldErrorActionPreference
+            }
+
+            $outputLines = foreach ($item in $output) {
+                if ($item -is [System.Management.Automation.ErrorRecord]) {
+                    $item.Exception.Message
+                } else {
+                    [string]$item
+                }
+            }
+            [System.IO.File]::WriteAllLines($logPath, [string[]]$outputLines, [System.Text.Encoding]::ASCII)
+            if (($exitCode -ne 0) -and (-not (Test-Path -LiteralPath $htmlPath -PathType Leaf))) {
+                continue
+            }
+
+            $stackRows = Read-XperfStackRows `
+                $htmlPath `
+                $hotRow.Symbol `
+                $hotRow.Function `
+                $htmlName `
+                $symbolMap
+            foreach ($stackRow in $stackRows) {
+                $rows.Add($stackRow)
+            }
+        }
+    } finally {
+        if ($null -eq $oldSymbolPath) {
+            Remove-Item Env:_NT_SYMBOL_PATH -ErrorAction SilentlyContinue
+        } else {
+            $env:_NT_SYMBOL_PATH = $oldSymbolPath
+        }
+        if ($null -eq $oldSymcachePath) {
+            Remove-Item Env:_NT_SYMCACHE_PATH -ErrorAction SilentlyContinue
+        } else {
+            $env:_NT_SYMCACHE_PATH = $oldSymcachePath
+        }
+    }
+
+    $report = Join-Path $OutDir "stage2-profile.hot-callers.tsv"
+    [System.IO.File]::WriteAllLines($report, $rows, [System.Text.Encoding]::ASCII)
+    Write-Host "[superluminal] wrote hot caller report: $report"
+}
+
 function Invoke-XperfProfileExport {
     param(
         [string]$OutDir,
@@ -551,6 +741,7 @@ function Invoke-XperfProfileExport {
     }
 
     Write-HotFunctionReport $detail $MapPath $hot
+    Invoke-XperfHotStackExport $xperf $etl $OutDir $hot $MapPath 8
 }
 
 function Assert-ProfileOutputMatchesBenchmark {
@@ -611,3 +802,4 @@ Write-Host "  etl:        $(Join-Path $OutDir "stage2-profile.etl")"
 Write-Host "  pdb:        $stage2Pdb"
 Write-Host "  symbol map: $symbolMap"
 Write-Host "  hot funcs:  $(Join-Path $OutDir "stage2-profile.hot-functions.tsv")"
+Write-Host "  hot callers: $(Join-Path $OutDir "stage2-profile.hot-callers.tsv")"

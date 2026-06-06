@@ -1576,6 +1576,66 @@
       [(BackendTargetLinux)
         (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" "")])))
 
+(define (compiler-backend-emit-windows-seh-proc
+  [target : CompilerBackendTarget]
+  [symbol : String]) : String
+  (if (compiler-backend-target-windows? target)
+    (backend-cat4 ".seh_proc " symbol "\n" "")
+    ""))
+
+(define (compiler-backend-emit-windows-seh-push-rbp
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_pushreg %rbp\n"
+    ""))
+
+(define (compiler-backend-emit-windows-seh-set-rbp
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_setframe %rbp, 0\n"
+    ""))
+
+(define (compiler-backend-emit-windows-seh-stackalloc
+  [target : CompilerBackendTarget]
+  [frame : i64]) : String
+  (if (and (compiler-backend-target-windows? target) (> frame 0))
+    (backend-cat4 "    .seh_stackalloc " (int->string frame) "\n" "")
+    ""))
+
+(define (compiler-backend-emit-windows-seh-endprologue
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_endprologue\n"
+    ""))
+
+(define (compiler-backend-emit-windows-seh-endproc
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_endproc\n"
+    ""))
+
+(define (compiler-backend-emit-function-entry
+  [target : CompilerBackendTarget]
+  [symbol : String]
+  [frame : i64]) : String
+  (string-append
+    (compiler-backend-emit-windows-seh-proc target symbol)
+    (string-append
+      symbol
+      (string-append
+        ":\n    pushq %rbp\n"
+        (string-append
+          (compiler-backend-emit-windows-seh-push-rbp target)
+          (string-append
+            "    movq %rsp, %rbp\n"
+            (string-append
+              (compiler-backend-emit-windows-seh-set-rbp target)
+              (string-append
+                (compiler-backend-emit-stack-sub target frame)
+                (string-append
+                  (compiler-backend-emit-windows-seh-stackalloc target frame)
+                  (compiler-backend-emit-windows-seh-endprologue target))))))))))
+
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (backend-cat5 "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
 
@@ -9109,9 +9169,12 @@
                         symbol
                         "\n"
                         (backend-cat5
-                          symbol
-                          ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                          (compiler-backend-emit-stack-sub target frame)
+                          (compiler-backend-emit-function-entry
+                            target
+                            symbol
+                            frame)
+                          ""
+                          ""
                           (string-append
                             (compiler-backend-mode-prologue mode)
                             (string-append
@@ -9146,11 +9209,14 @@
                                       spills
                                       (string-append
                                         body
-                                        (compiler-backend-return-epilogue
-                                          name
-                                          assignments
-                                          vars
-                                          blocks))))))))
+                                        (string-append
+                                          (compiler-backend-return-epilogue
+                                            name
+                                            assignments
+                                            vars
+                                            blocks)
+                                          (compiler-backend-emit-windows-seh-endproc
+                                            target)))))))))
                           "\n"))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
@@ -9592,9 +9658,12 @@
           [(OkCompilerBackend args-asm)
             (OkCompilerBackend
               (backend-cat5
-                (compiler-backend-closure-entry-label name)
-                ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                (compiler-backend-emit-stack-sub target frame)
+                (compiler-backend-emit-function-entry
+                  target
+                  (compiler-backend-closure-entry-label name)
+                  frame)
+                ""
+                ""
                 (string-append
                   spills
                   (string-append
@@ -9616,7 +9685,12 @@
                           "\n"
                           (string-append
                             (compiler-backend-emit-call-space-add call-space)
-                            "    movq %rbp, %rsp\n    popq %rbp\n    ret\n\n")
+                            (string-append
+                              "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                              (string-append
+                                (compiler-backend-emit-windows-seh-endproc
+                                  target)
+                                "\n")))
                           "")))))
                 ""))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]

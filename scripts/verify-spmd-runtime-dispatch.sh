@@ -112,7 +112,7 @@ if [ "$HOST_OS" = linux ]; then
         sed 's/^/  /' "$RUN_ERR" >&2
         exit 1
     fi
-    if ! ld "$OBJ" -o "$BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+    if ! ld "$OBJ" -o "$BIN" -static \
         >> "$RUN_OUT" 2>> "$RUN_ERR"; then
         echo "spmd-runtime-dispatch: link failed" >&2
         sed 's/^/  /' "$RUN_ERR" >&2

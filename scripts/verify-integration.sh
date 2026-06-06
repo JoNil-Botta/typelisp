@@ -623,7 +623,7 @@ build_linux_fixture_driver() {
         show_build_streams "$_build_stdout" "$_build_stderr"
         exit 1
     fi
-    if ! ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+    if ! ld -static "$_obj" -o "$_bin" \
         >> "$_build_stdout" 2>> "$_build_stderr"; then
         echo "FAIL: $_label link failed" >&2
         show_build_streams "$_build_stdout" "$_build_stderr"
@@ -800,7 +800,7 @@ assemble_link_windows() {
         exit 1
     }
     lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib || {
+        -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib || {
         echo "FAIL: $_label link failed" >&2
         exit 1
     }
@@ -1128,7 +1128,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         # shellcheck disable=SC2086
         if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" $native_objs "-OUT:$(cygpath -aw "$bin.exe")" \
-            -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+            -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
@@ -1181,8 +1181,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ran=$((ran + 1))
             continue
         fi
+        # Programs with no native FFI objects link freestanding (no libc, no
+        # loader) like every other typelisp binary. Tests that pull in native
+        # objects opt into the C toolchain and still link against libc.
+        if [ -n "$native_objs" ]; then
+            link_extra="-dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc"
+        else
+            link_extra="-static"
+        fi
         # shellcheck disable=SC2086
-        if ! ld "$obj" $native_objs -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        if ! ld "$obj" $native_objs -o "$bin" $link_extra \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"

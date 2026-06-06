@@ -637,7 +637,7 @@ build_selfhost_binary() {
             sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
             return 1
         fi
-        if ! ld "$obj" -o "$bin_path" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        if ! ld "$obj" -o "$bin_path" -static \
             >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
             printf '  FAIL selfhost %s: link failed\n' "$name" >&2
             sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true

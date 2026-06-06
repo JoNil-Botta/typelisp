@@ -12256,7 +12256,8 @@ tl_region_mark:
 
 ;; Freestanding Linux libc-ABI shims (#no-libc). The stdlib binds file/dir/env
 ;; helpers through FFI `extern`s to libc symbols (open/read/write/close/lseek/
-;; access/mkdir/rmdir/unlink/getpid/exit/__errno_location/getenv/strlen). Rather
+;; access/mkdir/rmdir/unlink/rename/getcwd/getrandom/getpid/exit/
+;; __errno_location/getenv/strlen). Rather
 ;; than link glibc, the entry object DEFINES those symbols itself as raw-syscall
 ;; thunks that mimic the glibc ABI (return -1 and set a private errno on a
 ;; syscall error result in [-4095,-1]). `getenv` walks the stack-captured
@@ -12317,6 +12318,26 @@ unlink:
     .globl rename
 rename:
     movq $82, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl getcwd
+getcwd:
+    pushq %rdi
+    movq $79, %rax
+    syscall
+    cmpq $-4095, %rax
+    jae .L_tl_shim_getcwd_err
+    popq %rax
+    ret
+.L_tl_shim_getcwd_err:
+    addq $8, %rsp
+    negq %rax
+    movl %eax, tl_errno(%rip)
+    xorq %rax, %rax
+    ret
+    .globl getrandom
+getrandom:
+    movq $318, %rax
     syscall
     jmp .L_tl_shim_ret
 .L_tl_shim_ret:
@@ -21407,7 +21428,9 @@ tl_process_output:
               (compiler-backend-string-contains?
                 asm
                 "    call tl_string_concat5\n")
-              true)
+              (and
+                (compiler-backend-string-contains? asm "getrandom:\n")
+                (compiler-backend-string-contains? asm "getcwd:\n")))
             (backend-and8
               (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
               (compiler-backend-string-contains? asm "tl_string_eq:\n")

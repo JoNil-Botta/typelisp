@@ -182,7 +182,7 @@ mutable `stage0-latest` tag cannot be stale or clobber a local tag.
 The complete local verification gate is:
 
 ```sh
-scripts/verify-no-rust-stage0.sh
+scripts/ci-verify.sh
 ```
 
 That script fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
@@ -365,7 +365,7 @@ canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate does not
 use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage. In no-Rust command-tier lanes it runs
-through the compiler selected by `scripts/verify-no-rust-stage0.sh`; runnable
+through the compiler selected by `scripts/ci-verify.sh`; runnable
 doctest files are required and executed on both Linux and Windows.
 
 ### Repository inline-test gate
@@ -418,7 +418,7 @@ the artifact.
 ### CI expectations
 
 Pull requests get Linux and Windows coverage from the single self-hosted
-verification gate `scripts/verify-no-rust-stage0.sh` (wired in
+verification gate `scripts/ci-verify.sh` (wired in
 [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
 build a fresh `selfhost/cli.tl` binary from the published stage0 compiler and
 smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
@@ -448,7 +448,7 @@ TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
-scripts/verify-no-rust-stage0.sh
+scripts/ci-verify.sh
 ```
 
 `scripts/check-tl-lint.sh` runs `typelisp lint <file.tl> --check` over tracked

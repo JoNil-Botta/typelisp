@@ -787,19 +787,19 @@
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ProcessCommand
   (if (source-tool-link-inputs-empty? link-inputs)
+    ;; No native link inputs: the runtime is pure syscalls and the backend
+    ;; emits its own libc-ABI shims, so link a freestanding static binary with
+    ;; no `-lc` and no dynamic loader. Programs that opt into native libraries
+    ;; (the non-empty branch below) still go through `cc`.
     (process-command
       (source-tool-resolve-command "ld")
       (process-args-cons
-        obj-path
+        "-static"
         (process-args-cons
-          "-o"
+          obj-path
           (process-args-cons
-            bin-path
-            (process-args-cons
-              "-dynamic-linker"
-              (process-args-cons
-                "/lib64/ld-linux-x86-64.so.2"
-                (process-args-cons "-lc" (process-args-empty))))))))
+            "-o"
+            (process-args-cons bin-path (process-args-empty))))))
     (process-command
       (source-tool-env-command-or-default
         "TYPELISP_LINUX_CC"
@@ -816,18 +816,12 @@
               bin-path
               (source-tool-link-inputs-linux-args link-inputs))))))))
 
+;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt) and only kernel32.
+;; The backend emits its own entry (_tl_start) plus kernel32-backed shims for the
+;; CRT-ABI symbols the runtime/stdlib reference. Stdlib random seeding uses
+;; kernel32 FFI only, so no advapi32; no COM (ole32/oleaut32) is needed either.
 (define (source-tool-windows-link-libs) : ProcessStringList
-  (process-args-cons
-    "msvcrt.lib"
-    (process-args-cons
-      "legacy_stdio_definitions.lib"
-      (process-args-cons
-        "kernel32.lib"
-        (process-args-cons
-          "advapi32.lib"
-          (process-args-cons
-            "ole32.lib"
-            (process-args-cons "oleaut32.lib" (process-args-empty))))))))
+  (process-args-cons "kernel32.lib" (process-args-empty)))
 
 (define (source-tool-windows-link-search-args [dirs : ProcessStringList]) : ProcessStringList
   (match dirs
@@ -866,12 +860,16 @@
         (process-args-cons
           "/SUBSYSTEM:CONSOLE"
           (process-args-cons
-            "/DYNAMICBASE:NO"
+            "/ENTRY:_tl_start"
             (process-args-cons
-              "/STACK:16777216"
-              (process-args-append
-                (source-tool-link-inputs-windows-args link-inputs)
-                (source-tool-windows-link-libs)))))))))
+              "/NODEFAULTLIB"
+              (process-args-cons
+                "/DYNAMICBASE:NO"
+                (process-args-cons
+                  "/STACK:16777216"
+                  (process-args-append
+                    (source-tool-link-inputs-windows-args link-inputs)
+                    (source-tool-windows-link-libs)))))))))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

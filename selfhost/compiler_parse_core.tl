@@ -90,6 +90,10 @@
   (OkAstExternSymbol String)
   (ErrAstExternSymbol String))
 
+(defenum ResultAstFnExport
+  (OkAstFnExport AstFnExport)
+  (ErrAstFnExport String))
+
 (defenum ResultAstExternParts
   (OkAstExternParts AstExternMetadata AstType)
   (ErrAstExternParts String))
@@ -3790,53 +3794,123 @@
         [_ (ErrAstDecl "parse: malformed value definition")])]
     [_ (ErrAstDecl "parse: malformed value definition")]))
 
+(define (parse-ast-define-fn-export-tail [tail : Sexpr]) : ResultAstFnExport
+  (match tail
+    [(SCons value-node end)
+      (match (box-get end)
+        [(SNil)
+          (match (box-get value-node)
+            [(SStr value)
+              (if (> (string-length value) 0)
+                (OkAstFnExport (AstFnExport value))
+                (ErrAstFnExport
+                  "parse: define :export-symbol must not be empty"))]
+            [_
+              (ErrAstFnExport "parse: malformed define :export-symbol metadata")])]
+        [_ (ErrAstFnExport "parse: malformed define :export-symbol metadata")])]
+    [_ (ErrAstFnExport "parse: malformed define :export-symbol metadata")]))
+
+(define (parse-ast-define-fn-metadata? [item : SpannedSexpr]) : bool
+  (match (spanned-sexpr-form item)
+    [(SCons key-node _)
+      (match (box-get key-node)
+        [(SSym key) (compiler-parse-metadata-key? key)]
+        [_ false])]
+    [_ false]))
+
+(define (parse-ast-define-fn-rest
+  [dispatch : SymI64Env]
+  [name : String]
+  [params : AstParamList]
+  [export : AstFnExport]
+  [seen-export : bool]
+  [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons first tail _)
+      (if (sexpr-colon? (spanned-sexpr-form (box-get first)))
+        (match (box-get tail)
+          [(SpSCons ret body-tail _)
+            (match (box-get body-tail)
+              [(SpSCons body end _)
+                (match (box-get end)
+                  [(SpSNil _)
+                    (match (parse-ast-type
+                      dispatch
+                      (spanned-sexpr-form (box-get ret)))
+                      [(OkAstType parsed-ret)
+                        (match (parse-ast-expr dispatch (box-get body))
+                          [(OkAstExpr parsed-body)
+                            (OkAstDecl
+                              (ast-decl-def-fn-export
+                                name
+                                params
+                                parsed-ret
+                                parsed-body
+                                export))]
+                          [(ErrAstExpr message) (ErrAstDecl message)])]
+                      [(ErrAstType message) (ErrAstDecl message)])]
+                  [_ (ErrAstDecl "parse: malformed function definition")])]
+              [_ (ErrAstDecl "parse: malformed function definition")])]
+          [_ (ErrAstDecl "parse: malformed function definition")])
+        (if (parse-ast-define-fn-metadata? (box-get first))
+          (match (spanned-sexpr-form (box-get first))
+            [(SCons key-node after-key)
+              (match (box-get key-node)
+                [(SSym key)
+                  (cond
+                    [(string-eq key ":export-symbol")
+                      (if seen-export
+                        (ErrAstDecl
+                          "parse: duplicate define :export-symbol metadata")
+                        (match (parse-ast-define-fn-export-tail
+                          (box-get after-key))
+                          [(OkAstFnExport parsed-export)
+                            (parse-ast-define-fn-rest
+                              dispatch
+                              name
+                              params
+                              parsed-export
+                              true
+                              (box-get tail))]
+                          [(ErrAstFnExport message) (ErrAstDecl message)]))]
+                    [(compiler-parse-metadata-key? key)
+                      (ErrAstDecl
+                        (string-append "parse: unknown define metadata " key))]
+                    [else
+                      (ErrAstDecl
+                        "parse: malformed define :export-symbol metadata")])]
+                [_ (ErrAstDecl "parse: malformed function definition")])]
+            [_ (ErrAstDecl "parse: malformed function definition")])
+          (match (box-get tail)
+            [(SpSNil _)
+              (match (parse-ast-expr dispatch (box-get first))
+                [(OkAstExpr parsed-body)
+                  (OkAstDecl
+                    (ast-decl-def-fn-export
+                      name
+                      params
+                      (AstTyUnit)
+                      parsed-body
+                      export))]
+                [(ErrAstExpr message) (ErrAstDecl message)])]
+            [_ (ErrAstDecl "parse: expected ':' in function definition")])))]
+    [_ (ErrAstDecl "parse: malformed function definition")]))
+
 (define (parse-ast-define-fn
   [dispatch : SymI64Env]
   [name : String]
   [params : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstDecl
-  (match rest
-    [(SpSCons first tail _)
-      (match (box-get tail)
-        [(SpSNil _)
-          (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
-            [(OkAstParamList parsed-params)
-              (match (parse-ast-expr dispatch (box-get first))
-                [(OkAstExpr parsed-body)
-                  (OkAstDecl
-                    (ast-decl-def-fn name parsed-params (AstTyUnit) parsed-body))]
-                [(ErrAstExpr message) (ErrAstDecl message)])]
-            [(ErrAstParamList message) (ErrAstDecl message)])]
-        [(SpSCons ret body-tail _)
-          (match (box-get body-tail)
-            [(SpSCons body end _)
-              (match (box-get end)
-                [(SpSNil _)
-                  (if (sexpr-colon? (spanned-sexpr-form (box-get first)))
-                    (match (parse-ast-param-list
-                      dispatch
-                      (spanned-sexpr-form params))
-                      [(OkAstParamList parsed-params)
-                        (match (parse-ast-type
-                          dispatch
-                          (spanned-sexpr-form (box-get ret)))
-                          [(OkAstType parsed-ret)
-                            (match (parse-ast-expr dispatch (box-get body))
-                              [(OkAstExpr parsed-body)
-                                (OkAstDecl
-                                  (ast-decl-def-fn
-                                    name
-                                    parsed-params
-                                    parsed-ret
-                                    parsed-body))]
-                              [(ErrAstExpr message) (ErrAstDecl message)])]
-                          [(ErrAstType message) (ErrAstDecl message)])]
-                      [(ErrAstParamList message) (ErrAstDecl message)])
-                    (ErrAstDecl "parse: expected ':' in function definition"))]
-                [_ (ErrAstDecl "parse: malformed function definition")])]
-            [_ (ErrAstDecl "parse: malformed function definition")])]
-        [_ (ErrAstDecl "parse: malformed function definition")])]
-    [_ (ErrAstDecl "parse: malformed function definition")]))
+  (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
+    [(OkAstParamList parsed-params)
+      (parse-ast-define-fn-rest
+        dispatch
+        name
+        parsed-params
+        AstFnNoExport
+        false
+        rest)]
+    [(ErrAstParamList message) (ErrAstDecl message)]))
 
 (define (parse-ast-define [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -4578,7 +4652,7 @@
 (define (parse-ast-generated-payload-name [decl : AstDecl]) : ResultAstDeclName
   (match decl
     [(AstDeclDef name _ _) (OkAstDeclName name)]
-    [(AstDeclDefFn name _ _ _) (OkAstDeclName name)]
+    [(AstDeclDefFn name _ _ _ _) (OkAstDeclName name)]
     [(AstDeclDefEnum name _) (OkAstDeclName name)]
     [(AstDeclDefEnumLifetimes name _ _) (OkAstDeclName name)]
     [(AstDeclDefStruct name _ _ _) (OkAstDeclName name)]
@@ -4653,7 +4727,7 @@
           (match (parse-ast-decl dispatch (box-get inner))
             [(OkAstDecl decl)
               (match decl
-                [(AstDeclDefFn _ _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
+                [(AstDeclDefFn _ _ _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
                 [(AstDeclExtern _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
                 [_
                   (ErrAstDecl
@@ -5206,7 +5280,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefFn name _ _ body-box)
+          [(AstDeclDefFn name _ _ body-box _)
             (let
               [body : AstExpr (box-get body-box)]
               (if (string-eq name "main")
@@ -5220,7 +5294,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box) _)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) _)
             (let
               [body : AstExpr (box-get body-box)]
               (match body
@@ -5286,7 +5360,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn name _ (AstTyF64) body-box) _)
+          [(AstDeclCons (AstDeclDefFn name _ (AstTyF64) body-box _) _)
             (let
               [body : AstExpr (box-get body-box)]
               (and
@@ -5381,7 +5455,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn name _ (AstTyI64) body-box) _)
+          [(AstDeclCons (AstDeclDefFn name _ (AstTyI64) body-box _) _)
             (let
               [body : AstExpr (box-get body-box)]
               (and
@@ -5464,6 +5538,16 @@
 
 (define (compiler-parse-extern-varargs-metadata-source) : String
   "(extern snprintf (:abi c-varargs 3) (:symbol \"snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))")
+
+(define (compiler-parse-define-export-symbol-source) : String
+  "(define (_write [fd : i32] [buf : (Ptr u8)] [n : i32]) (:export-symbol \"_write\") : i32
+  0)")
+
+(define (compiler-parse-param-list-count [params : AstParamList]) : i64
+  (match params
+    [(AstParamNil) 0]
+    [(AstParamCons _ rest)
+      (+ 1 (compiler-parse-param-list-count (box-get rest)))]))
 
 (define (compiler-parse-raw-pointer-ops-source) : String
   "(define (main [p : (MutPtr i64)] [n : u64]) : u64
@@ -5654,6 +5738,32 @@
           [_ false]))]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-define-export-symbol-ok?) : bool
+  (match (parse-ast-source (compiler-parse-define-export-symbol-source))
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons (AstDeclDefFn name params ret _ export) rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq name "_write")
+                    (and
+                      (= (compiler-parse-param-list-count params) 3)
+                      (and
+                        (match ret
+                          [(AstTyI32) true]
+                          [_ false])
+                        (match export
+                          [(AstFnExport symbol) (string-eq symbol "_write")]
+                          [_ false]))))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
   (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
@@ -5674,7 +5784,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ params _ _) rest)
+          [(AstDeclCons (AstDeclDefFn _ params _ _ _) rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match rest
@@ -5723,7 +5833,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box) rest)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (box-get body-box)]
               [rest : AstDeclList (box-get rest)]
@@ -5799,7 +5909,7 @@
                   (let
                     [rest1 : AstDeclList (box-get rest1)]
                     (match rest1
-                      [(AstDeclCons (AstDeclDefFn _ _ _ body-box) rest2)
+                      [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest2)
                         (let
                           [body : AstExpr (box-get body-box)]
                           [rest2 : AstDeclList (box-get rest2)]
@@ -5835,7 +5945,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box) rest)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (box-get body-box)]
               [rest : AstDeclList (box-get rest)]
@@ -5932,7 +6042,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box) rest)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (box-get body-box)]
               [rest : AstDeclList (box-get rest)]
@@ -6084,7 +6194,8 @@
             "make-option-string"
             1)
           (match template
-            [(AstDeclDefFn name _ (AstTyI64) _) (string-eq name "make-option")]
+            [(AstDeclDefFn name _ (AstTyI64) _ _)
+              (string-eq name "make-option")]
             [_ false])))]
     [_ false]))
 
@@ -6176,7 +6287,7 @@
           "bundle-score"
           2)
         (match (box-get template-box)
-          [(AstDeclDefFn name _ (AstTyI64) _) (string-eq name "bundle-score")]
+          [(AstDeclDefFn name _ (AstTyI64) _ _) (string-eq name "bundle-score")]
           [_ false]))]
     [_ false]))
 
@@ -6232,7 +6343,7 @@
                   (let
                     [first-inner : AstDecl (box-get first-inner-box)]
                     (match first-inner
-                      [(AstDeclDefFn name _ (AstTyI64) _)
+                      [(AstDeclDefFn name _ (AstTyI64) _ _)
                         (match tail
                           [(AstDeclCons second AstDeclNil)
                             (match second
@@ -6669,6 +6780,23 @@
       (compiler-parse-error-ok?
         (compiler-parse-unknown-export-kind-source)
         "parse: unknown export item kind"))))
+
+(define (compiler-parse-define-export-metadata-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(define (f) (:export-symbol \"\") : i64 0)"
+      "parse: define :export-symbol must not be empty")
+    (and
+      (compiler-parse-error-ok?
+        "(define (f) (:export-symbol bad) : i64 0)"
+        "parse: malformed define :export-symbol metadata")
+      (and
+        (compiler-parse-error-ok?
+          "(define (f) (:export-symbol \"a\") (:export-symbol \"b\") : i64 0)"
+          "parse: duplicate define :export-symbol metadata")
+        (compiler-parse-error-ok?
+          "(define (f) (:link-lib \"m\") : i64 0)"
+          "parse: unknown define metadata :link-lib")))))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
@@ -7235,7 +7363,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box) rest)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (box-get body-box)]
               [rest : AstDeclList (box-get rest)]
@@ -7296,7 +7424,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ _ body-box) rest)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (box-get body-box)]
               [rest : AstDeclList (box-get rest)]
@@ -7390,7 +7518,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ _ ret-ty body-box) rest)
+          [(AstDeclCons (AstDeclDefFn _ _ ret-ty body-box _) rest)
             (let
               [body : AstExpr (box-get body-box)]
               [rest : AstDeclList (box-get rest)]
@@ -7491,7 +7619,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclDefFn _ params _ _) _)
+          [(AstDeclCons (AstDeclDefFn _ params _ _ _) _)
             (ast-param-list-has-comptime? params)]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7617,7 +7745,9 @@
         (compiler-parse-with-escape-tests-ok?)
         (and
           (compiler-parse-quote-syntax-tests-ok?)
-          (compiler-parse-export-error-tests-ok?))))))
+          (and
+            (compiler-parse-export-error-tests-ok?)
+            (compiler-parse-define-export-metadata-error-tests-ok?)))))))
 
 (define (compiler-parse-smoke-shapes [program : AstProgram]) : unit
   (begin
@@ -7642,6 +7772,9 @@
     (if (compiler-parse-extern-varargs-metadata-ok?)
       unit
       (panic "parse: extern c-varargs metadata shape test failed"))
+    (if (compiler-parse-define-export-symbol-ok?)
+      unit
+      (panic "parse: define export-symbol shape test failed"))
     (if (compiler-parse-raw-pointer-ops-ok?)
       unit
       (panic "parse: raw pointer ops shape test failed"))

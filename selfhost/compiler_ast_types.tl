@@ -152,6 +152,10 @@
   (AstExternLinkInputNil)
   (AstExternLinkInputCons AstExternLinkInput (Box AstExternLinkInputList)))
 
+(defenum AstFnExport
+  (AstFnNoExport)
+  (AstFnExport String))
+
 (defenum AstExternMetadata
   (AstExternMetadata AstExternAbi String AstExternLinkInputList))
 
@@ -344,7 +348,7 @@
 (defenum AstDecl
   (AstDeclModule String)
   (AstDeclDef String AstMaybeType (Box AstExpr))
-  (AstDeclDefFn String AstParamList AstType (Box AstExpr))
+  (AstDeclDefFn String AstParamList AstType (Box AstExpr) AstFnExport)
   (AstDeclDefMacro String AstMacroParamList AstType (Box AstExpr))
   (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
@@ -661,7 +665,15 @@
   [params : AstParamList]
   [ret : AstType]
   [body : AstExpr]) : AstDecl
-  (AstDeclDefFn name params ret (box body)))
+  (AstDeclDefFn name params ret (box body) AstFnNoExport))
+
+(define (ast-decl-def-fn-export
+  [name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [export : AstFnExport]) : AstDecl
+  (AstDeclDefFn name params ret (box body) export))
 
 (define (ast-decl-def-macro
   [name : String]
@@ -805,7 +817,7 @@
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
     [(AstDeclDef _ _ _) 1]
-    [(AstDeclDefFn _ _ _ _) 2]
+    [(AstDeclDefFn _ _ _ _ _) 2]
     [(AstDeclDefMacro _ _ _ _) 10]
     [(AstDeclExtern _ _ _) 3]
     [(AstDeclDefEnum _ _) 4]

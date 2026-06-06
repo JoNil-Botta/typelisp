@@ -4733,6 +4733,60 @@
         (compiler-backend-stack-mixed-args-ok?)
         (compiler-backend-stack-windows-args-ok?)))))
 
+(define (compiler-backend-export-symbol-source) : String
+  "(define (exported [x : i64]) (:export-symbol \"tl_exported_value\") : i64
+  (+ x 1))
+(define (main) : i64
+  (exported 41))")
+
+(define (compiler-backend-export-symbol-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-export-symbol-source))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".globl tl_exported_value\n")
+        (compiler-backend-string-contains? asm "tl_exported_value:\n")
+        (compiler-backend-string-contains? asm "    call tl_exported_value\n")
+        (not
+          (compiler-backend-string-contains? asm ".extern tl_exported_value\n"))
+        (not (compiler-backend-string-contains? asm ".globl _tl_exported\n"))
+        (not (compiler-backend-string-contains? asm "_tl_exported:\n"))
+        (compiler-backend-string-contains? asm "main:\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-duplicate-export-symbol-source) : String
+  "(define (a) (:export-symbol \"dup_export\") : i64 1)
+(define (b) (:export-symbol \"dup_export\") : i64 2)
+(define (main) : i64 (+ (a) (b)))")
+
+(define (compiler-backend-export-symbol-function-collision-source) : String
+  "(define (normal) : i64 1)
+(define (other) (:export-symbol \"_tl_normal\") : i64 2)
+(define (main) : i64 (+ (normal) (other)))")
+
+(define (compiler-backend-export-symbol-runtime-collision-source) : String
+  "(define (own-alloc) (:export-symbol \"tl_alloc\") : i64 1)
+(define (main) : i64 (own-alloc))")
+
+(define (compiler-backend-export-symbol-diagnostics-ok?) : bool
+  (and
+    (compiler-backend-error-ok?
+      (compiler-backend-duplicate-export-symbol-source)
+      "backend: duplicate emitted function symbol dup_export")
+    (and
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-function-collision-source)
+        "backend: duplicate emitted function symbol _tl_normal")
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-runtime-collision-source)
+        "backend: exported function symbol collides with runtime symbol tl_alloc"))))
+
+(define (compiler-backend-export-symbol-tests-ok?) : bool
+  (and
+    (compiler-backend-export-symbol-ok?)
+    (compiler-backend-export-symbol-diagnostics-ok?)))
+
 (define (compiler-backend-raw-pointer-fixture-shape-ok?) : bool
   (match (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))
     [(OkCompilerBackend asm)
@@ -5061,24 +5115,26 @@
                           (and
                             (compiler-backend-tuple-ok?)
                             (and
-                              (compiler-backend-closure-emit-shape-ok?)
+                              (compiler-backend-export-symbol-tests-ok?)
                               (and
-                                (compiler-backend-alloc-runtime-shape-ok?)
-                                (backend-and8
-                                  (compiler-backend-scalar-wide-ops-ok?)
-                                  (compiler-backend-scalar-div-mod-ok?)
-                                  (and
-                                    (compiler-backend-narrow-scalar-instr-ok?)
-                                    (compiler-backend-global-compare-width-ok?))
-                                  (compiler-backend-f64-abi-ok?)
-                                  (compiler-backend-win64-f64-abi-ok?)
-                                  (compiler-backend-aggregate-storage-shape-ok?)
-                                  (compiler-backend-shift-guard-ok?)
-                                  (and
-                                    (compiler-backend-windows-runtime-guard-ok?)
+                                (compiler-backend-closure-emit-shape-ok?)
+                                (and
+                                  (compiler-backend-alloc-runtime-shape-ok?)
+                                  (backend-and8
+                                    (compiler-backend-scalar-wide-ops-ok?)
+                                    (compiler-backend-scalar-div-mod-ok?)
                                     (and
-                                      (compiler-backend-simd-vector-ok?)
-                                      (compiler-backend-dispatch-variant-mode-ok?)))))))))))))))))))
+                                      (compiler-backend-narrow-scalar-instr-ok?)
+                                      (compiler-backend-global-compare-width-ok?))
+                                    (compiler-backend-f64-abi-ok?)
+                                    (compiler-backend-win64-f64-abi-ok?)
+                                    (compiler-backend-aggregate-storage-shape-ok?)
+                                    (compiler-backend-shift-guard-ok?)
+                                    (and
+                                      (compiler-backend-windows-runtime-guard-ok?)
+                                      (and
+                                        (compiler-backend-simd-vector-ok?)
+                                        (compiler-backend-dispatch-variant-mode-ok?))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

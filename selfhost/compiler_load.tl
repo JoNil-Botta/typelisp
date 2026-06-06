@@ -1189,7 +1189,7 @@
   [module : String]
   [decl : AstDecl]) : CompilerLoadMaybeDecl
   (match decl
-    [(AstDeclDefFn name params ret _)
+    [(AstDeclDefFn name params ret _ _)
       (CompilerLoadSomeDecl
         (compiler-load-package-def-fn-extern
           entry-path
@@ -1691,7 +1691,7 @@
                           [rest4 : AstDeclList (box-get rest4)]
                           (match rest4
                             [(AstDeclCons
-                                (AstDeclDefFn main-name _ _ _)
+                                (AstDeclDefFn main-name _ _ _ _)
                                 AstDeclNil)
                               (and
                                 (string-eq imported-module "restore.dep")

@@ -2252,22 +2252,31 @@ Ordinary user-defined function parameters are by-value unless their type is a
 future reference type. Passing a `String`, array, tuple, struct, enum, or
 capturing closure to such a parameter consumes the argument.
 
-**Whole-place and path moves.** The v1 checker accepts only whole-place moves:
-locals, parameters, and whole constructor temporaries. Moving out of a
-field, tuple element, fixed-array element, dynamic-array element, or nested path
-is rejected until path tracking and reinitialization are implemented (#1049).
-`struct-get`, `tuple-ref`, and `array-ref` may copy out only copyable fields or
-elements. They may not move out a move-only field or element. A consuming
-`match` is the enum exception: it moves the whole scrutinee first, then binds
-payload values owned by the selected arm.
+**Whole-place and path moves.** The v1 checker accepts whole-place moves for
+locals, parameters, and whole constructor temporaries. It also tracks
+owner-consuming direct and nested paths through struct fields, tuple elements,
+and fixed-array literal indexes, so moving one tracked path does not move its
+siblings. Moving a tracked path marks the root partially moved; later whole-root
+owner moves are rejected until every moved path for that root is reinitialized.
+`array-set!` to a supported fixed-array path with an integer literal index
+reinitializes only that exact path after the receiver, index, and value have
+been checked. Reinitializing one element does not clear sibling moved paths; if
+it clears the final moved path for the root, the partial-root marker is removed.
+Dynamic-array elements, non-literal indexes, boxes, and unsupported path forms
+do not clear moved state. Struct field assignment remains deferred until
+`struct-set!` exists (#1521). `struct-get`, `tuple-ref`, and `array-ref` may copy
+out only copyable fields or elements, and may move out move-only fields/elements
+only where this tracked-path policy accepts the path. A consuming `match` is the
+enum exception: it moves the whole scrutinee first, then binds payload values
+owned by the selected arm.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
 - Use after move, naming the moved local or path and the move site when known.
 - Moving from an uninitialized or already-moved slot.
 - Assigning over an initialized move-only slot.
-- Moving out of an unsupported path such as a field, tuple element, or array
-  element.
+- Moving out of an unsupported path such as a dynamic-array element,
+  non-literal fixed-array index, box projection, or unsupported aggregate path.
 - Storing, capturing, or returning a move-only value where the destination would
   outlive the owner scope.
 

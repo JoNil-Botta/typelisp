@@ -2,6 +2,18 @@
 
 (import "stdlib/hashmap.tl")
 
+(comptime-decls
+  (:generated stdlib/hashmap-family (type-key (type i64)) (type-key
+    (type String)) "stdlib/hashmap/i64-key-v1")
+  (defenum I64StringFixtureMapSlot
+    (I64StringFixtureMapEmpty)
+    (I64StringFixtureMapOccupied i64 String i64))
+  (defstruct I64StringFixtureMap
+    (slots (Array I64StringFixtureMapSlot))
+    (len i64))
+  (define (i64-string-fixture-map-len [map : I64StringFixtureMap]) : i64
+    (struct-get map len)))
+
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
@@ -219,6 +231,25 @@
       (hashmap-i64-key-descriptor-key)
       "stdlib/hashmap/i64-key-v1"
       "i64 key descriptor identity")
+    ;; --- hashmap-family bundle request fixture beyond shipped families ---
+    (let
+      [fixture-slots : (Array I64StringFixtureMapSlot)
+        (make-array I64StringFixtureMapSlot 1)]
+      (begin
+        (array-set! fixture-slots 0 (I64StringFixtureMapOccupied 7 "seven" 7))
+        (let
+          [fixture : I64StringFixtureMap (I64StringFixtureMap fixture-slots 1)]
+          (begin
+            (assert-i64-eq
+              (i64-string-fixture-map-len fixture)
+              1
+              "i64->String fixture generated len helper")
+            (assert-i64-eq
+              (match (array-ref fixture-slots 0)
+                [(I64StringFixtureMapOccupied _ value _) (string-length value)]
+                [(I64StringFixtureMapEmpty) 0])
+              5
+              "i64->String fixture stores String value")))))
     ;; --- bucket-index math + wraparound ---
     (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 % 4")
     (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 % 4")

@@ -622,13 +622,13 @@
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (match (compiler-load-package-file-with-paths-and-roots-cfg
+  (match (compiler-driver-load-package-file-with-runtime
     input-path
-    (sym-i64-empty)
+    target
     stdlib-roots
     manifest-dir
     deps
-    (compiler-driver-target-cfgs target (compiler-cfg-empty)))
+    emit-entry)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths-mode
         input-path
@@ -648,6 +648,57 @@
             crt-entry)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+
+(define (compiler-driver-load-package-file-with-runtime
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerLoadWithPaths
+  (let
+    [cfgs : SymI64Env (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+    (if emit-entry
+      (match (compiler-load-package-file-with-paths-and-roots-cfg
+        "stdlib/runtime.tl"
+        (sym-i64-empty)
+        stdlib-roots
+        manifest-dir
+        deps
+        cfgs)
+        [(OkCompilerLoadWithPaths
+            prelude-decls
+            prelude-paths
+            prelude-modules
+            prelude-seen)
+          (match (compiler-load-package-file-with-paths-and-roots-cfg
+            input-path
+            prelude-seen
+            stdlib-roots
+            manifest-dir
+            deps
+            cfgs)
+            [(OkCompilerLoadWithPaths
+                entry-decls
+                entry-paths
+                entry-modules
+                seen)
+              (OkCompilerLoadWithPaths
+                (compiler-load-decl-list-append prelude-decls entry-decls)
+                (compiler-load-decl-path-list-append prelude-paths entry-paths)
+                (compiler-load-decl-module-list-append
+                  prelude-modules
+                  entry-modules)
+                seen)]
+            [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])
+      (compiler-load-package-file-with-paths-and-roots-cfg
+        input-path
+        (sym-i64-empty)
+        stdlib-roots
+        manifest-dir
+        deps
+        cfgs))))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
   (string-append

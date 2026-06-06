@@ -11099,116 +11099,106 @@
           ;; Other `length` argument types keep the ordinary direct-call path.
           ;; `string-ref`/`char-at` likewise recover their String byte-index
           ;; builtin here unless shadowed (#677).
-          (cond
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (tc-layout-query-name? name))
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  origin
-                  (string-append
-                    "lower: "
+          (let
+            [builtin-available : bool
+              (not (lower-top-level-value-defined? ctx name))]
+            (cond
+              [(and builtin-available (tc-layout-query-name? name))
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
                     (string-append
-                      name
-                      " is compile-time only; wrap it in (comptime ...)"))))]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (or (string-eq name "string-ref") (string-eq name "char-at")))
-              (lower-string-ref-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (or
-                  (string-eq name "array-length")
+                      "lower: "
+                      (string-append
+                        name
+                        " is compile-time only; wrap it in (comptime ...)"))))]
+              [(and
+                  builtin-available
+                  (or (string-eq name "string-ref") (string-eq name "char-at")))
+                (lower-string-ref-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)]
+              [(and
+                  builtin-available
                   (or
-                    (string-eq name "length")
-                    (string-eq name "string-length"))))
-              (lower-array-length
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (lower-string-runtime-builtin? name))
-              (lower-string-runtime-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "cpuid"))
-              (lower-cpuid-call ctx state env type-env args result-ty origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "xgetbv"))
-              (lower-xgetbv-call ctx state env type-env args origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "clone"))
-              (match args
-                [(AstExprCons arg tail)
-                  (let
-                    [arg : AstExpr (box-get arg)]
-                    [tail : AstExprList (box-get tail)]
-                    (match tail
-                      [(AstExprNil)
-                        (lower-clone-call ctx state env type-env arg)]
-                      [_
-                        (ErrLowerExpr
-                          (lower-diagnostic "lower: clone expects one argument"))]))]
-                [_
-                  (ErrLowerExpr
-                    (lower-diagnostic "lower: clone expects one argument"))])]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (lower-arena-builtin? name))
-              (lower-arena-builtin-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (lower-bootstrap-runtime-builtin? name))
-              (lower-bootstrap-runtime-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]
-            [else
-              (lower-call-non-builtin
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)])])]
+                    (string-eq name "array-length")
+                    (or
+                      (string-eq name "length")
+                      (string-eq name "string-length"))))
+                (lower-array-length
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)]
+              [(and builtin-available (lower-string-runtime-builtin? name))
+                (lower-string-runtime-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)]
+              [(and builtin-available (string-eq name "cpuid"))
+                (lower-cpuid-call ctx state env type-env args result-ty origin)]
+              [(and builtin-available (string-eq name "xgetbv"))
+                (lower-xgetbv-call ctx state env type-env args origin)]
+              [(and builtin-available (string-eq name "clone"))
+                (match args
+                  [(AstExprCons arg tail)
+                    (let
+                      [arg : AstExpr (box-get arg)]
+                      [tail : AstExprList (box-get tail)]
+                      (match tail
+                        [(AstExprNil)
+                          (lower-clone-call ctx state env type-env arg)]
+                        [_
+                          (ErrLowerExpr
+                            (lower-diagnostic
+                              "lower: clone expects one argument"))]))]
+                  [_
+                    (ErrLowerExpr
+                      (lower-diagnostic "lower: clone expects one argument"))])]
+              [(and builtin-available (lower-arena-builtin? name))
+                (lower-arena-builtin-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty)]
+              [(and builtin-available (lower-bootstrap-runtime-builtin? name))
+                (lower-bootstrap-runtime-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)]
+              [else
+                (lower-call-non-builtin
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)]))])]
     [_
       (match (lower-expr ctx state env type-env func)
         [(OkLowerExpr lowered-func)

@@ -77,22 +77,6 @@
 ;: Windows CRT errno-location binding used to recover host error codes.
 (extern io-windows-errno-location (:symbol "_errno") : (-> (MutPtr i32)))
 
-;: Linux `snprintf` binding for formatting f64 values.
-(extern io-linux-snprintf (:abi c-varargs 3) (:symbol "snprintf") : (->
-  (MutPtr u8)
-  i64
-  (Ptr u8)
-  f64
-  i32))
-
-;: Windows CRT `_snprintf` binding for formatting f64 values.
-(extern io-windows-snprintf (:abi c-varargs 3) (:symbol "_snprintf") : (->
-  (MutPtr u8)
-  i64
-  (Ptr u8)
-  f64
-  i32))
-
 ;: C library `fflush` binding retained for stdio compatibility.
 (extern io-ffi-fflush (:symbol "fflush") : (-> (Ptr u8) i32))
 
@@ -477,26 +461,369 @@
         unit
         (io-ffi-exit (cast 134 : i32))))))
 
+(defstruct BigNum
+  (limbs (Array u64))
+  (len i64))
+
+(define ftoa-cap : i64
+  96)
+
+(define ftoa-mask32 : u64
+  (cast 4294967295 : u64))
+
+(define (bn-zero) : BigNum
+  (BigNum (make-array u64 ftoa-cap) 0))
+
+(define (bn-from-u64 [x : u64]) : BigNum
+  (let
+    [r : BigNum (bn-zero)]
+    [lo : u64 (bit-and x ftoa-mask32)]
+    [hi : u64 (shr x 32)]
+    (begin
+      (array-set! (struct-get r limbs) 0 lo)
+      (array-set! (struct-get r limbs) 1 hi)
+      (cond
+        [(> hi (cast 0 : u64)) (BigNum (struct-get r limbs) 2)]
+        [(> lo (cast 0 : u64)) (BigNum (struct-get r limbs) 1)]
+        [else (BigNum (struct-get r limbs) 0)]))))
+
+(define (bn-cmp [a : BigNum] [b : BigNum]) : i64
+  (let
+    [la : i64 (struct-get a len)]
+    [lb : i64 (struct-get b len)]
+    (if (> la lb)
+      1
+      (if (< la lb)
+        -1
+        (let
+          [i : i64 (- la 1)]
+          [res : i64 0]
+          [done : bool false]
+          (begin
+            (while (and (not done) (>= i 0))
+              (let
+                [av : u64 (array-ref (struct-get a limbs) i)]
+                [bv : u64 (array-ref (struct-get b limbs) i)]
+                (begin
+                  (cond
+                    [(> av bv)
+                      (begin
+                        (set! res 1)
+                        (set! done true))]
+                    [(< av bv)
+                      (begin
+                        (set! res -1)
+                        (set! done true))]
+                    [else unit])
+                  (set! i (- i 1)))))
+            res))))))
+
+(define (bn-norm-len [arr : (Array u64)] [hint : i64]) : i64
+  (let
+    [i : i64 hint]
+    (begin
+      (while (and (> i 0) (= (array-ref arr (- i 1)) (cast 0 : u64)))
+        (set! i (- i 1)))
+      i)))
+
+(define (bn-add [a : BigNum] [b : BigNum]) : BigNum
+  (let
+    [r : (Array u64) (make-array u64 ftoa-cap)]
+    [la : i64 (struct-get a len)]
+    [lb : i64 (struct-get b len)]
+    [n : i64
+      (if (> la lb)
+        la
+        lb)]
+    [carry : u64 (cast 0 : u64)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [av : u64
+            (if (< i la)
+              (array-ref (struct-get a limbs) i)
+              (cast 0 : u64))]
+          [bv : u64
+            (if (< i lb)
+              (array-ref (struct-get b limbs) i)
+              (cast 0 : u64))]
+          [s : u64 (+ (+ av bv) carry)]
+          (begin
+            (array-set! r i (bit-and s ftoa-mask32))
+            (set! carry (shr s 32))
+            (set! i (+ i 1)))))
+      (when
+        (> carry (cast 0 : u64))
+        (begin
+          (array-set! r i carry)
+          (set! n (+ n 1))))
+      (BigNum r (bn-norm-len r n)))))
+
+(define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
+  (let
+    [r : (Array u64) (make-array u64 ftoa-cap)]
+    [la : i64 (struct-get a len)]
+    [carry : u64 (cast 0 : u64)]
+    [i : i64 0]
+    (begin
+      (while (< i la)
+        (let
+          [p : u64 (+ (* (array-ref (struct-get a limbs) i) m) carry)]
+          (begin
+            (array-set! r i (bit-and p ftoa-mask32))
+            (set! carry (shr p 32))
+            (set! i (+ i 1)))))
+      (while (> carry (cast 0 : u64))
+        (begin
+          (array-set! r i (bit-and carry ftoa-mask32))
+          (set! carry (shr carry 32))
+          (set! i (+ i 1))))
+      (BigNum r (bn-norm-len r i)))))
+
+(define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
+  (if (= (struct-get a len) 0)
+    a
+    (let
+      [limb-shift : i64 (/ n 32)]
+      [bit-shift : i64 (% n 32)]
+      [r : (Array u64) (make-array u64 ftoa-cap)]
+      [la : i64 (struct-get a len)]
+      [carry : u64 (cast 0 : u64)]
+      [i : i64 0]
+      (begin
+        (if (= bit-shift 0)
+          (while (< i la)
+            (begin
+              (array-set! r (+ i limb-shift) (array-ref (struct-get a limbs) i))
+              (set! i (+ i 1))))
+          (while (< i la)
+            (let
+              [v : u64 (array-ref (struct-get a limbs) i)]
+              [shifted : u64
+                (bit-or (bit-and (shl v bit-shift) ftoa-mask32) carry)]
+              (begin
+                (array-set! r (+ i limb-shift) shifted)
+                (set! carry (shr v (- 32 bit-shift)))
+                (set! i (+ i 1))))))
+        (when
+          (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
+          (array-set! r (+ la limb-shift) carry))
+        (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
+
+(define (bn-mul-u64 [a : BigNum] [m : u64]) : BigNum
+  (let
+    [lo : u64 (bit-and m ftoa-mask32)]
+    [hi : u64 (shr m 32)]
+    [low : BigNum (bn-mul-u32 a lo)]
+    (if (= hi (cast 0 : u64))
+      low
+      (bn-add low (bn-shl-bits (bn-mul-u32 a hi) 32)))))
+
+(define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
+  (let
+    [r : BigNum a]
+    [i : i64 0]
+    (begin
+      (while (< i p)
+        (begin
+          (set! r (bn-mul-u32 r (cast 10 : u64)))
+          (set! i (+ i 1))))
+      r)))
+
+;; floor(num/den) as u64, assuming the quotient fits in 60 bits.
+(define (bn-div-floor-u64 [num : BigNum] [den : BigNum]) : u64
+  (let
+    [q : u64 (cast 0 : u64)]
+    [bit : i64 59]
+    (begin
+      (while (>= bit 0)
+        (let
+          [cand : u64 (+ q (shl (cast 1 : u64) bit))]
+          [prod : BigNum (bn-mul-u64 den cand)]
+          (begin
+            (when (<= (bn-cmp prod num) 0) (set! q cand))
+            (set! bit (- bit 1)))))
+      q)))
+
+;; floor(a / b) for b > 0 (TL `/` truncates toward zero).
+(define (ftoa-floor-div [a : i64] [b : i64]) : i64
+  (if (>= a 0)
+    (/ a b)
+    (- 0 (/ (+ (- 0 a) (- b 1)) b))))
+
+(define (ftoa-msb-index [m : u64]) : i64
+  (let
+    [i : i64 0]
+    [v : u64 m]
+    (begin
+      (while (> v (cast 1 : u64))
+        (begin
+          (set! v (shr v 1))
+          (set! i (+ i 1))))
+      i)))
+
+;; Significant-digit string of `d` with trailing zeros removed (>= 1 digit).
+(define (ftoa-strip-zeros [d : i64]) : String
+  (let
+    [dd : i64 d]
+    (begin
+      (while (and (> dd 9) (= (% dd 10) 0))
+        (set! dd (/ dd 10)))
+      (int->string dd))))
+
+(define (ftoa-pad-exp [k : i64]) : String
+  (let
+    [mag : i64
+      (if (< k 0)
+        (- 0 k)
+        k)]
+    [digits : String (int->string mag)]
+    [sign : String
+      (if (< k 0)
+        "-"
+        "+")]
+    (string-append
+      sign
+      (if (< (string-length digits) 2)
+        (string-append "0" digits)
+        digits))))
+
+(define (ftoa-zeros [n : i64]) : String
+  (let
+    [s : String ""]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! s (string-append s "0"))
+          (set! i (+ i 1))))
+      s)))
+
+;; Format significant-digit string `s` whose leading digit has decimal
+;; exponent `k`, following printf %g (precision 17) style.
+(define (ftoa-render [neg : bool] [s : String] [k : i64]) : String
+  (let
+    [body : String ""]
+    [ndig : i64 (string-length s)]
+    (begin
+      (if (or (< k -4) (>= k 17))
+        ;; scientific
+        (set!
+          body
+          (string-append
+            (substring s 0 1)
+            (string-append
+              (if (> ndig 1)
+                (string-append "." (substring s 1 (- ndig 1)))
+                "")
+              (string-append "e" (ftoa-pad-exp k)))))
+        ;; fixed
+        (if (< k 0)
+          (set!
+            body
+            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))
+          (if (>= (+ k 1) ndig)
+            ;; integer, pad zeros on the right
+            (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))
+            ;; split int.frac
+            (set!
+              body
+              (string-append
+                (substring s 0 (+ k 1))
+                (string-append "." (substring s (+ k 1) (- ndig (+ k 1)))))))))
+      (if neg
+        (string-append "-" body)
+        body))))
+
+(define (io-format-float-core [value : f64]) : String
+  (let
+    [buf : (Array f64) (make-array f64 1)]
+    [bits : u64 (cast 0 : u64)]
+    (begin
+      (array-set! buf 0 value)
+      (set!
+        bits
+        (unsafe
+          (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))
+      (let
+        [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
+        [expf : u64 (bit-and (shr bits 52) (cast 2047 : u64))]
+        [frac : u64 (bit-and bits (cast 4503599627370495 : u64))]
+        (cond
+          [(= expf (cast 2047 : u64))
+            (if (= frac (cast 0 : u64))
+              (if neg
+                "-inf"
+                "inf")
+              (if neg
+                "-nan"
+                "nan"))]
+          [(and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+            (if neg
+              "-0"
+              "0")]
+          [else
+            (let
+              [m : u64
+                (if (= expf (cast 0 : u64))
+                  frac
+                  (bit-or frac (cast 4503599627370496 : u64)))]
+              [e2 : i64
+                (if (= expf (cast 0 : u64))
+                  -1074
+                  (- (cast expf : i64) 1075))]
+              [msb : i64 (ftoa-msb-index m)]
+              [kest : i64 (ftoa-floor-div (* (+ msb e2) 30103) 100000)]
+              [d : u64 (cast 0 : u64)]
+              [iters : i64 0]
+              [settled : bool false]
+              (begin
+                (while (and (not settled) (< iters 6))
+                  (let
+                    [p : i64 (- 16 kest)]
+                    [num : BigNum (bn-from-u64 m)]
+                    [den : BigNum (bn-from-u64 (cast 1 : u64))]
+                    (begin
+                      (if (>= e2 0)
+                        (set! num (bn-shl-bits num e2))
+                        (set! den (bn-shl-bits den (- 0 e2))))
+                      (if (>= p 0)
+                        (set! num (bn-mul-pow10 num p))
+                        (set! den (bn-mul-pow10 den (- 0 p))))
+                      (let
+                        [q : u64 (bn-div-floor-u64 num den)]
+                        [two-num : BigNum (bn-shl-bits num 1)]
+                        [t : BigNum
+                          (bn-mul-u64
+                            den
+                            (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
+                        [c : i64 (bn-cmp two-num t)]
+                        (begin
+                          (set! d q)
+                          (cond
+                            [(> c 0) (set! d (+ q (cast 1 : u64)))]
+                            [(= c 0)
+                              (when
+                                (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
+                                (set! d (+ q (cast 1 : u64))))]
+                            [else unit])
+                          (cond
+                            [(>= d (cast 100000000000000000 : u64))
+                              (set! kest (+ kest 1))]
+                            [(< d (cast 10000000000000000 : u64))
+                              (set! kest (- kest 1))]
+                            [else (set! settled true)])
+                          (set! iters (+ iters 1)))))))
+                (let
+                  [s0 : String (int->string (cast d : i64))]
+                  [k : i64 (+ (- (string-length s0) 17) kest)]
+                  (ftoa-render neg (ftoa-strip-zeros (cast d : i64)) k))))])))))
+
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (io-format-float [value : f64]) : String
-  (let
-    [buf : (Array u8) (make-array u8 64)]
-    [fmt-bytes : (Array u8) (io-c-string "%.17g\n")]
-    [fmt : (Ptr u8) (io-array-const-ptr fmt-bytes)]
-    [n32 : i32
-      (cfg
-        windows
-        (io-windows-snprintf (io-array-ptr buf) 64 fmt value)
-        (io-linux-snprintf (io-array-ptr buf) 64 fmt value))]
-    [n : i64 (cast n32 : i64)]
-    (if (< n 0)
-      ""
-      (unsafe
-        (string-from-bytes
-          (io-array-const-ptr buf)
-          (if (> n 63)
-            63
-            n))))))
+  (string-append (io-format-float-core value) "
+"))
 
 ;: Write a floating-point value to stdout using `%.17g` plus a newline.
 (define (print-float [value : f64]) : unit

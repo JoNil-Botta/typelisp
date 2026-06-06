@@ -472,7 +472,9 @@ traits: a generator inspects compile-time metadata such as `(type T)` and
 `(type-key (type T))`, then requests or emits ordinary monomorphic
 `defstruct`, `defenum`, and `define` declarations.
 
-The source surface is the top-level `comptime-decl` declaration:
+The source surface is the top-level `comptime-decl` declaration for a single
+payload, or `comptime-decls` when a generator request emits a bundle whose
+payloads share the same generator and argument keys:
 
 ```lisp test=ignore name=comptime-generated-decl-surface reason="generated declarations are specified before #893 implementation"
 (comptime-decl
@@ -487,22 +489,37 @@ The source surface is the top-level `comptime-decl` declaration:
     (match value
       [(Some_String _) true]
       [(None_String) false])))
+
+(comptime-decls
+  (:generated stdlib/option-family (type-key (type String)))
+  (defenum Option_String
+    (None_String)
+    (Some_String String))
+  (define (option-string-some? [value : Option_String]) : bool
+    (match value
+      [(Some_String _) true]
+      [(None_String) false])))
 ```
 
-`comptime-decl` is valid only at top level, after `module`/`import`
-resolution and before ordinary typechecking/lowering. Its payload is a single
-generated declaration template. V1 accepts only `defstruct`, `defenum`, and
-`define` payloads. `define` covers both value and function declarations.
-Generated `extern`, `defmacro`, `module`, `import`, `export`, `cfg`, `test`,
-and nested `comptime-decl` payloads are rejected in v1.
+`comptime-decl` and `comptime-decls` are valid only at top level, after
+`module`/`import` resolution and before ordinary typechecking/lowering.
+`comptime-decl` carries one generated declaration template. `comptime-decls`
+carries one or more generated declaration templates and expands them as if each
+payload had been written as a separate `comptime-decl` with the same generator
+and argument keys. V1 accepts only `defstruct`, `defenum`, and `define`
+payloads. `define` covers both value and function declarations. Generated
+`extern`, `defmacro`, `module`, `import`, `export`, `cfg`, `test`, and nested
+`comptime-decl`/`comptime-decls` payloads are rejected in v1.
 
 The `(:generated generator-name generated-item-name arg-key-expr*)` metadata is
-required for reusable generated declarations. The parser may continue accepting
-legacy literal `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum
-...))` templates during migration, but reusable #893 generation must use the
-metadata form.
+required for reusable single-payload `comptime-decl` declarations. The
+`comptime-decls` bundle form uses `(:generated generator-name arg-key-expr*)`;
+the generated item name is derived from each payload's visible declaration name.
+The parser may continue accepting legacy literal `(comptime-decl (defstruct
+...))` / `(comptime-decl (defenum ...))` templates during migration, but
+reusable #893 generation must use a metadata form.
 
-Conceptually, the source form creates one generated-declaration request. The
+Conceptually, each payload creates one generated-declaration request. The
 compiler API for comptime generator code uses the same request record: generator
 origin span, generated identity metadata, and the `AstDecl` payload to insert.
 Generator code must not bypass that record or mutate ordinary declaration lists
@@ -4418,6 +4435,7 @@ program       ::= top-level*
 top-level     ::= define-var
                 | cfg-decl
                 | comptime-decl
+                | comptime-decls
                 | define-func
                 | unsafe-decl
                 | dispatch-decl
@@ -4436,7 +4454,9 @@ cfg-predicate ::= ident
                 | "(" "any" cfg-predicate* ")"
                 | "(" "not" cfg-predicate ")"
 comptime-decl ::= "(" "comptime-decl" generated-meta? generated-payload ")"
+comptime-decls ::= "(" "comptime-decls" generated-bundle-meta generated-payload+ ")"
 generated-meta ::= "(" ":generated" qualified-name ident expr* ")"
+generated-bundle-meta ::= "(" ":generated" qualified-name expr* ")"
 generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"

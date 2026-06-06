@@ -12386,6 +12386,12 @@ _read:
     movslq %eax, %rax
     jmp .L_tl_read_ret
 .L_tl_read_err:
+    call GetLastError
+    cmpl $109, %eax
+    jne .L_tl_read_fail
+    xorq %rax, %rax
+    jmp .L_tl_read_ret
+.L_tl_read_fail:
     movq $-1, %rax
 .L_tl_read_ret:
     addq $64, %rsp

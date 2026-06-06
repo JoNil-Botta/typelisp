@@ -852,6 +852,20 @@
   [meta : AstGeneratedDeclMeta]) : String
   (string-append message (compiler-symbols-generated-meta-suffix meta)))
 
+(define (compiler-symbols-add-struct-cleanup-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [cleanup : AstStructCleanup]
+  [index : i64]) : ResultCompilerSymbols
+  (match cleanup
+    [(AstStructNoCleanup) (OkCompilerSymbols symbols)]
+    [(AstStructCleanupFn cleanup-name)
+      (compiler-symbols-add-value-in-module
+        symbols
+        module
+        cleanup-name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
+
 (define (compiler-symbols-add-decl-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -918,31 +932,45 @@
             index
             0)]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
-    [(AstDeclDefStruct name _ _ _)
+    [(AstDeclDefStruct name _ cleanup _)
       (match (compiler-symbols-add-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-value-in-module
+          (match (compiler-symbols-add-value-in-module
             next
             module
             name
-            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+            [(OkCompilerSymbols with-constructor)
+              (compiler-symbols-add-struct-cleanup-in-module
+                with-constructor
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
+    [(AstDeclDefStructLifetimes name _ _ cleanup _)
       (match (compiler-symbols-add-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-value-in-module
+          (match (compiler-symbols-add-value-in-module
             next
             module
             name
-            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+            [(OkCompilerSymbols with-constructor)
+              (compiler-symbols-add-struct-cleanup-in-module
+                with-constructor
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
@@ -995,6 +1023,20 @@
     symbols
     (compiler-symbol-module-key module name)
     handle))
+
+(define (compiler-symbols-add-local-struct-cleanup-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [cleanup : AstStructCleanup]
+  [index : i64]) : ResultCompilerSymbols
+  (match cleanup
+    [(AstStructNoCleanup) (OkCompilerSymbols symbols)]
+    [(AstStructCleanupFn cleanup-name)
+      (compiler-symbols-add-local-value-in-module
+        symbols
+        module
+        cleanup-name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
 (define (compiler-symbols-add-local-variant-value-in-module
   [symbols : CompilerSymbols]
@@ -1104,31 +1146,45 @@
             index
             0)]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
-    [(AstDeclDefStruct name _ _ _)
+    [(AstDeclDefStruct name _ cleanup _)
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-local-value-in-module
+          (match (compiler-symbols-add-local-value-in-module
             next
             module
             name
-            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+            [(OkCompilerSymbols with-constructor)
+              (compiler-symbols-add-local-struct-cleanup-in-module
+                with-constructor
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
+    [(AstDeclDefStructLifetimes name _ _ cleanup _)
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-local-value-in-module
+          (match (compiler-symbols-add-local-value-in-module
             next
             module
             name
-            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+            [(OkCompilerSymbols with-constructor)
+              (compiler-symbols-add-local-struct-cleanup-in-module
+                with-constructor
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
@@ -1177,6 +1233,19 @@
               rest
               enum-index
               (+ variant-index 1))]))]))
+
+(define (compiler-symbols-add-struct-cleanup-alias
+  [symbols : CompilerSymbols]
+  [alias : String]
+  [cleanup : AstStructCleanup]
+  [index : i64]) : CompilerSymbols
+  (match cleanup
+    [(AstStructNoCleanup) symbols]
+    [(AstStructCleanupFn cleanup-name)
+      (compiler-symbols-add-value-alias
+        symbols
+        (compiler-symbol-module-key alias cleanup-name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
 (define (compiler-symbols-add-decl-alias-in-module
   [symbols : CompilerSymbols]
@@ -1231,22 +1300,30 @@
         variants
         index
         0)]
-    [(AstDeclDefStruct name _ _ _)
-      (compiler-symbols-add-value-alias
-        (compiler-symbols-add-type-alias
-          symbols
+    [(AstDeclDefStruct name _ cleanup _)
+      (compiler-symbols-add-struct-cleanup-alias
+        (compiler-symbols-add-value-alias
+          (compiler-symbols-add-type-alias
+            symbols
+            (compiler-symbol-module-key alias name)
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
           (compiler-symbol-module-key alias name)
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-        (compiler-symbol-module-key alias name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
-      (compiler-symbols-add-value-alias
-        (compiler-symbols-add-type-alias
-          symbols
+        alias
+        cleanup
+        index)]
+    [(AstDeclDefStructLifetimes name _ _ cleanup _)
+      (compiler-symbols-add-struct-cleanup-alias
+        (compiler-symbols-add-value-alias
+          (compiler-symbols-add-type-alias
+            symbols
+            (compiler-symbol-module-key alias name)
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
           (compiler-symbol-module-key alias name)
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-        (compiler-symbol-module-key alias name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+        alias
+        cleanup
+        index)]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]

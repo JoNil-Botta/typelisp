@@ -802,6 +802,45 @@
     (tc-bind-unsafe env name ty)
     (tc-bind-unsafe env (compiler-symbol-module-key module name) ty)))
 
+(define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
+  (tc-fn1 struct-ty (AstTyUnit)))
+
+(define (tc-bind-struct-cleanup-module-name
+  [env : TcTypeEnv]
+  [module : String]
+  [cleanup : AstStructCleanup]
+  [struct-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstStructNoCleanup) env]
+    [(AstStructCleanupFn cleanup-name)
+      (tc-bind-module-name
+        env
+        module
+        cleanup-name
+        (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-struct-cleanup-local
+  [env : TcTypeEnv]
+  [cleanup : AstStructCleanup]
+  [struct-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstStructNoCleanup) env]
+    [(AstStructCleanupFn cleanup-name)
+      (tc-bind env cleanup-name (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-struct-cleanup-alias
+  [env : TcTypeEnv]
+  [alias : String]
+  [cleanup : AstStructCleanup]
+  [struct-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstStructNoCleanup) env]
+    [(AstStructCleanupFn cleanup-name)
+      (tc-bind
+        env
+        (compiler-symbol-module-key alias cleanup-name)
+        (tc-struct-cleanup-function-type struct-ty))]))
+
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
 
@@ -4407,28 +4446,34 @@
         name
         lifetimes
         variants)]
-    [(AstDeclDefStruct name _ _ fields)
+    [(AstDeclDefStruct name _ cleanup fields)
       (let
         [scoped-name : String (compiler-symbol-module-key module name)]
+        [struct-ty : AstType (AstTyStruct scoped-name)]
+        [constructor-ty : AstType
+          (ast-ty-func
+            (tc-field-type-list (tc-context-with-module ctx module) fields)
+            struct-ty)]
         (OkTcEnv
-          (tc-bind-module-name
-            env
+          (tc-bind-struct-cleanup-module-name
+            (tc-bind-module-name env module name constructor-ty)
             module
-            name
-            (ast-ty-func
-              (tc-field-type-list (tc-context-with-module ctx module) fields)
-              (AstTyStruct scoped-name)))))]
-    [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
+            cleanup
+            struct-ty)))]
+    [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
       (let
         [scoped-name : String (compiler-symbol-module-key module name)]
+        [struct-ty : AstType (AstTyStructArgs scoped-name lifetimes)]
+        [constructor-ty : AstType
+          (ast-ty-func
+            (tc-field-type-list (tc-context-with-module ctx module) fields)
+            struct-ty)]
         (OkTcEnv
-          (tc-bind-module-name
-            env
+          (tc-bind-struct-cleanup-module-name
+            (tc-bind-module-name env module name constructor-ty)
             module
-            name
-            (ast-ty-func
-              (tc-field-type-list (tc-context-with-module ctx module) fields)
-              (AstTyStructArgs scoped-name lifetimes)))))]
+            cleanup
+            struct-ty)))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -4576,22 +4621,34 @@
           (compiler-symbol-module-key module name)
           lifetimes
           variants))]
-    [(AstDeclDefStruct name _ _ fields)
-      (OkTcEnv
-        (tc-bind
-          env
-          (compiler-symbol-module-key alias name)
+    [(AstDeclDefStruct name _ cleanup fields)
+      (let
+        [struct-ty : AstType
+          (AstTyStruct (compiler-symbol-module-key module name))]
+        [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
-            (AstTyStruct (compiler-symbol-module-key module name)))))]
-    [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
-      (OkTcEnv
-        (tc-bind
-          env
-          (compiler-symbol-module-key alias name)
+            struct-ty)]
+        (OkTcEnv
+          (tc-bind-struct-cleanup-alias
+            (tc-bind env (compiler-symbol-module-key alias name) constructor-ty)
+            alias
+            cleanup
+            struct-ty)))]
+    [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+      (let
+        [struct-ty : AstType
+          (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes)]
+        [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
-            (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes))))]
+            struct-ty)]
+        (OkTcEnv
+          (tc-bind-struct-cleanup-alias
+            (tc-bind env (compiler-symbol-module-key alias name) constructor-ty)
+            alias
+            cleanup
+            struct-ty)))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -4807,22 +4864,28 @@
           (compiler-symbol-module-key module name)
           lifetimes
           variants))]
-    [(AstDeclDefStruct name _ _ fields)
-      (OkTcEnv
-        (tc-bind
-          env
-          name
-          (ast-ty-func
-            (tc-field-type-list ctx fields)
-            (AstTyStruct (compiler-symbol-module-key module name)))))]
-    [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
-      (OkTcEnv
-        (tc-bind
-          env
-          name
-          (ast-ty-func
-            (tc-field-type-list ctx fields)
-            (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes))))]
+    [(AstDeclDefStruct name _ cleanup fields)
+      (let
+        [struct-ty : AstType
+          (AstTyStruct (compiler-symbol-module-key module name))]
+        [constructor-ty : AstType
+          (ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
+        (OkTcEnv
+          (tc-bind-struct-cleanup-local
+            (tc-bind env name constructor-ty)
+            cleanup
+            struct-ty)))]
+    [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+      (let
+        [struct-ty : AstType
+          (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes)]
+        [constructor-ty : AstType
+          (ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
+        (OkTcEnv
+          (tc-bind-struct-cleanup-local
+            (tc-bind env name constructor-ty)
+            cleanup
+            struct-ty)))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]

@@ -583,6 +583,34 @@
       logical-name
       (box names))))
 
+(define (lower-name-env-add-struct-cleanup-in-module
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [cleanup : AstStructCleanup]) : LowerNameEnv
+  (match cleanup
+    [(AstStructNoCleanup) names]
+    [(AstStructCleanupFn cleanup-name)
+      (lower-name-env-add-module-binding
+        names
+        module
+        cleanup-name
+        (lower-decl-logical-name entry-path decl-path module cleanup-name))]))
+
+(define (lower-name-env-add-local-struct-cleanup
+  [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
+  [module : String]
+  [cleanup : AstStructCleanup]) : LowerNameEnv
+  (match cleanup
+    [(AstStructNoCleanup) names]
+    [(AstStructCleanupFn cleanup-name)
+      (LowerNameBind
+        cleanup-name
+        (lower-current-decl-logical-name-cache name-cache module cleanup-name)
+        (box names))]))
+
 (define (lower-name-has-clone-prefix? [name : String]) : bool
   (if (>= (string-length name) 6)
     (string-eq (substring name 0 6) "clone$")
@@ -750,6 +778,20 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
+    [(AstDeclDefStruct _ _ cleanup _)
+      (lower-name-env-add-struct-cleanup-in-module
+        names
+        entry-path
+        decl-path
+        module
+        cleanup)]
+    [(AstDeclDefStructLifetimes _ _ _ cleanup _)
+      (lower-name-env-add-struct-cleanup-in-module
+        names
+        entry-path
+        decl-path
+        module
+        cleanup)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -933,6 +975,32 @@
         (box names))]
     [(AstDeclExtern name _ _)
       (LowerNameBind (compiler-symbol-module-key alias name) name (box names))]
+    [(AstDeclDefStruct _ _ cleanup _)
+      (match cleanup
+        [(AstStructNoCleanup) names]
+        [(AstStructCleanupFn cleanup-name)
+          (LowerNameBind
+            (compiler-symbol-module-key alias cleanup-name)
+            (lower-alias-logical-name
+              entry-path
+              decl-path
+              module
+              cleanup-name
+              path-aware)
+            (box names))])]
+    [(AstDeclDefStructLifetimes _ _ _ cleanup _)
+      (match cleanup
+        [(AstStructNoCleanup) names]
+        [(AstStructCleanupFn cleanup-name)
+          (LowerNameBind
+            (compiler-symbol-module-key alias cleanup-name)
+            (lower-alias-logical-name
+              entry-path
+              decl-path
+              module
+              cleanup-name
+              path-aware)
+            (box names))])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -1143,6 +1211,10 @@
         name
         (lower-current-decl-logical-name-cache name-cache module name)
         (box names))]
+    [(AstDeclDefStruct _ _ cleanup _)
+      (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
+    [(AstDeclDefStructLifetimes _ _ _ cleanup _)
+      (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1199,8 +1271,38 @@
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclDefEnum _ variants)
       (lower-module-local-type-env-add-variants top-env env module variants)]
-    [(AstDeclDefStruct name _ _ _)
-      (lower-module-local-type-env-bind-qualified top-env env module name)]
+    [(AstDeclDefStruct name _ cleanup _)
+      (match (lower-module-local-type-env-bind-qualified
+        top-env
+        env
+        module
+        name)
+        [(OkTcEnv next-env)
+          (match cleanup
+            [(AstStructNoCleanup) (OkTcEnv next-env)]
+            [(AstStructCleanupFn cleanup-name)
+              (lower-module-local-type-env-bind-qualified
+                top-env
+                next-env
+                module
+                cleanup-name)])]
+        [(ErrTcEnv message) (ErrTcEnv message)])]
+    [(AstDeclDefStructLifetimes name _ _ cleanup _)
+      (match (lower-module-local-type-env-bind-qualified
+        top-env
+        env
+        module
+        name)
+        [(OkTcEnv next-env)
+          (match cleanup
+            [(AstStructNoCleanup) (OkTcEnv next-env)]
+            [(AstStructCleanupFn cleanup-name)
+              (lower-module-local-type-env-bind-qualified
+                top-env
+                next-env
+                module
+                cleanup-name)])]
+        [(ErrTcEnv message) (ErrTcEnv message)])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -16339,6 +16441,161 @@
       (OkLowerFunction fns (lower-record-function-span spans logical-name body))]
     [(ErrLowerFunction message) (ErrLowerFunction message)]))
 
+(define (lower-struct-cleanup-param-name) : String
+  "__tl_cleanup_value")
+
+(define (lower-struct-cleanup-qualified-name
+  [struct-name : String]
+  [cleanup-name : String]) : String
+  (if (tc-name-qualified? cleanup-name)
+    cleanup-name
+    (compiler-symbol-module-key
+      (tc-qualified-name-module struct-name)
+      cleanup-name)))
+
+(define (lower-struct-cleanup-name-for-struct
+  [ctx : TcContext]
+  [struct-name : String]) : ResultTcString
+  (match (tc-struct-decl ctx struct-name)
+    [(OkTcStructDecl decl)
+      (match decl
+        [(TcStructDecl _ cleanup _)
+          (match cleanup
+            [(AstStructCleanupFn cleanup-name)
+              (OkTcString
+                (lower-struct-cleanup-qualified-name struct-name cleanup-name))]
+            [(AstStructNoCleanup)
+              (ErrTcString
+                (string-append
+                  "lower: owned cleanup field type has no cleanup function "
+                  struct-name))])])]
+    [(ErrTcStructDecl message) (ErrTcString message)]))
+
+(define (lower-struct-cleanup-name-for-type [ctx : TcContext] [ty : AstType]) : ResultTcString
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyStruct name) (lower-struct-cleanup-name-for-struct ctx name)]
+      [(AstTyStructArgs name _) (lower-struct-cleanup-name-for-struct ctx name)]
+      [_
+        (ErrTcString
+          (string-append
+            "lower: owned cleanup field type is not a cleanup-owning struct "
+            (tc-type-render resolved)))])))
+
+(define (lower-struct-cleanup-call-expr
+  [cleanup-name : String]
+  [value-name : String]
+  [field-name : String]) : AstExpr
+  (ast-expr-call
+    (AstExprVar cleanup-name)
+    (ast-expr-cons
+      (ast-expr-struct-get (AstExprVar value-name) field-name)
+      AstExprNil)))
+
+(define (lower-struct-cleanup-field-exprs
+  [ctx : TcContext]
+  [value-name : String]
+  [field : AstFieldDef]
+  [acc : AstExprList]) : ResultAstExprList
+  (match field
+    [(AstFieldDef field-name ty cleanup)
+      (match cleanup
+        [(AstFieldNoCleanup) (OkAstExprList acc)]
+        [(AstFieldCleanupFn cleanup-name)
+          (OkAstExprList
+            (ast-expr-cons
+              (lower-struct-cleanup-call-expr
+                cleanup-name
+                value-name
+                field-name)
+              acc))]
+        [(AstFieldOwnedCleanup)
+          (match (lower-struct-cleanup-name-for-type ctx ty)
+            [(OkTcString cleanup-name)
+              (OkAstExprList
+                (ast-expr-cons
+                  (lower-struct-cleanup-call-expr
+                    cleanup-name
+                    value-name
+                    field-name)
+                  acc))]
+            [(ErrTcString message) (ErrAstExprList message)])])]))
+
+(define (lower-struct-cleanup-body-fields
+  [ctx : TcContext]
+  [value-name : String]
+  [fields : AstFieldDefList]
+  [acc : AstExprList]) : ResultAstExprList
+  (match fields
+    [(AstFieldDefNil) (OkAstExprList acc)]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match (lower-struct-cleanup-field-exprs ctx value-name field acc)
+          [(OkAstExprList next)
+            (lower-struct-cleanup-body-fields ctx value-name rest next)]
+          [(ErrAstExprList message) (ErrAstExprList message)]))]))
+
+(define (lower-struct-cleanup-function
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [logical-name : String]
+  [struct-ty : AstType]
+  [fields : AstFieldDefList]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (let
+    [value-name : String (lower-struct-cleanup-param-name)]
+    (match (lower-struct-cleanup-body-fields ctx value-name fields AstExprNil)
+      [(OkAstExprList exprs)
+        (let
+          [params : AstParamList
+            (ast-param-cons (AstParam value-name struct-ty false) AstParamNil)]
+          [body : AstExpr
+            (match exprs
+              [(AstExprNil) (AstExprLiteral AstLitUnit)]
+              [_ (AstExprBegin exprs)])]
+          (lower-function-escaping
+            ctx
+            top-env
+            type-cache
+            logical-name
+            params
+            (AstTyUnit)
+            body
+            spans
+            names
+            mode))]
+      [(ErrAstExprList message) (ErrLowerFunction (lower-diagnostic message))])))
+
+(define (lower-struct-cleanup-decl
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [logical-name : String]
+  [cleanup : AstStructCleanup]
+  [struct-ty : AstType]
+  [fields : AstFieldDefList]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (match cleanup
+    [(AstStructNoCleanup) (OkLowerFunction IrFunctionNil spans)]
+    [(AstStructCleanupFn _)
+      (lower-struct-cleanup-function
+        ctx
+        top-env
+        type-cache
+        logical-name
+        struct-ty
+        fields
+        spans
+        names
+        mode)]))
+
 (define (lower-dispatch-cache-name [logical-name : String]) : String
   (string-append "__tl_dispatch_cache_" logical-name))
 
@@ -17397,38 +17654,90 @@
               dispatch-variants
               mode
               module)]
-          [(AstDeclDefStruct _ _ _ _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclDefStructLifetimes _ _ _ _ _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
+          [(AstDeclDefStruct name _ cleanup fields)
+            (let
+              [decl-ctx : TcContext (tc-context-with-module ctx module)]
+              [logical-name : String
+                (match cleanup
+                  [(AstStructNoCleanup) ""]
+                  [(AstStructCleanupFn cleanup-name)
+                    (lower-current-decl-logical-name-cache
+                      name-cache
+                      module
+                      cleanup-name)])]
+              [struct-ty : AstType
+                (AstTyStruct (compiler-symbol-module-key module name))]
+              (match (lower-struct-cleanup-decl
+                decl-ctx
+                local-top-env
+                type-cache
+                logical-name
+                cleanup
+                struct-ty
+                fields
+                spans
+                name-cache
+                mode)
+                [(OkLowerFunction cleanup-functions cleanup-spans)
+                  (lower-decls-in-module
+                    ctx
+                    top-env
+                    local-top-env
+                    rest
+                    globals
+                    (lower-function-list-append cleanup-functions functions)
+                    externs
+                    cleanup-spans
+                    names
+                    name-cache
+                    type-cache
+                    dispatch-variants
+                    mode
+                    module)]
+                [(ErrLowerFunction message) (ErrLowerDecls message)]))]
+          [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+            (let
+              [decl-ctx : TcContext (tc-context-with-module ctx module)]
+              [logical-name : String
+                (match cleanup
+                  [(AstStructNoCleanup) ""]
+                  [(AstStructCleanupFn cleanup-name)
+                    (lower-current-decl-logical-name-cache
+                      name-cache
+                      module
+                      cleanup-name)])]
+              [struct-ty : AstType
+                (AstTyStructArgs
+                  (compiler-symbol-module-key module name)
+                  lifetimes)]
+              (match (lower-struct-cleanup-decl
+                decl-ctx
+                local-top-env
+                type-cache
+                logical-name
+                cleanup
+                struct-ty
+                fields
+                spans
+                name-cache
+                mode)
+                [(OkLowerFunction cleanup-functions cleanup-spans)
+                  (lower-decls-in-module
+                    ctx
+                    top-env
+                    local-top-env
+                    rest
+                    globals
+                    (lower-function-list-append cleanup-functions functions)
+                    externs
+                    cleanup-spans
+                    names
+                    name-cache
+                    type-cache
+                    dispatch-variants
+                    mode
+                    module)]
+                [(ErrLowerFunction message) (ErrLowerDecls message)]))]
           [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
@@ -18921,6 +19230,32 @@
     (with ([b 32 close-b])
       (OkI64 (+ a b)))))")
 
+(define (compiler-lower-cleanup-struct-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (close-fd [fd : i64]) : unit unit)
+(define (use-fd [ok : bool] [fd : i64]) : ResultI64
+  (if ok (OkI64 fd) (ErrI64 \"use fd\")))
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (main [use-ok : bool]) : ResultI64
+  (with ([h (FileHandle 10) cleanup-file-handle])
+    (OkI64 (try (use-fd use-ok (struct-get h fd))))))")
+
+(define (compiler-lower-cleanup-struct-nested-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(define (close-buffer [buffer : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct BufferedFile
+  (:cleanup cleanup-buffered-file)
+  (handle FileHandle (:owned))
+  (buffer i64 (:cleanup close-buffer)))
+(define (main) : i64
+  (with ([b (BufferedFile (FileHandle 10) 20) cleanup-buffered-file])
+    42))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _ _) true]
@@ -19385,6 +19720,29 @@
         (lower-test-instr-call-count instr name)
         (lower-test-instrs-call-count (box-get rest) name))]))
 
+(define (lower-test-instr-call-name? [instr : CompilerIrInstr] [name : String]) : bool
+  (match instr
+    [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
+    [_ false]))
+
+(define (lower-test-instrs-call-before?
+  [instrs : CompilerIrInstrList]
+  [first : String]
+  [second : String]
+  [seen-first : bool]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (if (lower-test-instr-call-name? instr second)
+        seen-first
+        (lower-test-instrs-call-before?
+          (box-get rest)
+          first
+          second
+          (if (lower-test-instr-call-name? instr first)
+            true
+            seen-first)))]))
+
 (define (lower-test-instrs-cpuid-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -19658,6 +20016,23 @@
               (compiler-ir-instr-seq-to-list instrs)
               name)
             (lower-test-blocks-call-count (box-get rest) name))])]))
+
+(define (lower-test-blocks-call-before?
+  [blocks : CompilerIrBlockList]
+  [first : String]
+  [second : String]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (lower-test-instrs-call-before?
+            (compiler-ir-instr-seq-to-list instrs)
+            first
+            second
+            false)
+            true
+            (lower-test-blocks-call-before? (box-get rest) first second))])]))
 
 (define (lower-test-blocks-cpuid-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -20063,6 +20438,20 @@
           (if (string-eq fname name)
             (lower-test-blocks-call-count blocks call-name)
             (lower-test-function-call-count (box-get rest) name call-name))])]))
+
+(define (lower-test-function-call-before?
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [first : String]
+  [second : String]) : bool
+  (match funcs
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-call-before? blocks first second)
+            (lower-test-function-call-before? (box-get rest) name first second))])]))
 
 (define (lower-test-function-indirect-call-count
   [funcs : CompilerIrFunctionList]
@@ -21162,6 +21551,61 @@
           (and
             (= (lower-test-functions-call-count functions "close-a") 1)
             (= (lower-test-functions-call-count functions "close-b") 1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-cleanup-struct-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-cleanup-struct-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                functions
+                "cleanup-file-handle"
+                "close-fd")
+              1)
+            (and
+              (>
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "cleanup-file-handle")
+                1)
+              (> (lower-test-function-return-count functions "main") 1)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-cleanup-struct-nested-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                functions
+                "cleanup-file-handle"
+                "close-fd")
+              1)
+            (and
+              (=
+                (lower-test-function-call-count
+                  functions
+                  "cleanup-buffered-file"
+                  "close-buffer")
+                1)
+              (and
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "cleanup-buffered-file"
+                    "cleanup-file-handle")
+                  1)
+                (lower-test-function-call-before?
+                  functions
+                  "cleanup-buffered-file"
+                  "close-buffer"
+                  "cleanup-file-handle"))))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
@@ -23023,6 +23467,12 @@
         unit
         (set! ok false))
       (if (compiler-lower-resource-with-nested-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-cleanup-struct-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-cleanup-struct-nested-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-array-length-source))

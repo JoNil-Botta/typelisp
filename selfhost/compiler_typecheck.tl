@@ -5462,8 +5462,148 @@
   (inner Inner (:owned))
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-projection-nested [p : Holder]) : unit
+(define (owner-projection-nested [p : Holder]) : unit
   (take-handle (struct-get (struct-get p inner) handle)))")
+
+(define (compiler-typecheck-move-owner-projection-nested-siblings-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (backup FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-projection-nested-siblings [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get (struct-get p inner) handle))
+    (take-handle (struct-get (struct-get p inner) backup))))")
+
+(define (compiler-typecheck-move-owner-projection-nested-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-nested-repeat [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get (struct-get p inner) handle))
+    (take-handle (struct-get (struct-get p inner) handle))))")
+
+(define (compiler-typecheck-move-owner-projection-nested-root-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (take-holder [h : Holder]) : unit unit)
+(define (bad-owner-projection-nested-root-reuse [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get (struct-get p inner) handle))
+    (take-holder p)))")
+
+(define (compiler-typecheck-move-owner-projection-nested-parent-after-child-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (take-inner [h : Inner]) : unit unit)
+(define (bad-owner-projection-nested-parent-after-child [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get (struct-get p inner) handle))
+    (take-inner (struct-get p inner))))")
+
+(define (compiler-typecheck-move-owner-projection-nested-child-after-parent-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (take-inner [h : Inner]) : unit unit)
+(define (bad-owner-projection-nested-child-after-parent [p : Holder]) : unit
+  (begin
+    (take-inner (struct-get p inner))
+    (take-handle (struct-get (struct-get p inner) handle))))")
+
+(define (compiler-typecheck-move-owner-projection-nested-set-reset-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-projection-nested-set-reset [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get (struct-get p inner) handle))
+    (set! p (Holder (Inner (FileHandle 10) 11) 12))
+    (take-handle (struct-get (struct-get p inner) handle))))")
+
+(define (compiler-typecheck-move-owner-projection-nested-shadow-reset-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-projection-nested-shadow-reset [p : Holder]) : unit
+  (let [q : Holder p]
+    (begin
+      (take-handle (struct-get (struct-get q inner) handle))
+      (let [q : Holder (Holder (Inner (FileHandle 20) 21) 22)]
+        (take-handle (struct-get (struct-get q inner) handle))))))")
 
 (define (compiler-typecheck-move-owner-projection-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -5542,8 +5682,30 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-tuple-ref-nested [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
+(define (owner-tuple-ref-nested [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
   (take-handle (tuple-ref (tuple-ref p 0) 0)))")
+
+(define (compiler-typecheck-move-owner-tuple-ref-nested-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-tuple-ref-nested-repeat [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
+  (begin
+    (take-handle (tuple-ref (tuple-ref p 0) 0))
+    (take-handle (tuple-ref (tuple-ref p 0) 0))))")
+
+(define (compiler-typecheck-move-owner-tuple-ref-nested-sibling-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-tuple-ref-nested-sibling [p : (Tuple (Tuple FileHandle FileHandle) i64)]) : unit
+  (begin
+    (take-handle (tuple-ref (tuple-ref p 0) 0))
+    (take-handle (tuple-ref (tuple-ref p 0) 1))))")
 
 (define (compiler-typecheck-move-owner-array-ref-other-element-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -5566,6 +5728,37 @@
   (begin
     (take-handle (array-ref items 0))
     (take-handle (array-ref items 0))))")
+
+(define (compiler-typecheck-move-owner-array-ref-nested-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-nested [items : (Array (Array FileHandle 2) 2)]) : unit
+  (take-handle (array-ref (array-ref items 0) 1)))")
+
+(define (compiler-typecheck-move-owner-array-ref-nested-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-nested-repeat [items : (Array (Array FileHandle 2) 2)]) : unit
+  (begin
+    (take-handle (array-ref (array-ref items 0) 1))
+    (take-handle (array-ref (array-ref items 0) 1))))")
+
+(define (compiler-typecheck-move-owner-array-ref-nested-sibling-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-nested-sibling [items : (Array (Array FileHandle 2) 2)]) : unit
+  (begin
+    (take-handle (array-ref (array-ref items 0) 1))
+    (take-handle (array-ref (array-ref items 0) 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-nonliteral-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -5763,9 +5956,40 @@
         (compiler-typecheck-move-owner-projection-bind-other-field-source))
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-nested-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-nested-siblings-source))
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-projection-nested-source)
-        "typecheck: cannot move owner-consuming value out of aggregate path")
+        (compiler-typecheck-move-owner-projection-nested-repeat-source)
+        "typecheck: use of moved value `p.inner.handle`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-nested-root-reuse-source)
+        "typecheck: use of moved value `p`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-nested-parent-after-child-source)
+        "typecheck: use of moved value `p.inner`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-nested-child-after-parent-source)
+        "typecheck: use of moved value `p.inner`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-nested-set-reset-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-nested-shadow-reset-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5791,9 +6015,17 @@
         "typecheck: use of moved value `p.#tuple.0`")
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-tuple-ref-nested-source))
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-tuple-ref-nested-source)
-        "typecheck: cannot move owner-consuming value out of aggregate path")
+        (compiler-typecheck-move-owner-tuple-ref-nested-repeat-source)
+        "typecheck: use of moved value `p.#tuple.0.#tuple.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-tuple-ref-nested-sibling-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -5803,6 +6035,19 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-repeat-source)
         "typecheck: use of moved value `items.#array.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-array-ref-nested-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-array-ref-nested-repeat-source)
+        "typecheck: use of moved value `items.#array.0.#array.1`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-array-ref-nested-sibling-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

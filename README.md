@@ -591,8 +591,8 @@ typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
 typelisp build                    # Build nearest typelisp.pkg artifact; --profile dev|release, --target <target>, --backend-mode <mode>
-typelisp fmt            file.tl    # Format source in place; --check reports changes without writing
-typelisp lint           file.tl    # Report lint findings; --check exits non-zero when findings are present
+typelisp fmt            [file.tl...] # Format files or nearest package; --check reports changes without writing
+typelisp lint           [file.tl...] # Lint files or nearest package; --check exits non-zero on findings
 typelisp test           file.tl    # Run inline `(test ...)` items; --check type-checks the generated harness
 ```
 

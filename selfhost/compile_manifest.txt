@@ -175,8 +175,8 @@ decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsin
 decision|selfhost/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by selfhost/clean.tl and selfhost/cli.tl and exercised through the selfhost_clean and selfhost_cli cases
 decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by selfhost/run.tl and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
 decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by selfhost/check.tl and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
-decision|selfhost/package_source_core.tl|package source discovery helper (#1986): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, and nested package roots; main-less, imported by selfhost/check_cli_core.tl and exercised through the selfhost_check and selfhost_cli cases
-decision|selfhost/format_cli_core.tl|fmt command logic (#522): --check vs rewrite over input paths; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
+decision|selfhost/package_source_core.tl|package source discovery helper (#1986/#1987): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
+decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
 decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
 decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by selfhost/compile.tl and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
@@ -790,9 +790,13 @@ count-at-least|call _tl_print_value|2
 end
 
 case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
-contains|_tl_fmt_format_file:
-contains|_tl_fmt_files:
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+contains|_tl_format_cli_core_u2etl_colon_colonfmt_format_file:
+contains|_tl_format_cli_core_u2etl_colon_colonfmt_files:
+contains|_tl_format_cli_core_u2etl_colon_colonfmt_package:
+contains|_tl_package_source_core_u2etl_colon_colonpackage_source_discover_for
 contains|fmt: would reformat 
+contains|fmt: cannot combine input paths with --manifest-path
 end
 
 case|selfhost_format_core|selfhost/format_core.tl|assembly|skip|direct
@@ -982,11 +986,15 @@ contains|_tl_lint_walk_expr:
 contains|_tl_lint_ladder_length:
 end
 
-decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163): arg parsing, finding rendering (path:line:col), file/source linting, and the driver self-test; main-less, imported by selfhost/lint.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
+decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by selfhost/lint.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
 
 case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
-contains|_tl_selfhost_lint_file:
-contains|_tl_selfhost_lint_render_finding:
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_file:
+contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_render_finding:
+contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_package:
+contains|_tl_package_source_core_u2etl_colon_colonpackage_source_discover_for
+contains|selfhost-lint: cannot combine input paths with --manifest-path
 end
 
 case|selfhost_lint_driver_smoke|selfhost/lint_driver_smoke.tl|assembly|exactly-one|direct

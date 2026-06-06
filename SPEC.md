@@ -4118,6 +4118,7 @@ Commands:
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
   build             Build nearest typelisp.pkg artifact
+  fmt               Format source files
   lint              Report lint findings
   test              Run inline `(test ...)` items
 
@@ -4143,9 +4144,17 @@ Options:
   test --check <file.tl>
                           Type-check the generated inline test harness without
                           assembling or running it
-  lint <file.tl> --check
+  fmt [<file.tl>...] --check
+                          Report files that would change without writing them
+  fmt --manifest-path <file>
+                          Format every source in a package; without explicit
+                          files, fmt defaults to the nearest typelisp.pkg upward
+  lint [<file.tl>...] --check
                           Exit non-zero when lint findings are present; default
                           lint mode is warn-only
+  lint --manifest-path <file>
+                          Lint every source in a package; without explicit
+                          files, lint defaults to the nearest typelisp.pkg upward
   build <file.tl> -o <exe>
                           Write the native executable to the given path
   build --manifest-path <file>

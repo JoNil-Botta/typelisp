@@ -109,6 +109,7 @@
       (package-source-cat3 "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
+  [command : String]
   [manifest-path : String]
   [has-manifest : bool]) : ResultPackageSourceSet
   (let
@@ -119,7 +120,9 @@
     (match resolved
       [(CompilerLoadNoPath)
         (ErrPackageSourceSet
-          "check: could not find typelisp.pkg from '.' or any parent directory")]
+          (string-append
+            command
+            ": could not find typelisp.pkg from '.' or any parent directory"))]
       [(CompilerLoadSomePath path) (package-source-load-manifest path)])))
 
 (define (package-source-relative-join [prefix : String] [name : String]) : String
@@ -152,17 +155,23 @@
     (fs-file-kind-regular? (fs-metadata-kind metadata))
     (package-source-tl-file? path)))
 
-(define (package-source-entry-error [path : String] [error : IoError]) : ResultPackageSourceList
+(define (package-source-entry-error
+  [command : String]
+  [path : String]
+  [error : IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
     (package-source-cat3
-      "check: failed to inspect package path '"
+      (string-append command ": failed to inspect package path '")
       path
       (string-append "': " (io-error-message error)))))
 
-(define (package-source-read-dir-error [path : String] [error : IoError]) : ResultPackageSourceList
+(define (package-source-read-dir-error
+  [command : String]
+  [path : String]
+  [error : IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
     (package-source-cat3
-      "check: failed to read package directory '"
+      (string-append command ": failed to read package directory '")
       path
       (string-append "': " (io-error-message error)))))
 
@@ -177,28 +186,33 @@
     (StringCons entry (box StringNil))))
 
 (define (package-source-scan-dir
+  [command : String]
   [root : String]
   [relative : String]
   [acc : StringList]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
     (match (try-read-dir (& dir))
-      [(ErrIoStringList error) (package-source-read-dir-error dir error)]
+      [(ErrIoStringList error)
+        (package-source-read-dir-error command dir error)]
       [(OkIoStringList entries)
-        (package-source-scan-entries root relative entries acc)])))
+        (package-source-scan-entries command root relative entries acc)])))
 
-(define (package-source-scan-root [source-set : PackageSourceSet]) : ResultPackageSourceList
+(define (package-source-scan-root
+  [command : String]
+  [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
     [root : String (struct-get source-set manifest-dir)]
     (match (try-read-dir (& root))
       [(ErrIoStringList error)
         (if (io-error-unsupported? error)
           (OkPackageSourceList (package-source-entry-list source-set))
-          (package-source-read-dir-error root error))]
+          (package-source-read-dir-error command root error))]
       [(OkIoStringList entries)
-        (package-source-scan-entries root "" entries StringNil)])))
+        (package-source-scan-entries command root "" entries StringNil)])))
 
 (define (package-source-scan-one
+  [command : String]
   [root : String]
   [relative : String]
   [name : String]
@@ -209,7 +223,8 @@
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
       (match (try-file-metadata (& child-path))
-        [(ErrFsMetadata error) (package-source-entry-error child-path error)]
+        [(ErrFsMetadata error)
+          (package-source-entry-error command child-path error)]
         [(OkFsMetadata metadata)
           (let
             [kind : FsFileKind (fs-metadata-kind metadata)]
@@ -217,7 +232,7 @@
               [(fs-file-kind-directory? kind)
                 (if (package-source-dir-has-manifest? child-path)
                   (OkPackageSourceList acc)
-                  (package-source-scan-dir root child-relative acc))]
+                  (package-source-scan-dir command root child-relative acc))]
               [(package-source-include-file? child-path metadata)
                 (OkPackageSourceList
                   (package-source-list-insert
@@ -226,6 +241,7 @@
               [else (OkPackageSourceList acc)]))]))))
 
 (define (package-source-scan-entries
+  [command : String]
   [root : String]
   [relative : String]
   [entries : StringList]
@@ -233,22 +249,32 @@
   (match entries
     [(StringNil) (OkPackageSourceList acc)]
     [(StringCons name rest)
-      (match (package-source-scan-one root relative name acc)
+      (match (package-source-scan-one command root relative name acc)
         [(ErrPackageSourceList message) (ErrPackageSourceList message)]
         [(OkPackageSourceList next)
-          (package-source-scan-entries root relative (box-get rest) next)])]))
+          (package-source-scan-entries
+            command
+            root
+            relative
+            (box-get rest)
+            next)])]))
 
-(define (package-source-discover [manifest-path : String] [has-manifest : bool]) : ResultPackageSourceSet
-  (match (package-source-resolve-manifest manifest-path has-manifest)
+(define (package-source-discover-for
+  [command : String]
+  [manifest-path : String]
+  [has-manifest : bool]) : ResultPackageSourceSet
+  (match (package-source-resolve-manifest command manifest-path has-manifest)
     [(ErrPackageSourceSet message) (ErrPackageSourceSet message)]
     [(OkPackageSourceSet base)
-      (match (package-source-scan-root base)
+      (match (package-source-scan-root command base)
         [(ErrPackageSourceList message) (ErrPackageSourceSet message)]
         [(OkPackageSourceList sources)
           (if (= (string-list-count sources) 0)
             (ErrPackageSourceSet
               (package-source-cat3
-                "check: no TypeLisp source files found in package '"
+                (string-append
+                  command
+                  ": no TypeLisp source files found in package '")
                 (struct-get base manifest-path)
                 "'"))
             (OkPackageSourceSet
@@ -257,3 +283,6 @@
                 (struct-get base manifest-dir)
                 (struct-get base manifest)
                 sources)))])]))
+
+(define (package-source-discover [manifest-path : String] [has-manifest : bool]) : ResultPackageSourceSet
+  (package-source-discover-for "check" manifest-path has-manifest))

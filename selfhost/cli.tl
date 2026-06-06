@@ -59,8 +59,8 @@ Usage:
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
     typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
-    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
-    typelisp lint <file.tl>... [--check] [--stdlib-root <dir>...]
+    typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc --test <file.tl>... [--stdlib-root <dir>...]
@@ -73,7 +73,7 @@ Usage:
     --link-arg <arg>               Pass a raw native linker argument
     --backend-mode <mode>          scalar, avx2, or avx512; avx2/avx512 support simple foreach maps
     --target <target>              linux-x86_64 or windows-x86_64
-    --manifest-path <file>         Package manifest for build/check/clean
+    --manifest-path <file>         Package manifest for build/check/clean/fmt/lint
     --stdlib-root <dir>            Search root for stdlib/... imports before env/embedded fallback
     --cfg <name>                   Enable a compile-time cfg predicate name
     TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
@@ -93,8 +93,10 @@ Options for check:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for fmt:
     --check                        Report files that would change without writing them
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for lint:
     --check                        Exit non-zero when lint findings are present
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for test:
     --check                        Typecheck inline tests without running them
     --opt-level <0|1|2|3>          Select selfhost test harness optimization

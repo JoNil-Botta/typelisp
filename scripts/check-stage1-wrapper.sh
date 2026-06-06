@@ -196,6 +196,26 @@ run_capture_cwd() {
     fi
 }
 
+run_expect_failure_cwd() {
+    label=$1
+    cwd=$2
+    shift 2
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    set +e
+    (cd "$cwd" && TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@") 3>&2 > "$stdout" 2> "$stderr"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+        echo "stage1 wrapper smoke command unexpectedly succeeded: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
 run_expect_failure() {
     label=$1
     shift
@@ -692,12 +712,59 @@ run_expect_failure fmt-parse-error "$COMPILER" fmt "$WORKDIR/fmt-parse-error.tl"
 assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
 
-echo "[stage1-wrapper] lint"
-assert_contains "$WORKDIR/help.stderr" "typelisp lint <file.tl>... [--check] [--stdlib-root <dir>...]"
+FMTLINT_PKG="$WORKDIR/fmtlint-pkg"
+mkdir -p "$FMTLINT_PKG/src/nested/deeper"
+cat > "$FMTLINT_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "stage1_fmtlint")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+cat > "$FMTLINT_PKG/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+cat > "$FMTLINT_PKG/src/needs_fmt.tl" <<'EOF'
+(define (needs-format) : i64
+(+ 1 2))
+EOF
+cat > "$FMTLINT_PKG/src/lint_bad.tl" <<'EOF'
+(define (classify [x : i64]) : i64
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        0))))
+EOF
+run_expect_failure fmt-package-check "$COMPILER" fmt --manifest-path "$FMTLINT_PKG/typelisp.pkg" --check
+assert_empty "$WORKDIR/fmt-package-check.stdout"
+assert_contains "$WORKDIR/fmt-package-check.stderr" "needs_fmt.tl"
+run_capture fmt-package-rewrite "$COMPILER" fmt --manifest-path "$FMTLINT_PKG/typelisp.pkg"
+assert_empty "$WORKDIR/fmt-package-rewrite.stdout"
+assert_empty "$WORKDIR/fmt-package-rewrite.stderr"
+assert_contains "$FMTLINT_PKG/src/needs_fmt.tl" "  (+ 1 2)"
+run_capture_cwd fmt-package-discover "$FMTLINT_PKG/src/nested/deeper" "$COMPILER" fmt --check
+assert_empty "$WORKDIR/fmt-package-discover.stdout"
+assert_empty "$WORKDIR/fmt-package-discover.stderr"
+run_expect_failure fmt-file-manifest "$COMPILER" fmt "$SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
+assert_empty "$WORKDIR/fmt-file-manifest.stdout"
+assert_contains "$WORKDIR/fmt-file-manifest.stderr" "cannot combine input paths with --manifest-path"
+FMT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-fmt-nopkg.XXXXXX")
+run_expect_failure_cwd fmt-no-manifest "$FMT_NOPKG" "$COMPILER" fmt --check
+assert_empty "$WORKDIR/fmt-no-manifest.stdout"
+assert_contains "$WORKDIR/fmt-no-manifest.stderr" "could not find typelisp.pkg"
+rm -rf "$FMT_NOPKG"
 
-run_expect_failure lint-missing "$COMPILER" lint
+echo "[stage1-wrapper] lint"
+assert_contains "$WORKDIR/help.stderr" "typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
+
+LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")
+run_expect_failure_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint
 assert_empty "$WORKDIR/lint-missing.stdout"
-assert_contains "$WORKDIR/lint-missing.stderr" "expected input path"
+assert_contains "$WORKDIR/lint-missing.stderr" "could not find typelisp.pkg"
+rm -rf "$LINT_NOPKG"
 
 run_capture lint-clean "$COMPILER" lint "$SRC"
 assert_empty "$WORKDIR/lint-clean.stderr"
@@ -731,6 +798,17 @@ assert_empty "$WORKDIR/lint-nested-if-check.stderr"
 assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint_ladder.tl:"
 assert_contains "$WORKDIR/lint-nested-if-check.stdout" "nested if-ladder"
 assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint: 1 finding(s)"
+
+run_expect_failure lint-package-check "$COMPILER" lint --manifest-path "$FMTLINT_PKG/typelisp.pkg" --check
+assert_empty "$WORKDIR/lint-package-check.stderr"
+assert_contains "$WORKDIR/lint-package-check.stdout" "lint_bad.tl:"
+assert_contains "$WORKDIR/lint-package-check.stdout" "lint: 1 finding(s)"
+run_capture_cwd lint-package-discover "$FMTLINT_PKG/src/nested/deeper" "$COMPILER" lint
+assert_empty "$WORKDIR/lint-package-discover.stderr"
+assert_contains "$WORKDIR/lint-package-discover.stdout" "lint_bad.tl:"
+run_expect_failure lint-file-manifest "$COMPILER" lint "$SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
+assert_empty "$WORKDIR/lint-file-manifest.stdout"
+assert_contains "$WORKDIR/lint-file-manifest.stderr" "cannot combine input paths with --manifest-path"
 
 run_expect_failure lint-missing-file "$COMPILER" lint "$WORKDIR/missing-lint.tl"
 assert_empty "$WORKDIR/lint-missing-file.stdout"

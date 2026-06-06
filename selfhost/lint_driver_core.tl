@@ -6,9 +6,13 @@
 ;; path to exit non-zero when findings remain.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/list.tl")
+
 (import "compiler_load.tl")
 
 (import "lint_core.tl")
+
+(import "package_source_core.tl")
 
 ;; Parsed lint CLI config: input paths, stdlib roots, and whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present).
@@ -17,7 +21,8 @@
   (SelfhostLintPathCons String (Box SelfhostLintPathList)))
 
 (defenum SelfhostLintConfig
-  (SelfhostLintConfig SelfhostLintPathList CompilerLoadRootList bool))
+  (SelfhostLintFileConfig SelfhostLintPathList CompilerLoadRootList bool)
+  (SelfhostLintPackageConfig String bool CompilerLoadRootList bool))
 
 (defenum ResultSelfhostLintConfig
   (OkSelfhostLintConfig SelfhostLintConfig)
@@ -59,17 +64,40 @@
     [(SelfhostLintPathCons _ rest)
       (+ 1 (selfhost-lint-path-list-count (box-get rest)))]))
 
+(define (selfhost-lint-config-finish
+  [input-paths : SelfhostLintPathList]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [enforcing : bool]) : ResultSelfhostLintConfig
+  (if (selfhost-lint-path-list-empty? input-paths)
+    (OkSelfhostLintConfig
+      (SelfhostLintPackageConfig
+        manifest-path
+        has-manifest
+        stdlib-roots
+        enforcing))
+    (if has-manifest
+      (ErrSelfhostLintConfig
+        "selfhost-lint: cannot combine input paths with --manifest-path")
+      (OkSelfhostLintConfig
+        (SelfhostLintFileConfig input-paths stdlib-roots enforcing)))))
+
 (define (selfhost-lint-parse-options
   [idx : i64]
   [count : i64]
   [input-paths : SelfhostLintPathList]
+  [manifest-path : String]
+  [has-manifest : bool]
   [stdlib-roots : CompilerLoadRootList]
   [enforcing : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
-    (if (selfhost-lint-path-list-empty? input-paths)
-      (ErrSelfhostLintConfig "selfhost-lint: expected input path")
-      (OkSelfhostLintConfig
-        (SelfhostLintConfig input-paths stdlib-roots enforcing)))
+    (selfhost-lint-config-finish
+      input-paths
+      manifest-path
+      has-manifest
+      stdlib-roots
+      enforcing)
     (let
       [current : String (arg idx)]
       (cond
@@ -78,6 +106,8 @@
             (+ idx 1)
             count
             input-paths
+            manifest-path
+            has-manifest
             stdlib-roots
             true)]
         [(string-eq current "--stdlib-root")
@@ -88,8 +118,24 @@
               (+ idx 2)
               count
               input-paths
+              manifest-path
+              has-manifest
               (selfhost-lint-root-list-append stdlib-roots (arg (+ idx 1)))
               enforcing))]
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrSelfhostLintConfig
+              "selfhost-lint: --manifest-path requires a value")
+            (if has-manifest
+              (ErrSelfhostLintConfig "selfhost-lint: duplicate --manifest-path")
+              (selfhost-lint-parse-options
+                (+ idx 2)
+                count
+                input-paths
+                (arg (+ idx 1))
+                true
+                stdlib-roots
+                enforcing)))]
         [(selfhost-lint-flag? current)
           (ErrSelfhostLintConfig
             (string-append "selfhost-lint: unknown flag " current))]
@@ -98,19 +144,21 @@
             (+ idx 1)
             count
             (selfhost-lint-path-list-append input-paths current)
+            manifest-path
+            has-manifest
             stdlib-roots
             enforcing)]))))
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
-  (if (< count (+ start 1))
-    (ErrSelfhostLintConfig "selfhost-lint: expected input path")
-    (selfhost-lint-parse-options
-      start
-      count
-      SelfhostLintPathNil
-      CompilerLoadRootNil
-      false)))
+  (selfhost-lint-parse-options
+    start
+    count
+    SelfhostLintPathNil
+    ""
+    false
+    CompilerLoadRootNil
+    false))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
 ;; node's source span; 0:0 only for synthesized nodes that carry no location).
@@ -355,18 +403,72 @@
             file-status
             status)))]))
 
+(define (selfhost-lint-package-files
+  [input-paths : StringList]
+  [stdlib-roots : CompilerLoadRootList]
+  [enforcing : bool]
+  [print-headers : bool]
+  [status : i64]) : i64
+  (match input-paths
+    [(StringNil) status]
+    [(StringCons input-path rest)
+      (let
+        [file-status : i64
+          (begin
+            (if print-headers
+              (print-string
+                (string-append "--- " (string-append input-path "\n")))
+              unit)
+            (selfhost-lint-file input-path stdlib-roots enforcing))]
+        (selfhost-lint-package-files
+          (box-get rest)
+          stdlib-roots
+          enforcing
+          print-headers
+          (if (= status 0)
+            file-status
+            status)))]))
+
+(define (selfhost-lint-package
+  [manifest-path : String]
+  [has-manifest : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [enforcing : bool]) : i64
+  (match (package-source-discover-for "lint" manifest-path has-manifest)
+    [(ErrPackageSourceSet message)
+      (begin
+        (print-error (string-append message "\n"))
+        1)]
+    [(OkPackageSourceSet source-set)
+      (selfhost-lint-package-files
+        (struct-get source-set sources)
+        stdlib-roots
+        enforcing
+        (> (string-list-count (struct-get source-set sources)) 1)
+        0)]))
+
 ;; Run the `lint` command over arguments starting at `start`.
 (define (selfhost-lint-run-from [start : i64] [count : i64]) : i64
   (match (selfhost-lint-config-from start count)
     [(OkSelfhostLintConfig config)
       (match config
-        [(SelfhostLintConfig input-paths stdlib-roots enforcing)
+        [(SelfhostLintFileConfig input-paths stdlib-roots enforcing)
           (selfhost-lint-files
             input-paths
             stdlib-roots
             enforcing
             (> (selfhost-lint-path-list-count input-paths) 1)
-            0)])]
+            0)]
+        [(SelfhostLintPackageConfig
+            manifest-path
+            has-manifest
+            stdlib-roots
+            enforcing)
+          (selfhost-lint-package
+            manifest-path
+            has-manifest
+            stdlib-roots
+            enforcing)])]
     [(ErrSelfhostLintConfig message)
       (begin
         (print-error (string-append message "\n"))

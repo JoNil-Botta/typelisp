@@ -260,7 +260,28 @@ root, an absolute path, or the GitHub shorthand form shown above. `tag` and
 then checked out detached at the requested `rev`, `tag`, or `branch` before the
 package graph consumes them. A pre-existing fetched root with `typelisp.pkg` is
 used as-is unless it has a `.git` directory, in which case the checkout is
-refreshed. Lockfile and update-policy support remains future work.
+refreshed. Build-time lockfile replay and update-policy support remains future
+work.
+
+Resolved remote package pins can be represented in `typelisp.lock`, a
+deterministic v1 S-expression lockfile:
+
+```lisp
+(typelisp-lock
+  (version "v1")
+  (dependencies
+    (dependency
+      (alias "lint")
+      (url "https://github.com/JoNil-Botta/typelisp-lint.git")
+      (pin (tag "v1.0.0"))
+      (commit "0123456789abcdef0123456789abcdef01234567"))))
+```
+
+Each dependency records its manifest alias, normalized URL, original pin
+kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. The selfhost
+lockfile helper parses this format with duplicate, missing-field, malformed,
+non-string, and unknown-version diagnostics, and emits entries in stable alias
+order. It does not invoke git or change build behavior yet.
 
 Remote package cache helpers use a deterministic v1 layout under the package
 root at `target/typelisp/cache/packages/v1`. Cache entries are keyed by the
@@ -296,9 +317,9 @@ fallback behavior.
 Under the legacy loader, imported package definitions share the same flat
 top-level namespace as local modules, so duplicate value or type names fail
 through the existing duplicate definition diagnostics. The package slice still
-has no registry, version solving, lockfile, or workspace model; namespace
-isolation and qualified symbol lookup are specified for the selfhost module
-model in `SPEC.md`.
+has no registry, version solving, lockfile replay, or workspace model;
+namespace isolation and qualified symbol lookup are specified for the selfhost
+module model in `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and

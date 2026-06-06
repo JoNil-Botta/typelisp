@@ -170,6 +170,10 @@
   (OkAstGeneratedDeclMeta AstGeneratedDeclMeta)
   (ErrAstGeneratedDeclMeta String))
 
+(defenum ResultAstDeclName
+  (OkAstDeclName String)
+  (ErrAstDeclName String))
+
 (defenum ResultAstExportItem
   (OkAstExportItem AstExportItem)
   (ErrAstExportItem String))
@@ -185,6 +189,7 @@
 (defenum ResultAstMaybeDecl
   (OkAstNoDecl)
   (OkAstSomeDecl AstDecl)
+  (OkAstDecls AstDeclList)
   (ErrAstMaybeDecl String))
 
 (defenum ResultAstDeclList
@@ -677,6 +682,9 @@
 (define (compiler-parse-tag-decl-comptime-decl) : i64
   405)
 
+(define (compiler-parse-tag-decl-comptime-decls) : i64
+  412)
+
 (define (compiler-parse-tag-decl-module) : i64
   406)
 
@@ -903,15 +911,20 @@
     [e5 : SymI64Env (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
     [e6 : SymI64Env
       (sym-i64-bind e5 "comptime-decl" (compiler-parse-tag-decl-comptime-decl))]
-    [e7 : SymI64Env (sym-i64-bind e6 "module" (compiler-parse-tag-decl-module))]
-    [e8 : SymI64Env (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))]
-    [e9 : SymI64Env
-      (sym-i64-bind e8 "defmacro" (compiler-parse-tag-decl-defmacro))]
+    [e7 : SymI64Env
+      (sym-i64-bind
+        e6
+        "comptime-decls"
+        (compiler-parse-tag-decl-comptime-decls))]
+    [e8 : SymI64Env (sym-i64-bind e7 "module" (compiler-parse-tag-decl-module))]
+    [e9 : SymI64Env (sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
     [e10 : SymI64Env
-      (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))]
+      (sym-i64-bind e9 "defmacro" (compiler-parse-tag-decl-defmacro))]
     [e11 : SymI64Env
-      (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))]
-    (sym-i64-bind e11 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
+      (sym-i64-bind e10 "export" (compiler-parse-tag-decl-export))]
+    [e12 : SymI64Env
+      (sym-i64-bind e11 "include-str" (compiler-parse-tag-decl-include-str))]
+    (sym-i64-bind e12 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1080,6 +1093,11 @@
         (cond
           [(string-eq name "comptime-decl")
             (compiler-parse-tag-decl-comptime-decl)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 14)
+        (cond
+          [(string-eq name "comptime-decls")
+            (compiler-parse-tag-decl-comptime-decls)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 16)
         (cond
@@ -3626,6 +3644,9 @@
     [(= tag (compiler-parse-tag-decl-comptime-decl))
       (ErrAstExpr
         "parse: comptime-decl is only valid as a top-level declaration")]
+    [(= tag (compiler-parse-tag-decl-comptime-decls))
+      (ErrAstExpr
+        "parse: comptime-decls is only valid as a top-level declaration")]
     [else (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-list-expr
@@ -4488,6 +4509,115 @@
       (ErrAstDecl
         "parse: comptime-decl expects one template or generated metadata plus one template")]))
 
+(define (parse-ast-generated-decls-meta
+  [dispatch : SymI64Env]
+  [meta : SpannedSexpr]) : ResultAstGeneratedDeclMeta
+  (match meta
+    [(SpSCons head-node meta-rest _)
+      (match (box-get head-node)
+        [(SpSSym head _)
+          (if (string-eq head ":generated")
+            (match (box-get meta-rest)
+              [(SpSCons generator-node arg-key-forms _)
+                (match (box-get generator-node)
+                  [(SpSSym generator-name _)
+                    (match (parse-ast-expr-list
+                      dispatch
+                      (box-get arg-key-forms))
+                      [(OkAstExprList arg-keys)
+                        (OkAstGeneratedDeclMeta
+                          (AstSomeGeneratedDeclMeta
+                            generator-name
+                            ""
+                            arg-keys
+                            ""))]
+                      [(ErrAstExprList message)
+                        (ErrAstGeneratedDeclMeta message)])]
+                  [_
+                    (ErrAstGeneratedDeclMeta
+                      "parse: :generated metadata expects generator name and argument key expressions")])]
+              [_
+                (ErrAstGeneratedDeclMeta
+                  "parse: :generated metadata expects generator name and argument key expressions")])
+            (ErrAstGeneratedDeclMeta
+              "parse: comptime-decls metadata must be :generated"))]
+        [_
+          (ErrAstGeneratedDeclMeta
+            "parse: comptime-decls metadata must be :generated")])]
+    [_
+      (ErrAstGeneratedDeclMeta
+        "parse: comptime-decls metadata must be :generated")]))
+
+(define (parse-ast-generated-payload-name [decl : AstDecl]) : ResultAstDeclName
+  (match decl
+    [(AstDeclDef name _ _) (OkAstDeclName name)]
+    [(AstDeclDefFn name _ _ _) (OkAstDeclName name)]
+    [(AstDeclDefEnum name _) (OkAstDeclName name)]
+    [(AstDeclDefEnumLifetimes name _ _) (OkAstDeclName name)]
+    [(AstDeclDefStruct name _ _ _) (OkAstDeclName name)]
+    [(AstDeclDefStructLifetimes name _ _ _ _) (OkAstDeclName name)]
+    [_
+      (ErrAstDeclName
+        "parse: comptime-decls payload must declare a visible item")]))
+
+(define (parse-ast-comptime-decls-wrap
+  [meta : AstGeneratedDeclMeta]
+  [template : AstDecl]) : ResultAstDecl
+  (match meta
+    [(AstSomeGeneratedDeclMeta generator-name _ arg-keys _)
+      (match (parse-ast-generated-payload-name template)
+        [(OkAstDeclName item-name)
+          (OkAstDecl
+            (ast-decl-comptime-decl-with-meta
+              (AstSomeGeneratedDeclMeta generator-name item-name arg-keys "")
+              template))]
+        [(ErrAstDeclName message) (ErrAstDecl message)])]
+    [(AstNoGeneratedDeclMeta)
+      (ErrAstDecl "parse: comptime-decls metadata must be :generated")]))
+
+(define (parse-ast-comptime-decls-payloads
+  [dispatch : SymI64Env]
+  [meta : AstGeneratedDeclMeta]
+  [templates : SpannedSexpr]) : ResultAstDeclList
+  (match templates
+    [(SpSNil _) (OkAstDeclList AstDeclNil)]
+    [(SpSCons template rest _)
+      (match (parse-ast-comptime-decl-payload dispatch (box-get template))
+        [(OkAstDecl parsed-template)
+          (match (parse-ast-comptime-decls-wrap meta parsed-template)
+            [(OkAstDecl wrapped)
+              (match (parse-ast-comptime-decls-payloads
+                dispatch
+                meta
+                (box-get rest))
+                [(OkAstDeclList wrapped-rest)
+                  (OkAstDeclList (ast-decl-cons wrapped wrapped-rest))]
+                [(ErrAstDeclList message) (ErrAstDeclList message)])]
+            [(ErrAstDecl message) (ErrAstDeclList message)])]
+        [(ErrAstDecl message) (ErrAstDeclList message)])]
+    [_
+      (ErrAstDeclList
+        "parse: comptime-decls expects generated metadata plus one or more templates")]))
+
+(define (parse-ast-comptime-decls [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDeclList
+  (match rest
+    [(SpSCons meta payloads _)
+      (match (box-get payloads)
+        [(SpSNil _)
+          (ErrAstDeclList
+            "parse: comptime-decls expects generated metadata plus one or more templates")]
+        [_
+          (match (parse-ast-generated-decls-meta dispatch (box-get meta))
+            [(OkAstGeneratedDeclMeta parsed-meta)
+              (parse-ast-comptime-decls-payloads
+                dispatch
+                parsed-meta
+                (box-get payloads))]
+            [(ErrAstGeneratedDeclMeta message) (ErrAstDeclList message)])])]
+    [_
+      (ErrAstDeclList
+        "parse: comptime-decls expects generated metadata plus one or more templates")]))
+
 (define (parse-ast-unsafe-decl [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons inner end _)
@@ -4579,14 +4709,26 @@
               [_
                 (ErrAstMaybeDecl
                   "parse: cfg declaration expects predicate and declaration")])
-            (match (parse-ast-decl dispatch s)
-              [(OkAstDecl decl) (OkAstSomeDecl decl)]
-              [(ErrAstDecl message) (ErrAstMaybeDecl message)]))]
+            (if (=
+              (compiler-parse-dispatch-tag dispatch head)
+              (compiler-parse-tag-decl-comptime-decls))
+              (match (parse-ast-comptime-decls dispatch (box-get rest))
+                [(OkAstDeclList decls) (OkAstDecls decls)]
+                [(ErrAstDeclList message) (ErrAstMaybeDecl message)])
+              (match (parse-ast-decl dispatch s)
+                [(OkAstDecl decl) (OkAstSomeDecl decl)]
+                [(ErrAstDecl message) (ErrAstMaybeDecl message)])))]
         [_
           (match (parse-ast-decl dispatch s)
             [(OkAstDecl decl) (OkAstSomeDecl decl)]
             [(ErrAstDecl message) (ErrAstMaybeDecl message)])])]
     [_ (ErrAstMaybeDecl "parse: malformed declaration")]))
+
+(define (parse-ast-decl-list-append [front : AstDeclList] [back : AstDeclList]) : AstDeclList
+  (match front
+    [(AstDeclNil) back]
+    [(AstDeclCons head rest)
+      (ast-decl-cons head (parse-ast-decl-list-append (box-get rest) back))]))
 
 (define (parse-ast-program-forms
   [dispatch : SymI64Env]
@@ -4600,6 +4742,11 @@
           [(OkAstSomeDecl decl)
             (match (parse-ast-program-forms dispatch toks cur)
               [(OkAstDeclList rest) (OkAstDeclList (ast-decl-cons decl rest))]
+              [(ErrAstDeclList message) (ErrAstDeclList message)])]
+          [(OkAstDecls decls)
+            (match (parse-ast-program-forms dispatch toks cur)
+              [(OkAstDeclList rest)
+                (OkAstDeclList (parse-ast-decl-list-append decls rest))]
               [(ErrAstDeclList message) (ErrAstDeclList message)])]
           [(OkAstNoDecl) (parse-ast-program-forms dispatch toks cur)]
           [(ErrAstMaybeDecl message) (ErrAstDeclList message)])]
@@ -4672,6 +4819,12 @@
             (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
               [(OkAstDeclListDiagnostic rest)
                 (OkAstDeclListDiagnostic (ast-decl-cons decl rest))]
+              [(ErrAstDeclListDiagnostic diag) (ErrAstDeclListDiagnostic diag)])]
+          [(OkAstDecls decls)
+            (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
+              [(OkAstDeclListDiagnostic rest)
+                (OkAstDeclListDiagnostic
+                  (parse-ast-decl-list-append decls rest))]
               [(ErrAstDeclListDiagnostic diag) (ErrAstDeclListDiagnostic diag)])]
           [(OkAstNoDecl)
             (parse-ast-program-forms-diagnostic path dispatch toks cur)]
@@ -5953,6 +6106,87 @@
           [_ false]))]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-comptime-decls-source) : String
+  "(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
+  (defstruct BundleBox (value String))
+  (defenum BundleChoice (BundleNone) (BundleSome String))
+  (define (bundle-score [value : BundleChoice]) : i64 1))")
+
+(define (compiler-parse-comptime-decls-struct-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (and
+        (compiler-parse-generated-meta-ok? meta "bundle-family" "BundleBox" 2)
+        (match (box-get template-box)
+          [(AstDeclDefStruct name _ _ fields)
+            (and
+              (string-eq name "BundleBox")
+              (= (compiler-parse-field-count fields) 1))]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-comptime-decls-enum-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (and
+        (compiler-parse-generated-meta-ok?
+          meta
+          "bundle-family"
+          "BundleChoice"
+          2)
+        (match (box-get template-box)
+          [(AstDeclDefEnum name _) (string-eq name "BundleChoice")]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-comptime-decls-fn-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (and
+        (compiler-parse-generated-meta-ok?
+          meta
+          "bundle-family"
+          "bundle-score"
+          2)
+        (match (box-get template-box)
+          [(AstDeclDefFn name _ (AstTyI64) _) (string-eq name "bundle-score")]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-comptime-decls-ok?) : bool
+  (match (parse-ast-source (compiler-parse-comptime-decls-source))
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons first rest1-box)
+            (let
+              [rest1 : AstDeclList (box-get rest1-box)]
+              (match rest1
+                [(AstDeclCons second rest2-box)
+                  (let
+                    [rest2 : AstDeclList (box-get rest2-box)]
+                    (match rest2
+                      [(AstDeclCons third rest3-box)
+                        (let
+                          [rest3 : AstDeclList (box-get rest3-box)]
+                          (match rest3
+                            [(AstDeclNil)
+                              (and
+                                (= (ast-decl-list-count decls) 3)
+                                (and
+                                  (compiler-parse-comptime-decls-struct-ok?
+                                    first)
+                                  (and
+                                    (compiler-parse-comptime-decls-enum-ok?
+                                      second)
+                                    (compiler-parse-comptime-decls-fn-ok? third))))]
+                            [_ false]))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-unsafe-decl-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
 (unsafe (extern raw-call : (-> i64 i64)))")
@@ -6200,6 +6434,22 @@
 (define (compiler-parse-comptime-decl-malformed-metadata-source) : String
   "(comptime-decl (:generated option-family) (defstruct Point (x i64)))")
 
+(define (compiler-parse-comptime-decls-expression-source) : String
+  "(define (main) : i64
+  (comptime-decls (:generated bundle-family \"v1\") (defstruct Point (x i64))))")
+
+(define (compiler-parse-comptime-decls-empty-source) : String
+  "(comptime-decls (:generated bundle-family \"v1\"))")
+
+(define (compiler-parse-comptime-decls-bad-metadata-source) : String
+  "(comptime-decls (:bad bundle-family \"v1\") (defstruct Point (x i64)))")
+
+(define (compiler-parse-comptime-decls-malformed-metadata-source) : String
+  "(comptime-decls (:generated) (defstruct Point (x i64)))")
+
+(define (compiler-parse-comptime-decls-bad-payload-source) : String
+  "(comptime-decls (:generated bundle-family \"v1\") (extern x : (-> i64)))")
+
 (define (compiler-parse-comptime-decl-invalid-payload-ok? [src : String]) : bool
   (compiler-parse-error-ok? src (parse-ast-comptime-decl-payload-message)))
 
@@ -6341,6 +6591,27 @@
           (compiler-parse-error-ok?
             (compiler-parse-comptime-decl-malformed-metadata-source)
             "parse: :generated metadata expects generator name, item name, and argument key expressions"))))))
+
+(define (compiler-parse-comptime-decls-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decls-expression-source)
+      "parse: comptime-decls is only valid as a top-level declaration")
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-comptime-decls-empty-source)
+        "parse: comptime-decls expects generated metadata plus one or more templates")
+      (and
+        (compiler-parse-error-ok?
+          (compiler-parse-comptime-decls-bad-metadata-source)
+          "parse: comptime-decls metadata must be :generated")
+        (and
+          (compiler-parse-error-ok?
+            (compiler-parse-comptime-decls-malformed-metadata-source)
+            "parse: :generated metadata expects generator name and argument key expressions")
+          (compiler-parse-error-ok?
+            (compiler-parse-comptime-decls-bad-payload-source)
+            (parse-ast-comptime-decl-payload-message)))))))
 
 (define (compiler-parse-unsafe-decl-error-tests-ok?) : bool
   (and
@@ -6595,39 +6866,35 @@
                     "parse: return expects exactly one expression"))))))))))
 
 (define (compiler-parse-error-tests-ok?) : bool
-  (and
-    (compiler-parse-special-form-error-tests-ok?)
-    (and
-      (compiler-parse-comptime-decl-error-tests-ok?)
-      (and
-        (compiler-parse-unsafe-decl-error-tests-ok?)
-        (and
-          (compiler-parse-repr-c-error-tests-ok?)
-          (and
-            (compiler-parse-cleanup-error-tests-ok?)
-            (and
-              (compiler-parse-error-ok?
-                (compiler-parse-malformed-module-source)
-                "parse: malformed module")
-              (and
-                (compiler-parse-error-ok?
-                  (compiler-parse-malformed-import-source)
-                  "parse: malformed import")
-                (and
-                  (compiler-parse-error-ok?
-                    (compiler-parse-empty-test-source)
-                    "parse: test needs at least one expression")
-                  (and
-                    (compiler-parse-let-error-tests-ok?)
-                    (and
-                      (compiler-parse-abstraction-policy-tests-ok?)
-                      (and
-                        (compiler-parse-raw-pointer-error-tests-ok?)
-                        (and
-                          (compiler-parse-extern-metadata-error-tests-ok?)
-                          (and
-                            (compiler-parse-box-error-tests-ok?)
-                            (compiler-parse-reference-error-tests-ok?)))))))))))))))
+  (cond
+    [(not (compiler-parse-special-form-error-tests-ok?)) false]
+    [(not (compiler-parse-comptime-decl-error-tests-ok?)) false]
+    [(not (compiler-parse-comptime-decls-error-tests-ok?)) false]
+    [(not (compiler-parse-unsafe-decl-error-tests-ok?)) false]
+    [(not (compiler-parse-repr-c-error-tests-ok?)) false]
+    [(not (compiler-parse-cleanup-error-tests-ok?)) false]
+    [(not
+        (compiler-parse-error-ok?
+          (compiler-parse-malformed-module-source)
+          "parse: malformed module"))
+      false]
+    [(not
+        (compiler-parse-error-ok?
+          (compiler-parse-malformed-import-source)
+          "parse: malformed import"))
+      false]
+    [(not
+        (compiler-parse-error-ok?
+          (compiler-parse-empty-test-source)
+          "parse: test needs at least one expression"))
+      false]
+    [(not (compiler-parse-let-error-tests-ok?)) false]
+    [(not (compiler-parse-abstraction-policy-tests-ok?)) false]
+    [(not (compiler-parse-raw-pointer-error-tests-ok?)) false]
+    [(not (compiler-parse-extern-metadata-error-tests-ok?)) false]
+    [(not (compiler-parse-box-error-tests-ok?)) false]
+    [(not (compiler-parse-reference-error-tests-ok?)) false]
+    [else true]))
 
 ;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
@@ -7271,18 +7538,22 @@
   (and
     (compiler-parse-comptime-decl-ok?)
     (and
-      (compiler-parse-unsafe-decl-ok?)
+      (compiler-parse-comptime-decls-ok?)
       (and
-        (compiler-parse-module-decl-ok?)
+        (compiler-parse-unsafe-decl-ok?)
         (and
-          (compiler-parse-import-metadata-ok?)
+          (compiler-parse-module-decl-ok?)
           (and
-            (compiler-parse-export-decl-ok?)
+            (compiler-parse-import-metadata-ok?)
             (and
-              (compiler-parse-defdispatch-tests-ok?)
+              (compiler-parse-export-decl-ok?)
               (and
-                (compiler-parse-flat-let-call-body-ok?)
-                (and (compiler-parse-inline-test-ok?) (compiler-parse-try-ok?))))))))))
+                (compiler-parse-defdispatch-tests-ok?)
+                (and
+                  (compiler-parse-flat-let-call-body-ok?)
+                  (and
+                    (compiler-parse-inline-test-ok?)
+                    (compiler-parse-try-ok?)))))))))))
 
 (define (compiler-parse-error-suite-front-ok?) : bool
   (and

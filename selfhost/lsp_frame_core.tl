@@ -603,51 +603,80 @@
     "end"
     (lsp-position line (+ col 1))))
 
-(define (lsp-diagnostic-code [message : String]) : String
-  (if (or
-    (lsp-frame-starts-with? message "parse:")
-    (lsp-frame-starts-with? message "reader:"))
-    "E0100"
-    (if (lsp-frame-starts-with? message "typecheck:")
-      "E0200"
-      "")))
-
-(define (lsp-diagnostic [line : i64] [col : i64] [message : String]) : Json
-  (let
-    [code : String (lsp-diagnostic-code message)]
-    (if (string-eq code "")
-      (lsp-json-object4
+(define (lsp-diagnostic
+  [line : i64]
+  [col : i64]
+  [message : String]
+  [code : String]) : Json
+  (if (string-eq code "")
+    (lsp-json-object4
+      "range"
+      (lsp-range line col)
+      "severity"
+      (lsp-json-number 1)
+      "source"
+      (JsonString "typelisp")
+      "message"
+      (JsonString message))
+    (lsp-json-object
+      (lsp-json-member
         "range"
         (lsp-range line col)
-        "severity"
-        (lsp-json-number 1)
-        "source"
-        (JsonString "typelisp")
-        "message"
-        (JsonString message))
-      (lsp-json-object
         (lsp-json-member
-          "range"
-          (lsp-range line col)
+          "severity"
+          (lsp-json-number 1)
           (lsp-json-member
-            "severity"
-            (lsp-json-number 1)
+            "source"
+            (JsonString "typelisp")
             (lsp-json-member
-              "source"
-              (JsonString "typelisp")
-              (lsp-json-member
-                "code"
-                (JsonString code)
-                (lsp-json-member
-                  "message"
-                  (JsonString message)
-                  JsonMemberListNil)))))))))
+              "code"
+              (JsonString code)
+              (lsp-json-member "message" (JsonString message) JsonMemberListNil))))))))
 
 (define (lsp-compiler-diagnostic [diag : CompilerDiagnostic]) : Json
   (lsp-diagnostic
     (compiler-diagnostic-line diag)
     (compiler-diagnostic-col diag)
-    (compiler-diagnostic-message diag)))
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-code-or-empty diag)))
+
+(define (lsp-compiler-diagnostic-code-ok?
+  [diag : CompilerDiagnostic]
+  [want : String]) : bool
+  (match (lsp-json-string-field (lsp-compiler-diagnostic diag) "code")
+    [(OkLspJsonText code) (string-eq code want)]
+    [(MissingLspJsonText) false]))
+
+(define (lsp-compiler-diagnostic-uncoded-ok? [diag : CompilerDiagnostic]) : bool
+  (match (lsp-json-string-field (lsp-compiler-diagnostic diag) "code")
+    [(OkLspJsonText _) false]
+    [(MissingLspJsonText) true]))
+
+(define (lsp-diagnostic-metadata-smoke) : i64
+  (let
+    [parse-diag : CompilerDiagnostic
+      (compiler-diagnostic-with-code
+        (compiler-diagnostic-simple "parse.tl" 2 3 "missing paren")
+        (compiler-diagnostic-code-parse))]
+    [typecheck-diag : CompilerDiagnostic
+      (compiler-diagnostic-with-code
+        (compiler-diagnostic-simple "type.tl" 4 5 "not assignable")
+        (compiler-diagnostic-code-typecheck))]
+    [uncoded : CompilerDiagnostic
+      (compiler-diagnostic-simple "plain.tl" 1 1 "typecheck: prefix text only")]
+    (begin
+      (unless
+        (lsp-compiler-diagnostic-code-ok?
+          parse-diag
+          (compiler-diagnostic-code-parse))
+        (return 1))
+      (unless
+        (lsp-compiler-diagnostic-code-ok?
+          typecheck-diag
+          (compiler-diagnostic-code-typecheck))
+        (return 2))
+      (unless (lsp-compiler-diagnostic-uncoded-ok? uncoded) (return 3))
+      42)))
 
 (define (lsp-diagnostic-uri
   [root-uri : String]
@@ -678,7 +707,7 @@
 (define (lsp-publish-uri-diagnostic [uri : String] [message : String]) : unit
   (lsp-publish-diagnostics
     uri
-    (lsp-json-list-cons (lsp-diagnostic 1 1 message) JsonListNil)))
+    (lsp-json-list-cons (lsp-diagnostic 1 1 message "") JsonListNil)))
 
 (define (lsp-clear-stale-diagnostic
   [docs : LspDocuments]

@@ -242,8 +242,13 @@
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
+(define (tc-canonical-diagnostic [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (compiler-diagnostic-with-category
+    (compiler-diagnostic-with-code diag (compiler-diagnostic-code-typecheck))
+    "typecheck"))
+
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start "" message))
+  (tc-canonical-diagnostic (compiler-diagnostic-at-start "" message)))
 
 (cfg
   compile-profile
@@ -606,7 +611,8 @@
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
-      (compiler-diagnostic-from-ast-span "" span message)]
+      (tc-canonical-diagnostic
+        (compiler-diagnostic-from-ast-span "" span message))]
     [_ (tc-diag-at-start message)]))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
@@ -645,7 +651,9 @@
       (let
         [body : AstExpr (box-get body-box)]
         (tc-expr-diag body message))]
-    [(AstDeclTest _ _ span) (compiler-diagnostic-from-ast-span "" span message)]
+    [(AstDeclTest _ _ span)
+      (tc-canonical-diagnostic
+        (compiler-diagnostic-from-ast-span "" span message))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]

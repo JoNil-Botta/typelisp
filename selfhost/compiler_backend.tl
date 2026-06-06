@@ -262,6 +262,20 @@
     [(BackendModeScalar) true]
     [_ false]))
 
+;; Whether scalar functions get full register allocation (#perf). Register
+;; allocation makes the EMITTED binary faster but its planning + register-aware
+;; emission cost more compile time than it saves on a single self-compile, so it
+;; is reserved for opt level 3 — the high-quality path whose extra cost the
+;; benchmark's 2x budget accommodates. opt levels 0-2 stay on the cheap
+;; stack-only homing. The driver sets this from the opt level before emitting;
+;; it is set deterministically per compile so a given opt level always produces
+;; identical assembly (the stage2==stage3 fixpoint holds within each level). SIMD
+;; (Avx2/Avx512) functions always use register allocation regardless.
+(define compiler-backend-scalar-registers-enabled : bool false)
+
+(define (compiler-backend-set-scalar-registers! [enabled : bool]) : unit
+  (set! compiler-backend-scalar-registers-enabled enabled))
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -9149,7 +9163,9 @@
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index span-index name "")]
         [reg-plan : CompilerRegPlan
-          (if (compiler-backend-mode-scalar? mode)
+          (if (if (compiler-backend-mode-scalar? mode)
+            (not compiler-backend-scalar-registers-enabled)
+            false)
             (compiler-reg-plan-function-stack-only func)
             (compiler-reg-plan-function func))]
         [raw-assignments : CompilerRegAssignmentList

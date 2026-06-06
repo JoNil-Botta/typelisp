@@ -613,7 +613,7 @@
               index))]
         [(StringStringMapOccupied slot-key _ slot-hash)
           (if (if (= slot-hash hash)
-            (string-eq slot-key key)
+            (string-eq-borrowed (& slot-key) key)
             false)
             (StringStringMapProbeFound index)
             (string-string-map-probe-borrowed-from

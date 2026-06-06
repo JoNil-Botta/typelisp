@@ -554,9 +554,38 @@
 (define (string-i64-map-remove [map : StringI64Map] [key : String]) : StringI64MapRemoveResult
   (string-i64-map-remove-borrowed map (& key)))
 
+;: Insert into a fresh destination table during rehash. Source entries are
+;: unique, and the destination has no tombstones, so only the first empty slot
+;: matters.
+(define (string-i64-map-insert-into-empty
+  [slots : (Array StringI64MapSlot)]
+  [capacity : i64]
+  [key : String]
+  [value : i64]
+  [hash : i64]) : unit
+  (if (<= capacity 0)
+    unit
+    (let
+      [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+      [walked : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< walked capacity))
+          (match (array-ref slots cursor)
+            [(StringI64MapEmpty)
+              (begin
+                (array-set! slots cursor (StringI64MapOccupied key value hash))
+                (set! done true))]
+            [_
+              (begin
+                (set! cursor (string-i64-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        unit))))
+
 ;: Re-insert every live (occupied) entry of `src` slots `[index, count)` into
 ;: the fresh `dst` table (`dst-capacity` empty slots), dropping tombstones.
-;: `dst-capacity` must hold every live entry, so the probe never returns `Full`.
 (define (string-i64-map-rehash-from
   [src : (Array StringI64MapSlot)]
   [dst : (Array StringI64MapSlot)]
@@ -568,12 +597,7 @@
     (begin
       (match (array-ref src index)
         [(StringI64MapOccupied key value hash)
-          (match (string-i64-map-probe-normalized dst dst-capacity key hash)
-            [(StringI64MapProbeAbsent slot)
-              (array-set! dst slot (StringI64MapOccupied key value hash))]
-            [(StringI64MapProbeFound slot)
-              (array-set! dst slot (StringI64MapOccupied key value hash))]
-            [(StringI64MapProbeFull) unit])]
+          (string-i64-map-insert-into-empty dst dst-capacity key value hash)]
         [(StringI64MapEmpty) unit]
         [(StringI64MapTombstone) unit])
       (string-i64-map-rehash-from src dst dst-capacity (+ index 1) count))))
@@ -990,6 +1014,36 @@
   ;: Compatibility owned-key remove wrapper.
   (define (string-string-map-remove [map : StringStringMap] [key : String]) : StringStringMapRemoveResult
     (string-string-map-remove-borrowed map (& key)))
+  ;: Insert into a fresh destination table during rehash.
+  (define (string-string-map-insert-into-empty
+    [slots : (Array StringStringMapSlot)]
+    [capacity : i64]
+    [key : String]
+    [value : String]
+    [hash : i64]) : unit
+    (if (<= capacity 0)
+      unit
+      (let
+        [cursor : i64 (string-string-map-bucket-index hash capacity)]
+        [walked : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< walked capacity))
+            (match (array-ref slots cursor)
+              [(StringStringMapEmpty)
+                (begin
+                  (array-set!
+                    slots
+                    cursor
+                    (StringStringMapOccupied key value hash))
+                  (set! done true))]
+              [_
+                (begin
+                  (set! cursor (string-string-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          unit))))
   ;: Re-insert every live entry into a fresh `StringStringMap` table.
   (define (string-string-map-rehash-from
     [src : (Array StringStringMapSlot)]
@@ -1002,16 +1056,12 @@
       (begin
         (match (array-ref src index)
           [(StringStringMapOccupied key value hash)
-            (match (string-string-map-probe-borrowed
+            (string-string-map-insert-into-empty
               dst
               dst-capacity
-              (& key)
-              hash)
-              [(StringStringMapProbeAbsent slot)
-                (array-set! dst slot (StringStringMapOccupied key value hash))]
-              [(StringStringMapProbeFound slot)
-                (array-set! dst slot (StringStringMapOccupied key value hash))]
-              [(StringStringMapProbeFull) unit])]
+              key
+              value
+              hash)]
           [(StringStringMapEmpty) unit]
           [(StringStringMapTombstone) unit])
         (string-string-map-rehash-from src dst dst-capacity (+ index 1) count))))
@@ -1309,6 +1359,33 @@
                 (+ (i64-i64-map-deleted map) 1))))]
         [(I64I64MapProbeAbsent _) (I64I64MapRemoveMissing map)]
         [(I64I64MapProbeFull) (I64I64MapRemoveMissing map)])))
+  ;: Insert into a fresh destination table during rehash.
+  (define (i64-i64-map-insert-into-empty
+    [slots : (Array I64I64MapSlot)]
+    [capacity : i64]
+    [key : i64]
+    [value : i64]
+    [hash : i64]) : unit
+    (if (<= capacity 0)
+      unit
+      (let
+        [cursor : i64 (i64-i64-map-bucket-index hash capacity)]
+        [walked : i64 0]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< walked capacity))
+            (match (array-ref slots cursor)
+              [(I64I64MapEmpty)
+                (begin
+                  (array-set! slots cursor (I64I64MapOccupied key value hash))
+                  (set! done true))]
+              [_
+                (begin
+                  (set! cursor (i64-i64-map-next-index cursor capacity))
+                  (set! walked (+ walked 1)))]))
+          unit))))
   ;: Re-insert every live entry into a fresh `I64I64Map` table.
   (define (i64-i64-map-rehash-from
     [src : (Array I64I64MapSlot)]
@@ -1321,12 +1398,7 @@
       (begin
         (match (array-ref src index)
           [(I64I64MapOccupied key value hash)
-            (match (i64-i64-map-probe dst dst-capacity key hash)
-              [(I64I64MapProbeAbsent slot)
-                (array-set! dst slot (I64I64MapOccupied key value hash))]
-              [(I64I64MapProbeFound slot)
-                (array-set! dst slot (I64I64MapOccupied key value hash))]
-              [(I64I64MapProbeFull) unit])]
+            (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
           [(I64I64MapEmpty) unit]
           [(I64I64MapTombstone) unit])
         (i64-i64-map-rehash-from src dst dst-capacity (+ index 1) count))))

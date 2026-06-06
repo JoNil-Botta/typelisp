@@ -1444,6 +1444,50 @@
       (set! buf (gen-tb2 buf "-remove-borrowed map (& key)))\n" ""))
       (set!
         buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-insert-into-empty\n  [slots : (Array "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          slot
+          ")]\n  [capacity : i64]\n  [key : String]\n  [value : "
+          value-type
+          "]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
+          prefix
+          "-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "      [walked : i64 0]\n      [done : bool false]\n      (begin\n        (while (if done false (< walked capacity))\n          (match (array-ref slots cursor)\n            [("
+          empty
+          ")\n              (begin\n                (array-set! slots cursor ("
+          occupied
+          " key value hash))\n                (set! done true))]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            [_\n              (begin\n                (set! cursor ("
+          prefix
+          "-next-index cursor capacity))\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "                (set! walked (+ walked 1)))]))\n        unit))))\n"
+          ""))
+      (set!
+        buf
         (gen-tb3 buf "(define (" prefix "-rehash-from\n  [src : (Array "))
       (set!
         buf
@@ -1464,37 +1508,11 @@
         (gen-tb4
           buf
           occupied
-          " key value hash)\n          (match ("
+          " key value hash)\n          ("
           prefix
-          "-probe-borrowed dst dst-capacity (& key) hash)\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-absent
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-found
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-full
-          ") unit])]\n        [("
-          empty
-          ") unit]\n        [("))
-      (set! buf (gen-tb3 buf tombstone ") unit])\n      (" prefix))
+          "-insert-into-empty dst dst-capacity key value hash)]\n        [("))
+      (set! buf (gen-tb3 buf empty ") unit]\n        [(" tombstone))
+      (set! buf (gen-tb2 buf ") unit])\n      (" prefix))
       (set!
         buf
         (gen-tb2
@@ -2197,6 +2215,50 @@
         (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
       (set!
         buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-insert-into-empty\n  [slots : (Array "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          slot
+          ")]\n  [capacity : i64]\n  [key : i64]\n  [value : "
+          value-type
+          "]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
+          prefix
+          "-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "      [walked : i64 0]\n      [done : bool false]\n      (begin\n        (while (if done false (< walked capacity))\n          (match (array-ref slots cursor)\n            [("
+          empty
+          ")\n              (begin\n                (array-set! slots cursor ("
+          occupied
+          " key value hash))\n                (set! done true))]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            [_\n              (begin\n                (set! cursor ("
+          prefix
+          "-next-index cursor capacity))\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "                (set! walked (+ walked 1)))]))\n        unit))))\n"
+          ""))
+      (set!
+        buf
         (gen-tb3 buf "(define (" prefix "-rehash-from\n  [src : (Array "))
       (set!
         buf
@@ -2217,37 +2279,11 @@
         (gen-tb4
           buf
           occupied
-          " key value hash)\n          (match ("
+          " key value hash)\n          ("
           prefix
-          "-probe dst dst-capacity key hash)\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-absent
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-found
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-full
-          ") unit])]\n        [("
-          empty
-          ") unit]\n        [("))
-      (set! buf (gen-tb3 buf tombstone ") unit])\n      (" prefix))
+          "-insert-into-empty dst dst-capacity key value hash)]\n        [("))
+      (set! buf (gen-tb3 buf empty ") unit]\n        [(" tombstone))
+      (set! buf (gen-tb2 buf ") unit])\n      (" prefix))
       (set!
         buf
         (gen-tb2

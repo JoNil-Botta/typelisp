@@ -359,9 +359,12 @@ items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
 test <file.tl>` loads the import graph, turns inline tests into private
 unit-returning functions, generates a test-owned `main`, and runs the resulting
 executable. With no file, `typelisp test` discovers the nearest package and runs
-package sources that contain top-level inline tests. `typelisp test --check`
-type-checks generated harnesses without assembling or linking. Tests commonly
-import `stdlib/test.tl` for assertion helpers.
+package sources that contain top-level inline tests, plus package-local
+`tests/**/*.tl` integration test files. Integration test files run as normal
+programs: a `main` exit status of `0` passes, while any non-zero status fails
+the package test command with exit `1`. `typelisp test --check` type-checks
+generated inline harnesses and integration test files without assembling or
+linking. Tests commonly import `stdlib/test.tl` for assertion helpers.
 
 CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
 test-bearing `.tl` files under `selfhost/`, `stdlib/`, `tests/integration/`,

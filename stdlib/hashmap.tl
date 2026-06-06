@@ -42,6 +42,8 @@
 ;# ```
 (import "hash.tl")
 
+(import "string.tl")
+
 ;: Stable descriptor identity for generated `String`-key hashmap families.
 (define (hashmap-string-key-descriptor-key) : String
   "stdlib/hashmap/string-key-v1")
@@ -764,6 +766,26 @@
     (if (>= first-tombstone 0)
       first-tombstone
       empty-index))
+  ;: Compare borrowed `StringStringMap` keys without relying on imported helpers.
+  (define (string-string-map-key-eq?
+    [left : (& left str)]
+    [right : (& right str)]) : bool
+    (let
+      [left-len : i64 (string-length left)]
+      [right-len : i64 (string-length right)]
+      (if (not (= left-len right-len))
+        false
+        (let
+          [i : i64 0]
+          [same : bool true]
+          (begin
+            (while (and same (< i left-len))
+              (if (=
+                (cast (string-ref left i) : i64)
+                (cast (string-ref right i) : i64))
+                (set! i (+ i 1))
+                (set! same false)))
+            same)))))
   ;: Linear probe for a borrowed `StringStringMap` key.
   (define (string-string-map-probe-borrowed-from
     [slots : (Array StringStringMapSlot)]
@@ -794,7 +816,7 @@
               index))]
         [(StringStringMapOccupied slot-key _ slot-hash)
           (if (if (= slot-hash hash)
-            (string-eq-borrowed (& slot-key) key)
+            (string-string-map-key-eq? (& slot-key) key)
             false)
             (StringStringMapProbeFound index)
             (string-string-map-probe-borrowed-from

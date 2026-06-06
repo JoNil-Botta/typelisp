@@ -594,7 +594,9 @@ EOF
 
     echo "[host-action-cli] test package discovery"
     TEST_PKG="$WORKDIR/inline-test-pkg"
-    mkdir -p "$TEST_PKG/src/nested" "$TEST_PKG/target/ignored" "$TEST_PKG/vendor/child/src"
+    mkdir -p "$TEST_PKG/src/nested" "$TEST_PKG/target/ignored" \
+        "$TEST_PKG/vendor/child/src" "$TEST_PKG/tests/nested" \
+        "$TEST_PKG/tests/target/ignored" "$TEST_PKG/tests/vendor/child/src"
     cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "inline_test_pkg")
@@ -608,13 +610,15 @@ EOF
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (test pkg-entry
-  (assert-i64-eq (inc 41) 42 "package entry inline test"))
+  (if (= (inc 41) 42)
+    unit
+    (let [_ : i64 (/ 1 0)] unit)))
 EOF
     cat > "$TEST_PKG/src/nested/more.tl" <<'EOF'
-(import "stdlib/test.tl")
-
 (test pkg-nested
-  (assert-i64-eq (+ 20 22) 42 "package nested inline test"))
+  (if (= (+ 20 22) 42)
+    unit
+    (let [_ : i64 (/ 1 0)] unit)))
 EOF
     cat > "$TEST_PKG/src/no-tests.tl" <<'EOF'
 (define package-no-test-value : i64 42)
@@ -630,12 +634,39 @@ EOF
 (test ignored-nested-package
   (panic "nested package inline test should be ignored"))
 EOF
+    cat > "$TEST_PKG/tests/basic.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-i64-eq (+ 21 21) 42 "package tests dir basic")
+    0))
+EOF
+    cat > "$TEST_PKG/tests/nested/more.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-i64-eq (* 6 7) 42 "package nested tests dir")
+    0))
+EOF
+    cat > "$TEST_PKG/tests/target/ignored/fail.tl" <<'EOF'
+(define (main) : i64 9)
+EOF
+    cat > "$TEST_PKG/tests/vendor/child/typelisp.pkg" <<'EOF'
+(package (name "child-tests") (version "0.1.0") (kind "lib"))
+EOF
+    cat > "$TEST_PKG/tests/vendor/child/src/fail.tl" <<'EOF'
+(define (main) : i64 9)
+EOF
     run_capture_cwd test-package-check "$TEST_PKG/src/nested" "$COMPILER" test --check --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-package-check.stderr"
     assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp test file:"
-    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp package test typecheck passed: 2 test(s) in 2 file(s)"
+    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp integration test file:"
+    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp package test typecheck passed: 4 test(s) in 4 file(s)"
     run_capture_cwd test-package-run "$TEST_PKG/src/nested" "$COMPILER" test --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
-    assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp package tests passed: 2 test(s) in 2 file(s)"
+    assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp integration test file:"
+    assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp package tests passed: 4 test(s) in 4 file(s)"
     assert_contains "$WORKDIR/test-package-run.stderr" "test pkg-entry"
     assert_contains "$WORKDIR/test-package-run.stderr" "ok pkg-entry"
     assert_contains "$WORKDIR/test-package-run.stderr" "test pkg-nested"
@@ -681,6 +712,32 @@ EOF
         echo "failing test left scratch assembly behind: $FAIL_SRC.test.s" >&2
         exit 1
     }
+
+    FAIL_PKG="$WORKDIR/integration-test-fail-pkg"
+    mkdir -p "$FAIL_PKG/src" "$FAIL_PKG/tests"
+    cat > "$FAIL_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "integration_test_fail_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$FAIL_PKG/src/lib.tl" <<'EOF'
+(define lib-value : i64 42)
+EOF
+    cat > "$FAIL_PKG/tests/fail.tl" <<'EOF'
+(define (main) : i64 7)
+EOF
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --target linux-x86_64 --manifest-path "$FAIL_PKG/typelisp.pkg" 3>&2 > "$WORKDIR/test-package-integration-fail.stdout" 2> "$WORKDIR/test-package-integration-fail.stderr"
+    pkg_fail_status=$?
+    set -e
+    if [ "$pkg_fail_status" -ne 1 ]; then
+        echo "host-action CLI package integration failure exited $pkg_fail_status, expected 1" >&2
+        exit 1
+    fi
+    assert_contains "$WORKDIR/test-package-integration-fail.stdout" "TypeLisp integration test file:"
+    assert_contains "$WORKDIR/test-package-integration-fail.stderr" "typelisp test: test executable exited with exit status: 7"
 
     BAD_SRC="$WORKDIR/inline-test-bad.tl"
     cat > "$BAD_SRC" <<'EOF'

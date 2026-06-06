@@ -225,10 +225,8 @@
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
 
-;; Windows supports temp-dir creation (mkdir + GetCurrentProcessId, #850) but
-;; not yet removal/cleanup (remove-file/remove-dir are unsupported stubs), so the
-;; Windows arm asserts a successful, unique, existing create rather than the full
-;; Linux create/write/remove lifecycle.
+;; Windows and Linux both support temp-dir creation; the broad lifecycle checks
+;; below cover cleanup where the test owns all generated children.
 (define (assert-created-temp-dir) : unit
   (let
     [dir-a : String
@@ -349,7 +347,7 @@
       (test-try-rename "windows source" "")
       "windows empty rename destination is invalid")))
 
-(define (assert-linux-read-dir-api [root : String]) : unit
+(define (assert-read-dir-api [root : String]) : unit
   (let
     [file-a : String (test-fs-path-join root "alpha.txt")]
     [file-b : String (test-fs-path-join root "beta data.txt")]
@@ -591,15 +589,48 @@
               (expect-ok-string
                 (test-try-create-temp-dir "typelisp fs mkdir test")
                 "create temp dir mkdir: ")]
-            (assert-mkdir-if-missing dir false))
+            [dir-d : String
+              (expect-ok-string
+                (test-try-create-temp-dir "typelisp fs read dir test")
+                "create temp dir read dir: ")]
+            [file-a : String (test-fs-path-join dir "artifact with space.s")]
+            (begin
+              (assert-mkdir-if-missing dir true)
+              (assert-file-kind-directory dir "windows temp dir is directory")
+              (assert-file-metadata-directory
+                dir
+                "windows temp dir metadata is directory")
+              (assert-ok-unit
+                (test-try-write-file file-a "assembly")
+                "windows write temp artifact: ")
+              (assert-file-kind-regular
+                file-a
+                "windows temp artifact is regular")
+              (assert-file-metadata-regular-size
+                file-a
+                8
+                "windows temp artifact metadata size")
+              (assert-file-kind-not-found
+                (test-fs-path-join dir "missing artifact.s")
+                "windows missing file kind is not found")
+              (assert-file-metadata-not-found
+                (test-fs-path-join dir "missing artifact.s")
+                "windows missing file metadata is not found")
+              (assert-ok-unit
+                (test-try-remove-file file-a)
+                "windows remove temp artifact: ")
+              (assert-read-dir-api dir-d)
+              (assert-ok-unit
+                (test-try-remove-dir dir-d)
+                "windows cleanup read-dir temp dir: ")
+              (assert-ok-unit
+                (test-try-remove-dir dir)
+                "windows cleanup mkdir temp dir: ")))
           (assert-windows-rename-api)
-          (assert-file-kind-unsupported "." "windows file kind unsupported")
-          (assert-file-metadata-unsupported
-            "."
-            "windows file metadata unsupported")
-          (assert-unsupported-string-list
-            (test-try-read-dir ".")
-            "windows read-dir reports unsupported")
+          (assert-file-kind-invalid "" "windows empty file-kind path invalid")
+          (assert-file-metadata-invalid
+            ""
+            "windows empty metadata path invalid")
           42)
         (let
           [dir-a : String
@@ -674,7 +705,7 @@
             (assert-ok-unit
               (test-try-remove-dir dir-c)
               "cleanup rename temp dir: ")
-            (assert-linux-read-dir-api dir-d)
+            (assert-read-dir-api dir-d)
             (assert-ok-unit
               (test-try-remove-dir dir-d)
               "cleanup read-dir temp dir: ")

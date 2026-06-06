@@ -1298,6 +1298,31 @@
     [text : String (read-file source)]
     (tltest-source-has-inline-tests-from text 0 (string-length text) true)))
 
+(define (tltest-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (> prefix-len text-len)
+      false
+      (string-eq (substring text 0 prefix-len) prefix))))
+
+(define (tltest-package-tests-prefix [manifest-dir : String]) : String
+  (string-append
+    (compiler-load-normalize-path
+      (package-source-root-join manifest-dir "tests"))
+    "/"))
+
+(define (tltest-package-test-source? [source : String] [tests-prefix : String]) : bool
+  (tltest-string-prefix? (compiler-load-normalize-path source) tests-prefix))
+
+(define (tltest-decls-have-main? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (if (tltest-main-decl? decl)
+        true
+        (tltest-decls-have-main? (box-get rest)))]))
+
 (define (tltest-package-source-line [source : String] [count : i64]) : String
   (string-append
     "TypeLisp test file: "
@@ -1362,6 +1387,78 @@
               (OkTestPackageTotals 1 count)
               (ErrTestPackageTotals status)))))]))
 
+(define (tltest-package-integration-line [source : String]) : String
+  (string-append "TypeLisp integration test file: " (string-append source "\n")))
+
+(define (tltest-package-integration-missing-main [source : String]) : String
+  (string-append
+    "test: integration test file has no main: "
+    (string-append source "\n")))
+
+(define (tltest-package-integration-check
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultTestPackageTotals
+  (begin
+    (print-string (tltest-package-integration-line source))
+    (if (tltest-decls-have-main? decls)
+      (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
+        [(OkCompilerTypecheck _) (OkTestPackageTotals 1 1)]
+        [(ErrCompilerTypecheck diag)
+          (begin
+            (print-error (compiler-diagnostic-render diag))
+            (ErrTestPackageTotals 1))])
+      (begin
+        (print-error (tltest-package-integration-missing-main source))
+        (ErrTestPackageTotals 1)))))
+
+(define (tltest-package-integration-run
+  [source : String]
+  [target : String]
+  [opt-level : i64]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultTestPackageTotals
+  (begin
+    (print-string (tltest-package-integration-line source))
+    (if (tltest-decls-have-main? decls)
+      (let
+        [status : i64
+          (tltest-run-direct source (ast-program decls) paths target opt-level)]
+        (if (= status 0)
+          (OkTestPackageTotals 1 1)
+          (ErrTestPackageTotals status)))
+      (begin
+        (print-error (tltest-package-integration-missing-main source))
+        (ErrTestPackageTotals 1)))))
+
+(define (tltest-package-run-integration-source
+  [source : String]
+  [target : String]
+  [roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultTestPackageTotals
+  (match (compiler-load-package-file-with-paths-and-roots-cfg
+    source
+    (sym-i64-empty)
+    roots
+    manifest-dir
+    deps
+    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (match test-mode
+        [(TestModeCheck) (tltest-package-integration-check source decls paths)]
+        [(TestModeRun)
+          (tltest-package-integration-run source target opt-level decls paths)])]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (print-error
+          (string-append "test: integration test source failed: " source))
+        (print-error (compiler-diagnostic-render diag))
+        (ErrTestPackageTotals 1))]))
+
 (define (tltest-package-run-source
   [source : String]
   [target : String]
@@ -1397,6 +1494,7 @@
 
 (define (tltest-package-run-sources
   [sources : StringList]
+  [tests-prefix : String]
   [target : String]
   [roots : CompilerLoadRootList]
   [opt-level : i64]
@@ -1409,7 +1507,58 @@
   (match sources
     [(StringNil) (OkTestPackageTotals file-count test-count)]
     [(StringCons source rest)
-      (match (tltest-package-run-source
+      (if (tltest-package-test-source? source tests-prefix)
+        (tltest-package-run-sources
+          (box-get rest)
+          tests-prefix
+          target
+          roots
+          opt-level
+          test-mode
+          backend-target
+          manifest-dir
+          deps
+          file-count
+          test-count)
+        (match (tltest-package-run-source
+          source
+          target
+          roots
+          opt-level
+          test-mode
+          backend-target
+          manifest-dir
+          deps)
+          [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
+          [(OkTestPackageTotals source-files source-tests)
+            (tltest-package-run-sources
+              (box-get rest)
+              tests-prefix
+              target
+              roots
+              opt-level
+              test-mode
+              backend-target
+              manifest-dir
+              deps
+              (+ file-count source-files)
+              (+ test-count source-tests))]))]))
+
+(define (tltest-package-run-integration-sources
+  [sources : StringList]
+  [target : String]
+  [roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [file-count : i64]
+  [test-count : i64]) : ResultTestPackageTotals
+  (match sources
+    [(StringNil) (OkTestPackageTotals file-count test-count)]
+    [(StringCons source rest)
+      (match (tltest-package-run-integration-source
         source
         target
         roots
@@ -1420,7 +1569,7 @@
         deps)
         [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
         [(OkTestPackageTotals source-files source-tests)
-          (tltest-package-run-sources
+          (tltest-package-run-integration-sources
             (box-get rest)
             target
             roots
@@ -1453,26 +1602,50 @@
         [(OkPackageSourceSet source-set)
           (let
             [manifest : CompilerPkgManifest (struct-get source-set manifest)]
-            (match (tltest-package-run-sources
-              (struct-get source-set sources)
-              target
-              roots
-              opt-level
-              test-mode
-              backend-target
-              (struct-get source-set manifest-dir)
-              (struct-get manifest deps)
-              0
-              0)
-              [(ErrTestPackageTotals status) status]
-              [(OkTestPackageTotals file-count test-count)
+            [manifest-dir : String (struct-get source-set manifest-dir)]
+            [tests-prefix : String (tltest-package-tests-prefix manifest-dir)]
+            (match (package-source-discover-tests-for "test" source-set)
+              [(ErrPackageSourceList message)
                 (begin
-                  (print-string
-                    (tltest-package-summary-line
+                  (print-error message)
+                  1)]
+              [(OkPackageSourceList integration-sources)
+                (match (tltest-package-run-sources
+                  (struct-get source-set sources)
+                  tests-prefix
+                  target
+                  roots
+                  opt-level
+                  test-mode
+                  backend-target
+                  manifest-dir
+                  (struct-get manifest deps)
+                  0
+                  0)
+                  [(ErrTestPackageTotals status) status]
+                  [(OkTestPackageTotals inline-file-count inline-test-count)
+                    (match (tltest-package-run-integration-sources
+                      integration-sources
+                      target
+                      roots
+                      opt-level
                       test-mode
-                      file-count
-                      test-count))
-                  0)]))])]))
+                      backend-target
+                      manifest-dir
+                      (struct-get manifest deps)
+                      0
+                      0)
+                      [(ErrTestPackageTotals status) status]
+                      [(OkTestPackageTotals
+                          integration-file-count
+                          integration-test-count)
+                        (begin
+                          (print-string
+                            (tltest-package-summary-line
+                              test-mode
+                              (+ inline-file-count integration-file-count)
+                              (+ inline-test-count integration-test-count)))
+                          0)])])]))])]))
 
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config

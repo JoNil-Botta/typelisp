@@ -1823,6 +1823,104 @@ assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
 [ ! -f "$WORKDIR/inline_test_no_tests.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+echo "[public-tools] package test discovery"
+TEST_PKG="$WORKDIR/package-test-pkg"
+mkdir -p "$TEST_PKG/src" "$TEST_PKG/tests/nested" \
+    "$TEST_PKG/tests/target/ignored" "$TEST_PKG/tests/vendor/child/src"
+cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "package_test_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+maybe_strip_manifest_kind "$TEST_PKG/typelisp.pkg"
+cat > "$TEST_PKG/src/lib.tl" <<'EOF'
+(test pkg-inline
+  (if (= 42 42)
+    unit
+    (let [_ : i64 (/ 1 0)] unit)))
+EOF
+cat > "$TEST_PKG/tests/basic.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-i64-eq (+ 20 22) 42 "package tests dir basic")
+    0))
+EOF
+cat > "$TEST_PKG/tests/nested/more.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-i64-eq (* 6 7) 42 "package nested tests dir")
+    0))
+EOF
+cat > "$TEST_PKG/tests/target/ignored/fail.tl" <<'EOF'
+(define (main) : i64 9)
+EOF
+cat > "$TEST_PKG/tests/vendor/child/typelisp.pkg" <<'EOF'
+(package (name "child-tests") (version "0.1.0") (kind "lib"))
+EOF
+maybe_strip_manifest_kind "$TEST_PKG/tests/vendor/child/typelisp.pkg"
+cat > "$TEST_PKG/tests/vendor/child/src/fail.tl" <<'EOF'
+(define (main) : i64 9)
+EOF
+run_cmd_cwd package-test-check "$TEST_PKG/src" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test file:"
+assert_contains "$out" "TypeLisp integration test file:"
+assert_contains "$out" "TypeLisp package test typecheck passed: 3 test(s) in 3 file(s)"
+run_cmd_cwd package-test-run "$TEST_PKG/src" "$COMPILER" test --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_contains "$out" "TypeLisp integration test file:"
+assert_contains "$out" "TypeLisp package tests passed: 3 test(s) in 3 file(s)"
+assert_contains "$err" "test pkg-inline"
+assert_contains "$err" "ok pkg-inline"
+
+TEST_EMPTY_PKG="$WORKDIR/package-test-empty-pkg"
+mkdir -p "$TEST_EMPTY_PKG/src"
+cat > "$TEST_EMPTY_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "package_test_empty_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+maybe_strip_manifest_kind "$TEST_EMPTY_PKG/typelisp.pkg"
+cat > "$TEST_EMPTY_PKG/src/lib.tl" <<'EOF'
+(define lib-value : i64 42)
+EOF
+run_cmd_cwd package-test-empty "$TEST_EMPTY_PKG" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)"
+
+TEST_FAIL_PKG="$WORKDIR/package-test-fail-pkg"
+mkdir -p "$TEST_FAIL_PKG/src" "$TEST_FAIL_PKG/tests"
+cat > "$TEST_FAIL_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "package_test_fail_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+maybe_strip_manifest_kind "$TEST_FAIL_PKG/typelisp.pkg"
+cat > "$TEST_FAIL_PKG/src/lib.tl" <<'EOF'
+(define lib-value : i64 42)
+EOF
+cat > "$TEST_FAIL_PKG/tests/fail.tl" <<'EOF'
+(define (main) : i64 7)
+EOF
+run_cmd package-test-fail "$COMPILER" test --target "$HOST_TARGET" --manifest-path "$TEST_FAIL_PKG/typelisp.pkg"
+if [ "$code" -ne 1 ]; then
+    fail "package integration failure exited $code, expected 1"
+fi
+assert_contains "$out" "TypeLisp integration test file:"
+assert_contains "$err" "typelisp test: test executable exited with exit status: 7"
+
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"
 mkdir -p "$PKG/src" "$PKG/vendor/math/src"

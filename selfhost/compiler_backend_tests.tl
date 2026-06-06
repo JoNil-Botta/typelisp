@@ -3379,6 +3379,17 @@
           (compiler-backend-string-contains? asm "\ntl_fs_read_dir_status:\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-windows-private-fs-no-crt? [asm : String]) : bool
+  (and
+    (backend-and4
+      (not (compiler-backend-string-contains? asm "_findfirst32"))
+      (not (compiler-backend-string-contains? asm "_findnext32"))
+      (not (compiler-backend-string-contains? asm "_findclose"))
+      (not (compiler-backend-string-contains? asm "_stat64")))
+    (and
+      (not (compiler-backend-string-contains? asm "    .extern _errno\n"))
+      (not (compiler-backend-string-contains? asm "    call _errno\n")))))
+
 (define (compiler-backend-windows-fs-read-dir-runtime-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-fs-read-dir-runtime-source)
@@ -3387,16 +3398,29 @@
       (backend-and8
         (compiler-backend-string-contains? asm ".L_tl_fs_read_dir_status:\n")
         (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")
-        (compiler-backend-string-contains? asm "    movq $38, %rax\n")
-        (not (compiler-backend-string-contains? asm "    syscall"))
-        (not (compiler-backend-string-contains? asm ".globl tl_fs_read_dir\n"))
-        (not
-          (compiler-backend-string-contains?
-            asm
-            ".globl tl_fs_read_dir_status\n"))
-        (not (compiler-backend-string-contains? asm "\ntl_fs_read_dir:\n"))
-        (not
-          (compiler-backend-string-contains? asm "\ntl_fs_read_dir_status:\n")))]
+        (compiler-backend-string-contains? asm "    .extern FindFirstFileA\n")
+        (compiler-backend-string-contains? asm "    .extern FindNextFileA\n")
+        (compiler-backend-string-contains? asm "    .extern FindClose\n")
+        (compiler-backend-string-contains? asm "    call FindFirstFileA\n")
+        (and
+          (compiler-backend-string-contains? asm "    call FindNextFileA\n")
+          (compiler-backend-string-contains? asm "    call FindClose\n"))
+        (and
+          (and
+            (not (compiler-backend-string-contains? asm "    syscall"))
+            (compiler-backend-windows-private-fs-no-crt? asm))
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_fs_read_dir_status\n"))
+            (and
+              (not
+                (compiler-backend-string-contains? asm "\ntl_fs_read_dir:\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "\ntl_fs_read_dir_status:\n"))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-file-kind-runtime-source) : String
@@ -3437,9 +3461,25 @@
       (and
         (compiler-backend-string-contains? asm ".L_tl_fs_file_kind_status:\n")
         (and
-          (compiler-backend-string-contains? asm "    movq $38, %rax\n")
           (and
-            (not (compiler-backend-string-contains? asm "    syscall"))
+            (compiler-backend-string-contains?
+              asm
+              "    .extern GetFileAttributesExA\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    call GetFileAttributesExA\n")
+              (compiler-backend-string-contains? asm "    testl $16, %eax\n")))
+          (and
+            (backend-and4
+              (not (compiler-backend-string-contains? asm "    syscall"))
+              (not (compiler-backend-string-contains? asm "_stat64"))
+              (not (compiler-backend-string-contains? asm "    call _errno\n"))
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    .extern GetLastError\n")
+                (compiler-backend-windows-private-fs-no-crt? asm)))
             (and
               (not
                 (compiler-backend-string-contains?
@@ -3498,9 +3538,28 @@
         (and
           (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n")
           (and
-            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
             (and
-              (not (compiler-backend-string-contains? asm "    syscall"))
+              (compiler-backend-string-contains?
+                asm
+                "    .extern GetFileAttributesExA\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    call GetFileAttributesExA\n")
+                (compiler-backend-string-contains?
+                  asm
+                  "    movl 32(%r12), %eax\n")))
+            (and
+              (backend-and4
+                (not (compiler-backend-string-contains? asm "    syscall"))
+                (not (compiler-backend-string-contains? asm "_stat64"))
+                (not
+                  (compiler-backend-string-contains? asm "    call _errno\n"))
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    .extern GetLastError\n")
+                  (compiler-backend-windows-private-fs-no-crt? asm)))
               (not
                 (compiler-backend-string-contains?
                   asm

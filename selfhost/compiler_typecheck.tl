@@ -2507,6 +2507,21 @@
     [(SomeRef value) (let [same : (& n i64) value] 0)]
     [(NoRef) 1]))")
 
+(define (compiler-typecheck-regular-call-lifetime-subst-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (ref-id [value : (& a i64)]) : (& a i64) value)
+(define (box-id [value : (& a i64)]) : (RefBox a) (RefBox value))
+(define (main [n : i64]) : i64
+  (let
+    [direct : (& n i64) (ref-id (& n))]
+    [box : (RefBox n) (box-id (& n))]
+    (let [value : (& n i64) (struct-get box value)] 0)))")
+
+(define (compiler-typecheck-regular-call-lifetime-conflict-source) : String
+  "(define (same-owner [a : (& source i64)] [b : (& source i64)]) : i64 0)
+(define (main [n : i64]) : i64
+  (let [other : i64 1] (same-owner (& n) (& other))))")
+
 (define (compiler-typecheck-lifetime-duplicate-source) : String
   "(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
 
@@ -2763,6 +2778,13 @@
       (compiler-typecheck-ok? (compiler-typecheck-lifetime-struct-field-source))]
     [lifetime-enum-match-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-lifetime-enum-match-source))]
+    [regular-call-lifetime-subst-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-regular-call-lifetime-subst-source))]
+    [regular-call-lifetime-conflict-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-regular-call-lifetime-conflict-source)
+        "typecheck: constructor lifetime mismatch")]
     [lifetime-duplicate-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-lifetime-duplicate-source)
@@ -2888,6 +2910,12 @@
         unit
         (set! ok false))
       (if lifetime-enum-match-ok
+        unit
+        (set! ok false))
+      (if regular-call-lifetime-subst-ok
+        unit
+        (set! ok false))
+      (if regular-call-lifetime-conflict-error-ok
         unit
         (set! ok false))
       (if lifetime-duplicate-error-ok

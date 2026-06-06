@@ -56,7 +56,7 @@
         (string-eq (array-ref (struct-get bundle fixed) 0) (piece seed 4))
         (and
           (string-eq (array-ref (struct-get bundle fixed) 1) (piece seed 5))
-          (cell-ok? (struct-get bundle cell) seed 6))))))
+          (string-eq (box-get (struct-get bundle cell)) (piece seed 6)))))))
 
 (define (outcome-ok? [outcome : EscapeOutcome] [seed : i64]) : bool
   (match outcome

@@ -3708,6 +3708,38 @@
 (comptime-decl (:generated option-family Option_String \"Bytes\")
   (defstruct Option_String (value String)))")
 
+(define (compiler-generated-decl-cross-module-reuse-source) : String
+  "(module option.family)
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))
+(module app)
+(module option.family)
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))")
+
+(define (compiler-generated-decl-cross-module-distinct-source) : String
+  "(module option.left)
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))
+(module option.right)
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defstruct Option_String (value String)))")
+
+(define (compiler-generated-decl-visible-count
+  [source : String]
+  [name : String]) : i64
+  (match (parse-ast-source source)
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram normalized)
+          (match normalized
+            [(AstProgram decls-box)
+              (compiler-specialize-decl-list-count-visible
+                (box-get decls-box)
+                name)])]
+        [(ErrSpecProgram _) -1])]
+    [(ErrAstProgram _) -1]))
+
 (define (compiler-generated-decl-reuse-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
     [(OkAstProgram program)
@@ -3785,6 +3817,20 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-decl-cross-module-reuse-ok?) : bool
+  (=
+    (compiler-generated-decl-visible-count
+      (compiler-generated-decl-cross-module-reuse-source)
+      "Option_String")
+    1))
+
+(define (compiler-generated-decl-cross-module-distinct-ok?) : bool
+  (=
+    (compiler-generated-decl-visible-count
+      (compiler-generated-decl-cross-module-distinct-source)
+      "Option_String")
+    2))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (unless (compiler-specialize-type-param-ok?) (return 0))
@@ -3806,4 +3852,6 @@
     (unless
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)
       (return 0))
+    (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
+    (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     1))

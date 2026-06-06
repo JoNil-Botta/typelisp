@@ -1945,6 +1945,15 @@
       (set! y (try (read b)))
       (OkI64 (+ x y)))))")
 
+(define (compiler-typecheck-option-try-source) : String
+  "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
+(defenum MaybeBool (NoneBool) (SomeBool bool))
+(define (read [flag : bool]) : MaybeI64
+  (if flag (SomeI64 41) NoneI64))
+(define (main [flag : bool]) : MaybeBool
+  (let ([x : i64 (try (read flag))])
+    (SomeBool (> x 0))))")
+
 (define (compiler-typecheck-result-try-non-result-source) : String
   "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
 (define (main) : ResultI64
@@ -1962,6 +1971,25 @@
 (define (read) : OtherResult (ErrOther 7))
 (define (main) : ResultI64
   (OkI64 (try (read))))")
+
+(define (compiler-typecheck-option-try-carrier-mismatch-source) : String
+  "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
+(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (read) : MaybeI64 (SomeI64 1))
+(define (main) : ResultI64
+  (OkI64 (try (read))))")
+
+(define (compiler-typecheck-option-try-payloadless-some-source) : String
+  "(defenum MaybeI64 (SomeI64) (NoneI64))
+(define (read) : MaybeI64 SomeI64)
+(define (main) : i64
+  (try (read)))")
+
+(define (compiler-typecheck-option-try-payloaded-none-source) : String
+  "(defenum MaybeI64 (SomeI64 i64) (NoneI64 i64))
+(define (read) : MaybeI64 (SomeI64 1))
+(define (main) : i64
+  (try (read)))")
 
 (define (compiler-typecheck-result-try-panic-source) : String
   (compiler-typecheck-with-io-source
@@ -2269,18 +2297,33 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-result-try-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-result-try-non-result-source)
-        "typecheck: try operand must be Result-like enum")
+      (compiler-typecheck-ok? (compiler-typecheck-option-try-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-result-try-non-result-return-source)
-          "typecheck: try requires enclosing Result-like function")
+          (compiler-typecheck-result-try-non-result-source)
+          "typecheck: try operand must be Result-like enum")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-result-try-incompatible-error-source)
-            "typecheck: try error type mismatch")
-          (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source)))))))
+            (compiler-typecheck-result-try-non-result-return-source)
+            "typecheck: try requires enclosing Result-like function")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-result-try-incompatible-error-source)
+              "typecheck: try error type mismatch")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-option-try-carrier-mismatch-source)
+                "typecheck: try carrier mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-option-try-payloadless-some-source)
+                  "typecheck: try operand must be Result-like enum")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-option-try-payloaded-none-source)
+                    "typecheck: try operand must be Result-like enum")
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-result-try-panic-source)))))))))))
 
 (define (compiler-typecheck-move-kind-copyable-tests-ok?) : bool
   (and

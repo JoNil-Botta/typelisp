@@ -38,8 +38,12 @@
   (OkTcString String)
   (ErrTcString String))
 
+(defenum TcTryKind
+  (TcTryResult)
+  (TcTryOption))
+
 (defenum TcResultInfo
-  (TcResultInfo String String AstType String AstType))
+  (TcResultInfo TcTryKind String String AstType String AstType))
 
 (defenum ResultTcResultInfo
   (OkTcResultInfo TcResultInfo)
@@ -9552,29 +9556,39 @@
 
 (define (tc-result-info-enum-name [info : TcResultInfo]) : String
   (match info
-    [(TcResultInfo enum-name _ _ _ _) enum-name]))
+    [(TcResultInfo _ enum-name _ _ _ _) enum-name]))
+
+(define (tc-result-info-kind [info : TcResultInfo]) : TcTryKind
+  (match info
+    [(TcResultInfo kind _ _ _ _ _) kind]))
 
 (define (tc-result-info-ok-name [info : TcResultInfo]) : String
   (match info
-    [(TcResultInfo _ ok-name _ _ _) ok-name]))
+    [(TcResultInfo _ _ ok-name _ _ _) ok-name]))
 
 (define (tc-result-info-ok-type [info : TcResultInfo]) : AstType
   (match info
-    [(TcResultInfo _ _ ok-ty _ _) ok-ty]))
+    [(TcResultInfo _ _ _ ok-ty _ _) ok-ty]))
 
 (define (tc-result-info-err-name [info : TcResultInfo]) : String
   (match info
-    [(TcResultInfo _ _ _ err-name _) err-name]))
+    [(TcResultInfo _ _ _ _ err-name _) err-name]))
 
 (define (tc-result-info-err-type [info : TcResultInfo]) : AstType
   (match info
-    [(TcResultInfo _ _ _ _ err-ty) err-ty]))
+    [(TcResultInfo _ _ _ _ _ err-ty) err-ty]))
 
 (define (tc-ok-variant-name? [name : String]) : bool
   (tc-string-prefix? name "Ok"))
 
 (define (tc-err-variant-name? [name : String]) : bool
   (tc-string-prefix? name "Err"))
+
+(define (tc-some-variant-name? [name : String]) : bool
+  (tc-string-prefix? name "Some"))
+
+(define (tc-none-variant-name? [name : String]) : bool
+  (tc-string-prefix? name "None"))
 
 (define (tc-result-variant-payload-type
   [ctx : TcContext]
@@ -9600,6 +9614,7 @@
 
 (define (tc-result-info-build
   [ctx : TcContext]
+  [try-kind : TcTryKind]
   [enum-name : String]
   [ok-name : String]
   [ok-fields : AstTypeList]
@@ -9610,7 +9625,40 @@
       (match (tc-result-variant-payload-type ctx err-name err-fields)
         [(OkTcType err-ty)
           (OkTcResultInfo
-            (TcResultInfo enum-name ok-name ok-ty err-name err-ty))]
+            (TcResultInfo try-kind enum-name ok-name ok-ty err-name err-ty))]
+        [(ErrTcType message) (ErrTcResultInfo message)])]
+    [(ErrTcType message) (ErrTcResultInfo message)]))
+
+(define (tc-option-none-variant-type
+  [variant-name : String]
+  [fields : AstTypeList]) : ResultTcType
+  (match fields
+    [(AstTypeNil) (OkTcType (AstTyUnit))]
+    [_
+      (ErrTcType
+        (string-append
+          "typecheck: try requires Option-like variant with no payload "
+          variant-name))]))
+
+(define (tc-option-info-build
+  [ctx : TcContext]
+  [enum-name : String]
+  [some-name : String]
+  [some-fields : AstTypeList]
+  [none-name : String]
+  [none-fields : AstTypeList]) : ResultTcResultInfo
+  (match (tc-result-variant-payload-type ctx some-name some-fields)
+    [(OkTcType some-ty)
+      (match (tc-option-none-variant-type none-name none-fields)
+        [(OkTcType none-ty)
+          (OkTcResultInfo
+            (TcResultInfo
+              TcTryOption
+              enum-name
+              some-name
+              some-ty
+              none-name
+              none-ty))]
         [(ErrTcType message) (ErrTcResultInfo message)])]
     [(ErrTcType message) (ErrTcResultInfo message)]))
 
@@ -9621,26 +9669,48 @@
   [first-fields : AstTypeList]
   [second-name : String]
   [second-fields : AstTypeList]) : ResultTcResultInfo
-  (if (and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
-    (tc-result-info-build
-      ctx
-      enum-name
-      first-name
-      first-fields
-      second-name
-      second-fields)
-    (if (and
-      (tc-err-variant-name? first-name)
-      (tc-ok-variant-name? second-name))
+  (cond
+    [(and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
       (tc-result-info-build
+        ctx
+        TcTryResult
+        enum-name
+        first-name
+        first-fields
+        second-name
+        second-fields)]
+    [(and (tc-err-variant-name? first-name) (tc-ok-variant-name? second-name))
+      (tc-result-info-build
+        ctx
+        TcTryResult
+        enum-name
+        second-name
+        second-fields
+        first-name
+        first-fields)]
+    [(and
+        (tc-some-variant-name? first-name)
+        (tc-none-variant-name? second-name))
+      (tc-option-info-build
+        ctx
+        enum-name
+        first-name
+        first-fields
+        second-name
+        second-fields)]
+    [(and
+        (tc-none-variant-name? first-name)
+        (tc-some-variant-name? second-name))
+      (tc-option-info-build
         ctx
         enum-name
         second-name
         second-fields
         first-name
-        first-fields)
+        first-fields)]
+    [else
       (ErrTcResultInfo
-        "typecheck: try requires Result-like enum with Ok*/Err* variants"))))
+        "typecheck: try requires Result-like Ok*/Err* or Option-like Some*/None* variants")]))
 
 (define (tc-result-info-from-variants
   [ctx : TcContext]
@@ -9684,6 +9754,23 @@
         [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
     [_ (ErrTcResultInfo "typecheck: try requires Result-like enum")]))
 
+(define (tc-try-infos-compatible
+  [operand-info : TcResultInfo]
+  [return-info : TcResultInfo]) : ResultTcUnit
+  (match (tc-result-info-kind operand-info)
+    [(TcTryResult)
+      (match (tc-result-info-kind return-info)
+        [(TcTryResult)
+          (tc-expect
+            (tc-result-info-err-type operand-info)
+            (tc-result-info-err-type return-info)
+            "typecheck: try error type mismatch")]
+        [(TcTryOption) (ErrTcUnit "typecheck: try carrier mismatch")])]
+    [(TcTryOption)
+      (match (tc-result-info-kind return-info)
+        [(TcTryOption) OkTcUnit]
+        [(TcTryResult) (ErrTcUnit "typecheck: try carrier mismatch")])]))
+
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
   (match (tc-expr ctx env inner)
     [(OkTcType operand-ty)
@@ -9693,10 +9780,7 @@
             [(OkTcType return-ty)
               (match (tc-result-info ctx return-ty)
                 [(OkTcResultInfo return-info)
-                  (match (tc-expect
-                    (tc-result-info-err-type operand-info)
-                    (tc-result-info-err-type return-info)
-                    "typecheck: try error type mismatch")
+                  (match (tc-try-infos-compatible operand-info return-info)
                     [(OkTcUnit)
                       (OkTcType (tc-result-info-ok-type operand-info))]
                     [(ErrTcUnit message) (ErrTcType message)])]

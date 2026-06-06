@@ -6350,15 +6350,20 @@
                 [(OkTcType return-ty)
                   (match (tc-result-info ctx return-ty)
                     [(OkTcResultInfo return-info)
-                      (lower-try-with-info
-                        ctx
-                        result-state
-                        env
-                        type-env
-                        result-value
-                        operand-info
-                        return-info
-                        origin)]
+                      (match (tc-try-infos-compatible operand-info return-info)
+                        [(OkTcUnit)
+                          (lower-try-with-info
+                            ctx
+                            result-state
+                            env
+                            type-env
+                            result-value
+                            operand-info
+                            return-info
+                            origin)]
+                        [(ErrTcUnit message)
+                          (ErrLowerExpr
+                            (lower-diagnostic-at-expr origin message))])]
                     [(ErrTcResultInfo _)
                       (ErrLowerExpr
                         (lower-diagnostic-at-expr
@@ -18033,6 +18038,14 @@
 (define (main [flag : bool]) : ResultI64
   (chain flag))")
 
+(define (compiler-lower-option-try-source) : String
+  "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
+(define (read [flag : bool] [n : i64]) : MaybeI64
+  (if flag (SomeI64 n) NoneI64))
+(define (main [a : bool] [b : bool]) : MaybeI64
+  (let ([x : i64 (try (read a 40))])
+    (SomeI64 (+ x (try (read b 2))))))")
+
 (define (compiler-lower-return-source) : String
   "(define (main [flag : bool]) : i64
   (begin
@@ -20170,6 +20183,16 @@
                 (> (lower-test-function-load-count functions "sum") 3))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-option-try-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-option-try-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-branch-count functions "main") 1)
+            (> (lower-test-function-return-count functions "main") 2))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-return-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-return-source))
     [(OkCompilerLower program _)
@@ -21967,6 +21990,9 @@
       (if (compiler-lower-ok? (compiler-lower-result-try-source))
         unit
         (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-option-try-source))
+        unit
+        (set! ok false))
       ok)))
 
 (define (compiler-lower-middle-tests-ok?) : bool
@@ -21979,6 +22005,9 @@
         (set! ok false))
       (if (compiler-lower-result-try-shape-ok?
         (compiler-lower-result-try-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-option-try-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-return-shape-ok?)

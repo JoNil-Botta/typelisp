@@ -356,9 +356,10 @@ Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
 test <file.tl>` loads the import graph, turns inline tests into private
 unit-returning functions, generates a test-owned `main`, and runs the resulting
-executable. `typelisp test --check <file.tl>` type-checks that generated
-harness without assembling or linking. Tests commonly import `stdlib/test.tl`
-for assertion helpers.
+executable. With no file, `typelisp test` discovers the nearest package and runs
+package sources that contain top-level inline tests. `typelisp test --check`
+type-checks generated harnesses without assembling or linking. Tests commonly
+import `stdlib/test.tl` for assertion helpers.
 
 CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
 test-bearing `.tl` files under `selfhost/`, `stdlib/`, `tests/integration/`,
@@ -630,7 +631,7 @@ typelisp run            file.tl    # Compile, assemble, link, and run; --target 
 typelisp build                    # Build nearest typelisp.pkg artifact; --profile dev|release, --target <target>, --backend-mode <mode>
 typelisp fmt            [file.tl...] # Format files or nearest package; --check reports changes without writing
 typelisp lint           [file.tl...] # Lint files or nearest package; --check exits non-zero on findings
-typelisp test           file.tl    # Run inline `(test ...)` items; --check type-checks the generated harness
+typelisp test           [file.tl]  # Run inline `(test ...)` items or nearest package; --check type-checks harnesses
 ```
 
 `check` is the public type-check command.

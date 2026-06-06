@@ -12,6 +12,8 @@
 
 (import "compiler_load.tl")
 
+(import "package_source_core.tl")
+
 (import "compiler_optimize.tl")
 
 (import "compiler_typecheck.tl")
@@ -21,7 +23,15 @@
   (TestModeCheck))
 
 (defenum TestConfig
-  (TestConfig String String String CompilerLoadRootList i64 TestMode))
+  (TestFileConfig String String String CompilerLoadRootList i64 TestMode)
+  (TestPackageConfig
+    String
+    bool
+    String
+    String
+    CompilerLoadRootList
+    i64
+    TestMode))
 
 (defenum ResultTestConfig
   (OkTestConfig TestConfig)
@@ -43,6 +53,10 @@
 (defenum InlineRuntimeDecls
   (InlineRuntimeDecls AstDeclList AstDeclPathList))
 
+(defenum ResultTestPackageTotals
+  (OkTestPackageTotals i64 i64)
+  (ErrTestPackageTotals i64))
+
 (define (tltest-root-cons [root : String] [roots : CompilerLoadRootList]) : CompilerLoadRootList
   (CompilerLoadRootCons root (box roots)))
 
@@ -61,6 +75,31 @@
     value
     "; expected 0, 1, 2, or 3"))
 
+(define (tltest-config-finish
+  [source : String]
+  [has-source : bool]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [target : String]
+  [mode : String]
+  [roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [test-mode : TestMode]) : ResultTestConfig
+  (if has-source
+    (if has-manifest
+      (ErrTestConfig "test: cannot combine source path with --manifest-path")
+      (OkTestConfig
+        (TestFileConfig source target mode roots opt-level test-mode)))
+    (OkTestConfig
+      (TestPackageConfig
+        manifest-path
+        has-manifest
+        target
+        mode
+        roots
+        opt-level
+        test-mode))))
+
 (define (tltest-target-valid? [value : String]) : bool
   (match (source-tool-target value)
     [(OkSourceToolTarget _) true]
@@ -76,6 +115,8 @@
   [count : i64]
   [source : String]
   [has-source : bool]
+  [manifest-path : String]
+  [has-manifest : bool]
   [target : String]
   [mode : String]
   [roots : CompilerLoadRootList]
@@ -83,9 +124,16 @@
   [opt-level : i64]
   [test-mode : TestMode]) : ResultTestConfig
   (if (>= idx count)
-    (if has-source
-      (OkTestConfig (TestConfig source target mode roots opt-level test-mode))
-      (ErrTestConfig "test: expected source path"))
+    (tltest-config-finish
+      source
+      has-source
+      manifest-path
+      has-manifest
+      target
+      mode
+      roots
+      opt-level
+      test-mode)
     (let
       [current : String (arg idx)]
       (cond
@@ -95,6 +143,8 @@
             count
             source
             has-source
+            manifest-path
+            has-manifest
             target
             mode
             roots
@@ -112,6 +162,8 @@
                   count
                   source
                   has-source
+                  manifest-path
+                  has-manifest
                   value
                   mode
                   roots
@@ -131,6 +183,8 @@
                     count
                     source
                     has-source
+                    manifest-path
+                    has-manifest
                     target
                     value
                     roots
@@ -147,12 +201,32 @@
               count
               source
               has-source
+              manifest-path
+              has-manifest
               target
               mode
               (tltest-root-cons (arg (+ idx 1)) roots)
               has-opt-level
               opt-level
               test-mode))]
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrTestConfig "test: --manifest-path requires a value")
+            (if has-manifest
+              (ErrTestConfig "test: duplicate --manifest-path")
+              (tltest-parse-options
+                (+ idx 2)
+                count
+                source
+                has-source
+                (arg (+ idx 1))
+                true
+                target
+                mode
+                roots
+                has-opt-level
+                opt-level
+                test-mode)))]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrTestConfig "test: --opt-level requires a value")
@@ -167,6 +241,8 @@
                       count
                       source
                       has-source
+                      manifest-path
+                      has-manifest
                       target
                       mode
                       roots
@@ -184,6 +260,8 @@
             count
             current
             true
+            manifest-path
+            has-manifest
             target
             mode
             roots
@@ -197,6 +275,8 @@
   (tltest-parse-options
     start
     count
+    ""
+    false
     ""
     false
     "linux-x86_64"
@@ -1164,9 +1244,241 @@
     target
     opt-level))
 
+(define (tltest-source-prefix-space? [c : char]) : bool
+  (or (= c #\space') (= c #\tab')))
+
+(define (tltest-source-line-break? [c : char]) : bool
+  (or (= c #\newline') (= c #\return')))
+
+(define (tltest-inline-marker-boundary? [source : String] [idx : i64] [n : i64]) : bool
+  (if (>= idx n)
+    true
+    (let
+      [c : char (string-ref source idx)]
+      (or
+        (tltest-source-prefix-space? c)
+        (or (tltest-source-line-break? c) (= c #)'))))))
+
+(define (tltest-inline-marker-at? [source : String] [idx : i64] [n : i64]) : bool
+  (and
+    (<= (+ idx 5) n)
+    (and
+      (= (string-ref source idx) #(')
+      (and
+        (= (string-ref source (+ idx 1)) #t')
+        (and
+          (= (string-ref source (+ idx 2)) #e')
+          (and
+            (= (string-ref source (+ idx 3)) #s')
+            (and
+              (= (string-ref source (+ idx 4)) #t')
+              (tltest-inline-marker-boundary? source (+ idx 5) n))))))))
+
+(define (tltest-source-has-inline-tests-from
+  [source : String]
+  [idx : i64]
+  [n : i64]
+  [line-open : bool]) : bool
+  (if (>= idx n)
+    false
+    (let
+      [c : char (string-ref source idx)]
+      (if line-open
+        (if (tltest-source-line-break? c)
+          (tltest-source-has-inline-tests-from source (+ idx 1) n true)
+          (if (tltest-source-prefix-space? c)
+            (tltest-source-has-inline-tests-from source (+ idx 1) n true)
+            (if (tltest-inline-marker-at? source idx n)
+              true
+              (tltest-source-has-inline-tests-from source (+ idx 1) n false))))
+        (if (tltest-source-line-break? c)
+          (tltest-source-has-inline-tests-from source (+ idx 1) n true)
+          (tltest-source-has-inline-tests-from source (+ idx 1) n false))))))
+
+(define (tltest-source-has-inline-tests? [source : String]) : bool
+  (let
+    [text : String (read-file source)]
+    (tltest-source-has-inline-tests-from text 0 (string-length text) true)))
+
+(define (tltest-package-source-line [source : String] [count : i64]) : String
+  (string-append
+    "TypeLisp test file: "
+    (string-append
+      source
+      (string-append " (" (string-append (int->string count) " test(s))\n")))))
+
+(define (tltest-package-summary-line
+  [mode : TestMode]
+  [file-count : i64]
+  [test-count : i64]) : String
+  (match mode
+    [(TestModeCheck)
+      (string-append
+        "TypeLisp package test typecheck passed: "
+        (string-append
+          (int->string test-count)
+          (string-append
+            " test(s) in "
+            (string-append (int->string file-count) " file(s)\n"))))]
+    [(TestModeRun)
+      (string-append
+        "TypeLisp package tests passed: "
+        (string-append
+          (int->string test-count)
+          (string-append
+            " test(s) in "
+            (string-append (int->string file-count) " file(s)\n"))))]))
+
+(define (tltest-package-run-one
+  [source : String]
+  [target : String]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultTestPackageTotals
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness program harness-paths count)
+      (if (= count 0)
+        (begin
+          (print-error
+            (string-append
+              "test: discovered inline test marker but no inline tests in "
+              (string-append source "\n")))
+          (ErrTestPackageTotals 1))
+        (begin
+          (print-string (tltest-package-source-line source count))
+          (let
+            [status : i64
+              (match test-mode
+                [(TestModeCheck)
+                  (tltest-check-only program harness-paths count backend-target)]
+                [(TestModeRun)
+                  (tltest-run-direct
+                    source
+                    program
+                    harness-paths
+                    target
+                    opt-level)])]
+            (if (= status 0)
+              (OkTestPackageTotals 1 count)
+              (ErrTestPackageTotals status)))))]))
+
+(define (tltest-package-run-source
+  [source : String]
+  [target : String]
+  [roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultTestPackageTotals
+  (if (tltest-source-has-inline-tests? source)
+    (match (compiler-load-package-file-with-paths-and-roots-cfg
+      source
+      (sym-i64-empty)
+      roots
+      manifest-dir
+      deps
+      (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (tltest-package-run-one
+          source
+          target
+          opt-level
+          test-mode
+          backend-target
+          decls
+          paths)]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (print-error (string-append "test: package source failed: " source))
+          (print-error (compiler-diagnostic-render diag))
+          (ErrTestPackageTotals 1))])
+    (OkTestPackageTotals 0 0)))
+
+(define (tltest-package-run-sources
+  [sources : StringList]
+  [target : String]
+  [roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [file-count : i64]
+  [test-count : i64]) : ResultTestPackageTotals
+  (match sources
+    [(StringNil) (OkTestPackageTotals file-count test-count)]
+    [(StringCons source rest)
+      (match (tltest-package-run-source
+        source
+        target
+        roots
+        opt-level
+        test-mode
+        backend-target
+        manifest-dir
+        deps)
+        [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
+        [(OkTestPackageTotals source-files source-tests)
+          (tltest-package-run-sources
+            (box-get rest)
+            target
+            roots
+            opt-level
+            test-mode
+            backend-target
+            manifest-dir
+            deps
+            (+ file-count source-files)
+            (+ test-count source-tests))])]))
+
+(define (tltest-run-package
+  [manifest-path : String]
+  [has-manifest : bool]
+  [target : String]
+  [roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [test-mode : TestMode]) : i64
+  (match (source-tool-target target)
+    [(ErrSourceToolTarget _)
+      (begin
+        (print-error (tltest-unknown-target target))
+        1)]
+    [(OkSourceToolTarget backend-target)
+      (match (package-source-discover-for "test" manifest-path has-manifest)
+        [(ErrPackageSourceSet message)
+          (begin
+            (print-error message)
+            1)]
+        [(OkPackageSourceSet source-set)
+          (let
+            [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+            (match (tltest-package-run-sources
+              (struct-get source-set sources)
+              target
+              roots
+              opt-level
+              test-mode
+              backend-target
+              (struct-get source-set manifest-dir)
+              (struct-get manifest deps)
+              0
+              0)
+              [(ErrTestPackageTotals status) status]
+              [(OkTestPackageTotals file-count test-count)
+                (begin
+                  (print-string
+                    (tltest-package-summary-line
+                      test-mode
+                      file-count
+                      test-count))
+                  0)]))])]))
+
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
-    [(TestConfig source target mode roots opt-level test-mode)
+    [(TestFileConfig source target mode roots opt-level test-mode)
       (match (source-tool-target target)
         [(ErrSourceToolTarget _)
           (begin
@@ -1203,7 +1515,22 @@
             [(ErrCompilerLoadWithPaths diag)
               (begin
                 (print-error (compiler-diagnostic-render diag))
-                1)])])]))
+                1)])])]
+    [(TestPackageConfig
+        manifest-path
+        has-manifest
+        target
+        _
+        roots
+        opt-level
+        test-mode)
+      (tltest-run-package
+        manifest-path
+        has-manifest
+        target
+        roots
+        opt-level
+        test-mode)]))
 
 ;; Run the `test` command over arguments starting at `start`.
 (define (tltest-run-from [start : i64] [count : i64]) : i64

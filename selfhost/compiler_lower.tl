@@ -4062,9 +4062,10 @@
     [(AstTyStr) true]
     [_ false]))
 
-(define (lower-supported-reference-type-list?
+(define (lower-supported-reference-type-list-with-stack?
   [ctx : TcContext]
-  [types : AstTypeList]) : bool
+  [types : AstTypeList]
+  [stack : LowerStringSet]) : bool
   (match types
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
@@ -4072,10 +4073,122 @@
         [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (and
-          (lower-supported-reference-type? ctx head)
-          (lower-supported-reference-type-list? ctx rest)))]))
+          (lower-supported-reference-type-with-stack? ctx head stack)
+          (lower-supported-reference-type-list-with-stack? ctx rest stack)))]))
 
-(define (lower-supported-reference-type? [ctx : TcContext] [ty : AstType]) : bool
+(define (lower-supported-reference-type-list-subst-with-stack?
+  [ctx : TcContext]
+  [subst : TcLifetimeSubst]
+  [types : AstTypeList]
+  [stack : LowerStringSet]) : bool
+  (match types
+    [(AstTypeNil) true]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (box-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (and
+          (lower-supported-reference-type-with-stack?
+            ctx
+            (tc-lifetime-subst-type subst head)
+            stack)
+          (lower-supported-reference-type-list-subst-with-stack?
+            ctx
+            subst
+            rest
+            stack)))]))
+
+(define (lower-supported-reference-field-list-with-stack?
+  [ctx : TcContext]
+  [subst : TcLifetimeSubst]
+  [fields : AstFieldDefList]
+  [stack : LowerStringSet]) : bool
+  (match fields
+    [(AstFieldDefNil) true]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty _)
+            (and
+              (lower-supported-reference-type-with-stack?
+                ctx
+                (tc-lifetime-subst-type subst ty)
+                stack)
+              (lower-supported-reference-field-list-with-stack?
+                ctx
+                subst
+                rest
+                stack))]))]))
+
+(define (lower-supported-reference-variant-list-with-stack?
+  [ctx : TcContext]
+  [subst : TcLifetimeSubst]
+  [variants : AstVariantDefList]
+  [stack : LowerStringSet]) : bool
+  (match variants
+    [(AstVariantDefNil) true]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ fields)
+            (and
+              (lower-supported-reference-type-list-subst-with-stack?
+                ctx
+                subst
+                fields
+                stack)
+              (lower-supported-reference-variant-list-with-stack?
+                ctx
+                subst
+                rest
+                stack))]))]))
+
+(define (lower-supported-reference-struct-args-with-stack?
+  [ctx : TcContext]
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [stack : LowerStringSet]) : bool
+  (if (lower-string-set-contains? stack name)
+    true
+    (match (tc-lifetime-subst-from-nominal-args ctx name lifetimes)
+      [(ErrTcLifetimeSubst _) false]
+      [(OkTcLifetimeSubst subst)
+        (match (tc-struct-decl ctx name)
+          [(ErrTcStructDecl _) false]
+          [(OkTcStructDecl decl)
+            (match decl
+              [(TcStructDecl _ _ fields)
+                (lower-supported-reference-field-list-with-stack?
+                  ctx
+                  subst
+                  fields
+                  (lower-string-set-insert stack name))])])])))
+
+(define (lower-supported-reference-enum-args-with-stack?
+  [ctx : TcContext]
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [stack : LowerStringSet]) : bool
+  (if (lower-string-set-contains? stack name)
+    true
+    (match (tc-lifetime-subst-from-nominal-args ctx name lifetimes)
+      [(ErrTcLifetimeSubst _) false]
+      [(OkTcLifetimeSubst subst)
+        (match (tc-context-enum-variants ctx name)
+          [(ErrAstVariantDefList _) false]
+          [(OkAstVariantDefList variants)
+            (lower-supported-reference-variant-list-with-stack?
+              ctx
+              subst
+              variants
+              (lower-string-set-insert stack name))])])))
+
+(define (lower-supported-reference-type-with-stack?
+  [ctx : TcContext]
+  [ty : AstType]
+  [stack : LowerStringSet]) : bool
   (let
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
     (if (not (tc-type-contains-reference? resolved))
@@ -4084,12 +4197,30 @@
         [(AstTyRef _ inner)
           (lower-supported-reference-referent-type? ctx (box-get inner))]
         [(AstTyMutRef _ _) false]
-        [(AstTyTuple elems) (lower-supported-reference-type-list? ctx elems)]
+        [(AstTyTuple elems)
+          (lower-supported-reference-type-list-with-stack? ctx elems stack)]
         [(AstTyArray elem _)
-          (lower-supported-reference-type? ctx (box-get elem))]
+          (lower-supported-reference-type-with-stack? ctx (box-get elem) stack)]
+        [(AstTyBox elem)
+          (lower-supported-reference-type-with-stack? ctx (box-get elem) stack)]
+        [(AstTyStructArgs name lifetimes)
+          (lower-supported-reference-struct-args-with-stack?
+            ctx
+            name
+            lifetimes
+            stack)]
+        [(AstTyEnumArgs name lifetimes)
+          (lower-supported-reference-enum-args-with-stack?
+            ctx
+            name
+            lifetimes
+            stack)]
         [(AstTyRegion _ inner)
-          (lower-supported-reference-type? ctx (box-get inner))]
+          (lower-supported-reference-type-with-stack? ctx (box-get inner) stack)]
         [_ false]))))
+
+(define (lower-supported-reference-type? [ctx : TcContext] [ty : AstType]) : bool
+  (lower-supported-reference-type-with-stack? ctx ty LowerStringNil))
 
 (define (lower-borrowed-str-expr
   [ctx : TcContext]
@@ -4166,6 +4297,23 @@
     [(ErrTcType message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
 
+(define (lower-borrow-struct-field-address-named
+  [ctx : TcContext]
+  [state : LowerState]
+  [receiver-value : CompilerIrValue]
+  [struct-name : String]
+  [field : String]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-struct-field-info ctx struct-name field)
+    [(OkLowerFieldInfo info)
+      (match info
+        [(LowerFieldInfo offset _)
+          (match (lower-gep-byte state receiver-value offset)
+            [(LowerExpr ptr-state ptr _)
+              (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
+    [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
+
 (define (lower-borrow-struct-field-address
   [ctx : TcContext]
   [state : LowerState]
@@ -4181,17 +4329,23 @@
         [(LowerExpr receiver-state receiver-value receiver-ty)
           (match (tc-resolve-type ctx receiver-ty)
             [(AstTyStruct struct-name)
-              (match (lower-struct-field-info ctx struct-name field)
-                [(OkLowerFieldInfo info)
-                  (match info
-                    [(LowerFieldInfo offset _)
-                      (match (lower-gep-byte
-                        receiver-state
-                        receiver-value
-                        offset)
-                        [(LowerExpr ptr-state ptr _)
-                          (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
-                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+              (lower-borrow-struct-field-address-named
+                ctx
+                receiver-state
+                receiver-value
+                struct-name
+                field
+                origin
+                result-ty)]
+            [(AstTyStructArgs struct-name _)
+              (lower-borrow-struct-field-address-named
+                ctx
+                receiver-state
+                receiver-value
+                struct-name
+                field
+                origin
+                result-ty)]
             [_
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
@@ -4581,7 +4735,20 @@
 (define (lower-enum-type-name-or-empty [ty : AstType]) : String
   (match (tc-type-strip-region ty)
     [(AstTyEnum enum-name) enum-name]
+    [(AstTyEnumArgs enum-name _) enum-name]
+    [(AstTyVarArgs enum-name _) enum-name]
     [_ ""]))
+
+(define (lower-variant-lookup-name-for-scrut
+  [scrut-ty : AstType]
+  [variant-name : String]) : String
+  (match (tc-type-strip-region scrut-ty)
+    [(AstTyEnum enum-name) (tc-variant-name-for-enum enum-name variant-name)]
+    [(AstTyEnumArgs enum-name _)
+      (tc-variant-name-for-enum enum-name variant-name)]
+    [(AstTyVarArgs enum-name _)
+      (tc-variant-name-for-enum enum-name variant-name)]
+    [_ variant-name]))
 
 (define (lower-variant-payload-offset
   [ctx : TcContext]
@@ -7282,17 +7449,15 @@
   [handle : i64]
   [values : CompilerIrValueList]
   [fields : AstTypeList]
-  [enum-name : String]) : ResultLowerExpr
+  [enum-name : String]
+  [enum-ty : AstType]) : ResultLowerExpr
   (match (tc-inline-aggregate-layout-for ctx enum-name)
     [(OkTcInlineAggregateLayout layout)
       (match layout
         [(TcInlineEnumLayout size _ _)
           (let
             [layout-variant-name : String (tc-qualified-name-base variant-name)]
-            (match (lower-reserve-inline-storage
-              state
-              size
-              (AstTyEnum enum-name))
+            (match (lower-reserve-inline-storage state size enum-ty)
               [(LowerExpr base-state base _)
                 (let
                   [tag-state : LowerState
@@ -7312,8 +7477,7 @@
                     layout-variant-name
                     0)
                     [(OkLowerState done-state)
-                      (OkLowerExpr
-                        (LowerExpr done-state base (AstTyEnum enum-name)))]
+                      (OkLowerExpr (LowerExpr done-state base enum-ty))]
                     [(ErrLowerState message) (ErrLowerExpr message)]))]))]
         [(TcInlineStructLayout _ _ _)
           (ErrLowerExpr
@@ -7324,6 +7488,103 @@
     [(ErrTcInlineAggregateLayout message)
       (ErrLowerExpr (lower-diagnostic message))]))
 
+(define (lower-enum-constructor-fields-for-result
+  [ctx : TcContext]
+  [enum-name : String]
+  [enum-ty : AstType]
+  [fields : AstTypeList]) : AstTypeList
+  (match enum-ty
+    [(AstTyEnumArgs _ lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
+        [(ErrTcLifetimeSubst _) fields])]
+    [(AstTyVarArgs _ lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
+        [(ErrTcLifetimeSubst _) fields])]
+    [_ fields]))
+
+(define (lower-construct-enum-with-name
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [variant-name : String]
+  [handle : i64]
+  [args : AstExprList]
+  [enum-name : String]
+  [enum-ty : AstType]) : ResultLowerExpr
+  (match ctx
+    [(TcContext _ symbols _ _)
+      (match (compiler-registries-variant-fields-indexed symbols handle)
+        [(OkAstTypeList fields)
+          (let
+            [resolved-fields : AstTypeList
+              (tc-resolve-type-list
+                ctx
+                (lower-enum-constructor-fields-for-result
+                  ctx
+                  enum-name
+                  enum-ty
+                  fields))]
+            (match (lower-args-as ctx state env type-env args resolved-fields)
+              [(OkLowerArgs args-state values)
+                (if (lower-mode-inline-aggregates?
+                  (lower-state-mode args-state))
+                  (lower-construct-enum-inline-from-values
+                    ctx
+                    args-state
+                    variant-name
+                    handle
+                    values
+                    resolved-fields
+                    enum-name
+                    enum-ty)
+                  (match resolved-fields
+                    [(AstTypeNil)
+                      (OkLowerExpr
+                        (LowerExpr
+                          args-state
+                          (IrValueGlobalAddr
+                            (lower-nullary-variant-object-name
+                              enum-name
+                              variant-name))
+                          enum-ty))]
+                    [_
+                      (let
+                        [size : i64
+                          (lower-variant-fields-storage-size
+                            ctx
+                            resolved-fields)]
+                        (match (lower-reserve-heap-storage
+                          args-state
+                          size
+                          enum-ty)
+                          [(LowerExpr base-state base _)
+                            (let
+                              [tag-state : LowerState
+                                (lower-store-at-offset
+                                  base-state
+                                  base
+                                  0
+                                  (IrValueI64
+                                    (compiler-registry-handle-child-index
+                                      handle))
+                                  (AstTyI64))]
+                              (match (lower-store-values
+                                ctx
+                                tag-state
+                                base
+                                values
+                                resolved-fields
+                                8)
+                                [(OkLowerState done-state)
+                                  (OkLowerExpr
+                                    (LowerExpr done-state base enum-ty))]
+                                [(ErrLowerState message) (ErrLowerExpr message)]))]))]))]
+              [(ErrLowerArgs message) (ErrLowerExpr message)]))]
+        [(ErrAstTypeList message) (ErrLowerExpr (lower-diagnostic message))])]))
+
 (define (lower-construct-enum-with-handle
   [ctx : TcContext]
   [state : LowerState]
@@ -7333,82 +7594,58 @@
   [handle : i64]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (tc-resolve-type ctx result-ty)
-    [(AstTyEnum enum-name)
-      (match ctx
-        [(TcContext _ symbols _ _)
-          (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(OkAstTypeList fields)
-              (match (lower-args-as
-                ctx
-                state
-                env
-                type-env
-                args
-                (tc-resolve-type-list ctx fields))
-                [(OkLowerArgs args-state values)
-                  (if (lower-mode-inline-aggregates?
-                    (lower-state-mode args-state))
-                    (lower-construct-enum-inline-from-values
-                      ctx
-                      args-state
-                      variant-name
-                      handle
-                      values
-                      fields
-                      enum-name)
-                    (match fields
-                      [(AstTypeNil)
-                        (OkLowerExpr
-                          (LowerExpr
-                            args-state
-                            (IrValueGlobalAddr
-                              (lower-nullary-variant-object-name
-                                enum-name
-                                variant-name))
-                            (AstTyEnum enum-name)))]
-                      [_
-                        (let
-                          [size : i64
-                            (lower-variant-fields-storage-size ctx fields)]
-                          (match (lower-reserve-heap-storage
-                            args-state
-                            size
-                            (AstTyEnum enum-name))
-                            [(LowerExpr base-state base _)
-                              (let
-                                [tag-state : LowerState
-                                  (lower-store-at-offset
-                                    base-state
-                                    base
-                                    0
-                                    (IrValueI64
-                                      (compiler-registry-handle-child-index
-                                        handle))
-                                    (AstTyI64))]
-                                (match (lower-store-values
-                                  ctx
-                                  tag-state
-                                  base
-                                  values
-                                  fields
-                                  8)
-                                  [(OkLowerState done-state)
-                                    (OkLowerExpr
-                                      (LowerExpr
-                                        done-state
-                                        base
-                                        (AstTyEnum enum-name)))]
-                                  [(ErrLowerState message)
-                                    (ErrLowerExpr message)]))]))]))]
-                [(ErrLowerArgs message) (ErrLowerExpr message)])]
-            [(ErrAstTypeList message) (ErrLowerExpr (lower-diagnostic message))])])]
-    [_
-      (ErrLowerExpr
-        (lower-diagnostic
-          (string-append
-            "lower: enum constructor result is not enum: "
-            variant-name)))]))
+  (let
+    [enum-ty : AstType
+      (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+    (match enum-ty
+      [(AstTyEnum enum-name)
+        (lower-construct-enum-with-name
+          ctx
+          state
+          env
+          type-env
+          variant-name
+          handle
+          args
+          enum-name
+          enum-ty)]
+      [(AstTyEnumArgs enum-name _)
+        (lower-construct-enum-with-name
+          ctx
+          state
+          env
+          type-env
+          variant-name
+          handle
+          args
+          enum-name
+          enum-ty)]
+      [_
+        (ErrLowerExpr
+          (lower-diagnostic
+            (string-append
+              "lower: enum constructor result is not enum: "
+              variant-name)))])))
+
+(define (lower-struct-constructor-field-types-for-result
+  [ctx : TcContext]
+  [struct-name : String]
+  [struct-ty : AstType]
+  [fields : AstFieldDefList]) : AstTypeList
+  (let
+    [field-types : AstTypeList (tc-field-type-list ctx fields)]
+    (match struct-ty
+      [(AstTyStructArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [(AstTyVarArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [_ field-types])))
 
 (define (lower-construct-struct
   [ctx : TcContext]
@@ -7421,58 +7658,59 @@
   (match (lower-struct-fields ctx struct-name)
     [(OkAstFieldDefList fields)
       (let
-        [field-types : AstTypeList (tc-field-type-list ctx fields)]
+        [struct-ty : AstType
+          (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+        [field-types : AstTypeList
+          (lower-struct-constructor-field-types-for-result
+            ctx
+            struct-name
+            struct-ty
+            fields)]
         (match (lower-args-as ctx state env type-env args field-types)
           [(OkLowerArgs args-state values)
-            (let
-              [struct-ty : AstType (tc-resolve-type ctx result-ty)]
-              (if (and
-                (lower-mode-inline-aggregates? (lower-state-mode args-state))
-                (not (lower-struct-repr-c? ctx struct-name)))
-                (lower-construct-struct-inline-from-values
-                  ctx
-                  args-state
-                  struct-name
-                  values
-                  fields
-                  struct-ty)
-                (if (lower-struct-repr-c? ctx struct-name)
-                  (match (tc-repr-c-struct-layout ctx struct-name)
-                    [(OkTcReprCLayout layout)
-                      (match (lower-reserve-heap-storage
-                        args-state
-                        (tc-repr-c-layout-size layout)
-                        struct-ty)
-                        [(LowerExpr base-state base _)
-                          (match (lower-store-repr-c-values
-                            ctx
-                            base-state
-                            base
-                            values
-                            (tc-repr-c-layout-fields layout))
-                            [(OkLowerState done-state)
-                              (OkLowerExpr
-                                (LowerExpr done-state base struct-ty))]
-                            [(ErrLowerState message) (ErrLowerExpr message)])])]
-                    [(ErrTcReprCLayout message)
-                      (ErrLowerExpr (lower-diagnostic message))])
-                  (let
-                    [size : i64 (lower-type-list-storage-size ctx field-types)]
+            (if (and
+              (lower-mode-inline-aggregates? (lower-state-mode args-state))
+              (not (lower-struct-repr-c? ctx struct-name)))
+              (lower-construct-struct-inline-from-values
+                ctx
+                args-state
+                struct-name
+                values
+                fields
+                struct-ty)
+              (if (lower-struct-repr-c? ctx struct-name)
+                (match (tc-repr-c-struct-layout ctx struct-name)
+                  [(OkTcReprCLayout layout)
                     (match (lower-reserve-heap-storage
                       args-state
-                      size
+                      (tc-repr-c-layout-size layout)
                       struct-ty)
                       [(LowerExpr base-state base _)
-                        (match (lower-store-values
+                        (match (lower-store-repr-c-values
                           ctx
                           base-state
                           base
                           values
-                          field-types
-                          0)
+                          (tc-repr-c-layout-fields layout))
                           [(OkLowerState done-state)
                             (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                          [(ErrLowerState message) (ErrLowerExpr message)])])))))]
+                          [(ErrLowerState message) (ErrLowerExpr message)])])]
+                  [(ErrTcReprCLayout message)
+                    (ErrLowerExpr (lower-diagnostic message))])
+                (let
+                  [size : i64 (lower-type-list-storage-size ctx field-types)]
+                  (match (lower-reserve-heap-storage args-state size struct-ty)
+                    [(LowerExpr base-state base _)
+                      (match (lower-store-values
+                        ctx
+                        base-state
+                        base
+                        values
+                        field-types
+                        0)
+                        [(OkLowerState done-state)
+                          (OkLowerExpr (LowerExpr done-state base struct-ty))]
+                        [(ErrLowerState message) (ErrLowerExpr message)])]))))]
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
     [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))]))
 
@@ -7926,6 +8164,16 @@
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstTyStruct struct-name)
           (match (tc-struct-field-type ctx struct-name field)
+            [(OkTcType field-ty)
+              (OkTcType
+                (lower-projected-result-type-fast ctx receiver-ty field-ty))]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(AstTyStructArgs struct-name lifetimes)
+          (match (tc-struct-field-type-with-args
+            ctx
+            struct-name
+            lifetimes
+            field)
             [(OkTcType field-ty)
               (OkTcType
                 (lower-projected-result-type-fast ctx receiver-ty field-ty))]
@@ -8975,6 +9223,38 @@
           [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))]
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
+(define (lower-struct-get-named
+  [ctx : TcContext]
+  [state : LowerState]
+  [receiver-value : CompilerIrValue]
+  [struct-name : String]
+  [field : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-struct-field-info-for-mode
+    ctx
+    (lower-state-mode state)
+    struct-name
+    field)
+    [(OkLowerFieldInfo info)
+      (match info
+        [(LowerFieldInfo offset field-ty)
+          (match (lower-gep-byte state receiver-value offset)
+            [(LowerExpr ptr-state ptr _)
+              (if (and
+                (lower-struct-repr-c? ctx struct-name)
+                (lower-repr-c-inline-field? ctx field-ty))
+                (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
+                (match (lower-state-alloc-var ptr-state)
+                  [(LowerAlloc allocated var-id)
+                    (OkLowerExpr
+                      (LowerExpr
+                        (lower-state-emit
+                          allocated
+                          (IrInstrLoad var-id ptr field-ty))
+                        (IrValueVar var-id)
+                        result-ty))]))])])]
+    [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
+
 (define (lower-struct-get
   [ctx : TcContext]
   [state : LowerState]
@@ -8989,33 +9269,21 @@
         [(LowerExpr receiver-state receiver-value receiver-ty)
           (match (tc-resolve-type ctx receiver-ty)
             [(AstTyStruct struct-name)
-              (match (lower-struct-field-info-for-mode
+              (lower-struct-get-named
                 ctx
-                (lower-state-mode receiver-state)
+                receiver-state
+                receiver-value
                 struct-name
-                field)
-                [(OkLowerFieldInfo info)
-                  (match info
-                    [(LowerFieldInfo offset field-ty)
-                      (match (lower-gep-byte
-                        receiver-state
-                        receiver-value
-                        offset)
-                        [(LowerExpr ptr-state ptr _)
-                          (if (and
-                            (lower-struct-repr-c? ctx struct-name)
-                            (lower-repr-c-inline-field? ctx field-ty))
-                            (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
-                            (match (lower-state-alloc-var ptr-state)
-                              [(LowerAlloc allocated var-id)
-                                (OkLowerExpr
-                                  (LowerExpr
-                                    (lower-state-emit
-                                      allocated
-                                      (IrInstrLoad var-id ptr field-ty))
-                                    (IrValueVar var-id)
-                                    result-ty))]))])])]
-                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                field
+                result-ty)]
+            [(AstTyStructArgs struct-name _)
+              (lower-struct-get-named
+                ctx
+                receiver-state
+                receiver-value
+                struct-name
+                field
+                result-ty)]
             [_
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
@@ -14341,8 +14609,30 @@
                   (IrInstrMov scrut-var scrut-value scrut-ty))
                 "match_merge")
                 [(LowerLabel merge-state merge-label)
-                  (match (tc-resolve-type ctx scrut-ty)
+                  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
                     [(AstTyEnum _)
+                      (lower-match-enum
+                        ctx
+                        merge-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        merge-label
+                        expr-ty)]
+                    [(AstTyEnumArgs _ _)
+                      (lower-match-enum
+                        ctx
+                        merge-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        merge-label
+                        expr-ty)]
+                    [(AstTyVarArgs _ _)
                       (lower-match-enum
                         ctx
                         merge-state
@@ -14615,67 +14905,75 @@
   (match ctx
     [(TcContext _ symbols registries _)
       (let
+        [resolved-scrut-ty : AstType
+          (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
         [lookup-name : String
-          (match (tc-type-strip-region scrut-ty)
-            [(AstTyEnum enum-name)
-              (tc-variant-name-for-enum enum-name variant-name)]
-            [_ variant-name])]
+          (lower-variant-lookup-name-for-scrut resolved-scrut-ty variant-name)]
         (match (compiler-registries-lookup-variant registries lookup-name)
           [(SomeI64 handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
-                ;; The final arm has no next-arm continuation, so a refutable
-                ;; payload subpattern here would have nowhere to fall through to;
-                ;; require a trailing catch-all instead (#651).
-                (if (lower-pattern-list-refutable? args)
-                  (ErrLowerExpr
-                    (lower-diagnostic
-                      "lower: refutable payload pattern in final match arm requires a trailing catch-all"))
-                  (match (lower-bind-variant-payloads
-                    ctx
-                    state
-                    env
-                    type-env
-                    (IrValueVar scrut-var)
-                    args
-                    fields
-                    (lower-state-mode state)
-                    (lower-enum-type-name-or-empty scrut-ty)
-                    variant-name
-                    0
-                    8
-                    merge-label)
-                    [(OkLowerEnv body-start body-env body-type-env)
-                      (match (lower-expr
+                (let
+                  [resolved-fields : AstTypeList
+                    (tc-resolve-type-list
+                      ctx
+                      (lower-enum-constructor-fields-for-result
                         ctx
-                        body-start
-                        body-env
-                        body-type-env
-                        body)
-                        [(OkLowerExpr body-lowered)
-                          (match body-lowered
-                            [(LowerExpr body-state body-value body-ty)
-                              (let
-                                [body-end-label : String
-                                  (lower-state-current-label body-state)]
-                                (if (tc-never-type? body-ty)
-                                  (lower-match-finish
-                                    body-state
-                                    merge-label
-                                    expr-ty
-                                    phi-inputs)
-                                  (lower-match-finish
-                                    (lower-state-emit
+                        (lower-enum-type-name-or-empty resolved-scrut-ty)
+                        resolved-scrut-ty
+                        fields))]
+                  ;; The final arm has no next-arm continuation, so a refutable
+                  ;; payload subpattern here would have nowhere to fall through to;
+                  ;; require a trailing catch-all instead (#651).
+                  (if (lower-pattern-list-refutable? args)
+                    (ErrLowerExpr
+                      (lower-diagnostic
+                        "lower: refutable payload pattern in final match arm requires a trailing catch-all"))
+                    (match (lower-bind-variant-payloads
+                      ctx
+                      state
+                      env
+                      type-env
+                      (IrValueVar scrut-var)
+                      args
+                      resolved-fields
+                      (lower-state-mode state)
+                      (lower-enum-type-name-or-empty resolved-scrut-ty)
+                      variant-name
+                      0
+                      8
+                      merge-label)
+                      [(OkLowerEnv body-start body-env body-type-env)
+                        (match (lower-expr
+                          ctx
+                          body-start
+                          body-env
+                          body-type-env
+                          body)
+                          [(OkLowerExpr body-lowered)
+                            (match body-lowered
+                              [(LowerExpr body-state body-value body-ty)
+                                (let
+                                  [body-end-label : String
+                                    (lower-state-current-label body-state)]
+                                  (if (tc-never-type? body-ty)
+                                    (lower-match-finish
                                       body-state
-                                      (IrInstrJump merge-label))
-                                    merge-label
-                                    expr-ty
-                                    (compiler-ir-phi-input-cons
-                                      body-value
-                                      body-end-label
-                                      phi-inputs))))])]
-                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrLowerEnv message) (ErrLowerExpr message)]))]
+                                      merge-label
+                                      expr-ty
+                                      phi-inputs)
+                                    (lower-match-finish
+                                      (lower-state-emit
+                                        body-state
+                                        (IrInstrJump merge-label))
+                                      merge-label
+                                      expr-ty
+                                      (compiler-ir-phi-input-cons
+                                        body-value
+                                        body-end-label
+                                        phi-inputs))))])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                      [(ErrLowerEnv message) (ErrLowerExpr message)])))]
               [(ErrAstTypeList message)
                 (ErrLowerExpr (lower-diagnostic message))])]
           [(NoneI64)
@@ -14763,61 +15061,69 @@
   (match ctx
     [(TcContext _ symbols registries _)
       (let
+        [resolved-scrut-ty : AstType
+          (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
         [lookup-name : String
-          (match (tc-type-strip-region scrut-ty)
-            [(AstTyEnum enum-name)
-              (tc-variant-name-for-enum enum-name variant-name)]
-            [_ variant-name])]
+          (lower-variant-lookup-name-for-scrut resolved-scrut-ty variant-name)]
         (match (compiler-registries-lookup-variant registries lookup-name)
           [(SomeI64 handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
-                (match (lower-state-alloc-var state)
-                  [(LowerAlloc eq-alloc eq-var)
-                    (let
-                      [eq-state : LowerState
-                        (lower-state-emit
-                          eq-alloc
-                          (IrInstrBinOp
-                            eq-var
-                            IrBinEq
-                            (IrValueVar tag-var)
-                            (IrValueI64
-                              (compiler-registry-handle-child-index handle))
-                            (AstTyI64)))]
-                      (match (lower-state-fresh-label eq-state "match_arm")
-                        [(LowerLabel body-label-state body-label)
-                          (match (lower-state-fresh-label
-                            body-label-state
-                            "match_next")
-                            [(LowerLabel next-label-state next-label)
-                              (let
-                                [body-start : LowerState
-                                  (lower-state-finish-block
-                                    (lower-state-emit
-                                      next-label-state
-                                      (IrInstrBranch
-                                        (IrValueVar eq-var)
-                                        body-label
-                                        next-label))
-                                    body-label)]
-                                (lower-match-variant-body
-                                  ctx
-                                  body-start
-                                  next-label
-                                  env
-                                  type-env
-                                  scrut-var
-                                  scrut-ty
-                                  tag-var
-                                  variant-name
-                                  fields
-                                  args
-                                  body
-                                  rest
-                                  merge-label
-                                  expr-ty
-                                  phi-inputs))])]))])]
+                (let
+                  [resolved-fields : AstTypeList
+                    (tc-resolve-type-list
+                      ctx
+                      (lower-enum-constructor-fields-for-result
+                        ctx
+                        (lower-enum-type-name-or-empty resolved-scrut-ty)
+                        resolved-scrut-ty
+                        fields))]
+                  (match (lower-state-alloc-var state)
+                    [(LowerAlloc eq-alloc eq-var)
+                      (let
+                        [eq-state : LowerState
+                          (lower-state-emit
+                            eq-alloc
+                            (IrInstrBinOp
+                              eq-var
+                              IrBinEq
+                              (IrValueVar tag-var)
+                              (IrValueI64
+                                (compiler-registry-handle-child-index handle))
+                              (AstTyI64)))]
+                        (match (lower-state-fresh-label eq-state "match_arm")
+                          [(LowerLabel body-label-state body-label)
+                            (match (lower-state-fresh-label
+                              body-label-state
+                              "match_next")
+                              [(LowerLabel next-label-state next-label)
+                                (let
+                                  [body-start : LowerState
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        next-label-state
+                                        (IrInstrBranch
+                                          (IrValueVar eq-var)
+                                          body-label
+                                          next-label))
+                                      body-label)]
+                                  (lower-match-variant-body
+                                    ctx
+                                    body-start
+                                    next-label
+                                    env
+                                    type-env
+                                    scrut-var
+                                    scrut-ty
+                                    tag-var
+                                    variant-name
+                                    resolved-fields
+                                    args
+                                    body
+                                    rest
+                                    merge-label
+                                    expr-ty
+                                    phi-inputs))])]))]))]
               [(ErrAstTypeList message)
                 (ErrLowerExpr (lower-diagnostic message))])]
           [(NoneI64)
@@ -15349,8 +15655,12 @@
     [(OkLowerExpr scrut-lowered)
       (match scrut-lowered
         [(LowerExpr scrut-state scrut-value scrut-ty)
-          (match (tc-resolve-type ctx scrut-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
             [(AstTyEnum _)
+              (lower-return-expr ctx state env type-env origin ret-ty)]
+            [(AstTyEnumArgs _ _)
+              (lower-return-expr ctx state env type-env origin ret-ty)]
+            [(AstTyVarArgs _ _)
               (lower-return-expr ctx state env type-env origin ret-ty)]
             [_
               (match (lower-state-alloc-var scrut-state)
@@ -17242,6 +17552,87 @@
       (borrow-tuple t)
       (borrow-array items)
       42)))")
+
+(define (compiler-lower-reference-struct-result-source) : String
+  "(defstruct RefBox
+  (:lifetimes text)
+  (borrowed (& text str))
+  (owned String)
+  (is-owned bool))
+(define (ref-box-borrowed [text : (& text str)] [owned : String]) : (RefBox text)
+  (RefBox text owned false))
+(define (ref-box-owned [text : (& text str)] [owned : String]) : (RefBox text)
+  (RefBox text owned true))
+(define (ref-box-length [item : (RefBox text)]) : i64
+  (if (struct-get item is-owned)
+    (string-length (struct-get item owned))
+    (string-length (struct-get item borrowed))))
+(define (main [text : String] [owned : String]) : i64
+  (let
+    [borrowed : (RefBox text) (ref-box-borrowed (& text) owned)]
+    [owned-box : (RefBox text) (ref-box-owned (& text) owned)]
+    (+ (ref-box-length borrowed) (ref-box-length owned-box))))")
+
+(define (compiler-lower-reference-struct-multi-result-source) : String
+  "(defstruct ReplaceResult
+  (:lifetimes text old replacement)
+  (borrowed (& text str))
+  (old-text (& old str))
+  (replacement-text (& replacement str))
+  (owned String)
+  (is-owned bool))
+(define (replace-borrowed
+  [text : (& text str)]
+  [old : (& old str)]
+  [replacement : (& replacement str)]
+  [owned : String]) : (ReplaceResult text old replacement)
+  (ReplaceResult text old replacement owned false))
+(define (replace-owned
+  [text : (& text str)]
+  [old : (& old str)]
+  [replacement : (& replacement str)]
+  [owned : String]) : (ReplaceResult text old replacement)
+  (ReplaceResult text old replacement owned true))
+(define (replace-score [item : (ReplaceResult text old replacement)]) : i64
+  (+
+    (string-length (struct-get item old-text))
+    (+
+      (string-length (struct-get item replacement-text))
+      (if (struct-get item is-owned)
+        (string-length (struct-get item owned))
+        (string-length (struct-get item borrowed))))))
+(define (main [text : String] [old : String] [replacement : String] [owned : String]) : i64
+  (let
+    [borrowed : (ReplaceResult text old replacement)
+      (replace-borrowed (& text) (& old) (& replacement) owned)]
+    [owned-result : (ReplaceResult text old replacement)
+      (replace-owned (& text) (& old) (& replacement) owned)]
+    (+ (replace-score borrowed) (replace-score owned-result))))")
+
+(define (compiler-lower-reference-enum-result-source) : String
+  "(defenum RefChoice
+  (:lifetimes text)
+  (RefChoiceBorrowed (& text str))
+  (RefChoiceOwned String))
+(define (borrowed-choice [text : (& text str)]) : (RefChoice text)
+  (RefChoiceBorrowed text))
+(define (owned-choice [text : (& text str)] [owned : String]) : (RefChoice text)
+  (RefChoiceOwned owned))
+(define (choice-length [choice : (RefChoice text)]) : i64
+  (match choice
+    [(RefChoiceBorrowed value) (string-length value)]
+    [(RefChoiceOwned value) (string-length value)]))
+(define (choice-loop [choice : (RefChoice text)] [count : i64]) : i64
+  (match choice
+    [(RefChoiceBorrowed value)
+      (if (> count 0)
+        (choice-loop (RefChoiceBorrowed value) (- count 1))
+        (string-length value))]
+    [(RefChoiceOwned value) (string-length value)]))
+(define (main [text : String] [owned : String]) : i64
+  (+
+    (choice-length (borrowed-choice (& text)))
+    (choice-loop (owned-choice (& text) owned) 1)))")
 
 (define (compiler-lower-function-value-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
@@ -20667,6 +21058,13 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-reference-nominal-aggregate-ok?) : bool
+  (and
+    (compiler-lower-ok? (compiler-lower-reference-struct-result-source))
+    (and
+      (compiler-lower-ok? (compiler-lower-reference-struct-multi-result-source))
+      (compiler-lower-ok? (compiler-lower-reference-enum-result-source)))))
+
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -22544,6 +22942,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-reference-place-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-reference-nominal-aggregate-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-comptime-fold-ok?

@@ -1,12 +1,11 @@
-;# Check-only borrowed text buffer source surface.
+;# Borrowed text buffer companion surface.
 ;#
 ;# `TextBufBorrowed` stores `(& text str)` chunks without copying at append
 ;# time, plus owned chunks for explicit copy boundaries. Rendering copies
 ;# borrowed chunks while materializing the final owned `String`.
 ;#
-;# This module intentionally remains separate from `text_buf.tl` until
-;# reference-typed lowering can compile borrowed aggregate values through
-;# ordinary import paths.
+;# This module intentionally remains separate from `text_buf.tl` while the
+;# compatibility surface keeps owned chunk storage.
 (import "text_buf.tl")
 
 ;: Borrowed buffer chunk. Borrowed chunks are not copied until render; owned

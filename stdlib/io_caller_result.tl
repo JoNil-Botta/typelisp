@@ -1,8 +1,8 @@
-;# Check-only lifetime-preserving I/O caller-result APIs (#1913).
+;# Lifetime-preserving I/O caller-result APIs (#1913/#1962).
 ;#
-;# This module is separate from `io.tl` because reference-typed aggregate values
-;# are not lowerable yet. It exposes the checked source shape for helpers that
-;# may return caller-provided fallback text without copying.
+;# This module stays separate from `io.tl` while the compatibility wrapper keeps
+;# the owned `String` API. It exposes helpers that may return caller-provided
+;# fallback text without copying.
 (import "io.tl")
 
 ;: Result for `read-file-or-result`.

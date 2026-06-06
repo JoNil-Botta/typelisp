@@ -178,6 +178,13 @@
           false)
         false))))
 
+(define (fmt-starts-ellipsis [src : String] [i : i64] [n : i64]) : bool
+  (and
+    (< (+ i 2) n)
+    (and
+      (= (string-ref src i) #.')
+      (and (= (string-ref src (+ i 1)) #.') (= (string-ref src (+ i 2)) #.')))))
+
 (define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
@@ -342,6 +349,11 @@
                 (fmt-store-token tokens count (FmtBacktick))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
+            [(fmt-starts-ellipsis src i n)
+              (begin
+                (fmt-store-token tokens count (FmtSymbol "..."))
+                (set! count (+ count 1))
+                (set! i (+ i 3)))]
             [(= c #.')
               (begin
                 (fmt-store-token tokens count (FmtDot))

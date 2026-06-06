@@ -528,6 +528,12 @@
   (define (danger [x : i64]) : i64
     x))")
 
+(define (format-rules-variadic-macro-source) : String
+  "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
+
+(define (format-rules-variadic-macro-expected) : String
+  "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
+
 (define (format-rules-self-test) : i64
   (let
     [decls : String
@@ -540,10 +546,15 @@
       (format-rules-render-source-width (format-rules-quote-source) 80)]
     [unsafe : String
       (format-rules-render-source-width (format-rules-unsafe-source) 80)]
+    [variadic : String
+      (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
     (begin
       (unless (string-eq decls (format-rules-decls-expected)) (return 1))
       (unless (string-eq flow (format-rules-flow-expected)) (return 2))
       (unless (string-eq comments (format-rules-comments-expected)) (return 3))
       (unless (string-eq quote (format-rules-quote-expected)) (return 4))
       (unless (string-eq unsafe (format-rules-unsafe-expected)) (return 5))
+      (unless
+        (string-eq variadic (format-rules-variadic-macro-expected))
+        (return 6))
       42)))

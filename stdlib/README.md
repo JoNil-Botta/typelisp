@@ -43,7 +43,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `core_macros.tl`: explicit-import typed expression macros for core guard
   forms. Import it with
   `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` and call
-  exported macros through the alias, such as `core/when` and `core/unless`.
+  exported macros through the alias, such as `core/when`, `core/unless`,
+  `core/and`, and `core/or`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, and coarse file-kind

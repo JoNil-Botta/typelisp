@@ -1,6 +1,8 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/text_buf.tl")
+
 (import "compiler_ctfe.tl")
 
 (import "compiler_diagnostic.tl")
@@ -135,7 +137,7 @@
   (ErrGenKey CompilerDiagnostic))
 
 (defenum ResultGenDecl
-  (OkGenDecl SpecMaybeDecl GenRegistry String)
+  (OkGenDecl AstDeclList GenRegistry String)
   (ErrGenDecl CompilerDiagnostic))
 
 (defenum ResultGenDecls
@@ -316,6 +318,9 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (ast-decl-cons head (spec-decl-list-append rest back)))]))
+
+(define (gen-single-decl-list [decl : AstDecl]) : AstDeclList
+  (ast-decl-cons decl AstDeclNil))
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
@@ -765,19 +770,1911 @@
       (string-append "conflicting generated item: " item))
     (string-append "generated identity: " key)))
 
+(defenum GenHashmapTypeInfo
+  (GenHashmapTypeInfo String String String))
+
+(defenum ResultGenHashmapTypeInfo
+  (OkGenHashmapTypeInfo GenHashmapTypeInfo)
+  (ErrGenHashmapTypeInfo CompilerDiagnostic))
+
+(defenum GenHashmapArgs
+  (GenHashmapArgs String String String))
+
+(defenum ResultGenHashmapArgs
+  (OkGenHashmapArgs GenHashmapArgs)
+  (ErrGenHashmapArgs CompilerDiagnostic))
+
+(defenum ResultGenHashmapSource
+  (OkGenHashmapSource String)
+  (ErrGenHashmapSource CompilerDiagnostic))
+
+(define (gen-tb2 [buf : TextBuf] [a : String] [b : String]) : TextBuf
+  (text-buf-append (text-buf-append buf a) b))
+
+(define (gen-tb3 [buf : TextBuf] [a : String] [b : String] [c : String]) : TextBuf
+  (text-buf-append (gen-tb2 buf a b) c))
+
+(define (gen-tb4
+  [buf : TextBuf]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]) : TextBuf
+  (text-buf-append (gen-tb3 buf a b c) d))
+
+(define (gen-tb5
+  [buf : TextBuf]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : TextBuf
+  (text-buf-append (gen-tb4 buf a b c d) e))
+
+(define (gen-tb6
+  [buf : TextBuf]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]) : TextBuf
+  (text-buf-append (gen-tb5 buf a b c d e) f))
+
+(define (gen-tb7
+  [buf : TextBuf]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]
+  [g : String]) : TextBuf
+  (text-buf-append (gen-tb6 buf a b c d e f) g))
+
+(define (gen-hashmap-diag [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start "" message))
+
+(define (gen-hashmap-eval-string [expr : AstExpr] [env : CtfeEnv]) : ResultGenKey
+  (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
+    [(OkCtfe value fuel)
+      (match value
+        [(CtfeString text) (OkGenKey text fuel)]
+        [_
+          (ErrGenKey
+            (spec-diagnostic-at-expr
+              expr
+              "hashmap-family: argument must evaluate to String"))])]
+    [(ErrCtfe diag) (ErrGenKey diag)]))
+
+(define (gen-hashmap-args [args : AstExprList] [env : CtfeEnv]) : ResultGenHashmapArgs
+  (match args
+    [(AstExprCons key-expr-box rest1-box)
+      (match (box-get rest1-box)
+        [(AstExprCons value-expr-box rest2-box)
+          (match (box-get rest2-box)
+            [(AstExprCons descriptor-expr-box rest3-box)
+              (match (box-get rest3-box)
+                [(AstExprNil)
+                  (let
+                    [key-expr : AstExpr (box-get key-expr-box)]
+                    [value-expr : AstExpr (box-get value-expr-box)]
+                    [descriptor-expr : AstExpr (box-get descriptor-expr-box)]
+                    (match (gen-hashmap-eval-string key-expr env)
+                      [(OkGenKey key-type _)
+                        (match (gen-hashmap-eval-string value-expr env)
+                          [(OkGenKey value-type _)
+                            (match (gen-hashmap-eval-string descriptor-expr env)
+                              [(OkGenKey descriptor _)
+                                (OkGenHashmapArgs
+                                  (GenHashmapArgs
+                                    key-type
+                                    value-type
+                                    descriptor))]
+                              [(ErrGenKey diag) (ErrGenHashmapArgs diag)])]
+                          [(ErrGenKey diag) (ErrGenHashmapArgs diag)])]
+                      [(ErrGenKey diag) (ErrGenHashmapArgs diag)]))]
+                [_
+                  (ErrGenHashmapArgs
+                    (gen-hashmap-diag
+                      "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+            [_
+              (ErrGenHashmapArgs
+                (gen-hashmap-diag
+                  "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+        [_
+          (ErrGenHashmapArgs
+            (gen-hashmap-diag
+              "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+    [_
+      (ErrGenHashmapArgs
+        (gen-hashmap-diag
+          "hashmap-family: expected key type, value type, and key descriptor arguments"))]))
+
+(define (gen-hashmap-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
+  (if (string-eq type-key "String")
+    (OkGenHashmapTypeInfo (GenHashmapTypeInfo "String" "String" "string"))
+    (if (string-eq type-key "i64")
+      (OkGenHashmapTypeInfo (GenHashmapTypeInfo "i64" "I64" "i64"))
+      (ErrGenHashmapTypeInfo
+        (gen-hashmap-diag
+          (string-append
+            "hashmap-family: unsupported "
+            (string-append role (string-append " type " type-key))))))))
+
+(define (gen-hashmap-family-marker-fields? [fields : AstFieldDefList]) : bool
+  (match fields
+    [(AstFieldDefCons field rest-box)
+      (match field
+        [(AstFieldDef name ty cleanup)
+          (and
+            (string-eq name "__hashmap_family_request")
+            (and
+              (ctfe-type-eq ty (AstTyI64))
+              (and
+                (match cleanup
+                  [(AstFieldNoCleanup) true]
+                  [_ false])
+                (match (box-get rest-box)
+                  [(AstFieldDefNil) true]
+                  [_ false]))))])]
+    [_ false]))
+
+(define (gen-hashmap-family-marker-name [decl : AstDecl]) : SpecMaybeString
+  (match decl
+    [(AstDeclDefStruct name repr cleanup fields)
+      (match repr
+        [(AstStructReprDefault)
+          (match cleanup
+            [(AstStructNoCleanup)
+              (if (gen-hashmap-family-marker-fields? fields)
+                (SpecSomeString name)
+                (SpecNoString))]
+            [_ (SpecNoString)])]
+        [_ (SpecNoString)])]
+    [_ (SpecNoString)]))
+
+(define (gen-hashmap-source-string-key
+  [map-name : String]
+  [prefix : String]
+  [value-type : String]) : String
+  (let
+    [slot : String (string-append map-name "Slot")]
+    [empty : String (string-append map-name "Empty")]
+    [tombstone : String (string-append map-name "Tombstone")]
+    [occupied : String (string-append map-name "Occupied")]
+    [probe : String (string-append map-name "Probe")]
+    [probe-found : String (string-append map-name "ProbeFound")]
+    [probe-absent : String (string-append map-name "ProbeAbsent")]
+    [probe-full : String (string-append map-name "ProbeFull")]
+    [lookup : String (string-append map-name "Lookup")]
+    [missing : String (string-append map-name "Missing")]
+    [found : String (string-append map-name "Found")]
+    [insert-result : String (string-append map-name "InsertResult")]
+    [insert-ok : String (string-append map-name "InsertOk")]
+    [insert-full : String (string-append map-name "InsertFull")]
+    [remove-result : String (string-append map-name "RemoveResult")]
+    [remove-ok : String (string-append map-name "RemoveOk")]
+    [remove-missing : String (string-append map-name "RemoveMissing")]
+    [entry : String (string-append map-name "Entry")]
+    [entry-none : String (string-append map-name "EntryNone")]
+    [entry-some : String (string-append map-name "EntrySome")]
+    [buf : TextBuf (text-buf-empty)]
+    (begin
+      (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
+      (set! buf (gen-tb5 buf tombstone ")\n  (" occupied " String " value-type))
+      (set! buf (gen-tb3 buf " i64))\n(defenum " probe "\n"))
+      (set!
+        buf
+        (gen-tb5 buf "  (" probe-found " i64)\n  (" probe-absent " i64)\n"))
+      (set! buf (gen-tb5 buf "  (" probe-full "))\n" "(define (" prefix))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "-hash-normalize [value : i64]) : i64\n  (let\n    [m : i64 2147483647]\n    [raw : i64 (% value 2147483647)]\n    (if (< raw 0)\n      (+ raw m)\n      raw)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-hash-key [key : (& key str)]) : i64\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [n : i64 (string-length key)]\n    [i : i64 0]\n    [hash : i64 0]\n    (begin\n      (while (< i n)\n        (begin\n          (set!\n            hash\n            (%\n              (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)\n              2147483647))\n          (set! i (+ i 1))))\n      hash)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  (% (" prefix "-hash-normalize hash) capacity))\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-next-index [index : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb2 buf "  (% (+ index 1) capacity))\n" ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (if (>= first-tombstone 0)\n    first-tombstone\n    empty-index))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-key-eq? [left : (& left str)] [right : (& right str)]) : bool\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (and same (< i left-len))\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-probe-borrowed-from\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  [key : (& key str)]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "
+          ""))
+      (set! buf (gen-tb2 buf probe "\n  (if (>= steps capacity)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (if (>= first-tombstone 0)\n      ("
+          probe-absent
+          " first-tombstone)\n      ("
+          probe-full
+          "))\n"))
+      (set! buf (gen-tb2 buf "    (match (array-ref slots index)\n      [(" ""))
+      (set! buf (gen-tb5 buf empty ")\n        (" probe-absent " (" prefix))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "-insert-slot first-tombstone index))]\n      [("
+          tombstone
+          ")\n"))
+      (set! buf (gen-tb3 buf "        (" prefix "-probe-borrowed-from\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "          slots\n          capacity\n          key\n          hash\n          ("
+          prefix
+          "-next-index index capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "          (+ steps 1)\n          (if (>= first-tombstone 0)\n            first-tombstone\n            index))]\n      [("
+          ""))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          occupied
+          " slot-key _ slot-hash)\n        (if (if (= slot-hash hash)\n          ("
+          prefix
+          "-key-eq? (& slot-key) key)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "          false)\n          ("
+          probe-found
+          " index)\n          ("
+          prefix
+          "-probe-borrowed-from\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            slots\n            capacity\n            key\n            hash\n            ("
+          prefix
+          "-next-index index capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "            (+ steps 1)\n            first-tombstone))])))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-probe-borrowed\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
+      (set! buf (gen-tb2 buf "  [key : (& key str)]\n  [hash : i64]) : " ""))
+      (set! buf (gen-tb2 buf probe "\n  (if (<= capacity 0)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    ("
+          probe-full
+          ")\n    ("
+          prefix
+          "-probe-borrowed-from\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "      slots\n      capacity\n      key\n      hash\n      ("
+          prefix
+          "-bucket-index hash capacity)\n"))
+      (set! buf (gen-tb2 buf "      0\n      -1)))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-probe\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
+      (set! buf (gen-tb2 buf "  [key : String]\n  [hash : i64]) : " ""))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          probe
+          "\n  ("
+          prefix
+          "-probe-borrowed slots capacity (& key) hash))\n(defstruct "
+          map-name))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "\n  (slots (Array "
+          slot
+          "))\n  (len i64)\n  (deleted i64))\n"))
+      (set! buf (gen-tb6 buf "(defenum " lookup "\n  (" missing ")\n  (" found))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          " "
+          value-type
+          "))\n(defenum "
+          insert-result
+          "\n  ("
+          insert-ok))
+      (set! buf (gen-tb6 buf " " map-name ")\n  (" insert-full " " map-name))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          "))\n(defenum "
+          remove-result
+          "\n  ("
+          remove-ok
+          " "
+          map-name))
+      (set! buf (gen-tb5 buf ")\n  (" remove-missing " " map-name "))\n"))
+      (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
+      (set!
+        buf
+        (gen-tb3 buf "]) : (Array " slot ")\n  (struct-get map slots))\n"))
+      (set! buf (gen-tb4 buf "(define (" prefix "-len [map : " map-name))
+      (set! buf (gen-tb2 buf "]) : i64\n  (struct-get map len))\n" ""))
+      (set! buf (gen-tb4 buf "(define (" prefix "-capacity [map : " map-name))
+      (set!
+        buf
+        (gen-tb2 buf "]) : i64\n  (array-length (struct-get map slots)))\n" ""))
+      (set! buf (gen-tb4 buf "(define (" prefix "-deleted [map : " map-name))
+      (set! buf (gen-tb2 buf "]) : i64\n  (struct-get map deleted))\n" ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-fill-empty\n  [slots : (Array "))
+      (set!
+        buf
+        (gen-tb2 buf slot ")]\n  [index : i64]\n  [count : i64]) : unit\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  (if (>= index count)\n    unit\n    (begin\n      (array-set! slots index ("
+          empty
+          "))\n      ("))
+      (set!
+        buf
+        (gen-tb3 buf prefix "-fill-empty slots (+ index 1) count))))\n" ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-with-capacity [capacity : i64]) : "))
+      (set! buf (gen-tb2 buf map-name "\n  (let\n    [slots : (Array "))
+      (set! buf (gen-tb4 buf slot ") (make-array " slot " capacity)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "    (begin\n      ("
+          prefix
+          "-fill-empty slots 0 capacity)\n      ("
+          map-name))
+      (set! buf (gen-tb2 buf " slots 0 0))))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-get-borrowed [map : "))
+      (set! buf (gen-tb4 buf map-name "] [key : (& key str)]) : " lookup "\n"))
+      (set! buf (gen-tb3 buf "  (let\n    [slots : (Array " slot ") ("))
+      (set! buf (gen-tb3 buf prefix "-slots map)]\n    (match (" prefix))
+      (set!
+        buf
+        (gen-tb3 buf "-probe-borrowed slots (" prefix "-capacity map) key ("))
+      (set!
+        buf
+        (gen-tb4 buf prefix "-hash-key key))\n      [(" probe-found " index)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "        (match (array-ref slots index)\n          [("
+          occupied
+          " _ value _) ("
+          found))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          " value)]\n          [("
+          empty
+          ") ("
+          missing
+          ")]\n          [("))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          tombstone
+          ") ("
+          missing
+          ")])]\n      [("
+          probe-absent
+          " _) ("
+          missing))
+      (set! buf (gen-tb5 buf ")]\n      [(" probe-full ") (" missing ")])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-get [map : "))
+      (set!
+        buf
+        (gen-tb5 buf map-name "] [key : String]) : " lookup "\n  (" prefix))
+      (set! buf (gen-tb2 buf "-get-borrowed map (& key)))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-contains-borrowed? [map : "))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          map-name
+          "] [key : (& key str)]) : bool\n  (match ("
+          prefix))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-get-borrowed map key)\n    [("
+          found
+          " _) true]\n    [("
+          missing))
+      (set! buf (gen-tb2 buf ") false]))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-contains? [map : "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          map-name
+          "] [key : String]) : bool\n  ("
+          prefix
+          "-contains-borrowed? map (& key)))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-slot-tombstone? [slot : "))
+      (set! buf (gen-tb3 buf slot "]) : bool\n  (match slot\n    [(" tombstone))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") true]\n    [("
+          empty
+          ") false]\n    [("
+          occupied
+          " _ _ _) false]))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-insert [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : String] [value : "
+          value-type
+          "]) : "
+          insert-result))
+      (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-slots map)]\n    [hash : i64 ("
+          prefix
+          "-hash-key (& key))]\n"))
+      (set!
+        buf
+        (gen-tb4 buf "    (match (" prefix "-probe-borrowed slots (" prefix))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-capacity map) (& key) hash)\n      [("
+          probe-found
+          " index)\n        (begin\n          (array-set! slots index ("
+          occupied))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          " key value hash))\n          ("
+          insert-ok
+          " map))]\n      [("
+          probe-absent
+          " index)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "        (let\n          [reused-tombstone : bool ("
+          prefix
+          "-slot-tombstone? (array-ref slots index))]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "          (begin\n            (array-set! slots index ("
+          occupied
+          " key value hash))\n            ("
+          insert-ok))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "\n              ("
+          map-name
+          "\n                slots\n                (+ ("
+          prefix
+          "-len map) 1)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "                (if reused-tombstone\n                  (- ("
+          prefix
+          "-deleted map) 1)\n                  ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-deleted map))))))]\n      [("
+          probe-full
+          ") ("
+          insert-full
+          " map)])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-remove-borrowed [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : (& key str)]) : "
+          remove-result
+          "\n  (let\n    [slots : (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") ("
+          prefix
+          "-slots map)]\n    (match ("
+          prefix
+          "-probe-borrowed slots ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-capacity map) key ("
+          prefix
+          "-hash-key key))\n      [("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          probe-found
+          " index)\n        (begin\n          (array-set! slots index ("
+          tombstone))
+      (set!
+        buf
+        (gen-tb4 buf "))\n          (" remove-ok "\n            (" map-name))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "\n              slots\n              (- ("
+          prefix
+          "-len map) 1)\n              (+ ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-deleted map) 1))))]\n      [("
+          probe-absent
+          " _) ("
+          remove-missing
+          " map)]\n"))
+      (set!
+        buf
+        (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-remove [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : String]) : "
+          remove-result
+          "\n  ("
+          prefix))
+      (set! buf (gen-tb2 buf "-remove-borrowed map (& key)))\n" ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-rehash-from\n  [src : (Array "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          slot
+          ")]\n  [dst : (Array "
+          slot
+          ")]\n  [dst-capacity : i64]\n  [index : i64]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  [count : i64]) : unit\n  (if (>= index count)\n    unit\n    (begin\n      (match (array-ref src index)\n        [("
+          ""))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          occupied
+          " key value hash)\n          (match ("
+          prefix
+          "-probe-borrowed dst dst-capacity (& key) hash)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            [("
+          probe-absent
+          " slot)\n              (array-set! dst slot ("
+          occupied
+          " key value hash))]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            [("
+          probe-found
+          " slot)\n              (array-set! dst slot ("
+          occupied
+          " key value hash))]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            [("
+          probe-full
+          ") unit])]\n        [("
+          empty
+          ") unit]\n        [("))
+      (set! buf (gen-tb3 buf tombstone ") unit])\n      (" prefix))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "-rehash-from src dst dst-capacity (+ index 1) count))))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-resized [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [new-capacity : i64]) : "
+          map-name
+          "\n  (let\n    [src : (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") ("
+          prefix
+          "-slots map)]\n    [old-capacity : i64 ("
+          prefix
+          "-capacity map)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    [dst : (Array "
+          slot
+          ") (make-array "
+          slot
+          " new-capacity)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "    (begin\n      ("
+          prefix
+          "-fill-empty dst 0 new-capacity)\n      ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-rehash-from src dst new-capacity 0 old-capacity)\n      ("
+          map-name
+          " dst ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-len map) 0))))\n(define ("
+          prefix
+          "-grow-capacity [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb2 buf "  (if (< capacity 4)\n    8\n    (* capacity 2)))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-grow [map : "))
+      (set!
+        buf
+        (gen-tb6 buf map-name "]) : " map-name "\n  (" prefix "-resized map ("))
+      (set!
+        buf
+        (gen-tb4 buf prefix "-grow-capacity (" prefix "-capacity map))))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-needs-grow? [map : "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          map-name
+          "]) : bool\n  (let\n    [capacity : i64 ("
+          prefix
+          "-capacity map)]\n"))
+      (set!
+        buf
+        (gen-tb4 buf "    [used : i64 (+ (" prefix "-len map) (" prefix))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "-deleted map))]\n    (if (<= capacity 0)\n      true\n      (>= (* used 4) (* capacity 3)))))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-put [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : String] [value : "
+          value-type
+          "]) : "
+          map-name))
+      (set!
+        buf
+        (gen-tb3 buf "\n  (let\n    [grown : " map-name "\n      (if ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-needs-grow? map)\n        ("
+          prefix
+          "-grow map)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "        map)]\n    (match ("
+          prefix
+          "-insert grown key value)\n      [("
+          insert-ok))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          " updated) updated]\n      [("
+          insert-full
+          " full)\n        (match ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-insert ("
+          prefix
+          "-grow full) key value)\n          [("
+          insert-ok
+          " u) u]\n"))
+      (set!
+        buf
+        (gen-tb4 buf "          [(" insert-full " u) u])])))\n(defenum " entry))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          "\n  ("
+          entry-none
+          ")\n  ("
+          entry-some
+          " String "
+          value-type))
+      (set! buf (gen-tb3 buf "))\n(define (" prefix "-next-occupied-from\n"))
+      (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n  [index : i64]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [capacity : i64]) : i64\n  (if (>= index capacity)\n    capacity\n    (match (array-ref slots index)\n      [("
+          occupied
+          " _ _ _) index]\n      [("
+          empty))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          ")\n        ("
+          prefix
+          "-next-occupied-from slots (+ index 1) capacity)]\n      [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          ")\n        ("
+          prefix
+          "-next-occupied-from slots (+ index 1) capacity)])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-next-occupied [map : "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          map-name
+          "] [from : i64]) : i64\n  ("
+          prefix
+          "-next-occupied-from\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    ("
+          prefix
+          "-slots map)\n    (if (< from 0)\n      0\n      from)\n    ("
+          prefix
+          "-capacity map)))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-entry-at [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [index : i64]) : "
+          entry
+          "\n  (if (if (< index 0)\n    true\n    (>= index ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-capacity map)))\n    ("
+          entry-none
+          ")\n    (match (array-ref ("
+          prefix
+          "-slots map) index)\n"))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          "      [("
+          occupied
+          " key value _) ("
+          entry-some
+          " key value)]\n      [("
+          empty))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          ") ("
+          entry-none
+          ")]\n      [("
+          tombstone
+          ") ("
+          entry-none
+          ")])))\n"))
+      (text-buf-render buf))))
+
+(define (gen-hashmap-source-i64-key
+  [map-name : String]
+  [prefix : String]
+  [value-type : String]) : String
+  (let
+    [slot : String (string-append map-name "Slot")]
+    [empty : String (string-append map-name "Empty")]
+    [tombstone : String (string-append map-name "Tombstone")]
+    [occupied : String (string-append map-name "Occupied")]
+    [probe : String (string-append map-name "Probe")]
+    [probe-found : String (string-append map-name "ProbeFound")]
+    [probe-absent : String (string-append map-name "ProbeAbsent")]
+    [probe-full : String (string-append map-name "ProbeFull")]
+    [lookup : String (string-append map-name "Lookup")]
+    [missing : String (string-append map-name "Missing")]
+    [found : String (string-append map-name "Found")]
+    [insert-result : String (string-append map-name "InsertResult")]
+    [insert-ok : String (string-append map-name "InsertOk")]
+    [insert-full : String (string-append map-name "InsertFull")]
+    [remove-result : String (string-append map-name "RemoveResult")]
+    [remove-ok : String (string-append map-name "RemoveOk")]
+    [remove-missing : String (string-append map-name "RemoveMissing")]
+    [entry : String (string-append map-name "Entry")]
+    [entry-none : String (string-append map-name "EntryNone")]
+    [entry-some : String (string-append map-name "EntrySome")]
+    [buf : TextBuf (text-buf-empty)]
+    (begin
+      (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
+      (set! buf (gen-tb5 buf tombstone ")\n  (" occupied " i64 " value-type))
+      (set! buf (gen-tb3 buf " i64))\n(defenum " probe "\n"))
+      (set!
+        buf
+        (gen-tb5 buf "  (" probe-found " i64)\n  (" probe-absent " i64)\n"))
+      (set! buf (gen-tb5 buf "  (" probe-full "))\n" "(define (" prefix))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "-hash-normalize [value : i64]) : i64\n  (let\n    [m : i64 2147483647]\n    [raw : i64 (% value 2147483647)]\n    (if (< raw 0)\n      (+ raw m)\n      raw)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-hash-key [key : i64]) : i64\n"))
+      (set! buf (gen-tb3 buf "  (" prefix "-hash-normalize key))\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  (% (" prefix "-hash-normalize hash) capacity))\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-next-index [index : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb2 buf "  (% (+ index 1) capacity))\n" ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (if (>= first-tombstone 0)\n    first-tombstone\n    empty-index))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-probe-from\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  [key : i64]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "
+          ""))
+      (set! buf (gen-tb2 buf probe "\n  (if (>= steps capacity)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (if (>= first-tombstone 0)\n      ("
+          probe-absent
+          " first-tombstone)\n      ("
+          probe-full
+          "))\n"))
+      (set! buf (gen-tb2 buf "    (match (array-ref slots index)\n      [(" ""))
+      (set! buf (gen-tb5 buf empty ")\n        (" probe-absent " (" prefix))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "-insert-slot first-tombstone index))]\n      [("
+          tombstone
+          ")\n"))
+      (set! buf (gen-tb3 buf "        (" prefix "-probe-from\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "          slots\n          capacity\n          key\n          hash\n          ("
+          prefix
+          "-next-index index capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "          (+ steps 1)\n          (if (>= first-tombstone 0)\n            first-tombstone\n            index))]\n      [("
+          ""))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          occupied
+          " slot-key _ slot-hash)\n        (if (if (= slot-hash hash)\n          (= slot-key key)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "          false)\n          ("
+          probe-found
+          " index)\n          ("
+          prefix
+          "-probe-from\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            slots\n            capacity\n            key\n            hash\n            ("
+          prefix
+          "-next-index index capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "            (+ steps 1)\n            first-tombstone))])))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-probe\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
+      (set! buf (gen-tb2 buf "  [key : i64]\n  [hash : i64]) : " ""))
+      (set! buf (gen-tb2 buf probe "\n  (if (<= capacity 0)\n"))
+      (set!
+        buf
+        (gen-tb5 buf "    (" probe-full ")\n    (" prefix "-probe-from\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "      slots\n      capacity\n      key\n      hash\n      ("
+          prefix
+          "-bucket-index hash capacity)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "      0\n      -1)))\n(defstruct "
+          map-name
+          "\n  (slots (Array "
+          slot))
+      (set! buf (gen-tb2 buf "))\n  (len i64)\n  (deleted i64))\n" ""))
+      (set! buf (gen-tb6 buf "(defenum " lookup "\n  (" missing ")\n  (" found))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          " "
+          value-type
+          "))\n(defenum "
+          insert-result
+          "\n  ("
+          insert-ok))
+      (set! buf (gen-tb6 buf " " map-name ")\n  (" insert-full " " map-name))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          "))\n(defenum "
+          remove-result
+          "\n  ("
+          remove-ok
+          " "
+          map-name))
+      (set! buf (gen-tb5 buf ")\n  (" remove-missing " " map-name "))\n"))
+      (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
+      (set!
+        buf
+        (gen-tb3 buf "]) : (Array " slot ")\n  (struct-get map slots))\n"))
+      (set! buf (gen-tb4 buf "(define (" prefix "-len [map : " map-name))
+      (set! buf (gen-tb2 buf "]) : i64\n  (struct-get map len))\n" ""))
+      (set! buf (gen-tb4 buf "(define (" prefix "-capacity [map : " map-name))
+      (set!
+        buf
+        (gen-tb2 buf "]) : i64\n  (array-length (struct-get map slots)))\n" ""))
+      (set! buf (gen-tb4 buf "(define (" prefix "-deleted [map : " map-name))
+      (set! buf (gen-tb2 buf "]) : i64\n  (struct-get map deleted))\n" ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-fill-empty\n  [slots : (Array "))
+      (set!
+        buf
+        (gen-tb2 buf slot ")]\n  [index : i64]\n  [count : i64]) : unit\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  (if (>= index count)\n    unit\n    (begin\n      (array-set! slots index ("
+          empty
+          "))\n      ("))
+      (set!
+        buf
+        (gen-tb3 buf prefix "-fill-empty slots (+ index 1) count))))\n" ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-with-capacity [capacity : i64]) : "))
+      (set! buf (gen-tb2 buf map-name "\n  (let\n    [slots : (Array "))
+      (set! buf (gen-tb4 buf slot ") (make-array " slot " capacity)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "    (begin\n      ("
+          prefix
+          "-fill-empty slots 0 capacity)\n      ("
+          map-name))
+      (set! buf (gen-tb2 buf " slots 0 0))))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-get [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : i64]) : "
+          lookup
+          "\n  (let\n    [slots : (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") ("
+          prefix
+          "-slots map)]\n    (match ("
+          prefix
+          "-probe slots ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-capacity map) key ("
+          prefix
+          "-hash-key key))\n      [("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          probe-found
+          " index)\n        (match (array-ref slots index)\n          [("
+          occupied
+          " _ value _) ("))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          found
+          " value)]\n          [("
+          empty
+          ") ("
+          missing
+          ")]\n          [("))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          tombstone
+          ") ("
+          missing
+          ")])]\n      [("
+          probe-absent
+          " _) ("
+          missing))
+      (set! buf (gen-tb5 buf ")]\n      [(" probe-full ") (" missing ")])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-contains? [map : "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          map-name
+          "] [key : i64]) : bool\n  (match ("
+          prefix
+          "-get map key)\n"))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          "    [("
+          found
+          " _) true]\n    [("
+          missing
+          ") false]))\n(define ("
+          prefix))
+      (set! buf (gen-tb3 buf "-slot-tombstone? [slot : " slot "]) : bool\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "  (match slot\n    [("
+          tombstone
+          ") true]\n    [("
+          empty
+          ") false]\n    [("))
+      (set! buf (gen-tb3 buf occupied " _ _ _) false]))\n(define (" prefix))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-insert [map : "
+          map-name
+          "] [key : i64] [value : "
+          value-type))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "]) : "
+          insert-result
+          "\n  (let\n    [slots : (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") ("
+          prefix
+          "-slots map)]\n    [hash : i64 ("
+          prefix
+          "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (match ("
+          prefix
+          "-probe slots ("
+          prefix
+          "-capacity map) key hash)\n      [("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          probe-found
+          " index)\n        (begin\n          (array-set! slots index ("
+          occupied))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          " key value hash))\n          ("
+          insert-ok
+          " map))]\n      [("
+          probe-absent
+          " index)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "        (let\n          [reused-tombstone : bool ("
+          prefix
+          "-slot-tombstone? (array-ref slots index))]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "          (begin\n            (array-set! slots index ("
+          occupied
+          " key value hash))\n            ("
+          insert-ok))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "\n              ("
+          map-name
+          "\n                slots\n                (+ ("
+          prefix
+          "-len map) 1)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "                (if reused-tombstone\n                  (- ("
+          prefix
+          "-deleted map) 1)\n                  ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-deleted map))))))]\n      [("
+          probe-full
+          ") ("
+          insert-full
+          " map)])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-remove [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : i64]) : "
+          remove-result
+          "\n  (let\n    [slots : (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") ("
+          prefix
+          "-slots map)]\n    (match ("
+          prefix
+          "-probe slots ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-capacity map) key ("
+          prefix
+          "-hash-key key))\n      [("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          probe-found
+          " index)\n        (begin\n          (array-set! slots index ("
+          tombstone))
+      (set!
+        buf
+        (gen-tb4 buf "))\n          (" remove-ok "\n            (" map-name))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "\n              slots\n              (- ("
+          prefix
+          "-len map) 1)\n              (+ ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-deleted map) 1))))]\n      [("
+          probe-absent
+          " _) ("
+          remove-missing
+          " map)]\n"))
+      (set!
+        buf
+        (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-rehash-from\n  [src : (Array "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          slot
+          ")]\n  [dst : (Array "
+          slot
+          ")]\n  [dst-capacity : i64]\n  [index : i64]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  [count : i64]) : unit\n  (if (>= index count)\n    unit\n    (begin\n      (match (array-ref src index)\n        [("
+          ""))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          occupied
+          " key value hash)\n          (match ("
+          prefix
+          "-probe dst dst-capacity key hash)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            [("
+          probe-absent
+          " slot)\n              (array-set! dst slot ("
+          occupied
+          " key value hash))]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            [("
+          probe-found
+          " slot)\n              (array-set! dst slot ("
+          occupied
+          " key value hash))]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            [("
+          probe-full
+          ") unit])]\n        [("
+          empty
+          ") unit]\n        [("))
+      (set! buf (gen-tb3 buf tombstone ") unit])\n      (" prefix))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "-rehash-from src dst dst-capacity (+ index 1) count))))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-resized [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [new-capacity : i64]) : "
+          map-name
+          "\n  (let\n    [src : (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ") ("
+          prefix
+          "-slots map)]\n    [old-capacity : i64 ("
+          prefix
+          "-capacity map)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    [dst : (Array "
+          slot
+          ") (make-array "
+          slot
+          " new-capacity)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "    (begin\n      ("
+          prefix
+          "-fill-empty dst 0 new-capacity)\n      ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-rehash-from src dst new-capacity 0 old-capacity)\n      ("
+          map-name
+          " dst ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-len map) 0))))\n(define ("
+          prefix
+          "-grow-capacity [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb2 buf "  (if (< capacity 4)\n    8\n    (* capacity 2)))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-grow [map : "))
+      (set!
+        buf
+        (gen-tb6 buf map-name "]) : " map-name "\n  (" prefix "-resized map ("))
+      (set!
+        buf
+        (gen-tb4 buf prefix "-grow-capacity (" prefix "-capacity map))))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-needs-grow? [map : "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          map-name
+          "]) : bool\n  (let\n    [capacity : i64 ("
+          prefix
+          "-capacity map)]\n"))
+      (set!
+        buf
+        (gen-tb4 buf "    [used : i64 (+ (" prefix "-len map) (" prefix))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "-deleted map))]\n    (if (<= capacity 0)\n      true\n      (>= (* used 4) (* capacity 3)))))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-put [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [key : i64] [value : "
+          value-type
+          "]) : "
+          map-name))
+      (set!
+        buf
+        (gen-tb3 buf "\n  (let\n    [grown : " map-name "\n      (if ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-needs-grow? map)\n        ("
+          prefix
+          "-grow map)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "        map)]\n    (match ("
+          prefix
+          "-insert grown key value)\n      [("
+          insert-ok))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          " updated) updated]\n      [("
+          insert-full
+          " full)\n        (match ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-insert ("
+          prefix
+          "-grow full) key value)\n          [("
+          insert-ok
+          " u) u]\n"))
+      (set!
+        buf
+        (gen-tb4 buf "          [(" insert-full " u) u])])))\n(defenum " entry))
+      (set!
+        buf
+        (gen-tb6 buf "\n  (" entry-none ")\n  (" entry-some " i64 " value-type))
+      (set! buf (gen-tb3 buf "))\n(define (" prefix "-next-occupied-from\n"))
+      (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n  [index : i64]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [capacity : i64]) : i64\n  (if (>= index capacity)\n    capacity\n    (match (array-ref slots index)\n      [("
+          occupied
+          " _ _ _) index]\n      [("
+          empty))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          ")\n        ("
+          prefix
+          "-next-occupied-from slots (+ index 1) capacity)]\n      [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          ")\n        ("
+          prefix
+          "-next-occupied-from slots (+ index 1) capacity)])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-next-occupied [map : "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          map-name
+          "] [from : i64]) : i64\n  ("
+          prefix
+          "-next-occupied-from\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    ("
+          prefix
+          "-slots map)\n    (if (< from 0)\n      0\n      from)\n    ("
+          prefix
+          "-capacity map)))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-entry-at [map : "))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          map-name
+          "] [index : i64]) : "
+          entry
+          "\n  (if (if (< index 0)\n    true\n    (>= index ("
+          prefix))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "-capacity map)))\n    ("
+          entry-none
+          ")\n    (match (array-ref ("
+          prefix
+          "-slots map) index)\n"))
+      (set!
+        buf
+        (gen-tb6
+          buf
+          "      [("
+          occupied
+          " key value _) ("
+          entry-some
+          " key value)]\n      [("
+          empty))
+      (set!
+        buf
+        (gen-tb7
+          buf
+          ") ("
+          entry-none
+          ")]\n      [("
+          tombstone
+          ") ("
+          entry-none
+          ")])))\n"))
+      (text-buf-render buf))))
+
+(define (gen-hashmap-descriptor-mismatch
+  [descriptor : String]
+  [key-type-key : String]) : ResultGenHashmapSource
+  (ErrGenHashmapSource
+    (gen-hashmap-diag
+      (string-append
+        "hashmap-family: descriptor "
+        (string-append
+          descriptor
+          (string-append " does not support key type " key-type-key))))))
+
+(define (gen-hashmap-type-info-source [info : GenHashmapTypeInfo]) : String
+  (match info
+    [(GenHashmapTypeInfo source _ _) source]))
+
+(define (gen-hashmap-type-info-name [info : GenHashmapTypeInfo]) : String
+  (match info
+    [(GenHashmapTypeInfo _ name _) name]))
+
+(define (gen-hashmap-type-info-prefix [info : GenHashmapTypeInfo]) : String
+  (match info
+    [(GenHashmapTypeInfo _ _ prefix) prefix]))
+
+(define (gen-hashmap-source-for-info
+  [map-name : String]
+  [key-type-key : String]
+  [value-type-key : String]
+  [descriptor : String]
+  [key-info : GenHashmapTypeInfo]
+  [value-info : GenHashmapTypeInfo]) : ResultGenHashmapSource
+  (let
+    [key-name : String (gen-hashmap-type-info-name key-info)]
+    [key-prefix : String (gen-hashmap-type-info-prefix key-info)]
+    [value-type : String (gen-hashmap-type-info-source value-info)]
+    [value-name : String (gen-hashmap-type-info-name value-info)]
+    [value-prefix : String (gen-hashmap-type-info-prefix value-info)]
+    [expected-map : String
+      (string-append key-name (string-append value-name "Map"))]
+    [prefix : String
+      (string-append
+        key-prefix
+        (string-append "-" (string-append value-prefix "-map")))]
+    (if (not (string-eq map-name expected-map))
+      (ErrGenHashmapSource
+        (gen-hashmap-diag
+          (string-append
+            "hashmap-family: marker item "
+            (string-append
+              map-name
+              (string-append " does not match generated map " expected-map)))))
+      (if (string-eq descriptor "stdlib/hashmap/string-key-v1")
+        (if (string-eq key-type-key "String")
+          (OkGenHashmapSource
+            (gen-hashmap-source-string-key map-name prefix value-type))
+          (gen-hashmap-descriptor-mismatch descriptor key-type-key))
+        (if (string-eq descriptor "stdlib/hashmap/i64-key-v1")
+          (if (string-eq key-type-key "i64")
+            (OkGenHashmapSource
+              (gen-hashmap-source-i64-key map-name prefix value-type))
+            (gen-hashmap-descriptor-mismatch descriptor key-type-key))
+          (ErrGenHashmapSource
+            (gen-hashmap-diag
+              (string-append
+                "hashmap-family: unsupported key descriptor "
+                descriptor))))))))
+
+(define (gen-hashmap-source-for
+  [map-name : String]
+  [key-type-key : String]
+  [value-type-key : String]
+  [descriptor : String]) : ResultGenHashmapSource
+  (match (gen-hashmap-type-info key-type-key "key")
+    [(OkGenHashmapTypeInfo key-info)
+      (match (gen-hashmap-type-info value-type-key "value")
+        [(OkGenHashmapTypeInfo value-info)
+          (gen-hashmap-source-for-info
+            map-name
+            key-type-key
+            value-type-key
+            descriptor
+            key-info
+            value-info)]
+        [(ErrGenHashmapTypeInfo diag) (ErrGenHashmapSource diag)])]
+    [(ErrGenHashmapTypeInfo _)
+      (ErrGenHashmapSource
+        (gen-hashmap-diag
+          (string-append
+            "hashmap-family: unsupported key descriptor "
+            (string-append
+              descriptor
+              (string-append " for key type " key-type-key)))))]))
+
+(define (gen-register-generated-decl
+  [template : AstDecl]
+  [module : String]
+  [generator : String]
+  [item : String]
+  [args : AstExprList]
+  [arg-key : String]
+  [registry : GenRegistry]) : ResultGenDecl
+  (let
+    [key : String (gen-full-key module generator item arg-key)]
+    (match (gen-registry-lookup registry key)
+      [(GenNoEntry)
+        (OkGenDecl
+          (gen-single-decl-list
+            (ast-decl-comptime-decl-with-meta
+              (AstSomeGeneratedDeclMeta generator item args key)
+              template))
+          (gen-registry-cons key template registry)
+          module)]
+      [(GenSomeEntry existing)
+        (if (gen-decl-eq? existing template)
+          (OkGenDecl AstDeclNil registry module)
+          (ErrGenDecl (gen-incompatible-diag item key)))])))
+
+(define (gen-register-generated-decls
+  [decls : AstDeclList]
+  [module : String]
+  [generator : String]
+  [args : AstExprList]
+  [arg-key : String]
+  [registry : GenRegistry]) : ResultGenDecl
+  (match decls
+    [(AstDeclNil) (OkGenDecl AstDeclNil registry module)]
+    [(AstDeclCons decl rest-box)
+      (match (gen-decl-visible-name decl)
+        [(SpecNoString)
+          (ErrGenDecl
+            (gen-hashmap-diag
+              "hashmap-family: generated payload must declare a visible item"))]
+        [(SpecSomeString item)
+          (match (gen-register-generated-decl
+            decl
+            module
+            generator
+            item
+            args
+            arg-key
+            registry)
+            [(OkGenDecl rewritten-head head-registry _)
+              (match (gen-register-generated-decls
+                (box-get rest-box)
+                module
+                generator
+                args
+                arg-key
+                head-registry)
+                [(OkGenDecl rewritten-rest rest-registry rest-module)
+                  (OkGenDecl
+                    (spec-decl-list-append rewritten-head rewritten-rest)
+                    rest-registry
+                    rest-module)]
+                [(ErrGenDecl diag) (ErrGenDecl diag)])]
+            [(ErrGenDecl diag) (ErrGenDecl diag)])])]))
+
+(define (gen-hashmap-expand-family
+  [map-name : String]
+  [module : String]
+  [generator : String]
+  [args : AstExprList]
+  [arg-key : String]
+  [registry : GenRegistry]
+  [env : CtfeEnv]) : ResultGenDecl
+  (match (gen-hashmap-args args env)
+    [(OkGenHashmapArgs parsed-args)
+      (match parsed-args
+        [(GenHashmapArgs key-type value-type descriptor)
+          (match (gen-hashmap-source-for
+            map-name
+            key-type
+            value-type
+            descriptor)
+            [(OkGenHashmapSource source)
+              (match (parse-ast-source source)
+                [(OkAstProgram (AstProgram decls-box))
+                  (gen-register-generated-decls
+                    (box-get decls-box)
+                    module
+                    generator
+                    args
+                    arg-key
+                    registry)]
+                [(ErrAstProgram message)
+                  (ErrGenDecl
+                    (gen-hashmap-diag
+                      (string-append
+                        "hashmap-family: generated source did not parse: "
+                        message)))])]
+            [(ErrGenHashmapSource diag) (ErrGenDecl diag)])])]
+    [(ErrGenHashmapArgs diag) (ErrGenDecl diag)]))
+
 (define (gen-rewrite-decl
   [decl : AstDecl]
   [module : String]
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDecl
   (match decl
-    [(AstDeclModule name) (OkGenDecl (SpecSomeDecl decl) registry name)]
+    [(AstDeclModule name) (OkGenDecl (gen-single-decl-list decl) registry name)]
     [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match meta
           [(AstNoGeneratedDeclMeta)
-            (OkGenDecl (SpecSomeDecl decl) registry module)]
+            (OkGenDecl (gen-single-decl-list decl) registry module)]
           [(AstSomeGeneratedDeclMeta generator item args _)
             (match (gen-decl-visible-name template)
               [(SpecNoString)
@@ -790,28 +2687,36 @@
                   (ErrGenDecl (gen-item-mismatch-diag item actual))
                   (match (gen-key-exprs args env (ctfe-fuel-limit))
                     [(OkGenKey arg-key _)
-                      (let
-                        [key : String
-                          (gen-full-key module generator item arg-key)]
-                        (match (gen-registry-lookup registry key)
-                          [(GenNoEntry)
-                            (OkGenDecl
-                              (SpecSomeDecl
-                                (ast-decl-comptime-decl-with-meta
-                                  (AstSomeGeneratedDeclMeta
-                                    generator
-                                    item
-                                    args
-                                    key)
-                                  template))
-                              (gen-registry-cons key template registry)
-                              module)]
-                          [(GenSomeEntry existing)
-                            (if (gen-decl-eq? existing template)
-                              (OkGenDecl SpecNoDecl registry module)
-                              (ErrGenDecl (gen-incompatible-diag item key)))]))]
+                      (if (string-eq generator "stdlib/hashmap-family")
+                        (match (gen-hashmap-family-marker-name template)
+                          [(SpecSomeString map-name)
+                            (gen-hashmap-expand-family
+                              map-name
+                              module
+                              generator
+                              args
+                              arg-key
+                              registry
+                              env)]
+                          [(SpecNoString)
+                            (gen-register-generated-decl
+                              template
+                              module
+                              generator
+                              item
+                              args
+                              arg-key
+                              registry)])
+                        (gen-register-generated-decl
+                          template
+                          module
+                          generator
+                          item
+                          args
+                          arg-key
+                          registry))]
                     [(ErrGenKey diag) (ErrGenDecl diag)]))])]))]
-    [_ (OkGenDecl (SpecSomeDecl decl) registry module)]))
+    [_ (OkGenDecl (gen-single-decl-list decl) registry module)]))
 
 (define (gen-rewrite-decls
   [decls : AstDeclList]
@@ -824,17 +2729,13 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match (gen-rewrite-decl decl module registry env)
-          [(OkGenDecl maybe-decl decl-registry decl-module)
+          [(OkGenDecl rewritten-decls decl-registry decl-module)
             (match (gen-rewrite-decls rest decl-module decl-registry env)
               [(OkGenDecls rewritten-rest rest-registry rest-module)
-                (match maybe-decl
-                  [(SpecNoDecl)
-                    (OkGenDecls rewritten-rest rest-registry rest-module)]
-                  [(SpecSomeDecl rewritten-decl)
-                    (OkGenDecls
-                      (ast-decl-cons rewritten-decl rewritten-rest)
-                      rest-registry
-                      rest-module)])]
+                (OkGenDecls
+                  (spec-decl-list-append rewritten-decls rewritten-rest)
+                  rest-registry
+                  rest-module)]
               [(ErrGenDecls diag) (ErrGenDecls diag)])]
           [(ErrGenDecl diag) (ErrGenDecls diag)]))]))
 
@@ -3860,24 +5761,18 @@
   (defenum HashMapSlot (HashMapEmpty)))")
 
 (define (compiler-generated-hashmap-family-bundle-source) : String
-  "(comptime-decls (:generated stdlib/hashmap-family (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
-  (defenum I64StringFixtureMapSlot
-    (I64StringFixtureMapEmpty)
-    (I64StringFixtureMapOccupied i64 String i64))
-  (defstruct I64StringFixtureMap
-    (slots (Array I64StringFixtureMapSlot))
-    (len i64))
-  (define (i64-string-fixture-map-len [map : I64StringFixtureMap]) : i64
-    (struct-get map len)))
-(comptime-decls (:generated stdlib/hashmap-family (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
-  (defenum I64StringFixtureMapSlot
-    (I64StringFixtureMapEmpty)
-    (I64StringFixtureMapOccupied i64 String i64))
-  (defstruct I64StringFixtureMap
-    (slots (Array I64StringFixtureMapSlot))
-    (len i64))
-  (define (i64-string-fixture-map-len [map : I64StringFixtureMap]) : i64
-    (struct-get map len)))")
+  "(comptime-decl (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
+  (defstruct StringStringMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64I64Map (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64StringMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64StringMap (__hashmap_family_request i64)))")
+
+(define (compiler-generated-hashmap-family-unsupported-key-source) : String
+  "(comptime-decl (:generated stdlib/hashmap-family BoolStringMap (type-key (type bool)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct BoolStringMap (__hashmap_family_request i64)))")
 
 (define (compiler-generated-decl-visible-count
   [source : String]
@@ -4112,17 +6007,67 @@
                   [slot-count : i64
                     (compiler-specialize-decl-list-count-visible
                       decls
-                      "I64StringFixtureMapSlot")]
+                      "I64StringMapSlot")]
                   [map-count : i64
                     (compiler-specialize-decl-list-count-visible
                       decls
-                      "I64StringFixtureMap")]
+                      "I64StringMap")]
+                  [entry-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64StringMapEntry")]
                   [len-count : i64
                     (compiler-specialize-decl-list-count-defs
                       decls
-                      "i64-string-fixture-map-len")]
-                  (and (= slot-count 1) (and (= map-count 1) (= len-count 1))))])]
+                      "i64-string-map-len")]
+                  [put-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-string-map-put")]
+                  [string-map-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "StringStringMap")]
+                  [string-borrowed-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "string-string-map-get-borrowed")]
+                  [i64-map-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64I64Map")]
+                  [i64-put-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-i64-map-put")]
+                  (and
+                    (= slot-count 1)
+                    (and
+                      (= map-count 1)
+                      (and
+                        (= entry-count 1)
+                        (and
+                          (= len-count 1)
+                          (and
+                            (= put-count 1)
+                            (and
+                              (= string-map-count 1)
+                              (and
+                                (= string-borrowed-count 1)
+                                (and (= i64-map-count 1) (= i64-put-count 1))))))))))])]
           [(ErrSpecProgram _) false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-hashmap-family-unsupported-key-rejected?) : bool
+  (match (parse-ast-source
+    (compiler-generated-hashmap-family-unsupported-key-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram diag)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "hashmap-family: unsupported key descriptor stdlib/hashmap/i64-key-v1 for key type bool")])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
@@ -4189,5 +6134,8 @@
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-hashmap-descriptor-distinct-ok?) (return 0))
     (unless (compiler-generated-hashmap-family-bundle-ok?) (return 0))
+    (unless
+      (compiler-generated-hashmap-family-unsupported-key-rejected?)
+      (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

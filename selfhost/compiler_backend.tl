@@ -2193,23 +2193,46 @@
     [(and (>= c #\space') (<= c #~')) (substring text idx 1)]
     [else (compiler-backend-octal-escape (compiler-backend-char-code c))]))
 
+(define (compiler-backend-string-byte-raw? [c : char]) : bool
+  (cond
+    [(= c #"') false]
+    [(= c #\\') false]
+    [(< c #\space') false]
+    [(> c #~') false]
+    [else true]))
+
 (define (compiler-backend-escape-string [text : String]) : String
   (let
     [i : i64 0]
     [n : i64 (string-length text)]
     [buf : TextBuf (text-buf-empty)]
+    [start : i64 0]
+    [escaped : bool false]
     (begin
       (while (< i n)
         (let
           [c : char (string-ref text i)]
-          (begin
-            (set!
-              buf
-              (text-buf-append
+          (if (compiler-backend-string-byte-raw? c)
+            (set! i (+ i 1))
+            (begin
+              (if (< start i)
+                (set! buf (text-buf-append buf (substring text start (- i start))))
+                unit)
+              (set!
                 buf
-                (compiler-backend-escape-string-byte text i c)))
-            (set! i (+ i 1)))))
-      (text-buf-render buf))))
+                (text-buf-append
+                  buf
+                  (compiler-backend-escape-string-byte text i c)))
+              (set! i (+ i 1))
+              (set! start i)
+              (set! escaped true)))))
+      (if escaped
+        (begin
+          (if (< start n)
+            (set! buf (text-buf-append buf (substring text start (- n start))))
+            unit)
+          (text-buf-render buf))
+        text))))
 
 (define (compiler-backend-quoted-gas-string [text : String]) : String
   (string-append

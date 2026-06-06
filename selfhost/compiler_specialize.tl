@@ -3794,6 +3794,41 @@
   (+ (if (option-string-some? (Some_String \"x\")) 1 0)
      (result-i64-string-value-or (Ok_I64_String 41) 0)))")
 
+(define (compiler-generated-decl-bundle-source) : String
+  "(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
+  (defstruct BundleBox (value String))
+  (defenum BundleMaybe (BundleNone) (BundleSome String))
+  (define (bundle-score [value : BundleMaybe]) : i64 1))
+(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
+  (defstruct BundleBox (value String))
+  (defenum BundleMaybe (BundleNone) (BundleSome String))
+  (define (bundle-score [value : BundleMaybe]) : i64 1))")
+
+(define (compiler-generated-decl-bundle-incompatible-source) : String
+  "(comptime-decls (:generated bundle-family \"v1\")
+  (defstruct BundleBox (value String)))
+(comptime-decls (:generated bundle-family \"v1\")
+  (defstruct BundleBox (value i64)))")
+
+(define (compiler-generated-decl-bundle-cross-module-reuse-source) : String
+  "(module bundle.family)
+(comptime-decls (:generated bundle-family \"v1\")
+  (defstruct BundleBox (value String))
+  (defenum BundleMaybe (BundleNone) (BundleSome String)))
+(module app)
+(module bundle.family)
+(comptime-decls (:generated bundle-family \"v1\")
+  (defstruct BundleBox (value String))
+  (defenum BundleMaybe (BundleNone) (BundleSome String)))")
+
+(define (compiler-generated-decl-bundle-cross-module-distinct-source) : String
+  "(module bundle.left)
+(comptime-decls (:generated bundle-family \"v1\")
+  (defstruct BundleBox (value String)))
+(module bundle.right)
+(comptime-decls (:generated bundle-family \"v1\")
+  (defstruct BundleBox (value String)))")
+
 (define (compiler-generated-decl-expected-string-key) : String
   (gen-full-key
     ""
@@ -3965,6 +4000,57 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-decl-bundle-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-bundle-source))
+    [(OkAstProgram program)
+      (and
+        (compiler-specialize-needed? program)
+        (match (compiler-specialize-program program)
+          [(OkSpecProgram normalized)
+            (match normalized
+              [(AstProgram decls-box)
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  [box-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "BundleBox")]
+                  [maybe-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "BundleMaybe")]
+                  [score-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "bundle-score")]
+                  (and
+                    (= box-count 1)
+                    (and (= maybe-count 1) (= score-count 1))))])]
+          [(ErrSpecProgram _) false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-bundle-incompatible-rejected?) : bool
+  (match (parse-ast-source (compiler-generated-decl-bundle-incompatible-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram _) true])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-bundle-cross-module-reuse-ok?) : bool
+  (=
+    (compiler-generated-decl-visible-count
+      (compiler-generated-decl-bundle-cross-module-reuse-source)
+      "BundleBox")
+    1))
+
+(define (compiler-generated-decl-bundle-cross-module-distinct-ok?) : bool
+  (=
+    (compiler-generated-decl-visible-count
+      (compiler-generated-decl-bundle-cross-module-distinct-source)
+      "BundleBox")
+    2))
+
 (define (compiler-generated-decl-cross-module-reuse-ok?) : bool
   (=
     (compiler-generated-decl-visible-count
@@ -4033,6 +4119,12 @@
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)
       (return 0))
     (unless (compiler-generated-option-result-family-ok?) (return 0))
+    (unless (compiler-generated-decl-bundle-ok?) (return 0))
+    (unless (compiler-generated-decl-bundle-incompatible-rejected?) (return 0))
+    (unless (compiler-generated-decl-bundle-cross-module-reuse-ok?) (return 0))
+    (unless
+      (compiler-generated-decl-bundle-cross-module-distinct-ok?)
+      (return 0))
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))

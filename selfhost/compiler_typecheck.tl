@@ -5900,6 +5900,27 @@
   "(define (lambda-body-discard [s : String]) : String
   (begin (lambda () : unit (let [t : String s] unit)) s))")
 
+(define (compiler-typecheck-move-owner-lambda-capture-box-ok-source) : String
+  "(define (owner-lambda-capture-box-ok [cell : (Box i64)]) : (-> i64)
+  (lambda () : i64 (box-get cell)))")
+
+(define (compiler-typecheck-move-owner-lambda-capture-box-reuse-source) : String
+  "(define (bad-owner-lambda-capture-box-reuse [cell : (Box i64)]) : i64
+  (begin (lambda () : i64 (box-get cell)) (box-get cell)))")
+
+(define (compiler-typecheck-move-owner-lambda-capture-cleanup-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-lambda-capture-cleanup-reuse [h : FileHandle]) : i64
+  (begin (lambda () : i64 (struct-get h fd)) (struct-get h fd)))")
+
+(define (compiler-typecheck-move-owner-lambda-body-reuse-source) : String
+  "(define (take-cell [cell : (Box i64)]) : unit unit)
+(define (bad-owner-lambda-body-reuse [cell : (Box i64)]) : (-> i64)
+  (lambda () : i64 (begin (take-cell cell) (box-get cell))))")
+
 (define (compiler-typecheck-move-while-loop-carried-param-source) : String
   "(define (bad-while-loop-carried-param [flag : bool] [s : String]) : String
   (begin (while flag (let [t : String s] unit)) s))")
@@ -6243,6 +6264,25 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-lambda-body-discard-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-lambda-capture-box-ok-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-lambda-capture-box-reuse-source)
+        "typecheck: use of moved value `cell`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-lambda-capture-cleanup-reuse-source)
+        "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-lambda-body-reuse-source)
+        "typecheck: use of moved value `cell`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

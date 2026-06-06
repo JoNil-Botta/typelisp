@@ -9,6 +9,8 @@
 ;;   typelisp run selfhost/doc.tl -- --load input.tl output.md [--stdlib-root <dir>...]
 (import "../stdlib/io.tl")
 
+(import "../stdlib/list.tl")
+
 (import "doc_render.tl")
 
 (import "doc_html.tl")
@@ -16,6 +18,8 @@
 (import "doc_test.tl")
 
 (import "compiler_load.tl")
+
+(import "package_source_core.tl")
 
 (defenum DocMaybeString
   (DocNoString)
@@ -26,11 +30,23 @@
   (DocTestPathCons String (Box DocTestPathList)))
 
 (defenum DocTestCliConfig
-  (DocTestCliConfig DocTestPathList CompilerLoadRootList))
+  (DocTestCliFileConfig DocTestPathList CompilerLoadRootList)
+  (DocTestCliPackageConfig String bool CompilerLoadRootList))
 
 (defenum ResultDocTestCliConfig
   (OkDocTestCliConfig DocTestCliConfig)
   (ErrDocTestCliConfig String))
+
+(defenum DocDefaultCliConfig
+  (DocDefaultCliExplicitConfig
+    DocTestPathList
+    DocMaybeString
+    CompilerLoadRootList)
+  (DocDefaultCliPackageConfig String bool String))
+
+(defenum ResultDocDefaultCliConfig
+  (OkDocDefaultCliConfig DocDefaultCliConfig)
+  (ErrDocDefaultCliConfig String))
 
 (define (doc-print-generated [output-path : String]) : unit
   (print-string (string-append "Generated: " (string-append output-path "\n"))))
@@ -59,6 +75,14 @@
     [(DocModuleNil) 0]
     [(DocModuleCons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
 
+(define (doc-modules-from-string-list [paths : StringList]) : DocModuleList
+  (match paths
+    [(StringNil) DocModuleNil]
+    [(StringCons path rest)
+      (doc-cli-module-cons
+        (DocModule path (doc-extract-file path))
+        (doc-modules-from-string-list (box-get rest)))]))
+
 (define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
   (match paths
     [(AstDeclPathNil) DocModuleNil]
@@ -83,14 +107,6 @@
       (doc-render-module-graph-markdown modules)
       (doc-render-markdown (doc-extract-file input-path)))))
 
-(define (doc-generate-module-graph [output-path : String]) : i64
-  (let
-    [modules : DocModuleList (doc-read-modules 1 (- (arg-count) 1))]
-    (begin
-      (write-file output-path (doc-render-module-graph-markdown modules))
-      (doc-print-generated output-path)
-      0)))
-
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
@@ -108,6 +124,24 @@
       (begin
         (print-error (compiler-diagnostic-render diag))
         1)]))
+
+(define (doc-generate-package
+  [manifest-path : String]
+  [has-manifest : bool]
+  [output-path : String]) : i64
+  (match (package-source-discover-for "doc" manifest-path has-manifest)
+    [(ErrPackageSourceSet message)
+      (begin
+        (print-error (string-append message "\n"))
+        1)]
+    [(OkPackageSourceSet source-set)
+      (begin
+        (write-file
+          output-path
+          (doc-render-module-graph-markdown
+            (doc-modules-from-string-list (struct-get source-set sources))))
+        (doc-print-generated output-path)
+        0)]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
@@ -141,6 +175,15 @@
 (define (doc-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
+(define (doc-root-list-append [roots : CompilerLoadRootList] [root : String]) : CompilerLoadRootList
+  (match roots
+    [(CompilerLoadRootNil)
+      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
+    [(CompilerLoadRootCons head rest)
+      (CompilerLoadRootCons
+        head
+        (box (doc-root-list-append (box-get rest) root)))]))
+
 (define (doc-stdlib-roots [idx : i64]) : CompilerLoadRootList
   (if (>= idx (arg-count))
     CompilerLoadRootNil
@@ -170,15 +213,66 @@
     [(DocTestPathNil) 0]
     [(DocTestPathCons _ rest) (+ 1 (doc-test-path-list-count (box-get rest)))]))
 
+(define (doc-test-path-list-first [paths : DocTestPathList]) : String
+  (match paths
+    [(DocTestPathNil) ""]
+    [(DocTestPathCons path _) path]))
+
+(define (doc-test-path-list-second [paths : DocTestPathList]) : String
+  (match paths
+    [(DocTestPathNil) ""]
+    [(DocTestPathCons _ rest) (doc-test-path-list-first (box-get rest))]))
+
+(define (doc-test-path-list-last [paths : DocTestPathList]) : String
+  (match paths
+    [(DocTestPathNil) ""]
+    [(DocTestPathCons path rest)
+      (match (box-get rest)
+        [(DocTestPathNil) path]
+        [_ (doc-test-path-list-last (box-get rest))])]))
+
+(define (doc-modules-from-doc-paths-before-last [paths : DocTestPathList]) : DocModuleList
+  (match paths
+    [(DocTestPathNil) DocModuleNil]
+    [(DocTestPathCons path rest)
+      (match (box-get rest)
+        [(DocTestPathNil) DocModuleNil]
+        [_
+          (doc-cli-module-cons
+            (DocModule path (doc-extract-file path))
+            (doc-modules-from-doc-paths-before-last (box-get rest)))])]))
+
+(define (doc-generate-module-graph-from-doc-paths [paths : DocTestPathList]) : i64
+  (let
+    [output-path : String (doc-test-path-list-last paths)]
+    [modules : DocModuleList (doc-modules-from-doc-paths-before-last paths)]
+    (begin
+      (write-file output-path (doc-render-module-graph-markdown modules))
+      (doc-print-generated output-path)
+      0)))
+
+(define (doc-test-config-finish
+  [input-paths : DocTestPathList]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [stdlib-roots : CompilerLoadRootList]) : ResultDocTestCliConfig
+  (if (doc-test-path-list-empty? input-paths)
+    (OkDocTestCliConfig
+      (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
+    (if has-manifest
+      (ErrDocTestCliConfig
+        "doc: cannot combine input paths with --manifest-path")
+      (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots)))))
+
 (define (doc-test-parse-options
   [idx : i64]
   [count : i64]
   [input-paths : DocTestPathList]
+  [manifest-path : String]
+  [has-manifest : bool]
   [stdlib-roots : CompilerLoadRootList]) : ResultDocTestCliConfig
   (if (>= idx count)
-    (if (doc-test-path-list-empty? input-paths)
-      (ErrDocTestCliConfig "doc: expected --test input path")
-      (OkDocTestCliConfig (DocTestCliConfig input-paths stdlib-roots)))
+    (doc-test-config-finish input-paths manifest-path has-manifest stdlib-roots)
     (let
       [current : String (arg idx)]
       (cond
@@ -189,7 +283,21 @@
               (+ idx 2)
               count
               input-paths
-              (CompilerLoadRootCons (arg (+ idx 1)) (box stdlib-roots))))]
+              manifest-path
+              has-manifest
+              (doc-root-list-append stdlib-roots (arg (+ idx 1)))))]
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrDocTestCliConfig "doc: --manifest-path requires a value")
+            (if has-manifest
+              (ErrDocTestCliConfig "doc: duplicate --manifest-path")
+              (doc-test-parse-options
+                (+ idx 2)
+                count
+                input-paths
+                (arg (+ idx 1))
+                true
+                stdlib-roots)))]
         [(doc-flag? current)
           (ErrDocTestCliConfig (string-append "doc: unknown flag " current))]
         [else
@@ -197,10 +305,18 @@
             (+ idx 1)
             count
             (doc-test-path-list-append input-paths current)
+            manifest-path
+            has-manifest
             stdlib-roots)]))))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
-  (doc-test-parse-options (+ base 1) count DocTestPathNil CompilerLoadRootNil))
+  (doc-test-parse-options
+    (+ base 1)
+    count
+    DocTestPathNil
+    ""
+    false
+    CompilerLoadRootNil))
 
 (define (doc-test-files
   [input-paths : DocTestPathList]
@@ -226,30 +342,146 @@
             file-status
             status)))]))
 
-(define (doc-has-output-option [idx : i64]) : bool
-  (if (>= idx (arg-count))
-    false
-    (if (string-eq (arg idx) "-o")
-      true
-      (doc-has-output-option (+ idx 1)))))
+(define (doc-test-package-files
+  [input-paths : StringList]
+  [stdlib-roots : CompilerLoadRootList]
+  [status : i64]) : i64
+  (match input-paths
+    [(StringNil) status]
+    [(StringCons input-path rest)
+      (let
+        [file-status : i64
+          (begin
+            (print-string
+              (string-append "--- " (string-append input-path "\n")))
+            (doc-test-file input-path stdlib-roots))]
+        (doc-test-package-files
+          (box-get rest)
+          stdlib-roots
+          (if (= status 0)
+            file-status
+            status)))]))
 
-(define (doc-output-option [idx : i64]) : DocMaybeString
-  (if (>= idx (arg-count))
+(define (doc-test-package
+  [manifest-path : String]
+  [has-manifest : bool]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (match (package-source-discover-for "doc" manifest-path has-manifest)
+    [(ErrPackageSourceSet message)
+      (begin
+        (print-error (string-append message "\n"))
+        1)]
+    [(OkPackageSourceSet source-set)
+      (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
+
+(define (doc-default-config-finish
+  [input-paths : DocTestPathList]
+  [output-path : DocMaybeString]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [stdlib-roots : CompilerLoadRootList]) : ResultDocDefaultCliConfig
+  (if (doc-test-path-list-empty? input-paths)
+    (match output-path
+      [(DocSomeString out)
+        (OkDocDefaultCliConfig
+          (DocDefaultCliPackageConfig manifest-path has-manifest out))]
+      [(DocNoString)
+        (if has-manifest
+          (ErrDocDefaultCliConfig
+            "doc: package documentation requires -o <out.md>")
+          (ErrDocDefaultCliConfig "doc: expected input and output paths"))])
+    (if has-manifest
+      (ErrDocDefaultCliConfig
+        "doc: cannot combine input paths with --manifest-path")
+      (OkDocDefaultCliConfig
+        (DocDefaultCliExplicitConfig input-paths output-path stdlib-roots)))))
+
+(define (doc-default-parse-options
+  [idx : i64]
+  [count : i64]
+  [input-paths : DocTestPathList]
+  [output-path : DocMaybeString]
+  [has-output : bool]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [stdlib-roots : CompilerLoadRootList]) : ResultDocDefaultCliConfig
+  (if (>= idx count)
+    (doc-default-config-finish
+      input-paths
+      output-path
+      manifest-path
+      has-manifest
+      stdlib-roots)
+    (let
+      [current : String (arg idx)]
+      (cond
+        [(string-eq current "-o")
+          (if (>= (+ idx 1) count)
+            (ErrDocDefaultCliConfig "doc: -o requires a value")
+            (if has-output
+              (ErrDocDefaultCliConfig "doc: duplicate -o")
+              (doc-default-parse-options
+                (+ idx 2)
+                count
+                input-paths
+                (DocSomeString (arg (+ idx 1)))
+                true
+                manifest-path
+                has-manifest
+                stdlib-roots)))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrDocDefaultCliConfig "doc: --stdlib-root requires a value")
+            (doc-default-parse-options
+              (+ idx 2)
+              count
+              input-paths
+              output-path
+              has-output
+              manifest-path
+              has-manifest
+              (doc-root-list-append stdlib-roots (arg (+ idx 1)))))]
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
+            (if has-manifest
+              (ErrDocDefaultCliConfig "doc: duplicate --manifest-path")
+              (doc-default-parse-options
+                (+ idx 2)
+                count
+                input-paths
+                output-path
+                has-output
+                (arg (+ idx 1))
+                true
+                stdlib-roots)))]
+        [(doc-flag? current)
+          (ErrDocDefaultCliConfig (string-append "doc: unknown flag " current))]
+        [else
+          (doc-default-parse-options
+            (+ idx 1)
+            count
+            (doc-test-path-list-append input-paths current)
+            output-path
+            has-output
+            manifest-path
+            has-manifest
+            stdlib-roots)]))))
+
+(define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
+  (doc-default-parse-options
+    base
+    count
+    DocTestPathNil
     (DocNoString)
-    (if (string-eq (arg idx) "-o")
-      (if (< (+ idx 1) (arg-count))
-        (DocSomeString (arg (+ idx 1)))
-        (DocNoString))
-      (doc-output-option (+ idx 1)))))
+    false
+    ""
+    false
+    CompilerLoadRootNil))
 
 (define (doc-invalid-args) : i64
   (begin
     (print-error "doc: expected input and output paths")
-    1))
-
-(define (doc-invalid-test-args) : i64
-  (begin
-    (print-error "doc: expected --test input path")
     1))
 
 (define (doc-invalid-load-args) : i64
@@ -261,6 +493,30 @@
   (begin
     (print-error "doc: expected --html input and output paths")
     1))
+
+(define (doc-run-explicit-default
+  [input-paths : DocTestPathList]
+  [output-path : DocMaybeString]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (match output-path
+    [(DocSomeString out)
+      (if (doc-test-path-list-empty? input-paths)
+        (doc-invalid-args)
+        (doc-generate-loaded-file
+          (doc-test-path-list-first input-paths)
+          out
+          stdlib-roots))]
+    [(DocNoString)
+      (let
+        [path-count : i64 (doc-test-path-list-count input-paths)]
+        (cond
+          [(= path-count 2)
+            (doc-generate-file
+              (doc-test-path-list-first input-paths)
+              (doc-test-path-list-second input-paths))]
+          [(> path-count 2)
+            (doc-generate-module-graph-from-doc-paths input-paths)]
+          [else (doc-invalid-args)]))]))
 
 (define (doc-command-kind-load [value : String]) : i64
   (if (or (string-eq value "--load") (string-eq value "load"))
@@ -284,12 +540,14 @@
   (match (doc-test-config-from base (arg-count))
     [(OkDocTestCliConfig config)
       (match config
-        [(DocTestCliConfig input-paths stdlib-roots)
+        [(DocTestCliFileConfig input-paths stdlib-roots)
           (doc-test-files
             input-paths
             stdlib-roots
             (> (doc-test-path-list-count input-paths) 1)
-            0)])]
+            0)]
+        [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
+          (doc-test-package manifest-path has-manifest stdlib-roots)])]
     [(ErrDocTestCliConfig message)
       (begin
         (print-error message)
@@ -311,19 +569,17 @@
     (doc-invalid-load-args)))
 
 (define (doc-main-default [base : i64]) : i64
-  (cond
-    [(doc-has-output-option (+ base 1))
-      (match (doc-output-option (+ base 1))
-        [(DocSomeString output-path)
-          (doc-generate-loaded-file
-            (arg base)
-            output-path
-            (doc-stdlib-roots (+ base 1)))]
-        [(DocNoString) (doc-invalid-args)])]
-    [(= (arg-count) (+ base 2)) (doc-generate-file (arg base) (arg (+ base 1)))]
-    [(> (arg-count) (+ base 2))
-      (doc-generate-module-graph (arg (- (arg-count) 1)))]
-    [else (doc-invalid-args)]))
+  (match (doc-default-config-from base (arg-count))
+    [(OkDocDefaultCliConfig config)
+      (match config
+        [(DocDefaultCliExplicitConfig input-paths output-path stdlib-roots)
+          (doc-run-explicit-default input-paths output-path stdlib-roots)]
+        [(DocDefaultCliPackageConfig manifest-path has-manifest output-path)
+          (doc-generate-package manifest-path has-manifest output-path)])]
+    [(ErrDocDefaultCliConfig message)
+      (begin
+        (print-error message)
+        1)]))
 
 (define (doc-main-dispatch [kind : i64] [base : i64]) : i64
   (match kind
@@ -335,5 +591,5 @@
 ;; Run the `doc` command; `start` is the index of the command-kind argument.
 (define (doc-run-from [start : i64] [count : i64]) : i64
   (if (< count (+ start 1))
-    (doc-invalid-args)
+    (doc-main-default start)
     (doc-main-dispatch (doc-command-kind (arg start)) start)))

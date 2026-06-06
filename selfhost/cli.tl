@@ -62,8 +62,9 @@ Usage:
     typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
-    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
-    typelisp doc --test <file.tl>... [--stdlib-root <dir>...]
+    typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
+    typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp new [--lib] <name>    Scaffold a new package in <name>/
     typelisp init [--lib] <name>   Scaffold a package in the current directory
 
@@ -73,7 +74,7 @@ Usage:
     --link-arg <arg>               Pass a raw native linker argument
     --backend-mode <mode>          scalar, avx2, or avx512; avx2/avx512 support simple foreach maps
     --target <target>              linux-x86_64 or windows-x86_64
-    --manifest-path <file>         Package manifest for build/check/clean/fmt/lint
+    --manifest-path <file>         Package manifest for build/check/clean/fmt/lint/doc
     --stdlib-root <dir>            Search root for stdlib/... imports before env/embedded fallback
     --cfg <name>                   Enable a compile-time cfg predicate name
     TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
@@ -101,7 +102,8 @@ Options for test:
     --check                        Typecheck inline tests without running them
     --opt-level <0|1|2|3>          Select selfhost test harness optimization
 Options for doc:
-    --test <file.tl>               Check TypeLisp fenced examples in docs
+    --test [<file.tl>...]          Check TypeLisp fenced examples in docs
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
 ")
 
 (define (cli-print-help [code : i64]) : i64

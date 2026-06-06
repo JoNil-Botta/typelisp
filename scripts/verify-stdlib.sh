@@ -243,7 +243,7 @@ stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-|-
 stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
-stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
+stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-

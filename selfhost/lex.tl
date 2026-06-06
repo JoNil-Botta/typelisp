@@ -112,25 +112,21 @@
 (define (is-symbol-char [c : char]) : bool
   (let
     [code : i64 (cast c : i64)]
-    (or
-      (and (>= code 65) (<= code 90))
-      (or
-        (and (>= code 97) (<= code 122))
-        (or
-          (and (>= code 48) (<= code 57))
-          (or
-            (= code 33)
-            (or
-              (and (>= code 37) (<= code 38))
-              (or
-                (if (and (>= code 42) (<= code 47))
-                  (not (= code 44))
-                  false)
-                (or
-                  (= code 58)
-                  (or
-                    (and (>= code 60) (<= code 63))
-                    (= code 95)))))))))))
+    (cond
+      [(and (>= code 97) (<= code 122)) true]
+      [(and (>= code 65) (<= code 90)) true]
+      [(and (>= code 48) (<= code 57)) true]
+      [(= code 45) true]
+      [(= code 95) true]
+      [(= code 33) true]
+      [(and (>= code 37) (<= code 38)) true]
+      [(= code 42) true]
+      [(= code 43) true]
+      [(= code 46) true]
+      [(= code 47) true]
+      [(= code 58) true]
+      [(and (>= code 60) (<= code 63)) true]
+      [else false])))
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool

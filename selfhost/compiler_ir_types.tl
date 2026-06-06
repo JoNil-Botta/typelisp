@@ -259,6 +259,12 @@
 (define (compiler-ir-instr-seq-count [instrs : CompilerIrInstrSeq]) : i64
   (struct-get instrs len))
 
+(define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
+  (= (struct-get instrs len) 0))
+
+(define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
+  (array-ref (struct-get instrs slots) index))
+
 (define (compiler-ir-block [label : String] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (IrBlock label (compiler-ir-instr-seq-from-list instrs)))
 
@@ -2696,10 +2702,16 @@
     (and
       (= (compiler-ir-instr-seq-count seq) 3)
       (and
-        (= (compiler-ir-instr-list-count roundtrip) 3)
         (and
-          (= (compiler-ir-block-list-instruction-count block-list) 3)
-          (compiler-ir-instr-list-first-mov-dst? roundtrip 1))))))
+          (not (compiler-ir-instr-seq-empty? seq))
+          (match (compiler-ir-instr-seq-ref seq 2)
+            [(IrInstrReturn _) true]
+            [_ false]))
+        (and
+          (= (compiler-ir-instr-list-count roundtrip) 3)
+          (and
+            (= (compiler-ir-block-list-instruction-count block-list) 3)
+            (compiler-ir-instr-list-first-mov-dst? roundtrip 1)))))))
 
 (define (compiler-ir-effect-self-test) : i64
   (begin

@@ -5928,11 +5928,44 @@
             [(ErrBackendValue message) (ErrBackendPhiCopies message)])]
         [_ (OkBackendPhiCopies BackendPhiCopyNil)])]))
 
+(define (compiler-backend-leading-phi-copies-seq-from
+  [assignments : CompilerRegAssignmentList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [from-label : String]) : ResultBackendPhiCopies
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OkBackendPhiCopies BackendPhiCopyNil)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrPhi dst inputs ty)
+        (match (compiler-backend-phi-input-value inputs from-label)
+          [(OkBackendValue value)
+            (match (compiler-backend-leading-phi-copies-seq-from
+              assignments
+              instrs
+              (+ index 1)
+              from-label)
+              [(OkBackendPhiCopies tail)
+                (if (compiler-backend-phi-same-home? assignments dst value)
+                  (OkBackendPhiCopies tail)
+                  (OkBackendPhiCopies
+                    (compiler-backend-phi-copy-cons
+                      (BackendPhiCopy dst (BackendPhiSourceValue value) ty)
+                      tail)))]
+              [(ErrBackendPhiCopies message) (ErrBackendPhiCopies message)])]
+          [(ErrBackendValue message) (ErrBackendPhiCopies message)])]
+      [_ (OkBackendPhiCopies BackendPhiCopyNil)])))
+
+(define (compiler-backend-leading-phi-copies-seq
+  [assignments : CompilerRegAssignmentList]
+  [instrs : CompilerIrInstrSeq]
+  [from-label : String]) : ResultBackendPhiCopies
+  (compiler-backend-leading-phi-copies-seq-from assignments instrs 0 from-label))
+
 (define (compiler-backend-emit-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
   [from-label : String]) : ResultCompilerBackend
-  (match (compiler-backend-leading-phi-copies assignments instrs from-label)
+  (match (compiler-backend-leading-phi-copies-seq assignments instrs from-label)
     [(OkBackendPhiCopies copies)
       (compiler-backend-emit-phi-copy-list assignments copies)]
     [(ErrBackendPhiCopies message)
@@ -5955,7 +5988,7 @@
           (if (string-eq block-label target-label)
             (compiler-backend-emit-leading-phi-copies
               assignments
-              (compiler-ir-instr-seq-to-list instrs)
+              instrs
               from-label)
             (compiler-backend-emit-phi-edge-copies
               assignments
@@ -6126,45 +6159,39 @@
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]
   [blocks : CompilerIrBlockList]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]) : ResultCompilerBackend
-  (match instrs
-    [(IrInstrCons instr rest)
+  (if (= (compiler-ir-instr-seq-count instrs) 2)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 0)]
+      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 1)]
       (match instr
         [(IrInstrPhi dst inputs _)
-          (match (box-get rest)
-            [(IrInstrCons next after-return)
-              (match next
-                [(IrInstrReturn maybe)
-                  (match (box-get after-return)
-                    [(IrInstrNil)
-                      (match maybe
-                        [(IrSomeValue value)
-                          (if (compiler-backend-branch-uses-var? value dst)
-                            (match (compiler-backend-phi-input-value
-                              inputs
-                              from-label)
-                              [(OkBackendValue incoming)
-                                (compiler-backend-emit-return
-                                  source-function
-                                  blocks
-                                  (IrSomeValue incoming)
-                                  assignments
-                                  vars
-                                  ret-ty)]
-                              [(ErrBackendValue message)
-                                (ErrCompilerBackend
-                                  (compiler-diagnostic-at-start "" message))])
-                            (OkCompilerBackend ""))]
-                        [(IrNoValue) (OkCompilerBackend "")])]
-                    [_ (OkCompilerBackend "")])]
-                [_ (OkCompilerBackend "")])]
+          (match next
+            [(IrInstrReturn maybe)
+              (match maybe
+                [(IrSomeValue value)
+                  (if (compiler-backend-branch-uses-var? value dst)
+                    (match (compiler-backend-phi-input-value inputs from-label)
+                      [(OkBackendValue incoming)
+                        (compiler-backend-emit-return
+                          source-function
+                          blocks
+                          (IrSomeValue incoming)
+                          assignments
+                          vars
+                          ret-ty)]
+                      [(ErrBackendValue message)
+                        (ErrCompilerBackend
+                          (compiler-diagnostic-at-start "" message))])
+                    (OkCompilerBackend ""))]
+                [(IrNoValue) (OkCompilerBackend "")])]
             [_ (OkCompilerBackend "")])]
-        [_ (OkCompilerBackend "")])]
-    [_ (OkCompilerBackend "")]))
+        [_ (OkCompilerBackend "")]))
+    (OkCompilerBackend "")))
 
 (define (compiler-backend-emit-trivial-phi-return-edge
   [source-function : String]
@@ -6183,7 +6210,7 @@
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
               blocks
-              (compiler-ir-instr-seq-to-list instrs)
+              instrs
               from-label
               assignments
               vars
@@ -6200,51 +6227,45 @@
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
   [source-function : String]
   [blocks : CompilerIrBlockList]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
   [moved-dst : i64]
   [moved-src : CompilerIrValue]) : ResultCompilerBackend
-  (match instrs
-    [(IrInstrCons instr rest)
+  (if (= (compiler-ir-instr-seq-count instrs) 2)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 0)]
+      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 1)]
       (match instr
         [(IrInstrPhi dst inputs _)
-          (match (box-get rest)
-            [(IrInstrCons next after-return)
-              (match next
-                [(IrInstrReturn maybe)
-                  (match (box-get after-return)
-                    [(IrInstrNil)
-                      (match maybe
-                        [(IrSomeValue value)
-                          (if (compiler-backend-branch-uses-var? value dst)
-                            (match (compiler-backend-phi-input-value
-                              inputs
-                              from-label)
-                              [(OkBackendValue incoming)
-                                (if (compiler-backend-branch-uses-var?
-                                  incoming
-                                  moved-dst)
-                                  (compiler-backend-emit-return
-                                    source-function
-                                    blocks
-                                    (IrSomeValue moved-src)
-                                    assignments
-                                    vars
-                                    ret-ty)
-                                  (OkCompilerBackend ""))]
-                              [(ErrBackendValue message)
-                                (ErrCompilerBackend
-                                  (compiler-diagnostic-at-start "" message))])
-                            (OkCompilerBackend ""))]
-                        [(IrNoValue) (OkCompilerBackend "")])]
-                    [_ (OkCompilerBackend "")])]
-                [_ (OkCompilerBackend "")])]
+          (match next
+            [(IrInstrReturn maybe)
+              (match maybe
+                [(IrSomeValue value)
+                  (if (compiler-backend-branch-uses-var? value dst)
+                    (match (compiler-backend-phi-input-value inputs from-label)
+                      [(OkBackendValue incoming)
+                        (if (compiler-backend-branch-uses-var?
+                          incoming
+                          moved-dst)
+                          (compiler-backend-emit-return
+                            source-function
+                            blocks
+                            (IrSomeValue moved-src)
+                            assignments
+                            vars
+                            ret-ty)
+                          (OkCompilerBackend ""))]
+                      [(ErrBackendValue message)
+                        (ErrCompilerBackend
+                          (compiler-diagnostic-at-start "" message))])
+                    (OkCompilerBackend ""))]
+                [(IrNoValue) (OkCompilerBackend "")])]
             [_ (OkCompilerBackend "")])]
-        [_ (OkCompilerBackend "")])]
-    [_ (OkCompilerBackend "")]))
+        [_ (OkCompilerBackend "")]))
+    (OkCompilerBackend "")))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge
   [source-function : String]
@@ -6265,7 +6286,7 @@
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
               blocks
-              (compiler-ir-instr-seq-to-list instrs)
+              instrs
               from-label
               assignments
               vars

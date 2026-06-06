@@ -35,13 +35,19 @@
   (FoundLspDocument String String String)
   (MissingLspDocument))
 
-(defenum LspDocumentList
-  (LspDocumentNil)
-  (LspDocumentCons String String String String (Box LspDocumentList)))
+(defstruct LspDocument
+  (uri String)
+  (path String)
+  (text String)
+  (diagnostic-uri String))
+
+(defstruct LspDocuments
+  (slots (Array LspDocument))
+  (len i64))
 
 (defenum LspHandleResult
-  (LspContinue LspDocumentList)
-  (LspExit LspDocumentList))
+  (LspContinue LspDocuments)
+  (LspExit LspDocuments))
 
 (define (lsp-frame-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -332,45 +338,142 @@
       "version"
       (JsonString "selfhost"))))
 
+(define (lsp-documents-slots [docs : LspDocuments]) : (Array LspDocument)
+  (struct-get docs slots))
+
+(define (lsp-documents-len [docs : LspDocuments]) : i64
+  (struct-get docs len))
+
+(define (lsp-documents-capacity [docs : LspDocuments]) : i64
+  (array-length (lsp-documents-slots docs)))
+
+(define (lsp-documents-with-capacity [capacity : i64]) : LspDocuments
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (LspDocuments (make-array LspDocument cap) 0)))
+
+(define (lsp-documents-new) : LspDocuments
+  (lsp-documents-with-capacity 4))
+
+(define (lsp-documents-copy-range
+  [dst : (Array LspDocument)]
+  [src : (Array LspDocument)]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (lsp-documents-grow [docs : LspDocuments]) : LspDocuments
+  (let
+    [n : i64 (lsp-documents-len docs)]
+    [bigger : (Array LspDocument)
+      (make-array LspDocument (* (lsp-documents-capacity docs) 2))]
+    (begin
+      (lsp-documents-copy-range bigger (lsp-documents-slots docs) 0 n)
+      (LspDocuments bigger n))))
+
+(define (lsp-documents-push [docs : LspDocuments] [doc : LspDocument]) : LspDocuments
+  (if (< (lsp-documents-len docs) (lsp-documents-capacity docs))
+    (let
+      [slots : (Array LspDocument) (lsp-documents-slots docs)]
+      (begin
+        (array-set! slots (lsp-documents-len docs) doc)
+        (LspDocuments slots (+ (lsp-documents-len docs) 1))))
+    (lsp-documents-push (lsp-documents-grow docs) doc)))
+
+(define (lsp-documents-set-index!
+  [docs : LspDocuments]
+  [index : i64]
+  [doc : LspDocument]) : LspDocuments
+  (begin
+    (if (if (>= index 0)
+      (< index (lsp-documents-len docs))
+      false)
+      (array-set! (lsp-documents-slots docs) index doc)
+      unit)
+    docs))
+
+(define (lsp-documents-find-index-from
+  [docs : LspDocuments]
+  [uri : String]
+  [index : i64]) : i64
+  (let
+    [i : i64 index]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (< i (lsp-documents-len docs))
+        (if done
+          (set! i (lsp-documents-len docs))
+          (let
+            [doc : LspDocument (array-ref (lsp-documents-slots docs) i)]
+            (if (string-eq (struct-get doc uri) uri)
+              (begin
+                (set! found i)
+                (set! done true)
+                (set! i (lsp-documents-len docs)))
+              (set! i (+ i 1))))))
+      found)))
+
+(define (lsp-documents-find-index [docs : LspDocuments] [uri : String]) : i64
+  (lsp-documents-find-index-from docs uri 0))
+
 (define (lsp-documents-set
-  [docs : LspDocumentList]
+  [docs : LspDocuments]
   [uri : String]
   [path : String]
   [text : String]
-  [diagnostic-uri : String]) : LspDocumentList
-  (match docs
-    [(LspDocumentNil)
-      (LspDocumentCons uri path text diagnostic-uri (box LspDocumentNil))]
-    [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
-      (if (string-eq item-uri uri)
-        (LspDocumentCons uri path text diagnostic-uri rest)
-        (LspDocumentCons
-          item-uri
-          item-path
-          item-text
-          item-diagnostic-uri
-          (box (lsp-documents-set (box-get rest) uri path text diagnostic-uri))))]))
+  [diagnostic-uri : String]) : LspDocuments
+  (let
+    [doc : LspDocument (LspDocument uri path text diagnostic-uri)]
+    [index : i64 (lsp-documents-find-index docs uri)]
+    (if (>= index 0)
+      (lsp-documents-set-index! docs index doc)
+      (lsp-documents-push docs doc))))
 
-(define (lsp-documents-remove [docs : LspDocumentList] [uri : String]) : LspDocumentList
-  (match docs
-    [(LspDocumentNil) LspDocumentNil]
-    [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
-      (if (string-eq item-uri uri)
-        (box-get rest)
-        (LspDocumentCons
-          item-uri
-          item-path
-          item-text
-          item-diagnostic-uri
-          (box (lsp-documents-remove (box-get rest) uri))))]))
+(define (lsp-documents-shift-left! [docs : LspDocuments] [index : i64]) : unit
+  (let
+    [i : i64 index]
+    [last : i64 (- (lsp-documents-len docs) 1)]
+    (begin
+      (while (< i last)
+        (begin
+          (array-set!
+            (lsp-documents-slots docs)
+            i
+            (array-ref (lsp-documents-slots docs) (+ i 1)))
+          (set! i (+ i 1)))))))
 
-(define (lsp-documents-lookup [docs : LspDocumentList] [uri : String]) : LspDocumentLookup
-  (match docs
-    [(LspDocumentNil) MissingLspDocument]
-    [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
-      (if (string-eq item-uri uri)
-        (FoundLspDocument item-path item-text item-diagnostic-uri)
-        (lsp-documents-lookup (box-get rest) uri))]))
+(define (lsp-documents-remove-index [docs : LspDocuments] [index : i64]) : LspDocuments
+  (if (if (>= index 0)
+    (< index (lsp-documents-len docs))
+    false)
+    (begin
+      (lsp-documents-shift-left! docs index)
+      (LspDocuments (lsp-documents-slots docs) (- (lsp-documents-len docs) 1)))
+    docs))
+
+(define (lsp-documents-remove [docs : LspDocuments] [uri : String]) : LspDocuments
+  (lsp-documents-remove-index docs (lsp-documents-find-index docs uri)))
+
+(define (lsp-documents-lookup [docs : LspDocuments] [uri : String]) : LspDocumentLookup
+  (let
+    [index : i64 (lsp-documents-find-index docs uri)]
+    (if (>= index 0)
+      (let
+        [doc : LspDocument (array-ref (lsp-documents-slots docs) index)]
+        (FoundLspDocument
+          (struct-get doc path)
+          (struct-get doc text)
+          (struct-get doc diagnostic-uri)))
+      MissingLspDocument)))
 
 (define (lsp-hex-value [c : char]) : i64
   (let
@@ -578,7 +681,7 @@
     (lsp-json-list-cons (lsp-diagnostic 1 1 message) JsonListNil)))
 
 (define (lsp-clear-stale-diagnostic
-  [docs : LspDocumentList]
+  [docs : LspDocuments]
   [uri : String]
   [next-diagnostic-uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -592,7 +695,7 @@
         (lsp-publish-diagnostics old-diagnostic-uri JsonListNil))]
     [(MissingLspDocument) unit]))
 
-(define (lsp-clear-close-diagnostics [docs : LspDocumentList] [uri : String]) : unit
+(define (lsp-clear-close-diagnostics [docs : LspDocuments] [uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
     [(FoundLspDocument _ _ old-diagnostic-uri)
       (begin
@@ -641,7 +744,7 @@
 
 (define (lsp-did-open
   [params : Json]
-  [docs : LspDocumentList]
+  [docs : LspDocuments]
   [stdlib-roots : StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
@@ -656,11 +759,10 @@
                   (let
                     [diagnostic-uri : String
                       (lsp-analyze-document uri path text stdlib-roots)]
-                    [next-docs : LspDocumentList
-                      (lsp-documents-set docs uri path text diagnostic-uri)]
                     (begin
                       (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                      (LspContinue next-docs)))]
+                      (LspContinue
+                        (lsp-documents-set docs uri path text diagnostic-uri))))]
                 [(ErrLspUriPath message)
                   (begin
                     (lsp-publish-uri-diagnostic uri message)
@@ -670,7 +772,7 @@
 
 (define (lsp-did-change
   [params : Json]
-  [docs : LspDocumentList]
+  [docs : LspDocuments]
   [stdlib-roots : StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
@@ -685,11 +787,10 @@
                     (let
                       [diagnostic-uri : String
                         (lsp-analyze-document uri path text stdlib-roots)]
-                      [next-docs : LspDocumentList
-                        (lsp-documents-set docs uri path text diagnostic-uri)]
                       (begin
                         (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                        (LspContinue next-docs)))]
+                        (LspContinue
+                          (lsp-documents-set docs uri path text diagnostic-uri))))]
                   [(ErrLspUriPath message)
                     (begin
                       (lsp-publish-uri-diagnostic uri message)
@@ -704,7 +805,7 @@
           [(MissingLspJsonText) (LspContinue docs)])]
       [(JsonMissing) (LspContinue docs)])))
 
-(define (lsp-did-close [params : Json] [docs : LspDocumentList]) : LspHandleResult
+(define (lsp-did-close [params : Json] [docs : LspDocuments]) : LspHandleResult
   (let
     [key : String "textDocument"]
     (match (json-object-get params (& key))
@@ -726,7 +827,7 @@
 
 (define (lsp-handle-message
   [message : Json]
-  [docs : LspDocumentList]
+  [docs : LspDocuments]
   [stdlib-roots : StringVec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(OkLspJsonText method)
@@ -795,7 +896,7 @@
   (let
     [done : bool false]
     [status : i64 0]
-    [docs : LspDocumentList LspDocumentNil]
+    [docs : LspDocuments (lsp-documents-new)]
     [stdlib-roots : StringVec (lsp-stdlib-roots-from idx count)]
     (begin
       (while (not done)

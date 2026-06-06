@@ -1,0 +1,13 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_count": 6,
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"textDocumentSync\""},
+    {"raw_contains": "\"code\":\"E0200\"", "raw_contains": "${{TMP_URI}}/a.tl"},
+    {"raw_contains": "\"code\":\"E0200\"", "raw_contains": "${{TMP_URI}}/b.tl"},
+    {"raw_contains": "\"diagnostics\":[]", "raw_contains": "${{TMP_URI}}/a.tl"},
+    {"raw_contains": "\"diagnostics\":[]", "raw_contains": "${{TMP_URI}}/b.tl"},
+    {"jsonpath_id": 2, "jsonpath_result": null}
+  ]
+}

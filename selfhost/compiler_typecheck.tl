@@ -5479,6 +5479,24 @@
     (take-handle (struct-get p handle))
     (take-holder p)))")
 
+(define (compiler-typecheck-move-owner-projection-key-collision-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-projection-key-collision
+  [p : Holder]
+  [p.handle : Holder]
+  [p.__tl_partial : Holder]) : i64
+  (begin
+    (take-handle (struct-get p handle))
+    (+ (struct-get p.handle size) (struct-get p.__tl_partial size))))")
+
 (define (compiler-typecheck-move-owner-tuple-ref-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -5624,6 +5642,10 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-root-reuse-source)
         "typecheck: use of moved value `p`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-key-collision-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

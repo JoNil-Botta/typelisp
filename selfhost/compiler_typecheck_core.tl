@@ -12145,8 +12145,11 @@
 (define (tc-move-use-message [name : String]) : String
   (string-append (string-append "typecheck: use of moved value `" name) "`"))
 
+(define (tc-moved-path-key [path : String]) : String
+  (string-append "\npath:" path))
+
 (define (tc-moved-partial-key [name : String]) : String
-  (string-append name ".__tl_partial"))
+  (string-append "\npartial:" name))
 
 (define (tc-moved-partial? [set : TcMovedSet] [name : String]) : bool
   (tc-moved-contains? set (tc-moved-partial-key name)))
@@ -12207,7 +12210,7 @@
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name : String]) : TcMovedSet
   (tc-moved-remove-prefix
     (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
-    (string-append name ".")))
+    (tc-moved-path-key (string-append name "."))))
 
 (define (tc-moved-union-loop
   [a : StringI64Map]
@@ -12375,7 +12378,9 @@
   [moved : TcMovedSet]
   [root : String]
   [path : String]) : TcMovedSet
-  (tc-moved-add (tc-moved-add moved path) (tc-moved-partial-key root)))
+  (tc-moved-add
+    (tc-moved-add moved (tc-moved-path-key path))
+    (tc-moved-partial-key root)))
 
 (define (tc-move-dynamic-array-element-projection?
   [ctx : TcContext]
@@ -12469,7 +12474,7 @@
                   (match (tc-move-root-projection-var init)
                     [(TcSomeString root)
                       (if (tc-moved-contains? locals root)
-                        (if (tc-moved-contains? moved path)
+                        (if (tc-moved-contains? moved (tc-moved-path-key path))
                           (ErrTcMove (tc-move-use-message path))
                           (OkTcMove (tc-moved-add-struct-field moved root path)))
                         (OkTcMove moved))]
@@ -12503,7 +12508,7 @@
           (match (tc-move-root-projection-var expr)
             [(TcSomeString root)
               (if (tc-moved-contains? locals root)
-                (if (tc-moved-contains? moved path)
+                (if (tc-moved-contains? moved (tc-moved-path-key path))
                   (ErrTcMove (tc-move-use-message path))
                   (OkTcMove (tc-moved-add-struct-field moved root path)))
                 (OkTcMove moved))]
@@ -12915,7 +12920,7 @@
           [(OkTcMove moved1)
             (match (tc-move-struct-field-path expr)
               [(TcSomeString path)
-                (if (tc-moved-contains? moved1 path)
+                (if (tc-moved-contains? moved1 (tc-moved-path-key path))
                   (ErrTcMove (tc-move-use-message path))
                   (OkTcMove moved1))]
               [(TcNoString) (OkTcMove moved1)])]

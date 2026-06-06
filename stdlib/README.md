@@ -54,13 +54,19 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/ffi.tl")`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
   future collections. Import it with `(import "stdlib/hash.tl")`.
-- `hashmap.tl`: fixed-capacity, open-addressed `String -> i64` map — the
-  linear-probing core with full-table detection (#825) plus the v1 map API
-  (`string-i64-map-with-capacity` / `-insert` / `-get` / `-contains?` / `-len`,
-  copied-value lookup; #826), tombstone-based removal (`-remove` / `-deleted`,
-  with reinsert reusing tombstones; #829), and load-factor resize/rehash
-  (`-put` auto-grows; `-resized` / `-grow` / `-needs-grow?`; #827). Deterministic
-  iteration is a follow-up. Import it with `(import "stdlib/hashmap.tl")`.
+- `hashmap.tl`: generated concrete hashmap family (collections v1, #817) over
+  open-addressed linear-probing slot arrays. `StringI64Map` remains the
+  compatibility `String -> i64` map, while generated `StringStringMap` and
+  `I64I64Map` add `String -> String` and `i64 -> i64` instantiations with the
+  same API shape: `*-map-with-capacity` / `-insert` / `-put` / `-get` /
+  `-contains?` / `-remove` / `-len` / `-capacity`, tombstone accounting,
+  resize/rehash helpers, and deterministic bucket-order iteration through
+  `-next-occupied` / `-entry-at`. String-key maps expose borrowed-key lookup,
+  containment, and removal helpers such as `string-string-map-get-borrowed`;
+  owned-key wrappers remain for compatibility. Use these stdlib maps for
+  ordinary program data and keep compiler-specialized symbol tables where their
+  value domain or lifecycle is deliberately narrower. Import it with
+  `(import "stdlib/hashmap.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `list.tl`: monomorphic `StringList` and `StringListBuilder` helpers for
@@ -178,6 +184,7 @@ ordinary runnable stdlib imports keep the compatibility wrappers.
 | `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `fs-path-absolute?`, `fs-path-normalize`, `fs-path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-read-dir`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). `fs-path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `fs-path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `fs-path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux, without symlink canonicalization; Windows currently returns `IoUnsupported`. Recoverable filesystem helpers map host/runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and `IoUnsupported` on Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux; directory and other node sizes are zero in this first slice, and Windows currently returns `IoUnsupported`. `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior on Linux while returning `IoUnsupported` on Windows. `try-read-dir` returns entry names only, filters `.` and `..`, preserves host directory order without promising stable sorting, and allocates the returned list spine and entry strings in the active arena; Linux reads directories directly through the backend runtime, while Windows currently returns `IoUnsupported`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
 | `ffi-c-string-*` helpers | Non-allocating inspection and copying into caller-owned `(MutPtr u8)` storage. `ffi-c-string-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
+| `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, and `to-array` allocate backing arrays in the active arena. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, and `contains?` are non-allocating aside from caller-provided fallback/value storage. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `json-*` helpers | Parser, lookup, and escaping helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, and list/member spines allocate owned results in the active arena. |

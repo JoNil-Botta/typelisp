@@ -1355,31 +1355,45 @@
     [index : i64 (doc-test-example-index example)]
     [virtual-path : String (doc-test-example-virtual-path path index)]
     [code : String (doc-test-example-code example)]
-    (match (compiler-load-source-with-paths-and-roots-cfg
-      virtual-path
-      code
+    [cfgs : SymI64Env (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+    (match (compiler-load-file-with-paths-and-roots-cfg
+      "stdlib/runtime.tl"
       (sym-i64-empty)
       stdlib-roots
-      (compiler-driver-target-cfgs target (compiler-cfg-empty)))
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (match (lower-compiler-program-with-decl-paths
+      cfgs)
+      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+        (match (compiler-load-source-with-paths-and-roots-cfg
           virtual-path
-          (ast-program decls)
-          paths)
-          [(OkCompilerLower program spans)
-            (match (compiler-driver-emit-lowered-with-level
-              virtual-path
-              program
-              spans
-              target
-              true
-              (compiler-optimize-default-level))
-              [(OkCompilerDriver asm)
-                (OkSourceToolString
-                  (source-tool-augment-assembly-for-target asm target))]
-              [(ErrCompilerDriver diag)
-                (ErrSourceToolString (compiler-diagnostic-render diag))])]
-          [(ErrCompilerLower diag)
+          code
+          prelude-seen
+          stdlib-roots
+          cfgs)
+          [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
+            (let
+              [decls : AstDeclList
+                (compiler-load-decl-list-append prelude-decls entry-decls)]
+              [paths : AstDeclPathList
+                (compiler-load-decl-path-list-append prelude-paths entry-paths)]
+              (match (lower-compiler-program-with-decl-paths
+                virtual-path
+                (ast-program decls)
+                paths)
+                [(OkCompilerLower program spans)
+                  (match (compiler-driver-emit-lowered-with-level
+                    virtual-path
+                    program
+                    spans
+                    target
+                    true
+                    (compiler-optimize-default-level))
+                    [(OkCompilerDriver asm)
+                      (OkSourceToolString
+                        (source-tool-augment-assembly-for-target asm target))]
+                    [(ErrCompilerDriver diag)
+                      (ErrSourceToolString (compiler-diagnostic-render diag))])]
+                [(ErrCompilerLower diag)
+                  (ErrSourceToolString (compiler-diagnostic-render diag))]))]
+          [(ErrCompilerLoadWithPaths diag)
             (ErrSourceToolString (compiler-diagnostic-render diag))])]
       [(ErrCompilerLoadWithPaths diag)
         (ErrSourceToolString (compiler-diagnostic-render diag))])))

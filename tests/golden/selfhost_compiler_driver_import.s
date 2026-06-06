@@ -125,6 +125,136 @@ tl_arena_destroy:
     pop %rbx
     ret
 
+    .globl __errno_location
+__errno_location:
+    leaq tl_errno(%rip), %rax
+    ret
+
+    .globl read
+read:
+    movq $0, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl write
+write:
+    movq $1, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl open
+open:
+    movq $2, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl close
+close:
+    movq $3, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl lseek
+lseek:
+    movq $8, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl access
+access:
+    movq $21, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl mkdir
+mkdir:
+    movq $83, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl rmdir
+rmdir:
+    movq $84, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl unlink
+unlink:
+    movq $87, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl rename
+rename:
+    movq $82, %rax
+    syscall
+    jmp .L_tl_shim_ret
+.L_tl_shim_ret:
+    cmpq $-4095, %rax
+    jae .L_tl_shim_err
+    ret
+.L_tl_shim_err:
+    negq %rax
+    movl %eax, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl getpid
+getpid:
+    movq $39, %rax
+    syscall
+    ret
+
+    .globl exit
+exit:
+    movq $231, %rax
+    syscall
+    ret
+
+    .globl fflush
+fflush:
+    xorq %rax, %rax
+    ret
+
+    .globl strlen
+strlen:
+    movq %rdi, %rax
+.L_tl_strlen_loop:
+    cmpb $0, (%rax)
+    je .L_tl_strlen_done
+    incq %rax
+    jmp .L_tl_strlen_loop
+.L_tl_strlen_done:
+    subq %rdi, %rax
+    ret
+
+    .globl getenv
+getenv:
+    movq .L_tl_envp(%rip), %r8
+.L_tl_getenv_loop:
+    movq (%r8), %rsi
+    testq %rsi, %rsi
+    jz .L_tl_getenv_nf
+    movq %rdi, %rax
+.L_tl_getenv_cmp:
+    movb (%rax), %cl
+    testb %cl, %cl
+    jz .L_tl_getenv_namedone
+    movb (%rsi), %dl
+    cmpb %cl, %dl
+    jne .L_tl_getenv_next
+    incq %rax
+    incq %rsi
+    jmp .L_tl_getenv_cmp
+.L_tl_getenv_namedone:
+    cmpb $61, (%rsi)
+    jne .L_tl_getenv_next
+    leaq 1(%rsi), %rax
+    ret
+.L_tl_getenv_next:
+    addq $8, %r8
+    jmp .L_tl_getenv_loop
+.L_tl_getenv_nf:
+    xorq %rax, %rax
+    ret
+
+    .data
+    .balign 4
+tl_errno:
+    .long 0
+    .text
+
 _start:
     movq (%rsp), %rax
     movq %rax, .L_tl_argc(%rip)

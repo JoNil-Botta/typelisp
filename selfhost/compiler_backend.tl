@@ -215,8 +215,6 @@
     bool
     bool
     bool
-    bool
-    bool
     CompilerBackendRuntimeTailPlan))
 
 (defstruct CompilerBackendRuntimeIndex
@@ -10640,8 +10638,7 @@
   [read-bytes : bool]
   [stdin-eof : bool]
   [flush-stdout : bool]
-  [windows-setup-instances : bool]
-  [windows-sdk-registry-install : bool]
+  [random-system-seed : bool]
   [env-var-exists : bool]
   [env-var-value : bool]
   [env-path-separator : bool]) : bool
@@ -10649,21 +10646,12 @@
     [_read-bytes : bool read-bytes]
     [_stdin-eof : bool stdin-eof]
     [_flush-stdout : bool flush-stdout]
+    [_random-system-seed : bool random-system-seed]
     (or
-      (backend-or4
-        (compiler-backend-provides-runtime-name?
-          name
-          "tl_windows_setup_instances"
-          windows-setup-instances)
-        (compiler-backend-provides-runtime-name?
-          name
-          "tl_windows_sdk_registry_install"
-          windows-sdk-registry-install)
-        (compiler-backend-provides-runtime-name?
-          name
-          "tl_env_var_exists"
-          env-var-exists)
-        false)
+      (compiler-backend-provides-runtime-name?
+        name
+        "tl_env_var_exists"
+        env-var-exists)
       (or
         (compiler-backend-provides-runtime-name?
           name
@@ -10722,9 +10710,7 @@
         flush-stdout
         region-mark
         region-reset
-        random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
+        _
         provides-env-var-exists
         provides-env-var-value
         provides-env-path-separator
@@ -10923,8 +10909,7 @@
                           read-bytes
                           stdin-eof
                           flush-stdout
-                          windows-setup-instances
-                          windows-sdk-registry-install
+                          false
                           provides-env-var-exists
                           provides-env-var-value
                           provides-env-path-separator)
@@ -10993,14 +10978,6 @@
       (compiler-backend-runtime-index-defines? index "tl_process_start")]
     [defines-process-wait : bool
       (compiler-backend-runtime-index-defines? index "tl_process_wait")]
-    [defines-windows-setup-instances : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        "tl_windows_setup_instances")]
-    [defines-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        "tl_windows_sdk_registry_install")]
     [defines-env-var-exists : bool
       (compiler-backend-runtime-index-defines? index "tl_env_var_exists")]
     [defines-env-var-value : bool
@@ -11138,14 +11115,6 @@
       (compiler-backend-runtime-index-extern? index "tl_region_mark")]
     [extern-region-reset : bool
       (compiler-backend-runtime-index-extern? index "tl_region_reset")]
-    [extern-windows-setup-instances : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        "tl_windows_setup_instances")]
-    [extern-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        "tl_windows_sdk_registry_install")]
     [extern-env-var-exists : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
     [extern-env-var-value : bool
@@ -11270,12 +11239,6 @@
       (compiler-backend-runtime-index-calls? index "tl_region_mark")]
     [calls-region-reset : bool
       (compiler-backend-runtime-index-calls? index "tl_region_reset")]
-    [calls-windows-setup-instances : bool
-      (compiler-backend-runtime-index-calls? index "tl_windows_setup_instances")]
-    [calls-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        "tl_windows_sdk_registry_install")]
     [calls-env-var-exists : bool
       (compiler-backend-runtime-index-calls? index "tl_env_var_exists")]
     [calls-env-var-value : bool
@@ -11380,16 +11343,6 @@
         (not defines-region-reset)
         (or extern-region-reset calls-region-reset))]
     [needs-random-system-seed : bool false]
-    [needs-windows-setup-instances : bool
-      (and
-        (not defines-windows-setup-instances)
-        (or extern-windows-setup-instances calls-windows-setup-instances))]
-    [needs-windows-sdk-registry-install : bool
-      (and
-        (not defines-windows-sdk-registry-install)
-        (or
-          extern-windows-sdk-registry-install
-          calls-windows-sdk-registry-install))]
     [needs-env-var-exists : bool
       (and
         (not defines-env-var-exists)
@@ -11429,13 +11382,11 @@
             needs-read-bytes
             needs-random-system-seed
             false)
-          (or
-            needs-windows-setup-instances
-            (backend-or4
-              needs-windows-sdk-registry-install
-              needs-env-var-exists
-              needs-env-var-value
-              needs-env-path-separator))))]
+          (backend-or4
+            needs-env-var-exists
+            needs-env-var-value
+            needs-env-path-separator
+            false)))]
     [needs-profile : bool
       (or
         (backend-or4
@@ -11484,8 +11435,6 @@
         needs-region-mark
         needs-region-reset
         needs-random-system-seed
-        needs-windows-setup-instances
-        needs-windows-sdk-registry-install
         needs-env-var-exists
         needs-env-var-value
         needs-env-path-separator
@@ -11774,31 +11723,6 @@ tl_profile_alloc_peak_bytes:
 ")
     ""))
 
-(define (compiler-backend-runtime-windows-setup-instances-data
-  [windows-setup-instances : bool]) : String
-  (if windows-setup-instances
-    "    .section .rodata
-.L_tl_windows_setup_unsupported_msg:
-    .ascii \"windows setup: SetupConfiguration is only supported on windows-x86_64 targets\"
-    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg
-.L_tl_windows_setup_unavailable_msg:
-    .ascii \"windows setup: SetupConfiguration COM server is unavailable\"
-    .set .L_tl_windows_setup_unavailable_msg_len, . - .L_tl_windows_setup_unavailable_msg
-
-"
-    ""))
-
-(define (compiler-backend-runtime-windows-sdk-registry-install-data
-  [windows-sdk-registry-install : bool]) : String
-  (if windows-sdk-registry-install
-    "    .section .rodata
-.L_tl_windows_registry_unsupported_msg:
-    .ascii \"windows registry: unsupported on non-Windows targets\"
-    .set .L_tl_windows_registry_unsupported_msg_len, . - .L_tl_windows_registry_unsupported_msg
-
-"
-    ""))
-
 (define (compiler-backend-runtime-print-f64-data [print-f64 : bool]) : String
   (if print-f64
     "    .section .rodata
@@ -11841,8 +11765,6 @@ tl_profile_alloc_peak_bytes:
         region-mark
         region-reset
         _
-        windows-setup-instances
-        windows-sdk-registry-install
         env-var-exists
         env-var-value
         _
@@ -11904,11 +11826,7 @@ tl_profile_alloc_peak_bytes:
                                 (compiler-backend-runtime-flush-stdout-data
                                   target
                                   flush-stdout)
-                                (string-append
-                                  (compiler-backend-runtime-windows-setup-instances-data
-                                    windows-setup-instances)
-                                  (compiler-backend-runtime-windows-sdk-registry-install-data
-                                    windows-sdk-registry-install)))))))))))))))]))
+                                "")))))))))))))]))
 
 (define (compiler-backend-runtime-profile-alloc-account
   [size-reg : String]
@@ -12176,6 +12094,848 @@ tl_region_mark:
 .L_tl_region_mark_zero:
     xorq %rax, %rax
     ret
+
+")
+
+;; Freestanding Linux libc-ABI shims (#no-libc). The stdlib binds file/dir/env
+;; helpers through FFI `extern`s to libc symbols (open/read/write/close/lseek/
+;; access/mkdir/rmdir/unlink/getpid/exit/__errno_location/getenv/strlen). Rather
+;; than link glibc, the entry object DEFINES those symbols itself as raw-syscall
+;; thunks that mimic the glibc ABI (return -1 and set a private errno on a
+;; syscall error result in [-4095,-1]). `getenv` walks the stack-captured
+;; environment (`.L_tl_envp`), `strlen` is a NUL scan. With these present the
+;; final link needs no `-lc` and no dynamic loader. C args rdi/rsi/rdx already
+;; match the System V syscall arg registers for the <=3-argument calls here.
+(define (compiler-backend-runtime-linux-libc-shim-functions) : String
+  "    .globl __errno_location
+__errno_location:
+    leaq tl_errno(%rip), %rax
+    ret
+
+    .globl read
+read:
+    movq $0, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl write
+write:
+    movq $1, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl open
+open:
+    movq $2, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl close
+close:
+    movq $3, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl lseek
+lseek:
+    movq $8, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl access
+access:
+    movq $21, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl mkdir
+mkdir:
+    movq $83, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl rmdir
+rmdir:
+    movq $84, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl unlink
+unlink:
+    movq $87, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl rename
+rename:
+    movq $82, %rax
+    syscall
+    jmp .L_tl_shim_ret
+.L_tl_shim_ret:
+    cmpq $-4095, %rax
+    jae .L_tl_shim_err
+    ret
+.L_tl_shim_err:
+    negq %rax
+    movl %eax, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl getpid
+getpid:
+    movq $39, %rax
+    syscall
+    ret
+
+    .globl exit
+exit:
+    movq $231, %rax
+    syscall
+    ret
+
+    .globl fflush
+fflush:
+    xorq %rax, %rax
+    ret
+
+    .globl strlen
+strlen:
+    movq %rdi, %rax
+.L_tl_strlen_loop:
+    cmpb $0, (%rax)
+    je .L_tl_strlen_done
+    incq %rax
+    jmp .L_tl_strlen_loop
+.L_tl_strlen_done:
+    subq %rdi, %rax
+    ret
+
+    .globl getenv
+getenv:
+    movq .L_tl_envp(%rip), %r8
+.L_tl_getenv_loop:
+    movq (%r8), %rsi
+    testq %rsi, %rsi
+    jz .L_tl_getenv_nf
+    movq %rdi, %rax
+.L_tl_getenv_cmp:
+    movb (%rax), %cl
+    testb %cl, %cl
+    jz .L_tl_getenv_namedone
+    movb (%rsi), %dl
+    cmpb %cl, %dl
+    jne .L_tl_getenv_next
+    incq %rax
+    incq %rsi
+    jmp .L_tl_getenv_cmp
+.L_tl_getenv_namedone:
+    cmpb $61, (%rsi)
+    jne .L_tl_getenv_next
+    leaq 1(%rsi), %rax
+    ret
+.L_tl_getenv_next:
+    addq $8, %r8
+    jmp .L_tl_getenv_loop
+.L_tl_getenv_nf:
+    xorq %rax, %rax
+    ret
+
+    .data
+    .balign 4
+tl_errno:
+    .long 0
+    .text
+
+")
+
+(define (compiler-backend-runtime-windows-libc-shim-functions) : String
+  "    .globl _errno
+_errno:
+    leaq tl_errno(%rip), %rax
+    ret
+
+    .globl __chkstk
+__chkstk:
+    pushq %rcx
+    pushq %rax
+    movq %rax, %rcx
+    leaq 16(%rsp), %rax
+.L_tl_ck_loop:
+    cmpq $4096, %rcx
+    jb .L_tl_ck_done
+    subq $4096, %rax
+    movb $0, (%rax)
+    subq $4096, %rcx
+    jmp .L_tl_ck_loop
+.L_tl_ck_done:
+    subq %rcx, %rax
+    movb $0, (%rax)
+    popq %rax
+    popq %rcx
+    ret
+
+    .globl memcpy
+memcpy:
+    movq %rcx, %rax
+    movq %rcx, %rdi
+    movq %rdx, %rsi
+    movq %r8, %rcx
+    rep movsb
+    ret
+
+    .globl memset
+memset:
+    movq %rcx, %r9
+    movq %rcx, %rdi
+    movl %edx, %eax
+    movq %r8, %rcx
+    rep stosb
+    movq %r9, %rax
+    ret
+
+.L_tl_win_fd_handle:
+    cmpq $2, %rcx
+    ja .L_tl_fdh_id
+    movl $-11, %edx
+    cmpq $0, %rcx
+    jne .L_tl_fdh_chk2
+    movl $-10, %edx
+    jmp .L_tl_fdh_get
+.L_tl_fdh_chk2:
+    cmpq $2, %rcx
+    jne .L_tl_fdh_get
+    movl $-12, %edx
+.L_tl_fdh_get:
+    movslq %edx, %rcx
+    subq $40, %rsp
+    call GetStdHandle
+    addq $40, %rsp
+    ret
+.L_tl_fdh_id:
+    movq %rcx, %rax
+    ret
+
+    .globl _write
+_write:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    subq $64, %rsp
+    movq %rdx, %r12
+    movl %r8d, %r13d
+    call .L_tl_win_fd_handle
+    movq %rax, %rcx
+    movq %r12, %rdx
+    movl %r13d, %r8d
+    leaq -24(%rbp), %r9
+    movq $0, 32(%rsp)
+    call WriteFile
+    testl %eax, %eax
+    je .L_tl_write_err
+    movl -24(%rbp), %eax
+    movslq %eax, %rax
+    jmp .L_tl_write_ret
+.L_tl_write_err:
+    movq $-1, %rax
+.L_tl_write_ret:
+    addq $64, %rsp
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+
+    .globl _read
+_read:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    subq $64, %rsp
+    movq %rdx, %r12
+    movl %r8d, %r13d
+    call .L_tl_win_fd_handle
+    movq %rax, %rcx
+    movq %r12, %rdx
+    movl %r13d, %r8d
+    leaq -24(%rbp), %r9
+    movq $0, 32(%rsp)
+    call ReadFile
+    testl %eax, %eax
+    je .L_tl_read_err
+    movl -24(%rbp), %eax
+    movslq %eax, %rax
+    jmp .L_tl_read_ret
+.L_tl_read_err:
+    call GetLastError
+    cmpl $109, %eax
+    jne .L_tl_read_fail
+    xorq %rax, %rax
+    jmp .L_tl_read_ret
+.L_tl_read_fail:
+    movq $-1, %rax
+.L_tl_read_ret:
+    addq $64, %rsp
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+
+    .globl _lseeki64
+_lseeki64:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    subq $64, %rsp
+    movq %rdx, %r12
+    movl %r8d, %r13d
+    call .L_tl_win_fd_handle
+    movq %rax, %rcx
+    movq %r12, %rdx
+    leaq -24(%rbp), %r8
+    movl %r13d, %r9d
+    call SetFilePointerEx
+    testl %eax, %eax
+    je .L_tl_seek_err
+    movq -24(%rbp), %rax
+    jmp .L_tl_seek_ret
+.L_tl_seek_err:
+    movq $-1, %rax
+.L_tl_seek_ret:
+    addq $64, %rsp
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+
+    .globl _open
+_open:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    subq $72, %rsp
+    movq %rcx, %rbx
+    movl %edx, %r12d
+    xorl %r13d, %r13d
+    testl $8, %r12d
+    jz .L_tl_open_noapp
+    movl $4, %r13d
+    jmp .L_tl_open_acc_done
+.L_tl_open_noapp:
+    testl $2, %r12d
+    jz .L_tl_open_nordwr
+    movl $0xC0000000, %r13d
+    jmp .L_tl_open_acc_done
+.L_tl_open_nordwr:
+    testl $1, %r12d
+    jz .L_tl_open_rd
+    movl $0x40000000, %r13d
+    jmp .L_tl_open_acc_done
+.L_tl_open_rd:
+    movl $0x80000000, %r13d
+.L_tl_open_acc_done:
+    movl $3, %eax
+    testl $0x100, %r12d
+    jz .L_tl_open_disp_chk_trunc
+    testl $0x200, %r12d
+    jz .L_tl_open_creat_only
+    movl $2, %eax
+    jmp .L_tl_open_disp_done
+.L_tl_open_creat_only:
+    movl $4, %eax
+    jmp .L_tl_open_disp_done
+.L_tl_open_disp_chk_trunc:
+    testl $0x200, %r12d
+    jz .L_tl_open_disp_done
+    movl $5, %eax
+.L_tl_open_disp_done:
+    movq %rbx, %rcx
+    movl %r13d, %edx
+    movl $3, %r8d
+    xorq %r9, %r9
+    movq %rax, 32(%rsp)
+    movq $0x80, 40(%rsp)
+    movq $0, 48(%rsp)
+    call CreateFileA
+    cmpq $-1, %rax
+    jne .L_tl_open_ret
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+.L_tl_open_ret:
+    addq $72, %rsp
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+    .globl _close
+_close:
+    cmpq $2, %rcx
+    jbe .L_tl_close_ok
+    subq $40, %rsp
+    call CloseHandle
+    addq $40, %rsp
+.L_tl_close_ok:
+    xorq %rax, %rax
+    ret
+
+    .globl _access
+_access:
+    subq $40, %rsp
+    call GetFileAttributesA
+    addq $40, %rsp
+    cmpl $-1, %eax
+    je .L_tl_acc_err
+    xorq %rax, %rax
+    ret
+.L_tl_acc_err:
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl _mkdir
+_mkdir:
+    xorq %rdx, %rdx
+    subq $40, %rsp
+    call CreateDirectoryA
+    testl %eax, %eax
+    je .L_tl_mkdir_err
+    addq $40, %rsp
+    xorq %rax, %rax
+    ret
+.L_tl_mkdir_err:
+    call GetLastError
+    addq $40, %rsp
+    cmpl $183, %eax
+    je .L_tl_mkdir_exists
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+.L_tl_mkdir_exists:
+    movl $17, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+    .globl _rmdir
+_rmdir:
+    subq $40, %rsp
+    call RemoveDirectoryA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+    .globl _unlink
+_unlink:
+    subq $40, %rsp
+    call DeleteFileA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+    .globl rename
+rename:
+    movl $1, %r8d
+    subq $40, %rsp
+    call MoveFileExA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+.L_tl_dir_err:
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl exit
+exit:
+    subq $40, %rsp
+    call ExitProcess
+
+    .globl strlen
+strlen:
+    movq %rcx, %rax
+.L_tl_win_sl:
+    cmpb $0, (%rax)
+    je .L_tl_win_sld
+    incq %rax
+    jmp .L_tl_win_sl
+.L_tl_win_sld:
+    subq %rcx, %rax
+    ret
+
+    .globl fflush
+fflush:
+    xorq %rax, %rax
+    ret
+
+    .globl getenv
+getenv:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    subq $32, %rsp
+    movq %rcx, %rbx
+    call GetEnvironmentStringsA
+    movq %rax, %r12
+.L_tl_ge_entry:
+    cmpb $0, (%r12)
+    je .L_tl_ge_null
+    movq %rbx, %r13
+    movq %r12, %r14
+.L_tl_ge_cmp:
+    movb (%r13), %al
+    testb %al, %al
+    je .L_tl_ge_name_end
+    movb (%r14), %cl
+    cmpb $65, %al
+    jb .L_tl_ge_al_lc
+    cmpb $90, %al
+    ja .L_tl_ge_al_lc
+    addb $32, %al
+.L_tl_ge_al_lc:
+    cmpb $65, %cl
+    jb .L_tl_ge_cl_lc
+    cmpb $90, %cl
+    ja .L_tl_ge_cl_lc
+    addb $32, %cl
+.L_tl_ge_cl_lc:
+    cmpb %al, %cl
+    jne .L_tl_ge_skip
+    incq %r13
+    incq %r14
+    jmp .L_tl_ge_cmp
+.L_tl_ge_name_end:
+    cmpb $61, (%r14)
+    jne .L_tl_ge_skip
+    leaq 1(%r14), %rax
+    jmp .L_tl_ge_ret
+.L_tl_ge_skip:
+    cmpb $0, (%r12)
+    je .L_tl_ge_skipnull
+    incq %r12
+    jmp .L_tl_ge_skip
+.L_tl_ge_skipnull:
+    incq %r12
+    jmp .L_tl_ge_entry
+.L_tl_ge_null:
+    xorq %rax, %rax
+.L_tl_ge_ret:
+    addq $32, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+    .globl tmpfile
+tmpfile:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $64, %rsp
+    movq $24, tl_temp_sa(%rip)
+    movq $0, tl_temp_sa+8(%rip)
+    movq $1, tl_temp_sa+16(%rip)
+    movl $300, %ecx
+    leaq tl_temp_dir(%rip), %rdx
+    call GetTempPathA
+    leaq tl_temp_dir(%rip), %rcx
+    leaq tl_temp_pfx(%rip), %rdx
+    xorl %r8d, %r8d
+    leaq tl_temp_name(%rip), %r9
+    call GetTempFileNameA
+    testl %eax, %eax
+    je .L_tl_tmp_err
+    leaq tl_temp_name(%rip), %rcx
+    movl $0xC0000000, %edx
+    movl $3, %r8d
+    leaq tl_temp_sa(%rip), %r9
+    movq $2, 32(%rsp)
+    movq $0x04000100, 40(%rsp)
+    movq $0, 48(%rsp)
+    call CreateFileA
+    cmpq $-1, %rax
+    je .L_tl_tmp_err
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_tmp_err:
+    xorq %rax, %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+
+    .globl _fileno
+_fileno:
+    movq %rcx, %rax
+    ret
+    .globl _get_osfhandle
+_get_osfhandle:
+    movq %rcx, %rax
+    ret
+    .globl fclose
+fclose:
+    subq $40, %rsp
+    call CloseHandle
+    addq $40, %rsp
+    xorq %rax, %rax
+    ret
+
+    .globl __p__environ
+__p__environ:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    subq $8, %rsp
+    movq tl_environ_arr(%rip), %rax
+    testq %rax, %rax
+    jnz .L_tl_pe_done
+    call GetEnvironmentStringsA
+    movq %rax, %rbx
+    movq %rbx, %r12
+    xorq %r13, %r13
+.L_tl_pe_count:
+    cmpb $0, (%r12)
+    je .L_tl_pe_count_done
+    incq %r13
+.L_tl_pe_count_skip:
+    cmpb $0, (%r12)
+    je .L_tl_pe_count_next
+    incq %r12
+    jmp .L_tl_pe_count_skip
+.L_tl_pe_count_next:
+    incq %r12
+    jmp .L_tl_pe_count
+.L_tl_pe_count_done:
+    leaq 1(%r13), %rcx
+    shlq $3, %rcx
+    subq $32, %rsp
+    call .L_tl_boot_alloc
+    addq $32, %rsp
+    movq %rax, %r14
+    movq %rbx, %r12
+    xorq %r13, %r13
+.L_tl_pe_fill:
+    cmpb $0, (%r12)
+    je .L_tl_pe_fill_done
+    movq %r12, (%r14,%r13,8)
+    incq %r13
+.L_tl_pe_fill_skip:
+    cmpb $0, (%r12)
+    je .L_tl_pe_fill_next
+    incq %r12
+    jmp .L_tl_pe_fill_skip
+.L_tl_pe_fill_next:
+    incq %r12
+    jmp .L_tl_pe_fill
+.L_tl_pe_fill_done:
+    movq $0, (%r14,%r13,8)
+    movq %r14, tl_environ_arr(%rip)
+.L_tl_pe_done:
+    leaq tl_environ_arr(%rip), %rax
+    addq $8, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+    .globl tl_setup_argv
+tl_setup_argv:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    subq $40, %rsp
+    call GetCommandLineA
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    call strlen
+    movq %rax, %r12
+    leaq 1(%r12), %rcx
+    subq $32, %rsp
+    call .L_tl_boot_alloc
+    addq $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_argv_cp:
+    cmpq %r12, %rcx
+    jge .L_tl_argv_cpd
+    movb (%rbx,%rcx), %al
+    movb %al, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_argv_cp
+.L_tl_argv_cpd:
+    movb $0, (%r13,%r12)
+    movq $2056, %rcx
+    subq $32, %rsp
+    call .L_tl_boot_alloc
+    addq $32, %rsp
+    movq %rax, %r14
+    xorq %r15, %r15
+    movq %r13, %rbx
+.L_tl_argv_scan:
+    movb (%rbx), %al
+    cmpb $0, %al
+    je .L_tl_argv_done
+    cmpb $0x20, %al
+    jne .L_tl_argv_tokstart
+    incq %rbx
+    jmp .L_tl_argv_scan
+.L_tl_argv_tokstart:
+    cmpq $255, %r15
+    jge .L_tl_argv_done
+    movq %rbx, (%r14,%r15,8)
+    incq %r15
+    xorl %r9d, %r9d
+.L_tl_argv_tok:
+    movb (%rbx), %al
+    cmpb $0, %al
+    je .L_tl_argv_done
+    cmpb $0x22, %al
+    jne .L_tl_argv_notq
+    xorl $1, %r9d
+    movq %rbx, %rcx
+.L_tl_argv_shift:
+    movb 1(%rcx), %al
+    movb %al, (%rcx)
+    incq %rcx
+    cmpb $0, %al
+    jne .L_tl_argv_shift
+    jmp .L_tl_argv_tok
+.L_tl_argv_notq:
+    cmpb $0x20, %al
+    jne .L_tl_argv_adv
+    testl %r9d, %r9d
+    jnz .L_tl_argv_adv
+    movb $0, (%rbx)
+    incq %rbx
+    jmp .L_tl_argv_scan
+.L_tl_argv_adv:
+    incq %rbx
+    jmp .L_tl_argv_tok
+.L_tl_argv_done:
+    movq $0, (%r14,%r15,8)
+    movq %r15, .L_tl_argc(%rip)
+    movq %r14, .L_tl_argv(%rip)
+    addq $40, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+.L_tl_boot_alloc:
+    movq tl_boot_off(%rip), %rax
+    leaq tl_boot_pool(%rip), %rdx
+    addq %rdx, %rax
+    addq %rcx, tl_boot_off(%rip)
+    ret
+
+    .globl _tl_start
+_tl_start:
+    subq $40, %rsp
+    call tl_setup_argv
+    movq .L_tl_argc(%rip), %rcx
+    movq .L_tl_argv(%rip), %rdx
+    call main
+    movq %rax, %rcx
+    call ExitProcess
+
+    .bss
+    .balign 8
+tl_errno:
+    .long 0
+    .balign 8
+tl_environ_arr:
+    .quad 0
+tl_getenv_buf:
+    .space 4096
+tl_temp_dir:
+    .space 320
+tl_temp_name:
+    .space 320
+tl_temp_pfx:
+    .space 8
+tl_temp_sa:
+    .space 24
+    .balign 8
+tl_boot_off:
+    .quad 0
+tl_boot_pool:
+    .space 524288
+    .text
+
+    .section .rsrc,\"dr\"
+.L_tl_rsrc_base:
+    .long 0
+    .long 0
+    .short 0
+    .short 0
+    .short 0
+    .short 1
+    .long 24
+    .long 0x80000000 + (.L_tl_rsrc_type - .L_tl_rsrc_base)
+.L_tl_rsrc_type:
+    .long 0
+    .long 0
+    .short 0
+    .short 0
+    .short 0
+    .short 1
+    .long 1
+    .long 0x80000000 + (.L_tl_rsrc_lang - .L_tl_rsrc_base)
+.L_tl_rsrc_lang:
+    .long 0
+    .long 0
+    .short 0
+    .short 0
+    .short 0
+    .short 1
+    .long 1033
+    .long .L_tl_rsrc_data - .L_tl_rsrc_base
+.L_tl_rsrc_data:
+    .rva .L_tl_manifest
+    .long .L_tl_manifest_end - .L_tl_manifest
+    .long 0
+    .long 0
+    .balign 4
+.L_tl_manifest:
+    .byte 60,63,120,109,108,32,118,101,114,115,105,111,110,61,34,49
+    .byte 46,48,34,32,101,110,99,111,100,105,110,103,61,34,85,84
+    .byte 70,45,56,34,32,115,116,97,110,100,97,108,111,110,101,61
+    .byte 34,121,101,115,34,63,62,13,10,60,97,115,115,101,109,98
+    .byte 108,121,32,120,109,108,110,115,61,34,117,114,110,58,115,99
+    .byte 104,101,109,97,115,45,109,105,99,114,111,115,111,102,116,45
+    .byte 99,111,109,58,97,115,109,46,118,49,34,32,109,97,110,105
+    .byte 102,101,115,116,86,101,114,115,105,111,110,61,34,49,46,48
+    .byte 34,62,13,10,32,32,60,97,112,112,108,105,99,97,116,105
+    .byte 111,110,32,120,109,108,110,115,61,34,117,114,110,58,115,99
+    .byte 104,101,109,97,115,45,109,105,99,114,111,115,111,102,116,45
+    .byte 99,111,109,58,97,115,109,46,118,51,34,62,13,10,32,32
+    .byte 32,32,60,119,105,110,100,111,119,115,83,101,116,116,105,110
+    .byte 103,115,62,13,10,32,32,32,32,32,32,60,97,99,116,105
+    .byte 118,101,67,111,100,101,80,97,103,101,32,120,109,108,110,115
+    .byte 61,34,104,116,116,112,58,47,47,115,99,104,101,109,97,115
+    .byte 46,109,105,99,114,111,115,111,102,116,46,99,111,109,47,83
+    .byte 77,73,47,50,48,49,57,47,87,105,110,100,111,119,115,83
+    .byte 101,116,116,105,110,103,115,34,62,85,84,70,45,56,60,47
+    .byte 97,99,116,105,118,101,67,111,100,101,80,97,103,101,62,13
+    .byte 10,32,32,32,32,60,47,119,105,110,100,111,119,115,83,101
+    .byte 116,116,105,110,103,115,62,13,10,32,32,60,47,97,112,112
+    .byte 108,105,99,97,116,105,111,110,62,13,10,60,47,97,115,115
+    .byte 101,109,98,108,121,62,13,10
+.L_tl_manifest_end:
+    .text
 
 ")
 
@@ -19114,124 +19874,6 @@ tl_process_output:
 
 ")
 
-(define (compiler-backend-runtime-windows-setup-instances-functions
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "    .globl tl_windows_setup_instances
-tl_windows_setup_instances:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    leaq .L_tl_windows_setup_unavailable_msg(%rip), %r12
-    movq $.L_tl_windows_setup_unavailable_msg_len, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"
-    "    .globl tl_windows_setup_instances
-tl_windows_setup_instances:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    leaq .L_tl_windows_setup_unsupported_msg(%rip), %r12
-    movq $.L_tl_windows_setup_unsupported_msg_len, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $0, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"))
-
-(define (compiler-backend-runtime-windows-sdk-registry-install-functions
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "    .globl tl_windows_sdk_registry_install
-tl_windows_sdk_registry_install:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    push %r14
-    sub $8, %rsp
-    movq $0, %r12
-    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
-    movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r14, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r13, 8(%rax)
-    add $8, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"
-    "    .globl tl_windows_sdk_registry_install
-tl_windows_sdk_registry_install:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    push %r14
-    sub $8, %rsp
-    movq $0, %r12
-    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
-    movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r14, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r13, 8(%rax)
-    add $8, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"))
-
 (define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-functions-for-target (BackendTargetLinux) plan))
 
@@ -19277,9 +19919,7 @@ tl_windows_sdk_registry_install:
         flush-stdout
         region-mark
         region-reset
-        random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
+        _
         env-var-exists
         env-var-value
         env-path-separator
@@ -19484,15 +20124,6 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-windows-region-reset-functions profile)
               (compiler-backend-runtime-region-reset-functions profile))
             "")]
-        [windows-setup-instances-asm : String
-          (if windows-setup-instances
-            (compiler-backend-runtime-windows-setup-instances-functions target)
-            "")]
-        [windows-sdk-registry-install-asm : String
-          (if windows-sdk-registry-install
-            (compiler-backend-runtime-windows-sdk-registry-install-functions
-              target)
-            "")]
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-arena-functions profile)
@@ -19546,10 +20177,7 @@ tl_windows_sdk_registry_install:
             read-bytes-asm
             stdin-eof-asm
             flush-stdout-asm)]
-        [windows-asm : String
-          (string-append
-            windows-setup-instances-asm
-            windows-sdk-registry-install-asm)]
+        [random-and-windows-asm : String ""]
         [env-var-exists-asm : String
           (if env-var-exists
             (if (compiler-backend-target-windows? target)
@@ -19568,6 +20196,10 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-windows-env-path-separator-functions)
               (compiler-backend-runtime-env-path-separator-functions))
             "")]
+        [linux-libc-shims-asm : String
+          (if (compiler-backend-target-windows? target)
+            (compiler-backend-runtime-windows-libc-shim-functions)
+            (compiler-backend-runtime-linux-libc-shim-functions))]
         (backend-cat5
           runtime-front-asm
           runtime-string-asm
@@ -19579,11 +20211,11 @@ tl_windows_sdk_registry_install:
             fs-asm
             runtime-tail-asm
             (backend-cat5
-              windows-asm
+              random-and-windows-asm
               env-var-exists-asm
               env-var-value-asm
               env-path-separator-asm
-              ""))))]))
+              linux-libc-shims-asm))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -19767,9 +20399,7 @@ tl_windows_sdk_registry_install:
         flush-stdout
         region-mark
         region-reset
-        random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
+        _
         env-var-exists
         env-var-value
         env-path-separator
@@ -19812,11 +20442,11 @@ tl_windows_sdk_registry_install:
             flush-stdout
             region-mark
             region-reset
-            random-system-seed
-            windows-setup-instances
-            windows-sdk-registry-install
+            false
             env-var-exists
-            env-var-value)]
+            env-var-value
+            false
+            false)]
         [extra-runtime : bool
           (backend-or4
             env-path-separator
@@ -19880,24 +20510,26 @@ tl_windows_sdk_registry_install:
 "
               "")
             (string-append
-              (if (compiler-backend-plan-provides? plan "tl_print_f64")
-                "    .extern _snprintf
-"
-                "")
+              ""
               (string-append
-                (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
-                  "    .extern QueryPerformanceCounter
-    .extern QueryPerformanceFrequency
+                (if (compiler-backend-plan-provides? plan "tl_print_f64")
+                  "    .extern _snprintf
 "
                   "")
-                ;; The Windows tl_process_output spawns the child via CreateProcessA
-                ;; with a constructed contiguous env block (__p__environ above) and
-                ;; captures stdout/stderr through CRT temp files made inheritable
-                ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-                ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-                ;; variant uses raw syscalls instead.
-                (if (compiler-backend-plan-provides? plan "tl_process_output")
-                  "    .extern __p__environ
+                (string-append
+                  (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
+                    "    .extern QueryPerformanceCounter
+    .extern QueryPerformanceFrequency
+"
+                    "")
+                  ;; The Windows tl_process_output spawns the child via CreateProcessA
+                  ;; with a constructed contiguous env block (__p__environ above) and
+                  ;; captures stdout/stderr through CRT temp files made inheritable
+                  ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+                  ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+                  ;; variant uses raw syscalls instead.
+                  (if (compiler-backend-plan-provides? plan "tl_process_output")
+                    "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -19912,7 +20544,7 @@ tl_windows_sdk_registry_install:
     .extern CloseHandle
     .extern GetStdHandle
 "
-                  "")))))))
+                    ""))))))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
@@ -20584,13 +21216,8 @@ tl_windows_sdk_registry_install:
               (compiler-backend-string-contains?
                 asm
                 ".L_tl_fs_remove_dir_status:\n")))
-          (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_fs_rename_status:\n"))
-            (not
-              (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))))))))
+          (not
+            (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")))))))
 
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))

@@ -40,7 +40,7 @@
   0)
 
 (define doc-site-stdlib-manifest-size : i64
-  22)
+  19)
 
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
@@ -154,19 +154,7 @@
                                         (DocSiteModule
                                           "stdlib/vector.tl"
                                           "stdlib-vector.html")
-                                        (doc-site-module-cons
-                                          (DocSiteModule
-                                            "stdlib/windows_registry.tl"
-                                            "stdlib-windows-registry.html")
-                                          (doc-site-module-cons
-                                            (DocSiteModule
-                                              "stdlib/windows_sdk.tl"
-                                              "stdlib-windows-sdk.html")
-                                            (doc-site-module-cons
-                                              (DocSiteModule
-                                                "stdlib/windows_setup.tl"
-                                                "stdlib-windows-setup.html")
-                                              DocSiteModuleNil)))))))))))))))))))))))
+                                        DocSiteModuleNil))))))))))))))))))))
 
 (define (doc-site-language-guides) : DocSiteGuidePageList
   (doc-site-guide-page-cons

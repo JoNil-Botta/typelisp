@@ -219,9 +219,6 @@ text_buf.tl
 text_buf_borrowed.tl
 vector.tl
 vector_slice.tl
-windows_registry.tl
-windows_sdk.tl
-windows_setup.tl
 EOF
 }
 
@@ -246,7 +243,7 @@ stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-|-
 stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
-stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
+stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-
@@ -262,12 +259,8 @@ stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/vector_api.tl|42|-|-
-stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
-stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
-stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size,tl_windows_sdk_registry_install
 EOF
 }
 

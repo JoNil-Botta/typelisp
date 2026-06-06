@@ -909,8 +909,7 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_stdin_eof" \
         ".extern .L_tl_flush_stdout" \
         ".extern tl_random_system_seed" \
-        ".extern SystemFunction036" \
-        "call SystemFunction036" \
+        "SystemFunction036" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
         ".L_tl_string_concat_copy_b:" \

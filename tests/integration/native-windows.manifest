@@ -59,7 +59,7 @@ nested_eval|tests/integration/nested_eval.tl|7|-|-|-
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
-process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/string.tl
+process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/string.tl
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed\n
 selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n

@@ -1,6 +1,6 @@
 (import "stdlib/env.tl")
 
-(import "stdlib/process.tl")
+(import "stdlib/process_borrowed.tl")
 
 (import "stdlib/test.tl")
 
@@ -103,6 +103,37 @@
 
 (define (process-runtime-printf-command [text : String]) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single text)))
+
+(define (process-runtime-borrowed-output [exe : String] [text : String]) : ResultProcessOutput
+  (process-borrowed-output
+    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+
+(define (process-runtime-borrowed-start [exe : String] [text : String]) : ResultProcessChild
+  (process-borrowed-start
+    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+
+(define (process-runtime-borrowed-cwd-output [exe : String] [cwd : String]) : ResultProcessOutput
+  (process-borrowed-output
+    (process-borrowed-command-with-cwd
+      (process-borrowed-command-empty (& exe))
+      (& cwd))))
+
+(define (process-runtime-borrowed-env-output [exe : String] [env-name : String]) : ResultProcessOutput
+  (process-borrowed-output
+    (process-borrowed-command-with-env-list
+      (process-borrowed-command
+        (& exe)
+        (process-borrowed-args-single (& env-name)))
+      (process-borrowed-env-cons
+        (& env-name)
+        (& env-name)
+        (process-borrowed-env-empty-like (& env-name))))))
+
+(define (process-runtime-borrowed-stdin-output [exe : String] [text : String]) : ResultProcessOutput
+  (process-borrowed-output
+    (process-borrowed-command-with-stdin
+      (process-borrowed-command-empty (& exe))
+      (& text))))
 
 (define (process-runtime-cwd-command) : ProcessCommand
   (process-command-with-cwd
@@ -219,6 +250,32 @@
         ""
         "process stdin ignored")
       (assert-process-ok
+        (process-runtime-borrowed-output "/usr/bin/printf" "borrowed-output")
+        0
+        "borrowed-output"
+        ""
+        "borrowed process output")
+      (assert-process-ok
+        (process-runtime-borrowed-cwd-output "/usr/bin/true" "stdlib")
+        0
+        ""
+        ""
+        "borrowed process cwd")
+      (assert-process-ok
+        (process-runtime-borrowed-env-output
+          "/usr/bin/printenv"
+          "TYPELISP_PROCESS_RUNTIME_BORROWED")
+        0
+        "TYPELISP_PROCESS_RUNTIME_BORROWED\n"
+        ""
+        "borrowed process env")
+      (assert-process-ok
+        (process-runtime-borrowed-stdin-output "/usr/bin/cat" "borrowed-stdin")
+        0
+        "borrowed-stdin"
+        ""
+        "borrowed process stdin")
+      (assert-process-ok
         (process-output (process-command "/usr/bin/false" (process-args-empty)))
         1
         ""
@@ -246,7 +303,17 @@
           (assert-process-child-ok
             (process-start (process-runtime-printf-command "async-b"))
             "process async start b: ")]
+        [child-c : ProcessChild
+          (assert-process-child-ok
+            (process-runtime-borrowed-start "/usr/bin/printf" "borrowed-async")
+            "borrowed process async start: ")]
         (begin
+          (assert-process-ok
+            (process-wait child-c)
+            0
+            "borrowed-async"
+            ""
+            "borrowed process async wait")
           (assert-process-ok
             (process-wait child-b)
             0

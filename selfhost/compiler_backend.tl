@@ -11015,10 +11015,10 @@
       false)))
 
 ;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
-;; string equality/parsing moved in #2036, allocating string helpers in #2037,
-;; and environment hooks are the open migration owner #1729. Migrated
-;; IO/stdin/file/argv/print helpers are deliberately absent here: those names
-;; are stdlib-owned and must remain external from the backend runtime plan.
+;; string equality/parsing moved in #2036 and allocating string helpers moved in
+;; #2037. Migrated IO/stdin/file/argv/print/env helpers are deliberately absent
+;; here: those names are stdlib-owned and must remain external from the backend
+;; runtime plan for normal source builds.
 (define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
   (or
     (backend-or8
@@ -11030,15 +11030,13 @@
       (string-eq name "tl_string_eq")
       (string-eq name "tl_string_to_int")
       (string-eq name "tl_int_to_string"))
-    (backend-or4
-      (string-eq name "tl_hash_string")
-      (string-eq name "tl_env_var_exists")
-      (string-eq name "tl_env_var_value")
-      (string-eq name "env-path-separator"))))
+    (string-eq name "tl_hash_string")))
 
 (define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
-  (let
-    [_ : String name]
+  (backend-or4
+    (string-eq name "tl_env_var_exists")
+    (string-eq name "tl_env_var_value")
+    (string-eq name "env-path-separator")
     false))
 
 (define (compiler-backend-runtime-helper-deprecated? [name : String]) : bool

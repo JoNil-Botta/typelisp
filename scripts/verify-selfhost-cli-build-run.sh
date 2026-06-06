@@ -45,6 +45,7 @@ CLI_SURFACE_DIR="$WORKDIR/cli-surface"
 CLI_SURFACE_SRC="$CLI_SURFACE_DIR/main.tl"
 CLI_SURFACE_RUN_SRC="$CLI_SURFACE_DIR/run-main.tl"
 CLI_SURFACE_DOC_SRC="$CLI_SURFACE_DIR/doc-main.tl"
+CLI_SURFACE_CHECK_PKG="$CLI_SURFACE_DIR/check-package"
 
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
@@ -269,7 +270,7 @@ assert_cli_surface_help_matches_manifest() {
 }
 
 prepare_cli_surface_files() {
-    mkdir -p "$CLI_SURFACE_DIR"
+    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_CHECK_PKG/src"
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
@@ -297,6 +298,20 @@ EOF
 ;# Command surface doc smoke.
 (define (main) : i64
   0)
+EOF
+    cat > "$CLI_SURFACE_CHECK_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "surface_check")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    cat > "$CLI_SURFACE_CHECK_PKG/src/main.tl" <<'EOF'
+(import "extra.tl")
+(define (main) : i64 (surface-extra))
+EOF
+    cat > "$CLI_SURFACE_CHECK_PKG/src/extra.tl" <<'EOF'
+(define (surface-extra) : i64 0)
 EOF
 }
 
@@ -326,6 +341,11 @@ assert_active_cli_surface_command() {
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
             assert_contains "$label" "$WORKDIR/$label.out" "Type checking passed!"
+            package_label="${label}-package"
+            run_cli_capture "$package_label" "$COMPILER" check --manifest-path "$CLI_SURFACE_CHECK_PKG/typelisp.pkg"
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Type checking passed!"
             ;;
         fmt)
             run_cli_capture "$label" "$COMPILER" fmt --check "$CLI_SURFACE_SRC"

@@ -291,6 +291,30 @@ EOF
     cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
+    mkdir -p "$PKG/target"
+    cat > "$PKG/target/ignored.tl" <<'EOF'
+(define (ignored) : i64 true)
+EOF
+    cat > "$PKG/vendor/math/src/non_entry_bad.tl" <<'EOF'
+(define (nested-package-source) : i64 true)
+EOF
+    run_capture check-package "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
+    assert_empty "$WORKDIR/check-package.stderr"
+    assert_contains "$WORKDIR/check-package.stdout" "Type checking passed!"
+    run_capture_cwd check-package-discover "$PKG/src/nested/deeper" "$COMPILER" check
+    assert_empty "$WORKDIR/check-package-discover.stderr"
+    assert_contains "$WORKDIR/check-package-discover.stdout" "Type checking passed!"
+    cat > "$PKG/src/non_entry_bad.tl" <<'EOF'
+(define (package-non-entry) : i64 true)
+EOF
+    run_expect_failure check-package-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
+    assert_empty "$WORKDIR/check-package-bad.stdout"
+    assert_contains "$WORKDIR/check-package-bad.stderr" "check: package source failed:"
+    assert_contains "$WORKDIR/check-package-bad.stderr" "non_entry_bad.tl"
+    rm "$PKG/src/non_entry_bad.tl"
+    run_expect_failure check-file-manifest "$COMPILER" check "$SRC" --manifest-path "$PKG/typelisp.pkg"
+    assert_empty "$WORKDIR/check-file-manifest.stdout"
+    assert_contains "$WORKDIR/check-file-manifest.stderr" "cannot combine input path with --manifest-path"
     PKG_OUT_DIR="$PKG/target/typelisp/release/stage1_pkg"
     PKG_BIN="$PKG_OUT_DIR/stage1_pkg"
     PKG_ASM="$PKG_OUT_DIR/stage1_pkg.s"
@@ -378,6 +402,9 @@ EOF
 run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
 assert_empty "$WORKDIR/build-package-missing.stdout"
 assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
+run_expect_failure check-package-missing "$COMPILER" check --manifest-path "$WORKDIR/missing.pkg"
+assert_empty "$WORKDIR/check-package-missing.stdout"
+assert_contains "$WORKDIR/check-package-missing.stderr" "cannot read package manifest"
 
 echo "[stage1-wrapper] run"
 set +e

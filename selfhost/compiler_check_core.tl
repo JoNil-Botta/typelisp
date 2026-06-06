@@ -93,6 +93,28 @@
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ErrCompilerCheck diag))])))
 
+(define (compiler-check-package-file-with-roots
+  [path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerCheck
+  (begin
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (compiler-load-package-file-with-paths-and-roots
+      path
+      (sym-i64-empty)
+      stdlib-roots
+      manifest-dir
+      deps)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (compiler-check-program-with-paths path decls paths))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (ErrCompilerCheck diag))])))
+
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))

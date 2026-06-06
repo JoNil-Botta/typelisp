@@ -20,11 +20,10 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   wrappers, argv access, panic/error, and monomorphic Result-style I/O error
   APIs built as stdlib extern wrappers over backend runtime symbols. Import it with
   `(import "stdlib/io.tl")`.
-- `io_caller_result.tl`: check-only lifetime-preserving `read-file-or-result`
-  surface that can return a borrow of the caller fallback or owned file
-  contents. Import it with `(import "stdlib/io_caller_result.tl")`; ordinary
-  lowering still rejects reference-typed aggregate values until borrow/reference
-  lowering lands.
+- `io_caller_result.tl`: lifetime-preserving `read-file-or-result` surface that
+  can return a borrow of the caller fallback or owned file contents. Import it
+  with `(import "stdlib/io_caller_result.tl")`; it remains separate from
+  `io.tl` while the compatibility wrapper keeps the owned `String` API.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
   target-cfg-derived `env-path-separator` wrappers. Import it with
@@ -91,21 +90,20 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   Import it with `(import "stdlib/random.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
-- `string_caller_result.tl`: check-only lifetime-preserving string replacement
+- `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it
-  with `(import "stdlib/string_caller_result.tl")`; ordinary lowering still
-  rejects reference-typed aggregate values until borrow/reference lowering
-  lands.
+  with `(import "stdlib/string_caller_result.tl")`; it remains separate from
+  `string.tl` while the compatibility wrapper keeps the owned `String` API.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks. Import it with
   `(import "stdlib/text_buf.tl")`.
-- `text_buf_borrowed.tl`: check-only lifetime-parameterized
-  `TextBufBorrowed` borrowed-chunk surface. Import it with
-  `(import "stdlib/text_buf_borrowed.tl")`; ordinary lowering still rejects
-  reference-typed aggregate values until borrow/reference lowering lands.
+- `text_buf_borrowed.tl`: lifetime-parameterized `TextBufBorrowed`
+  borrowed-chunk companion surface. Import it with
+  `(import "stdlib/text_buf_borrowed.tl")`; it remains separate from
+  `text_buf.tl` while the compatibility surface keeps owned chunk storage.
 - `vector.tl`: generated concrete vector family (collections v1, #835/#1989)
   over `(Array T)`, with `I64Vec` preserved as the compatibility template and
   `StringVec` added as the first non-i64 stdlib instantiation. Both provide
@@ -160,15 +158,14 @@ arena as arena-owned, which prevents those values from escaping the scope. The
 v1 `String`/`str` contract in `SPEC.md` classifies which future signatures
 should take borrowed text and which should return owned active-arena strings.
 The `string_caller_result.tl`, `io_caller_result.tl`, and
-`process_borrowed.tl` companion modules expose source/typecheck-only
-lifetime-preserving shapes while ordinary runnable stdlib imports keep the
-lowerable compatibility wrappers.
+`process_borrowed.tl` companion modules expose lifetime-preserving shapes while
+ordinary runnable stdlib imports keep the compatibility wrappers.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
-| `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the check-only `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
+| `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `try-read-file` | Performs host file inspection through stdlib FFI; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
 | `try-write-file` | Writes through the recoverable stdlib status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
@@ -176,7 +173,7 @@ lowerable compatibility wrappers.
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque stdlib-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The stdlib copies the path into active-arena storage for the host call and tracks handle state in a process-global table. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
 | `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `file-write`, `file-flush` | `file-write` writes a `String` to an `OpenWriteTruncate` or `OpenWriteAppend` handle, retrying host short writes until complete or an error is reported. `file-flush` flushes a write-mode handle. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. |
-| `read-file-or` | Compatibility wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. `io_caller_result.tl` exposes a check-only `read-file-or-result` that preserves the fallback borrow on error paths and owned file contents on success. |
+| `read-file-or` | Compatibility wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. `io_caller_result.tl` exposes a `read-file-or-result` shape that preserves the fallback borrow on error paths and owned file contents on success. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
 | `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing an active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until a future byte-buffer/slice split lands. |
@@ -194,7 +191,7 @@ lowerable compatibility wrappers.
 | `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. `process_borrowed.tl` exposes source/typecheck-only lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text, plus explicit conversion to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux, owned `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads host entropy through the backend, normalizes the returned seed, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; `assert-string-eq` borrows compared text inputs while assertion messages remain owned `String` values for the current `panic` API. |
-| `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` materializes the final owned `String`. The borrowed module is source/typecheck-only until reference-typed aggregate lowering lands. |
+| `text-buf-*` helpers in `text_buf.tl` / `text_buf_borrowed.tl` | Owned `TextBuf` chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. `TextBufBorrowed` carries one source lifetime, stores `(& text str)` chunks without copying at append time, and also accepts owned chunks through `text-buf-borrowed-append-owned`. `text-buf-borrowed-append-copy` copies unrelated borrowed chunks into owned active-arena storage before appending, while `text-buf-borrowed-render` materializes the final owned `String`. |
 | `windows-registry-*` helpers | The SDK registry probe allocates returned root/version strings and result aggregates in the active arena. It reads only `HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots`, the `KitsRoot10` string value, and version subkeys; unsupported hosts and registry failures return structured errors. |
 | `windows-sdk-*` helpers | Non-owning root/version/path inputs are borrowed `str` values. SDK layout structs/errors allocate in the active arena; path assembly returns owned strings, and path probes copy borrowed paths while the lower-level `io/fs` APIs still take owned `String`. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry discovery uses the narrow `windows-registry-sdk-install` probe, then validates the same include/lib/bin layout before returning it. |
 | `windows-setup-*` helpers | Non-owning package-id probes use borrowed `str` values. Helpers that store package/component identifiers copy borrowed inputs into owned active-arena strings, while runtime discovery returns owned strings, package/component lists, and instance lists. `windows-setup-instances` returns structured unsupported/unavailable/query-failed errors when the runtime cannot enumerate SetupConfiguration. |
@@ -205,9 +202,9 @@ The recoverable I/O API maps the runtime's integer status codes into the public
 directory-read statuses get semantic variants; target-specific or unstable
 codes remain available as `IoSystemCode`.
 
-Only the check-only companion modules currently return borrow-typed text inside
+Only the companion modules currently return borrow-typed text inside
 reference-typed aggregate results; the runnable stdlib compatibility wrappers
-still lower through owned `String`/aggregate APIs. No stdlib function mutates a
+still expose owned `String`/aggregate APIs. No stdlib function mutates a
 caller-provided buffer in place. Except for the explicit `stdlib/arena.tl`
 manual-control surface, stdlib APIs do not manually reset arenas and should
 prefer `with-arena` for scoped reclamation. Source-level `arena-set!`,

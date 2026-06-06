@@ -260,7 +260,28 @@ root, an absolute path, or the GitHub shorthand form shown above. `tag` and
 then checked out detached at the requested `rev`, `tag`, or `branch` before the
 package graph consumes them. A pre-existing fetched root with `typelisp.pkg` is
 used as-is unless it has a `.git` directory, in which case the checkout is
-refreshed. Lockfile and update-policy support remains future work.
+refreshed. Build-time lockfile replay and update-policy support remains future
+work.
+
+Resolved remote package pins can be represented in `typelisp.lock`, a
+deterministic v1 S-expression lockfile:
+
+```lisp
+(typelisp-lock
+  (version "v1")
+  (dependencies
+    (dependency
+      (alias "lint")
+      (url "https://github.com/JoNil-Botta/typelisp-lint.git")
+      (pin (tag "v1.0.0"))
+      (commit "0123456789abcdef0123456789abcdef01234567"))))
+```
+
+Each dependency records its manifest alias, normalized URL, original pin
+kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. The selfhost
+lockfile helper parses this format with duplicate, missing-field, malformed,
+non-string, and unknown-version diagnostics, and emits entries in stable alias
+order. It does not invoke git or change build behavior yet.
 
 Remote package cache helpers use a deterministic v1 layout under the package
 root at `target/typelisp/cache/packages/v1`. Cache entries are keyed by the
@@ -296,9 +317,9 @@ fallback behavior.
 Under the legacy loader, imported package definitions share the same flat
 top-level namespace as local modules, so duplicate value or type names fail
 through the existing duplicate definition diagnostics. The package slice still
-has no registry, version solving, lockfile, or workspace model; namespace
-isolation and qualified symbol lookup are specified for the selfhost module
-model in `SPEC.md`.
+has no registry, version solving, lockfile replay, or workspace model;
+namespace isolation and qualified symbol lookup are specified for the selfhost
+module model in `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and
@@ -366,7 +387,8 @@ same local value or type name without colliding.
 ### Expression forms
 
 `if`, `when`, `unless`, `let`, `while`, `begin`, `set!`, `match` (incl.
-nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`, plus
+nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`,
+`spmd-reduce`, plus
 arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
 (`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
@@ -389,9 +411,10 @@ map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes. Runtime-dispatched
 SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`.
-`spmd-reduce` scalar lowering is implemented, and SIMD backend modes vectorize
-eligible contiguous array reductions: `sum` over `i32`, `i64`, and `f64`;
-`min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`.
+`spmd-reduce` scalar lowering supports `sum` over `i32`, `i64`, and `f64`,
+`min`/`max` over `i32` and `i64`, and `all`/`any` over `bool`. SIMD backend
+modes vectorize eligible contiguous array reductions: `sum` over `i32`, `i64`,
+and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`.
 
 ### Builtins
 
@@ -620,8 +643,10 @@ through the TypeLisp-owned build/run path.
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
 `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes, plus
-eligible `spmd-reduce` array folds. AVX-512 uses ZMM vectors and opmask
-predicated tails, and additionally vectorizes `i64` min/max reductions.
+eligible `spmd-reduce` array folds. Scalar `spmd-reduce` lowering supports
+`sum`, `min`, `max`, `all`, and `any` over the SPEC.md supported types.
+AVX-512 uses ZMM vectors and opmask predicated tails, and additionally
+vectorizes `i64` min/max reductions.
 Unsupported vector IR falls back or rejects explicitly.
 
 `compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg

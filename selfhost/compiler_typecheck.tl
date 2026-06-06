@@ -4231,7 +4231,7 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
-;; spmd-reduce purity rules (#1011, SPEC.md §5.16): the per-lane value
+;; spmd-reduce purity rules (#1011, SPEC.md §5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
@@ -4243,18 +4243,18 @@
     (and
       (compiler-typecheck-error-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.15)")
       (and
         (compiler-typecheck-error-ok?
           "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
-          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.15)")
         (and
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
-            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.15)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array
@@ -5596,6 +5596,38 @@
   (let [h : FileHandle (array-ref items i)]
     (struct-get h fd)))")
 
+(define (compiler-typecheck-move-box-get-copyable-source) : String
+  "(define (main) : i64
+  (let
+    [cell : (Box i64) (box 7)]
+    (box-get cell)))")
+
+(define (compiler-typecheck-move-owner-box-get-call-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-box-get-call [cell : (Box FileHandle)]) : unit
+  (take-handle (box-get cell)))")
+
+(define (compiler-typecheck-move-owner-box-get-bind-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-box-get-bind [cell : (Box FileHandle)]) : i64
+  (let [h : FileHandle (box-get cell)]
+    (struct-get h fd)))")
+
+(define (compiler-typecheck-move-owner-box-get-return-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-box-get-return [cell : (Box FileHandle)]) : FileHandle
+  (return (box-get cell)))")
+
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
   (if flag (let [t : String s] t) s))")
@@ -5604,9 +5636,47 @@
   "(define (lambda-body-discard [s : String]) : String
   (begin (lambda () : unit (let [t : String s] unit)) s))")
 
-(define (compiler-typecheck-move-while-body-discard-source) : String
-  "(define (while-body-discard [flag : bool] [s : String]) : String
+(define (compiler-typecheck-move-while-loop-carried-param-source) : String
+  "(define (bad-while-loop-carried-param [flag : bool] [s : String]) : String
   (begin (while flag (let [t : String s] unit)) s))")
+
+(define (compiler-typecheck-move-while-loop-carried-local-source) : String
+  "(define (bad-while-loop-carried-local [flag : bool]) : unit
+  (let
+    [s : String (int->string 1)]
+    (while flag (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-while-body-local-owner-source) : String
+  "(define (while-body-local-owner [flag : bool]) : unit
+  (while flag
+    (let
+      [s : String (int->string 1)]
+      (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-while-copyable-source) : String
+  "(define (while-copyable [flag : bool] [n : i64]) : i64
+  (begin (while flag (let [m : i64 n] unit)) n))")
+
+(define (compiler-typecheck-move-foreach-loop-carried-param-source) : String
+  "(define (bad-foreach-loop-carried-param [n : i64] [s : String]) : unit
+  (foreach ([i : i64 0 n]) (let [t : String s] unit)))")
+
+(define (compiler-typecheck-move-foreach-loop-carried-local-source) : String
+  "(define (bad-foreach-loop-carried-local [n : i64]) : unit
+  (let
+    [s : String (int->string 1)]
+    (foreach ([i : i64 0 n]) (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-foreach-body-local-owner-source) : String
+  "(define (foreach-body-local-owner [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [s : String (int->string 1)]
+      (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-foreach-copyable-source) : String
+  "(define (foreach-copyable [n : i64] [x : i64]) : i64
+  (begin (foreach ([i : i64 0 n]) (let [y : i64 x] unit)) x))")
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
@@ -5629,8 +5699,8 @@
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
-;; aggregate/projection sharing, one-shot owner transfers, and branch/deferred
-;; body isolation pass.
+;; aggregate/projection sharing, one-shot owner transfers, branch/deferred body
+;; isolation, and conservative repeated-loop owner moves pass.
 (define (compiler-typecheck-move-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -5751,6 +5821,25 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-box-get-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-box-get-call-source)
+        "typecheck: cannot move owner-consuming value out of box")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-box-get-bind-source)
+        "typecheck: cannot move owner-consuming value out of box")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-box-get-return-source)
+        "typecheck: cannot move owner-consuming value out of box")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         (compiler-typecheck-move-branch-arm-isolated-source))
         unit
         (set! ok false))
@@ -5758,8 +5847,40 @@
         (compiler-typecheck-move-lambda-body-discard-source))
         unit
         (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-while-loop-carried-param-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-while-loop-carried-local-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
       (if (compiler-typecheck-ok?
-        (compiler-typecheck-move-while-body-discard-source))
+        (compiler-typecheck-move-while-body-local-owner-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-while-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-foreach-loop-carried-param-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-foreach-loop-carried-local-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-foreach-body-local-owner-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-foreach-copyable-source))
         unit
         (set! ok false))
       ok)))

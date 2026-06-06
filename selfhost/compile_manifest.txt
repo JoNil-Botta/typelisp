@@ -177,6 +177,7 @@ decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct sour
 decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by selfhost/check.tl and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
 decision|selfhost/package_source_core.tl|package source discovery helper (#1986/#1987): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
 decision|selfhost/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
+decision|selfhost/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
 decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
 decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
@@ -1012,6 +1013,13 @@ contains|main:
 contains|typelisp-package-cache-v1
 contains|package-cache: self-test mismatch
 contains|package-cache: cache key requires exact rev pin
+end
+
+case|selfhost_package_lock_smoke|selfhost/package_lock_smoke.tl|assembly|exactly-one|direct
+contains|main:
+contains|typelisp-lock
+contains|package-lock: self-test mismatch
+contains|package-lock: duplicate dependency alias
 end
 
 case|selfhost_scaffold|selfhost/scaffold.tl|assembly|skip|direct

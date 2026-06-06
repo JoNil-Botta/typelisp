@@ -1876,9 +1876,13 @@ Example:
   letters, digits, `-`, and `_`; duplicate aliases are rejected.
 - `entry` is resolved relative to the manifest directory.
 - Relative dependency paths are resolved relative to the manifest directory;
-  absolute dependency paths are used as written. Remote entries are manifest
-  syntax for git dependency fetch support; local path entries keep the existing
-  build and `pkg:` resolution behavior.
+  absolute dependency paths are used as written. GitHub remote entries fetch
+  with `git` into `target/typelisp/git-deps/<alias>` below the declaring
+  package root, then checkout the requested `rev`, `tag`, or `branch` before
+  the graph consumes the dependency. A pre-existing fetched root with
+  `typelisp.pkg` is used as-is unless it has a `.git` directory, in which case
+  the checkout is refreshed. Lockfile and update-policy behavior is not yet
+  specified.
 - Local dependency manifests are loaded into a normalized DAG keyed by manifest
   path before build execution. Transitive dependency packages build once per
   root build invocation, diamond graphs de-duplicate the common archive,

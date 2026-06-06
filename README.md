@@ -254,9 +254,12 @@ package; `kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
 alias. Dependency entries may use a local path relative to that same package
 root, an absolute path, or the GitHub shorthand form shown above. `tag` and
 `branch` pins are also accepted, and the shorthand normalizes to
-`https://github.com/owner/repo.git#rev=commit`. Remote entries currently report
-a fetch-support diagnostic until git dependency fetch, cache, and lockfile
-support lands; local paths keep the existing behavior.
+`https://github.com/owner/repo.git#rev=commit`. Remote entries are fetched with
+`git` into `target/typelisp/git-deps/<alias>` below the declaring package root,
+then checked out detached at the requested `rev`, `tag`, or `branch` before the
+package graph consumes them. A pre-existing fetched root with `typelisp.pkg` is
+used as-is unless it has a `.git` directory, in which case the checkout is
+refreshed. Lockfile and update-policy support remains future work.
 
 The repository root is also a package. From a checkout, `typelisp build` builds
 the unified selfhost CLI from `selfhost/cli.tl` and writes

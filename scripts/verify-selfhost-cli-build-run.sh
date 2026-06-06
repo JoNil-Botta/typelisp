@@ -751,6 +751,55 @@ assert_status package-graph-chain-program "$status" 42
 assert_empty package-graph-chain-program "$WORKDIR/package-graph-chain-program.out"
 assert_empty package-graph-chain-program "$WORKDIR/package-graph-chain-program.err"
 
+GITHUB_DIR="$WORKDIR/package-graph-github-prefetch"
+GITHUB_ROOT="$GITHUB_DIR/root"
+GITHUB_REMOTE="$GITHUB_ROOT/target/typelisp/git-deps/remote"
+mkdir -p "$GITHUB_ROOT/src" "$GITHUB_REMOTE/src"
+cat > "$GITHUB_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "github_prefetch_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+EOF
+cat > "$GITHUB_ROOT/src/main.tl" <<'EOF'
+(import "pkg:remote/src/lib.tl")
+(define (main) : i64 (remote-answer))
+EOF
+cat > "$GITHUB_REMOTE/typelisp.pkg" <<'EOF'
+(package
+  (name "github_prefetch_remote")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$GITHUB_REMOTE/src/lib.tl" <<'EOF'
+(define (remote-answer) : i64 43)
+EOF
+GITHUB_EXE="$GITHUB_ROOT/target/typelisp/release/github_prefetch_root/github_prefetch_root"
+GITHUB_REMOTE_ARCHIVE="$GITHUB_REMOTE/target/typelisp/release/github_prefetch_remote/libgithub_prefetch_remote.a"
+if [ "$HOST_OS" = windows ]; then
+    GITHUB_EXE="$GITHUB_EXE.exe"
+    GITHUB_REMOTE_ARCHIVE="$GITHUB_REMOTE/target/typelisp/release/github_prefetch_remote/github_prefetch_remote.lib"
+fi
+
+set +e
+"$COMPILER" build --manifest-path "$GITHUB_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-prefetch.out" 2> "$WORKDIR/package-graph-github-prefetch.err"
+status=$?
+set -e
+assert_status package-graph-github-prefetch "$status" 0
+assert_empty package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.err"
+assert_contains package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.out" "Generated: $(generated_path "$GITHUB_REMOTE_ARCHIVE")"
+assert_contains package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.out" "Generated: $(generated_path "$GITHUB_EXE")"
+
+set +e
+"$GITHUB_EXE" > "$WORKDIR/package-graph-github-prefetch-program.out" 2> "$WORKDIR/package-graph-github-prefetch-program.err"
+status=$?
+set -e
+assert_status package-graph-github-prefetch-program "$status" 43
+assert_empty package-graph-github-prefetch-program "$WORKDIR/package-graph-github-prefetch-program.out"
+assert_empty package-graph-github-prefetch-program "$WORKDIR/package-graph-github-prefetch-program.err"
+
 DIAMOND_DIR="$WORKDIR/package-graph-diamond"
 DIAMOND_ROOT="$DIAMOND_DIR/root"
 DIAMOND_LEFT="$DIAMOND_DIR/left"

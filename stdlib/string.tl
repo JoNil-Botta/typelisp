@@ -95,7 +95,9 @@
         [same : bool true]
         (begin
           (while (and same (< i left-len))
-            (if (char-eq (string-ref left i) (string-ref right i))
+            (if (=
+              (cast (string-ref left i) : i64)
+              (cast (string-ref right i) : i64))
               (set! i (+ i 1))
               (set! same false)))
           same)))))

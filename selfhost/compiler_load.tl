@@ -13,6 +13,8 @@
 
 (import "../stdlib/fs.tl")
 
+(import "../stdlib/hashmap.tl")
+
 (import "compiler_embedded_stdlib.tl")
 
 (defenum ResultCompilerLoad
@@ -1345,7 +1347,7 @@
   [name : String]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerLoadInclude
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
   (match (if (compiler-load-pkg-import? include-path)
     (compiler-load-resolve-pkg-import include-path manifest-dir deps)
     (compiler-load-resolve-import-result-with-roots
@@ -1370,7 +1372,7 @@
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
@@ -1516,7 +1518,7 @@
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match program
     [(AstProgram decls-box)
@@ -1554,7 +1556,7 @@
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (file-exists? path)
     (match (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)
@@ -1594,7 +1596,7 @@
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect
     path
     seen
@@ -1609,7 +1611,7 @@
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect
     path
@@ -2350,6 +2352,12 @@
   (CompilerPkgDepNil)
   (CompilerPkgDepCons CompilerPkgDep (Box CompilerPkgDepList)))
 
+;: Package dependencies preserve manifest order for deterministic builds while
+;: indexing aliases for duplicate detection and `pkg:<alias>/...` resolution.
+(defstruct CompilerPkgDeps
+  (ordered CompilerPkgDepList)
+  (aliases StringStringMap))
+
 ;: Package artifact kind: binary executable or static library.
 (defenum CompilerPkgKind
   (CompilerPkgKindBin)
@@ -2361,7 +2369,7 @@
   (version String)
   (kind CompilerPkgKind)
   (entry String)
-  (deps CompilerPkgDepList))
+  (deps CompilerPkgDeps))
 
 ;: Parse result: the manifest or a diagnostic.
 (defenum ResultCompilerPkgManifest
@@ -2378,10 +2386,10 @@
   (OkCompilerPkgKind CompilerPkgKind)
   (ErrCompilerPkgKind String))
 
-;: Internal: a parsed dependency list, or a diagnostic.
-(defenum ResultCompilerPkgDepList
-  (OkCompilerPkgDepList CompilerPkgDepList)
-  (ErrCompilerPkgDepList String))
+;: Internal: parsed dependencies, or a diagnostic.
+(defenum ResultCompilerPkgDeps
+  (OkCompilerPkgDeps CompilerPkgDeps)
+  (ErrCompilerPkgDeps String))
 
 ;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
@@ -2389,6 +2397,39 @@
     [(CompilerPkgDepNil) 0]
     [(CompilerPkgDepCons _ rest)
       (+ 1 (compiler-pkg-dep-list-count (box-get rest)))]))
+
+(define (compiler-pkg-deps-empty) : CompilerPkgDeps
+  (CompilerPkgDeps CompilerPkgDepNil (string-string-map-with-capacity 8)))
+
+(define (compiler-pkg-deps-list [deps : CompilerPkgDeps]) : CompilerPkgDepList
+  (struct-get deps ordered))
+
+(define (compiler-pkg-deps-count [deps : CompilerPkgDeps]) : i64
+  (compiler-pkg-dep-list-count (compiler-pkg-deps-list deps)))
+
+(define (compiler-pkg-deps-alias-seen?
+  [deps : CompilerPkgDeps]
+  [target-alias : String]) : bool
+  (string-string-map-contains? (struct-get deps aliases) target-alias))
+
+(define (compiler-pkg-deps-cons
+  [alias : String]
+  [path : String]
+  [tail : CompilerPkgDeps]) : CompilerPkgDeps
+  (CompilerPkgDeps
+    (CompilerPkgDepCons
+      (CompilerPkgDep alias path)
+      (box (compiler-pkg-deps-list tail)))
+    (string-string-map-put (struct-get tail aliases) alias path)))
+
+(define (compiler-pkg-deps-from-list [deps : CompilerPkgDepList]) : CompilerPkgDeps
+  (match deps
+    [(CompilerPkgDepNil) (compiler-pkg-deps-empty)]
+    [(CompilerPkgDepCons dep rest)
+      (compiler-pkg-deps-cons
+        (struct-get dep alias)
+        (struct-get dep path)
+        (compiler-pkg-deps-from-list (box-get rest)))]))
 
 (define (compiler-load-package-name-char? [c : char]) : bool
   (let
@@ -2490,16 +2531,6 @@
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
   (compiler-load-safe-relative? path))
-
-(define (compiler-load-pkg-dep-alias-seen?
-  [deps : CompilerPkgDepList]
-  [target-alias : String]) : bool
-  (match deps
-    [(CompilerPkgDepNil) false]
-    [(CompilerPkgDepCons dep rest)
-      (if (string-eq (struct-get dep alias) target-alias)
-        true
-        (compiler-load-pkg-dep-alias-seen? (box-get rest) target-alias))]))
 
 ;: Extract a single `"value"` from a field tail `("value")`.
 (define (compiler-load-manifest-string-value [ftail : Sexpr] [fname : String]) : ResultPkgString
@@ -2712,34 +2743,33 @@
 (define (compiler-load-manifest-cons-dep
   [alias : String]
   [path : String]
-  [rest : Sexpr]) : ResultCompilerPkgDepList
+  [rest : Sexpr]) : ResultCompilerPkgDeps
   (cond
     [(string-eq alias "")
-      (ErrCompilerPkgDepList "dependency alias must not be empty")]
+      (ErrCompilerPkgDeps "dependency alias must not be empty")]
     [(not (compiler-load-package-token-valid? alias))
-      (ErrCompilerPkgDepList
+      (ErrCompilerPkgDeps
         "dependency alias may only contain ASCII letters, digits, '-' and '_'")]
     [(string-eq path "")
-      (ErrCompilerPkgDepList
+      (ErrCompilerPkgDeps
         (string-append
           "manifest dependency `"
           (string-append alias "` path must not be empty")))]
     [else
       (match (compiler-load-manifest-parse-deps rest)
-        [(ErrCompilerPkgDepList m) (ErrCompilerPkgDepList m)]
-        [(OkCompilerPkgDepList tail-deps)
-          (if (compiler-load-pkg-dep-alias-seen? tail-deps alias)
-            (ErrCompilerPkgDepList
+        [(ErrCompilerPkgDeps m) (ErrCompilerPkgDeps m)]
+        [(OkCompilerPkgDeps tail-deps)
+          (if (compiler-pkg-deps-alias-seen? tail-deps alias)
+            (ErrCompilerPkgDeps
               (string-append
                 "duplicate dependency alias `"
                 (string-append alias "`")))
-            (OkCompilerPkgDepList
-              (CompilerPkgDepCons (CompilerPkgDep alias path) (box tail-deps))))])]))
+            (OkCompilerPkgDeps (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
-(define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDepList
+(define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDeps
   (match entries
-    [(SNil) (OkCompilerPkgDepList (CompilerPkgDepNil))]
+    [(SNil) (OkCompilerPkgDeps (compiler-pkg-deps-empty))]
     [(SCons entry rest)
       (match (box-get entry)
         [(SCons ehead etail)
@@ -2748,17 +2778,17 @@
               (match (compiler-load-manifest-dependency-value
                 (box-get etail)
                 alias)
-                [(ErrPkgString m) (ErrCompilerPkgDepList m)]
+                [(ErrPkgString m) (ErrCompilerPkgDeps m)]
                 [(OkPkgString path)
                   (compiler-load-manifest-cons-dep alias path (box-get rest))])]
             [_
-              (ErrCompilerPkgDepList
+              (ErrCompilerPkgDeps
                 "dependency entries must start with an alias name")])]
         [_
-          (ErrCompilerPkgDepList
+          (ErrCompilerPkgDeps
             "dependency entries must be lists like `(alias \"path\")`")])]
     [_
-      (ErrCompilerPkgDepList
+      (ErrCompilerPkgDeps
         "`dependencies` must be a list of `(alias \"path\")` or `(alias (github ...))` entries")]))
 
 (define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
@@ -2780,7 +2810,7 @@
   [entry : String]
   [has-entry : bool]
   [has-deps : bool]
-  [deps : CompilerPkgDepList]) : ResultCompilerPkgManifest
+  [deps : CompilerPkgDeps]) : ResultCompilerPkgManifest
   (match fields
     [(SNil)
       (let
@@ -2820,8 +2850,8 @@
                     (ErrCompilerPkgManifest
                       "duplicate manifest field `dependencies`")
                     (match (compiler-load-manifest-parse-deps (box-get ftail))
-                      [(ErrCompilerPkgDepList m) (ErrCompilerPkgManifest m)]
-                      [(OkCompilerPkgDepList parsed-deps)
+                      [(ErrCompilerPkgDeps m) (ErrCompilerPkgManifest m)]
+                      [(OkCompilerPkgDeps parsed-deps)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           name
@@ -2946,7 +2976,7 @@
               ""
               false
               false
-              (CompilerPkgDepNil))
+              (compiler-pkg-deps-empty))
             (ErrCompilerPkgManifest
               (string-append
                 "expected `package` form, got `"
@@ -2974,7 +3004,7 @@
             [(CompilerPkgKindBin)
               (and
                 (string-eq (struct-get m entry) "src/main.tl")
-                (= (compiler-pkg-dep-list-count (struct-get m deps)) 2))]
+                (= (compiler-pkg-deps-count (struct-get m deps)) 2))]
             [(CompilerPkgKindLib) false])))]
     [(ErrCompilerPkgManifest _) false]))
 
@@ -2987,7 +3017,7 @@
         [(CompilerPkgKindLib)
           (and
             (string-eq (struct-get m entry) "src/lib.tl")
-            (= (compiler-pkg-dep-list-count (struct-get m deps)) 0))]
+            (= (compiler-pkg-deps-count (struct-get m deps)) 0))]
         [(CompilerPkgKindBin) false])]
     [(ErrCompilerPkgManifest _) false]))
 
@@ -3010,32 +3040,62 @@
     [(ErrCompilerPkgManifest _) false]))
 
 (define (compiler-load-manifest-dep-path-is?
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [alias : String]
   [expected : String]) : bool
   (match (compiler-load-pkg-dep-lookup deps alias)
     [(CompilerLoadSomePath path) (string-eq path expected)]
     [(CompilerLoadNoPath) false]))
 
+(define (compiler-load-pkg-deps-three-alias-order?
+  [deps : CompilerPkgDeps]
+  [first-alias : String]
+  [second-alias : String]
+  [third-alias : String]) : bool
+  (match (compiler-pkg-deps-list deps)
+    [(CompilerPkgDepCons first rest1)
+      (and
+        (string-eq (struct-get first alias) first-alias)
+        (match (box-get rest1)
+          [(CompilerPkgDepCons second rest2)
+            (and
+              (string-eq (struct-get second alias) second-alias)
+              (match (box-get rest2)
+                [(CompilerPkgDepCons third rest3)
+                  (and
+                    (string-eq (struct-get third alias) third-alias)
+                    (match (box-get rest3)
+                      [(CompilerPkgDepNil) true]
+                      [(CompilerPkgDepCons _ _) false]))]
+                [(CompilerPkgDepNil) false]))]
+          [(CompilerPkgDepNil) false]))]
+    [(CompilerPkgDepNil) false]))
+
 (define (compiler-load-manifest-github-deps-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"abc123\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
     [(OkCompilerPkgManifest m)
       (let
-        [deps : CompilerPkgDepList (struct-get m deps)]
+        [deps : CompilerPkgDeps (struct-get m deps)]
         (and
-          (= (compiler-pkg-dep-list-count deps) 3)
+          (= (compiler-pkg-deps-count deps) 3)
           (and
-            (compiler-load-manifest-dep-path-is?
+            (compiler-load-pkg-deps-three-alias-order?
               deps
               "math"
-              "https://github.com/JoNil-Botta/math.git#rev=abc123")
+              "util"
+              "core")
             (and
               (compiler-load-manifest-dep-path-is?
                 deps
-                "util"
-                "https://github.com/JoNil-Botta/util.repo.git#tag=v1.0.0")
-              (compiler-load-manifest-dep-path-is? deps "core" "../core")))))]
+                "math"
+                "https://github.com/JoNil-Botta/math.git#rev=abc123")
+              (and
+                (compiler-load-manifest-dep-path-is?
+                  deps
+                  "util"
+                  "https://github.com/JoNil-Botta/util.repo.git#tag=v1.0.0")
+                (compiler-load-manifest-dep-path-is? deps "core" "../core"))))))]
     [(ErrCompilerPkgManifest _) false]))
 
 ;: True when parsing `source` fails with exactly the `expected` diagnostic.
@@ -3162,20 +3222,17 @@
 
 ;: Look up a dependency's root path by import alias.
 (define (compiler-load-pkg-dep-lookup
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [target-alias : String]) : CompilerLoadMaybePath
-  (match deps
-    [(CompilerPkgDepNil) (CompilerLoadNoPath)]
-    [(CompilerPkgDepCons dep rest)
-      (if (string-eq (struct-get dep alias) target-alias)
-        (CompilerLoadSomePath (struct-get dep path))
-        (compiler-load-pkg-dep-lookup (box-get rest) target-alias))]))
+  (match (string-string-map-get (struct-get deps aliases) target-alias)
+    [(StringStringMapFound path) (CompilerLoadSomePath path)]
+    [(StringStringMapMissing) (CompilerLoadNoPath)]))
 
 ;: Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
 (define (compiler-load-resolve-pkg-import
   [import-path : String]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultPkgResolve
+  [deps : CompilerPkgDeps]) : ResultPkgResolve
   (let
     [body : String (substring import-path 4 (- (string-length import-path) 4))]
     [slash : i64 (compiler-load-slash-index-from body 0 (string-length body))]
@@ -3278,18 +3335,19 @@
             (struct-get manifest deps))])]))
 
 ;: Self-test fixture: local deps plus one GitHub dep that needs fetch support.
-(define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList
-  (CompilerPkgDepCons
-    (CompilerPkgDep "math" "../math")
-    (box
-      (CompilerPkgDepCons
-        (CompilerPkgDep "util" "vendor/util")
-        (box
-          (CompilerPkgDepCons
-            (CompilerPkgDep
-              "remote"
-              "https://github.com/owner/repo.git#rev=abc")
-            (box CompilerPkgDepNil)))))))
+(define (compiler-load-pkg-resolve-deps) : CompilerPkgDeps
+  (compiler-pkg-deps-from-list
+    (CompilerPkgDepCons
+      (CompilerPkgDep "math" "../math")
+      (box
+        (CompilerPkgDepCons
+          (CompilerPkgDep "util" "vendor/util")
+          (box
+            (CompilerPkgDepCons
+              (CompilerPkgDep
+                "remote"
+                "https://github.com/owner/repo.git#rev=abc")
+              (box CompilerPkgDepNil))))))))
 
 ;: True when resolving `import-path` yields exactly `expected`.
 (define (compiler-load-pkg-resolves? [import-path : String] [expected : String]) : bool
@@ -3375,17 +3433,18 @@
 
 (define (compiler-load-boxed-pkg-dep-list-ok?) : bool
   (let
-    [deps : CompilerPkgDepList
-      (CompilerPkgDepCons
-        (CompilerPkgDep "alpha" "dep-alpha")
-        (box
-          (CompilerPkgDepCons
-            (CompilerPkgDep "beta" "dep-beta")
-            (box CompilerPkgDepNil))))]
+    [deps : CompilerPkgDeps
+      (compiler-pkg-deps-from-list
+        (CompilerPkgDepCons
+          (CompilerPkgDep "alpha" "dep-alpha")
+          (box
+            (CompilerPkgDepCons
+              (CompilerPkgDep "beta" "dep-beta")
+              (box CompilerPkgDepNil)))))]
     (and
-      (= (compiler-pkg-dep-list-count deps) 2)
+      (= (compiler-pkg-deps-count deps) 2)
       (and
-        (compiler-load-pkg-dep-alias-seen? deps "beta")
+        (compiler-pkg-deps-alias-seen? deps "beta")
         (compiler-load-manifest-dep-path-is? deps "beta" "dep-beta")))))
 
 ;; relative-resolution variants (#1074): importer-relative join, parent-directory

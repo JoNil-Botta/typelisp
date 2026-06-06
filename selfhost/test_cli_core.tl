@@ -1439,7 +1439,7 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultTestPackageTotals
+  [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (match (compiler-load-package-file-with-paths-and-roots-cfg
     source
     (sym-i64-empty)
@@ -1467,7 +1467,7 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultTestPackageTotals
+  [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
     (match (compiler-load-package-file-with-paths-and-roots-cfg
       source
@@ -1501,7 +1501,7 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
   (match sources
@@ -1552,7 +1552,7 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
   (match sources

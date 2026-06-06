@@ -548,7 +548,7 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerDriver
   (compiler-driver-emit-package-file-with-target-roots-level-and-crt
     input-path
@@ -568,7 +568,7 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
@@ -591,7 +591,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (match (compiler-load-package-file-with-paths-and-roots-cfg

@@ -97,7 +97,7 @@
   [path : String]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerCheck
+  [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-package-file-with-paths-and-roots

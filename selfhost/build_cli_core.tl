@@ -1707,7 +1707,7 @@
         (match (build-package-resolve-deps-with-lock
           manifest-dir
           (struct-get lock-state entries)
-          (struct-get manifest deps))
+          (compiler-pkg-deps-list (struct-get manifest deps)))
           [(ErrBuildResolvedPkgDeps message) (ErrBuildManifest message)]
           [(OkBuildResolvedPkgDeps resolved)
             (begin
@@ -1726,7 +1726,7 @@
                   (struct-get manifest version)
                   (struct-get manifest kind)
                   (struct-get manifest entry)
-                  (struct-get resolved deps))))])])))
+                  (compiler-pkg-deps-from-list (struct-get resolved deps)))))])])))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))
@@ -1892,7 +1892,7 @@
             (BuildPackagePathCons manifest-path (box stack))]
           (match (build-package-graph-add-deps
             manifest-dir
-            (struct-get manifest deps)
+            (compiler-pkg-deps-list (struct-get manifest deps))
             visiting
             next-stack)
             [(ErrBuildPackageGraphState message)
@@ -1944,7 +1944,7 @@
       (BuildPackagePathCons root-path (box BuildPackagePathNil))]
     (match (build-package-graph-add-deps
       root-dir
-      (struct-get manifest deps)
+      (compiler-pkg-deps-list (struct-get manifest deps))
       initial
       stack)
       [(ErrBuildPackageGraphState message) (ErrBuildPackageGraph message)]
@@ -2033,12 +2033,17 @@
     "0.1.0"
     (CompilerPkgKindLib)
     "src/lib.tl"
-    CompilerPkgDepNil))
+    (compiler-pkg-deps-empty)))
 
 (define (build-package-graph-test-manifest-with-deps
   [name : String]
   [deps : CompilerPkgDepList]) : CompilerPkgManifest
-  (CompilerPkgManifest name "0.1.0" (CompilerPkgKindLib) "src/lib.tl" deps))
+  (CompilerPkgManifest
+    name
+    "0.1.0"
+    (CompilerPkgKindLib)
+    "src/lib.tl"
+    (compiler-pkg-deps-from-list deps)))
 
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
   (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
@@ -2346,7 +2351,10 @@
     [manifest-path : String (struct-get node manifest-path)]
     [manifest-dir : String (compiler-load-dirname manifest-path)]
     [manifest : CompilerPkgManifest (struct-get node manifest)]
-    (build-package-deps-built? manifest-dir (struct-get manifest deps) built)))
+    (build-package-deps-built?
+      manifest-dir
+      (compiler-pkg-deps-list (struct-get manifest deps))
+      built)))
 
 (define (build-package-node-scheduled?
   [scheduled : StringI64Map]

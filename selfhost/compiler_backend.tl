@@ -10640,7 +10640,6 @@
   [read-bytes : bool]
   [stdin-eof : bool]
   [flush-stdout : bool]
-  [random-system-seed : bool]
   [windows-setup-instances : bool]
   [windows-sdk-registry-install : bool]
   [env-var-exists : bool]
@@ -10654,10 +10653,6 @@
       (backend-or4
         (compiler-backend-provides-runtime-name?
           name
-          "tl_random_system_seed"
-          random-system-seed)
-        (compiler-backend-provides-runtime-name?
-          name
           "tl_windows_setup_instances"
           windows-setup-instances)
         (compiler-backend-provides-runtime-name?
@@ -10667,7 +10662,8 @@
         (compiler-backend-provides-runtime-name?
           name
           "tl_env_var_exists"
-          env-var-exists))
+          env-var-exists)
+        false)
       (or
         (compiler-backend-provides-runtime-name?
           name
@@ -10920,17 +10916,13 @@
                           name
                           ".L_tl_flush_stdout"
                           flush-stdout)
-                        (compiler-backend-provides-runtime-name?
-                          name
-                          "tl_random_system_seed"
-                          random-system-seed))
+                        false)
                       (or
                         (compiler-backend-plan-provides-tail?
                           name
                           read-bytes
                           stdin-eof
                           flush-stdout
-                          random-system-seed
                           windows-setup-instances
                           windows-sdk-registry-install
                           provides-env-var-exists
@@ -11001,8 +10993,6 @@
       (compiler-backend-runtime-index-defines? index "tl_process_start")]
     [defines-process-wait : bool
       (compiler-backend-runtime-index-defines? index "tl_process_wait")]
-    [defines-random-system-seed : bool
-      (compiler-backend-runtime-index-defines? index "tl_random_system_seed")]
     [defines-windows-setup-instances : bool
       (compiler-backend-runtime-index-defines?
         index
@@ -11148,8 +11138,6 @@
       (compiler-backend-runtime-index-extern? index "tl_region_mark")]
     [extern-region-reset : bool
       (compiler-backend-runtime-index-extern? index "tl_region_reset")]
-    [extern-random-system-seed : bool
-      (compiler-backend-runtime-index-extern? index "tl_random_system_seed")]
     [extern-windows-setup-instances : bool
       (compiler-backend-runtime-index-extern?
         index
@@ -11282,8 +11270,6 @@
       (compiler-backend-runtime-index-calls? index "tl_region_mark")]
     [calls-region-reset : bool
       (compiler-backend-runtime-index-calls? index "tl_region_reset")]
-    [calls-random-system-seed : bool
-      (compiler-backend-runtime-index-calls? index "tl_random_system_seed")]
     [calls-windows-setup-instances : bool
       (compiler-backend-runtime-index-calls? index "tl_windows_setup_instances")]
     [calls-windows-sdk-registry-install : bool
@@ -11393,10 +11379,7 @@
       (and
         (not defines-region-reset)
         (or extern-region-reset calls-region-reset))]
-    [needs-random-system-seed : bool
-      (and
-        (not defines-random-system-seed)
-        (or extern-random-system-seed calls-random-system-seed))]
+    [needs-random-system-seed : bool false]
     [needs-windows-setup-instances : bool
       (and
         (not defines-windows-setup-instances)
@@ -11791,17 +11774,6 @@ tl_profile_alloc_peak_bytes:
 ")
     ""))
 
-(define (compiler-backend-runtime-random-system-seed-data
-  [random-system-seed : bool]) : String
-  (if random-system-seed
-    "    .section .rodata
-.L_tl_random_system_seed_err_msg:
-    .ascii \"random: system entropy unavailable\"
-    .set .L_tl_random_system_seed_err_msg_len, . - .L_tl_random_system_seed_err_msg
-
-"
-    ""))
-
 (define (compiler-backend-runtime-windows-setup-instances-data
   [windows-setup-instances : bool]) : String
   (if windows-setup-instances
@@ -11868,7 +11840,7 @@ tl_profile_alloc_peak_bytes:
         flush-stdout
         region-mark
         region-reset
-        random-system-seed
+        _
         windows-setup-instances
         windows-sdk-registry-install
         env-var-exists
@@ -11933,13 +11905,10 @@ tl_profile_alloc_peak_bytes:
                                   target
                                   flush-stdout)
                                 (string-append
-                                  (compiler-backend-runtime-random-system-seed-data
-                                    random-system-seed)
-                                  (string-append
-                                    (compiler-backend-runtime-windows-setup-instances-data
-                                      windows-setup-instances)
-                                    (compiler-backend-runtime-windows-sdk-registry-install-data
-                                      windows-sdk-registry-install))))))))))))))))]))
+                                  (compiler-backend-runtime-windows-setup-instances-data
+                                    windows-setup-instances)
+                                  (compiler-backend-runtime-windows-sdk-registry-install-data
+                                    windows-sdk-registry-install)))))))))))))))]))
 
 (define (compiler-backend-runtime-profile-alloc-account
   [size-reg : String]
@@ -19145,108 +19114,6 @@ tl_process_output:
 
 ")
 
-(define (compiler-backend-runtime-random-system-seed-functions) : String
-  "    .globl tl_random_system_seed
-tl_random_system_seed:
-    push %rbp
-    movq %rsp, %rbp
-    push %r12
-    push %r13
-    sub $16, %rsp
-    leaq (%rsp), %rdi
-    movq $8, %rsi
-    xorq %rdx, %rdx
-    movq $318, %rax
-    syscall
-    testq %rax, %rax
-    js .L_tl_random_system_seed_err
-    cmpq $8, %rax
-    jne .L_tl_random_system_seed_err
-    movq (%rsp), %r12
-    call .L_tl_alloc16
-    movq $0, 0(%rax)
-    movq %r12, 8(%rax)
-    add $16, %rsp
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-.L_tl_random_system_seed_err:
-    leaq .L_tl_random_system_seed_err_msg(%rip), %r12
-    movq $.L_tl_random_system_seed_err_msg_len, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $0, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    add $16, %rsp
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-")
-
-(define (compiler-backend-runtime-windows-random-system-seed-functions) : String
-  "    .globl tl_random_system_seed
-tl_random_system_seed:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    sub $16, %rsp
-    leaq (%rsp), %rcx
-    movl $8, %edx
-    sub $32, %rsp
-    call SystemFunction036
-    add $32, %rsp
-    testb %al, %al
-    jz .L_tl_random_system_seed_err
-    movq (%rsp), %r12
-    call .L_tl_alloc16
-    movq $0, 0(%rax)
-    movq %r12, 8(%rax)
-    add $16, %rsp
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-.L_tl_random_system_seed_err:
-    leaq .L_tl_random_system_seed_err_msg(%rip), %r12
-    movq $.L_tl_random_system_seed_err_msg_len, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $0, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    add $16, %rsp
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-")
-
 (define (compiler-backend-runtime-windows-setup-instances-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -19617,12 +19484,6 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-windows-region-reset-functions profile)
               (compiler-backend-runtime-region-reset-functions profile))
             "")]
-        [random-system-seed-asm : String
-          (if random-system-seed
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-random-system-seed-functions)
-              (compiler-backend-runtime-random-system-seed-functions))
-            "")]
         [windows-setup-instances-asm : String
           (if windows-setup-instances
             (compiler-backend-runtime-windows-setup-instances-functions target)
@@ -19685,12 +19546,10 @@ tl_windows_sdk_registry_install:
             read-bytes-asm
             stdin-eof-asm
             flush-stdout-asm)]
-        [random-and-windows-asm : String
+        [windows-asm : String
           (string-append
-            random-system-seed-asm
-            (string-append
-              windows-setup-instances-asm
-              windows-sdk-registry-install-asm))]
+            windows-setup-instances-asm
+            windows-sdk-registry-install-asm)]
         [env-var-exists-asm : String
           (if env-var-exists
             (if (compiler-backend-target-windows? target)
@@ -19720,7 +19579,7 @@ tl_windows_sdk_registry_install:
             fs-asm
             runtime-tail-asm
             (backend-cat5
-              random-and-windows-asm
+              windows-asm
               env-var-exists-asm
               env-var-value-asm
               env-path-separator-asm
@@ -20021,29 +19880,24 @@ tl_windows_sdk_registry_install:
 "
               "")
             (string-append
-              (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
-                "    .extern SystemFunction036
+              (if (compiler-backend-plan-provides? plan "tl_print_f64")
+                "    .extern _snprintf
 "
                 "")
               (string-append
-                (if (compiler-backend-plan-provides? plan "tl_print_f64")
-                  "    .extern _snprintf
-"
-                  "")
-                (string-append
-                  (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
-                    "    .extern QueryPerformanceCounter
+                (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
+                  "    .extern QueryPerformanceCounter
     .extern QueryPerformanceFrequency
 "
-                    "")
-                  ;; The Windows tl_process_output spawns the child via CreateProcessA
-                  ;; with a constructed contiguous env block (__p__environ above) and
-                  ;; captures stdout/stderr through CRT temp files made inheritable
-                  ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-                  ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-                  ;; variant uses raw syscalls instead.
-                  (if (compiler-backend-plan-provides? plan "tl_process_output")
-                    "    .extern __p__environ
+                  "")
+                ;; The Windows tl_process_output spawns the child via CreateProcessA
+                ;; with a constructed contiguous env block (__p__environ above) and
+                ;; captures stdout/stderr through CRT temp files made inheritable
+                ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+                ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+                ;; variant uses raw syscalls instead.
+                (if (compiler-backend-plan-provides? plan "tl_process_output")
+                  "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -20058,7 +19912,7 @@ tl_windows_sdk_registry_install:
     .extern CloseHandle
     .extern GetStdHandle
 "
-                    ""))))))))
+                  "")))))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
@@ -20604,11 +20458,7 @@ tl_windows_sdk_registry_install:
                     (ast-ty-func
                       (ast-type-cons (AstTyI64) AstTypeNil)
                       (AstTyI64)))
-                  (compiler-ir-extern-cons
-                    (compiler-ir-extern-default
-                      "tl_random_system_seed"
-                      (AstTyI64))
-                    IrExternNil))))))))))
+                  IrExternNil)))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -20653,14 +20503,8 @@ tl_windows_sdk_registry_install:
                             (compiler-ir-value-cons (IrValueI64 0) IrValueNil)))))
                     (AstTyI64))
                   (compiler-ir-instr-cons
-                    (IrInstrCall
-                      3
-                      "tl_random_system_seed"
-                      (IrCallArgsNil)
-                      (AstTyI64))
-                    (compiler-ir-instr-cons
-                      (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                      IrInstrNil))))))
+                    (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                    IrInstrNil)))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))
@@ -20674,7 +20518,6 @@ tl_windows_sdk_registry_install:
 (extern tl_string_to_int : (-> String i64))
 (extern tl_int_to_string : (-> i64 String))
 (extern tl_process_output : (-> i64 i64))
-(extern tl_random_system_seed : (-> i64))
 (define (main) : i64
   (begin
     (tl_alloc 8)
@@ -20684,7 +20527,7 @@ tl_windows_sdk_registry_install:
     (tl_string_to_int \"1\")
     (tl_int_to_string 1)
     (tl_process_output 0)
-    (tl_random_system_seed)))")
+    42))")
 
 (define (compiler-backend-no-stdlib-forwarding-labels? [asm : String]) : bool
   (and
@@ -20741,8 +20584,13 @@ tl_windows_sdk_registry_install:
               (compiler-backend-string-contains?
                 asm
                 ".L_tl_fs_remove_dir_status:\n")))
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")))))))
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_rename_status:\n"))
+            (not
+              (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))))))))
 
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
@@ -20788,7 +20636,10 @@ tl_windows_sdk_registry_install:
                 ".globl tl_int_to_string\n")
               (compiler-backend-string-contains? asm "tl_int_to_string:\n")
               (compiler-backend-string-contains? asm "tl_process_output:\n")
-              (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "tl_random_system_seed:\n"))))
           (and
             (backend-and4
               (or

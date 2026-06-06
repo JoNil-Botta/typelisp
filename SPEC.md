@@ -1882,8 +1882,29 @@ Example:
   package root, then checkout the requested `rev`, `tag`, or `branch` before
   the graph consumes the dependency. A pre-existing fetched root with
   `typelisp.pkg` is used as-is unless it has a `.git` directory, in which case
-  the checkout is refreshed. Lockfile and update-policy behavior is not yet
-  specified.
+  the checkout is refreshed. Build-time lockfile replay and update-policy
+  behavior is not yet specified.
+- `typelisp.lock` is a deterministic v1 S-expression lockfile for resolved
+  remote package pins:
+
+  ```lisp test=ignore name=package-lock reason="lockfile data, not TypeLisp source"
+  (typelisp-lock
+    (version "v1")
+    (dependencies
+      (dependency
+        (alias "lint")
+        (url "https://github.com/JoNil-Botta/typelisp-lint.git")
+        (pin (tag "v1.0.0"))
+        (commit "0123456789abcdef0123456789abcdef01234567"))))
+  ```
+
+  Each dependency records the manifest alias, normalized URL, original pin
+  kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. Duplicate
+  aliases, duplicate fields, missing required fields, malformed entries,
+  non-string values, and unknown versions are rejected. Emitters write stable,
+  human-readable entries sorted by alias. The lockfile helper only parses and
+  emits this data model; it does not fetch remotes, resolve pins, replay locked
+  builds, or update the file during package builds.
 - Remote package cache helpers use a deterministic v1 root below the package
   root at `target/typelisp/cache/packages/v1`. Entry paths are derived from the
   normalized remote URL and an exact `rev` commit pin; `tag` and `branch` pins
@@ -1920,9 +1941,9 @@ Example:
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,
-  implicit preludes, lockfile, workspace model, or dynamic/shared library
-  output. Namespace isolation and qualified symbol access are specified by the
-  selfhost module model in section 4.4, not by package resolution itself.
+  implicit preludes, lockfile replay, workspace model, or dynamic/shared
+  library output. Namespace isolation and qualified symbol access are specified
+  by the selfhost module model in section 4.4, not by package resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 

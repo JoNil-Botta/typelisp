@@ -176,6 +176,14 @@
   (profile bool)
   (hash-string bool))
 
+(defenum CompilerBackendRuntimeHelperOwner
+  (BackendRuntimeOwnerUnknown)
+  (BackendRuntimeOwnerCore)
+  (BackendRuntimeOwnerStdlibFfi)
+  (BackendRuntimeOwnerStdlibTypeLisp)
+  (BackendRuntimeOwnerCompatibilityAlias)
+  (BackendRuntimeOwnerDeprecated))
+
 (defenum ResultCompilerBackendBuffer
   (OkCompilerBackendBuffer TextBuf)
   (ErrCompilerBackendBuffer CompilerDiagnostic))
@@ -10725,20 +10733,149 @@
       externs)
     functions))
 
+;; Runtime helper ownership inventory (#2044). This is the backend's checked-in
+;; boundary table for helper names accepted by `compiler-backend-plan-provides?`.
+;; New runtime-plan symbols must be classified here before the plan can provide
+;; them.
+(define (compiler-backend-runtime-helper-core? [name : String]) : bool
+  (or
+    (backend-or8
+      (string-eq name "tl_alloc")
+      (string-eq name "tl_oob_abort")
+      (string-eq name "tl_div_abort")
+      (string-eq name "tl_shift_abort")
+      (string-eq name ".L_tl_abort")
+      (string-eq name "tl_region_mark")
+      (string-eq name "tl_region_reset")
+      (string-eq name "tl_arena_make"))
+    (backend-or4
+      (string-eq name "tl_arena_current")
+      (string-eq name "tl_arena_set")
+      (string-eq name "tl_arena_destroy")
+      (string-eq name "tl_arena_poison_enable"))))
+
+;; Current stdlib modules still depend on these backend runtime shims for
+;; unavoidable OS/process/profile operations. `stdlib/fs.tl` read-dir and
+;; metadata probes are tracked by #2047.
+(define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
+  (or
+    (backend-or8
+      (string-eq name "tl_process_output")
+      (string-eq name "tl_process_start")
+      (string-eq name "tl_process_wait")
+      (string-eq name "tl_profile_now_ms")
+      (string-eq name "tl_profile_alloc_total")
+      (string-eq name "tl_profile_alloc_live")
+      (string-eq name "tl_profile_alloc_peak")
+      (string-eq name "tl_profile_alloc_reset_peak"))
+    (backend-or8
+      (string-eq name ".L_tl_fs_read_dir_status")
+      (string-eq name ".L_tl_fs_read_dir")
+      (string-eq name ".L_tl_fs_file_kind_status")
+      (string-eq name ".L_tl_fs_file_size_status")
+      (string-eq name ".L_tl_fs_file_size")
+      false
+      false
+      false)))
+
+;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
+;; string equality/parsing moved in #2036, allocating string helpers in #2037,
+;; and environment hooks are the open migration owner #1729.
+(define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
+  (or
+    (backend-or8
+      (string-eq name "tl_substring")
+      (string-eq name "tl_string_concat")
+      (string-eq name "tl_string_concat3")
+      (string-eq name "tl_string_concat4")
+      (string-eq name "tl_string_concat5")
+      (string-eq name "tl_string_eq")
+      (string-eq name "tl_string_to_int")
+      (string-eq name "tl_int_to_string"))
+    (or
+      (backend-or8
+        (string-eq name "tl_hash_string")
+        (string-eq name ".L_tl_read_file")
+        (string-eq name ".L_tl_write_file")
+        (string-eq name ".L_tl_file_exists")
+        (string-eq name ".L_tl_read_file_status")
+        (string-eq name ".L_tl_write_file_status")
+        (string-eq name ".L_tl_append_file_status")
+        (string-eq name ".L_tl_file_exists_status"))
+      (or
+        (backend-or8
+          (string-eq name ".L_tl_file_open_status")
+          (string-eq name ".L_tl_file_close_status")
+          (string-eq name ".L_tl_file_read_chunk_status")
+          (string-eq name ".L_tl_file_write_status")
+          (string-eq name ".L_tl_file_flush_status")
+          (string-eq name ".L_tl_file_read_chunk_bytes")
+          (string-eq name ".L_tl_file_read_chunk_eof")
+          (string-eq name ".L_tl_read_stdin_line"))
+        (or
+          (backend-or8
+            (string-eq name ".L_tl_read_stdin_bytes")
+            (string-eq name ".L_tl_stdin_eof")
+            (string-eq name ".L_tl_flush_stdout")
+            (string-eq name "tl_env_var_exists")
+            (string-eq name "tl_env_var_value")
+            (string-eq name "env-path-separator")
+            false
+            false)
+          false)))))
+
+(define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
+  (or
+    (backend-or8
+      (string-eq name "tl_print_err")
+      (string-eq name "tl_print_str")
+      (string-eq name "tl_print_string")
+      (string-eq name "tl_print_char")
+      (string-eq name "tl_print_f64")
+      (string-eq name ".L_tl_arg_count")
+      (string-eq name "tl_arg_count")
+      (string-eq name ".L_tl_arg"))
+    (string-eq name "tl_arg")))
+
+(define (compiler-backend-runtime-helper-deprecated? [name : String]) : bool
+  false)
+
+(define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
+  (cond
+    [(compiler-backend-runtime-helper-core? name) (BackendRuntimeOwnerCore)]
+    [(compiler-backend-runtime-helper-stdlib-ffi? name)
+      (BackendRuntimeOwnerStdlibFfi)]
+    [(compiler-backend-runtime-helper-stdlib-type-lisp? name)
+      (BackendRuntimeOwnerStdlibTypeLisp)]
+    [(compiler-backend-runtime-helper-compatibility-alias? name)
+      (BackendRuntimeOwnerCompatibilityAlias)]
+    [(compiler-backend-runtime-helper-deprecated? name)
+      (BackendRuntimeOwnerDeprecated)]
+    [else (BackendRuntimeOwnerUnknown)]))
+
+(define (compiler-backend-runtime-helper-known? [name : String]) : bool
+  (match (compiler-backend-runtime-helper-owner name)
+    [(BackendRuntimeOwnerUnknown) false]
+    [_ true]))
+
 (define (compiler-backend-provides-runtime-name?
   [name : String]
   [candidate : String]
   [enabled : bool]) : bool
-  (and (string-eq name candidate) enabled))
+  (and
+    (compiler-backend-runtime-helper-known? candidate)
+    (and (string-eq name candidate) enabled)))
 
 (define (compiler-backend-runtime-concat-name? [name : String]) : bool
-  (or
-    (backend-or4
-      (string-eq name "tl_string_concat")
-      (string-eq name "tl_string_concat3")
-      (string-eq name "tl_string_concat4")
-      (string-eq name "tl_string_concat5"))
-    false))
+  (and
+    (compiler-backend-runtime-helper-known? name)
+    (or
+      (backend-or4
+        (string-eq name "tl_string_concat")
+        (string-eq name "tl_string_concat3")
+        (string-eq name "tl_string_concat4")
+        (string-eq name "tl_string_concat5"))
+      false)))
 
 (define (compiler-backend-runtime-index-defines-concat?
   [index : CompilerBackendRuntimeIndex]) : bool
@@ -10775,20 +10912,26 @@
   [canonical : String]
   [alias : String]
   [enabled : bool]) : bool
-  (and enabled (or (string-eq name canonical) (string-eq name alias))))
+  (and
+    (and
+      (compiler-backend-runtime-helper-known? canonical)
+      (compiler-backend-runtime-helper-known? alias))
+    (and enabled (or (string-eq name canonical) (string-eq name alias)))))
 
 (define (compiler-backend-provides-profile-runtime-name?
   [name : String]
   [enabled : bool]) : bool
   (and
     enabled
-    (or
-      (backend-or4
-        (string-eq name "tl_profile_now_ms")
-        (string-eq name "tl_profile_alloc_total")
-        (string-eq name "tl_profile_alloc_live")
-        (string-eq name "tl_profile_alloc_peak"))
-      (string-eq name "tl_profile_alloc_reset_peak"))))
+    (and
+      (compiler-backend-runtime-helper-known? name)
+      (or
+        (backend-or4
+          (string-eq name "tl_profile_now_ms")
+          (string-eq name "tl_profile_alloc_total")
+          (string-eq name "tl_profile_alloc_live")
+          (string-eq name "tl_profile_alloc_peak"))
+        (string-eq name "tl_profile_alloc_reset_peak")))))
 
 (define (compiler-backend-plan-provides-tail?
   [name : String]
@@ -10826,13 +10969,15 @@
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (or
-    (or
-      (string-eq name "tl_arena_poison_enable")
-      (backend-or4
-        (string-eq name "tl_arena_make")
-        (string-eq name "tl_arena_current")
-        (string-eq name "tl_arena_set")
-        (string-eq name "tl_arena_destroy")))
+    (and
+      (compiler-backend-runtime-helper-known? name)
+      (or
+        (string-eq name "tl_arena_poison_enable")
+        (backend-or4
+          (string-eq name "tl_arena_make")
+          (string-eq name "tl_arena_current")
+          (string-eq name "tl_arena_set")
+          (string-eq name "tl_arena_destroy"))))
     (compiler-backend-plan-provides-rest? plan name)))
 
 (define (compiler-backend-plan-provides-rest?

@@ -418,6 +418,23 @@
 (define (doc-test-line-list-reverse [lines : DocTestLineList]) : DocTestLineList
   (doc-test-line-list-reverse-into lines DocTestLineNil))
 
+(define (doc-test-line-array-to-list-rev
+  [lines : (Array DocTestLine)]
+  [index : i64]
+  [acc : DocTestLineList]) : DocTestLineList
+  (if (< index 0)
+    acc
+    (doc-test-line-array-to-list-rev
+      lines
+      (- index 1)
+      (DocTestLineCons (array-ref lines index) (box acc)))))
+
+(define (doc-test-line-array-to-list [lines : (Array DocTestLine)]) : DocTestLineList
+  (doc-test-line-array-to-list-rev
+    lines
+    (- (array-length lines) 1)
+    DocTestLineNil))
+
 (define (doc-test-example-list-append
   [examples : DocTestExampleList]
   [example : DocTestExample]) : DocTestExampleList
@@ -917,13 +934,18 @@
   [state : DocTestScanState]) : DocTestScanState
   (doc-test-scan-doc-block (doc-test-line-list-reverse lines) state))
 
+(define (doc-test-scan-line-array
+  [lines : (Array DocTestLine)]
+  [state : DocTestScanState]) : DocTestScanState
+  (doc-test-scan-doc-block (doc-test-line-array-to-list lines) state))
+
 (define (doc-test-extract-source [src : String]) : DocTestExtraction
   (let
     [n : i64 (string-length src)]
     [pos : i64 0]
     [line-number : i64 1]
-    [module-lines : DocTestLineList DocTestLineNil]
-    [pending-lines : DocTestLineList DocTestLineNil]
+    [module-lines : (Array DocTestLine) (make-array DocTestLine 0)]
+    [pending-lines : (Array DocTestLine) (make-array DocTestLine 0)]
     [state : DocTestScanState
       (DocTestScanState DocTestExampleNil DocTestErrorNil 1)]
     (begin
@@ -935,38 +957,30 @@
             (match (doc-test-module-doc-comment-body line)
               [(DocTestSomeString body)
                 (begin
-                  (set! pending-lines DocTestLineNil)
-                  (set!
-                    module-lines
-                    (doc-test-line-cons
-                      (DocTestLine line-number body)
-                      module-lines)))]
+                  (set! pending-lines (make-array DocTestLine 0))
+                  (array-push! module-lines (DocTestLine line-number body)))]
               [(DocTestNoString)
                 (if (doc-test-string-blank? line)
-                  (set! pending-lines pending-lines)
+                  unit
                   (begin
-                    (set!
-                      state
-                      (doc-test-scan-reversed-block module-lines state))
-                    (set! module-lines DocTestLineNil)
+                    (set! state (doc-test-scan-line-array module-lines state))
+                    (set! module-lines (make-array DocTestLine 0))
                     (match (doc-test-item-doc-comment-body line)
                       [(DocTestSomeString body)
-                        (set!
+                        (array-push!
                           pending-lines
-                          (doc-test-line-cons
-                            (DocTestLine line-number body)
-                            pending-lines))]
+                          (DocTestLine line-number body))]
                       [(DocTestNoString)
                         (if (doc-test-supported-item-declaration? line)
                           (begin
                             (set!
                               state
-                              (doc-test-scan-reversed-block pending-lines state))
-                            (set! pending-lines DocTestLineNil))
-                          (set! pending-lines DocTestLineNil))])))])
+                              (doc-test-scan-line-array pending-lines state))
+                            (set! pending-lines (make-array DocTestLine 0)))
+                          (set! pending-lines (make-array DocTestLine 0)))])))])
             (set! pos (doc-test-next-line-start src line-end n))
             (set! line-number (+ line-number 1)))))
-      (set! state (doc-test-scan-reversed-block module-lines state))
+      (set! state (doc-test-scan-line-array module-lines state))
       (match state
         [(DocTestScanState examples errors _)
           (DocTestExtraction examples errors)]))))

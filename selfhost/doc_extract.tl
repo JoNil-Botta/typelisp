@@ -93,6 +93,20 @@
 (define (doc-item-list-reverse [items : DocItemList]) : DocItemList
   (doc-item-list-reverse-into items DocItemNil))
 
+(define (doc-item-array-to-list-rev
+  [items : (Array DocItem)]
+  [index : i64]
+  [acc : DocItemList]) : DocItemList
+  (if (< index 0)
+    acc
+    (doc-item-array-to-list-rev
+      items
+      (- index 1)
+      (DocItemCons (array-ref items index) (box acc)))))
+
+(define (doc-item-array-to-list [items : (Array DocItem)]) : DocItemList
+  (doc-item-array-to-list-rev items (- (array-length items) 1) DocItemNil))
+
 (define (doc-inline-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
 
@@ -413,7 +427,7 @@
     [module-has : bool false]
     [pending-doc : String ""]
     [pending-has : bool false]
-    [items : DocItemList DocItemNil]
+    [items : (Array DocItem) (make-array DocItem 0)]
     (begin
       (while (< i n)
         (let
@@ -473,13 +487,11 @@
                       (if pending-has
                         (match (doc-decl-info signature)
                           [(DocDeclInfo kind name)
-                            (set!
+                            (array-push!
                               items
-                              (DocItemCons
-                                (DocItem kind name pending-doc signature)
-                                (box items)))]
-                          [(DocNoDeclInfo) (set! items items)])
-                        (set! items items))
+                              (DocItem kind name pending-doc signature))]
+                          [(DocNoDeclInfo) unit])
+                        unit)
                       (set! pending-doc "")
                       (set! pending-has false)
                       (set! i form-end)))
@@ -487,7 +499,7 @@
                     (set! pending-doc "")
                     (set! pending-has false)
                     (set! i (doc-next-line-start src line-end n)))))))))
-      (DocExtraction module-doc (doc-item-list-reverse items)))))
+      (DocExtraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
   (doc-extract-source (read-file path)))

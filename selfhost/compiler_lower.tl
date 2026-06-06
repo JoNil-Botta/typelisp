@@ -3532,10 +3532,12 @@
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
     [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
-      (lower-block-list-reverse
-        (compiler-ir-block-cons
-          (IrBlock current-label (lower-instr-seq-from-reversed-list current-instrs))
-          blocks))]))
+      (let
+        [current-block : CompilerIrBlock
+          (IrBlock current-label (lower-instr-seq-from-reversed-list current-instrs))]
+        (lower-block-list-reverse-onto
+          blocks
+          (compiler-ir-block-cons current-block IrBlockNil)))]))
 
 (define (lower-state-add-functions
   [state : LowerState]
@@ -16024,9 +16026,8 @@
       (lower-supported-function-return-type? ctx (box-get inner))]
     [_ true]))
 
-(define (lower-stdlib-hash-string-logical-name? [logical-name : String]) : bool
+(define (lower-logical-name-has-suffix? [logical-name : String] [suffix : String]) : bool
   (let
-    [suffix : String "stdlib/hash.tl::hash-string"]
     [name-len : i64 (string-length logical-name)]
     [suffix-len : i64 (string-length suffix)]
     (and
@@ -16049,7 +16050,7 @@
   [params : AstParamList]
   [ret-ty : AstType]) : bool
   (and
-    (lower-stdlib-hash-string-logical-name? logical-name)
+    (lower-logical-name-has-suffix? logical-name "stdlib/hash.tl::hash-string")
     (and
       (tc-type-eq ret-ty (AstTyI64))
       (match params
@@ -16063,6 +16064,27 @@
                     (lower-stdlib-hash-string-param? ctx ty)])]
               [_ false]))]
         [_ false]))))
+
+(define (lower-runtime-return-function
+  [ctx : TcContext]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret-ty : AstType]
+  [call-state : LowerState]
+  [value : CompilerIrValue]) : ResultLowerFunction
+  (let
+    [return-state : LowerState
+      (lower-state-emit call-state (IrInstrReturn (IrSomeValue value)))]
+    (OkLowerFunction
+      (compiler-ir-function-cons
+        (IrFunction
+          logical-name
+          (lower-param-list ctx params 0)
+          ret-ty
+          (lower-state-next-var return-state)
+          (lower-state-build-blocks return-state))
+        (lower-state-functions return-state))
+      (lower-state-spans return-state))))
 
 (define (lower-stdlib-hash-string-function
   [ctx : TcContext]
@@ -16082,22 +16104,71 @@
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr call-state value _)
-              (let
-                [return-state : LowerState
-                  (lower-state-emit
-                    call-state
-                    (IrInstrReturn (IrSomeValue value)))]
-                (OkLowerFunction
-                  (compiler-ir-function-cons
-                    (IrFunction
-                      logical-name
-                      (lower-param-list ctx params 0)
-                      ret-ty
-                      (lower-state-next-var return-state)
-                      (lower-state-build-blocks return-state))
-                    (lower-state-functions return-state))
-                  (lower-state-spans return-state)))])]
+              (lower-runtime-return-function
+                ctx
+                logical-name
+                params
+                ret-ty
+                call-state
+                value)])]
         [(ErrLowerExpr message) (ErrLowerFunction message)])]))
+
+(define (lower-stdlib-string-eq-borrowed-signature?
+  [ctx : TcContext]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret-ty : AstType]) : bool
+  (and
+    (lower-logical-name-has-suffix?
+      logical-name
+      "stdlib/string.tl::string-eq-borrowed")
+    (and
+      (tc-type-eq ret-ty (AstTyBool))
+      (match params
+        [(AstParamCons (AstParam _ left-ty _) left-rest)
+          (match (box-get left-rest)
+            [(AstParamCons (AstParam _ right-ty _) right-rest)
+              (match (box-get right-rest)
+                [(AstParamNil)
+                  (and
+                    (lower-stdlib-hash-string-param? ctx left-ty)
+                    (lower-stdlib-hash-string-param? ctx right-ty))]
+                [_ false])]
+            [_ false])]
+        [_ false]))))
+
+(define (lower-stdlib-string-eq-borrowed-function
+  [ctx : TcContext]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret-ty : AstType]
+  [state : LowerState]) : ResultLowerFunction
+  (match (lower-string-fields state (IrValueVar 0))
+    [(LowerStringFields left-state left-ptr left-len)
+      (match (lower-string-fields left-state (IrValueVar 1))
+        [(LowerStringFields done-state right-ptr right-len)
+          (match (lower-runtime-call-values
+            done-state
+            "tl_string_eq"
+            (compiler-ir-value-cons
+              left-ptr
+              (compiler-ir-value-cons
+                left-len
+                (compiler-ir-value-cons
+                  right-ptr
+                  (compiler-ir-value-cons right-len IrValueNil))))
+            ret-ty)
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr call-state value _)
+                  (lower-runtime-return-function
+                    ctx
+                    logical-name
+                    params
+                    ret-ty
+                    call-state
+                    value)])]
+            [(ErrLowerExpr message) (ErrLowerFunction message)])])]))
 
 (define (lower-function
   [ctx : TcContext]
@@ -16150,33 +16221,44 @@
             params
             ret-ty
             state)
-          (match (lower-copy-inline-aggregate-params
+          (if (lower-stdlib-string-eq-borrowed-signature?
             ctx
-            state
-            env
-            type-env
-            params)
-            [(OkLowerEnv abi-state abi-env abi-type-env)
-              (match (lower-tail-expr
-                ctx
-                abi-state
-                abi-env
-                abi-type-env
-                body
-                ret-ty)
-                [(OkLowerState final-state)
-                  (OkLowerFunction
-                    (compiler-ir-function-cons
-                      (IrFunction
-                        logical-name
-                        (lower-param-list ctx params 0)
-                        ret-ty
-                        (lower-state-next-var final-state)
-                        (lower-state-build-blocks final-state))
-                      (lower-state-functions final-state))
-                    (lower-state-spans final-state))]
-                [(ErrLowerState message) (ErrLowerFunction message)])]
-            [(ErrLowerEnv message) (ErrLowerFunction message)]))
+            logical-name
+            params
+            ret-ty)
+            (lower-stdlib-string-eq-borrowed-function
+              ctx
+              logical-name
+              params
+              ret-ty
+              state)
+            (match (lower-copy-inline-aggregate-params
+              ctx
+              state
+              env
+              type-env
+              params)
+              [(OkLowerEnv abi-state abi-env abi-type-env)
+                (match (lower-tail-expr
+                  ctx
+                  abi-state
+                  abi-env
+                  abi-type-env
+                  body
+                  ret-ty)
+                  [(OkLowerState final-state)
+                    (OkLowerFunction
+                      (compiler-ir-function-cons
+                        (IrFunction
+                          logical-name
+                          (lower-param-list ctx params 0)
+                          ret-ty
+                          (lower-state-next-var final-state)
+                          (lower-state-build-blocks final-state))
+                        (lower-state-functions final-state))
+                      (lower-state-spans final-state))]
+                  [(ErrLowerState message) (ErrLowerFunction message)])]
+              [(ErrLowerEnv message) (ErrLowerFunction message)])))
         (ErrLowerFunction
           (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 

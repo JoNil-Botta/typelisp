@@ -14,7 +14,7 @@
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType (Box TcTypeEnv))
-  (TcTypeCache StringI64Map (Array AstType) StringI64Map (Box TcTypeEnv)))
+  (TcTypeCache StringI64Map (Array AstType) (Array i64) StringI64Map (Box TcTypeEnv)))
 
 (defenum TcContext
   (TcContext AstProgram CompilerSymbols CompilerRegistries String))
@@ -651,9 +651,6 @@
 (define (tc-unsafe-decl-marker-name [name : String]) : String
   (string-append " __tl_unsafe_decl:" name))
 
-(define (tc-unsafe-cache-key [name : String]) : String
-  (string-append " __tl_unsafe_cache:" name))
-
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind (tc-bind env (tc-unsafe-decl-marker-name name) (AstTyUnit)) name ty))
 
@@ -665,12 +662,9 @@
 (define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ shadows rest)
+    [(TcTypeCache ids _ unsafe-flags _ rest)
       (match (string-i64-map-get ids name)
-        [(StringI64MapFound _)
-          (match (string-i64-map-get shadows (tc-unsafe-cache-key name))
-            [(StringI64MapFound flag) (= flag 1)]
-            [(StringI64MapMissing) false])]
+        [(StringI64MapFound index) (= (array-ref unsafe-flags index) 1)]
         [(StringI64MapMissing) false])]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
@@ -681,7 +675,7 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-cache-count (box-get rest))]))
+    [(TcTypeCache _ _ _ _ rest) (tc-env-cache-count (box-get rest))]))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -691,8 +685,10 @@
 (define (tc-env-cache-add
   [ids : StringI64Map]
   [values : (Array AstType)]
+  [unsafe-flags : (Array i64)]
   [name : String]
-  [ty : AstType]) : StringI64Map
+  [ty : AstType]
+  [unsafe : bool]) : StringI64Map
   (match (string-i64-map-get ids name)
     [(StringI64MapFound _) ids]
     [(StringI64MapMissing)
@@ -700,20 +696,35 @@
         [next : i64 (string-i64-map-len ids)]
         (begin
           (array-set! values next ty)
+          (array-set!
+            unsafe-flags
+            next
+            (if unsafe
+              1
+              0))
           (string-i64-map-put ids name next)))]))
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
   [ids : StringI64Map]
-  [values : (Array AstType)]) : StringI64Map
+  [values : (Array AstType)]
+  [unsafe-flags : (Array i64)]) : StringI64Map
   (match env
     [(TcTypeNil) ids]
     [(TcTypeBind name ty rest)
       (tc-env-cache-fill
         (box-get rest)
-        (tc-env-cache-add ids values name ty)
-        values)]
-    [(TcTypeCache _ _ _ rest) (tc-env-cache-fill (box-get rest) ids values)]))
+        (tc-env-cache-add
+          ids
+          values
+          unsafe-flags
+          name
+          ty
+          (tc-binding-unsafe-marker-head? (box-get rest) name))
+        values
+        unsafe-flags)]
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-env-cache-fill (box-get rest) ids values unsafe-flags)]))
 
 (define (tc-env-default-shadow-count [env : TcTypeEnv]) : i64
   (match env
@@ -722,7 +733,7 @@
       (if (string-eq name (tc-default-boundary-name))
         0
         (+ 1 (tc-env-default-shadow-count (box-get rest))))]
-    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
+    [(TcTypeCache _ _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
 
 (define (tc-env-default-shadow-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
   (match env
@@ -733,55 +744,25 @@
         (tc-env-default-shadow-fill
           (box-get rest)
           (string-i64-map-put shadows name 1)))]
-    [(TcTypeCache _ _ _ rest)
-      (tc-env-default-shadow-fill (box-get rest) shadows)]))
-
-(define (tc-env-unsafe-cache-add
-  [shadows : StringI64Map]
-  [name : String]
-  [unsafe : bool]) : StringI64Map
-  (let
-    [key : String (tc-unsafe-cache-key name)]
-    (match (string-i64-map-get shadows key)
-      [(StringI64MapFound _) shadows]
-      [(StringI64MapMissing)
-        (string-i64-map-put
-          shadows
-          key
-          (if unsafe
-            1
-            0))])))
-
-(define (tc-env-unsafe-cache-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
-  (match env
-    [(TcTypeNil) shadows]
-    [(TcTypeBind name _ rest)
-      (tc-env-unsafe-cache-fill
-        (box-get rest)
-        (tc-env-unsafe-cache-add
-          shadows
-          name
-          (tc-binding-unsafe-marker-head? (box-get rest) name)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-unsafe-cache-fill (box-get rest) shadows)]))
+    [(TcTypeCache _ _ _ _ rest) (tc-env-default-shadow-fill (box-get rest) shadows)]))
 
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (let
     [count : i64 (tc-env-cache-count env)]
     [shadow-count : i64 (tc-env-default-shadow-count env)]
     [values : (Array AstType) (make-array AstType count)]
+    [unsafe-flags : (Array i64) (make-array i64 count)]
     [ids : StringI64Map
       (tc-env-cache-fill
         env
         (string-i64-map-with-capacity (tc-env-cache-capacity count))
-        values)]
+        values
+        unsafe-flags)]
     [shadows : StringI64Map
-      (tc-env-unsafe-cache-fill
+      (tc-env-default-shadow-fill
         env
-        (tc-env-default-shadow-fill
-          env
-          (string-i64-map-with-capacity
-            (tc-env-cache-capacity (+ count shadow-count)))))]
-    (TcTypeCache ids values shadows (box env))))
+        (string-i64-map-with-capacity (tc-env-cache-capacity shadow-count)))]
+    (TcTypeCache ids values unsafe-flags shadows (box env))))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
@@ -873,7 +854,7 @@
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
@@ -886,7 +867,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeCache _ _ _ _)
+    [(TcTypeCache _ _ _ _ _)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
@@ -1095,7 +1076,7 @@
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (ErrTcType (string-append "typecheck: unbound name " name))]
-    [(TcTypeCache ids values _ rest)
+    [(TcTypeCache ids values _ _ rest)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index) (OkTcType (array-ref values index))]
         [(StringI64MapMissing)
@@ -1119,7 +1100,7 @@
   [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup root name)]
-    [(TcTypeCache _ _ _ rest)
+    [(TcTypeCache _ _ _ _ rest)
       (tc-lookup-hygiene-global-scan root (box-get rest) name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
@@ -1146,7 +1127,7 @@
   [name : String]) : bool
   (match env
     [(TcTypeNil) (tc-binding-unsafe? root name)]
-    [(TcTypeCache _ _ _ rest)
+    [(TcTypeCache _ _ _ _ rest)
       (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
@@ -1159,7 +1140,7 @@
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
-    [(TcTypeCache _ _ _ _) (TcNoString)]
+    [(TcTypeCache _ _ _ _ _) (TcNoString)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-region-marker-name))
         (match ty
@@ -1206,13 +1187,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (tc-cleanup-owner-marker-head? (box-get rest) name)
@@ -1221,7 +1202,7 @@
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
-    [(TcTypeCache _ _ _ _) TcStringNil]
+    [(TcTypeCache _ _ _ _ _) TcStringNil]
     [(TcTypeBind key ty rest)
       (let
         [owners : TcStringList
@@ -1400,7 +1381,7 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
@@ -1423,7 +1404,7 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         seen-target
@@ -1459,7 +1440,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _) false]
+      [(TcTypeCache _ _ _ _ _) false]
       [(TcTypeBind key ty rest)
         (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
           seen-target
@@ -1912,7 +1893,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _) false]
+      [(TcTypeCache _ _ _ _ _) false]
       [(TcTypeBind key ty rest)
         (if (string-eq key (tc-region-marker-name))
           (match ty
@@ -3709,7 +3690,7 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
-    [(TcTypeCache _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
+    [(TcTypeCache _ _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
     [(TcTypeBind name ty rest)
       (TcSpmdEnvBind
         name
@@ -5275,7 +5256,7 @@
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ shadows _) (not (string-i64-map-contains? shadows name))]
+    [(TcTypeCache _ _ _ shadows _) (not (string-i64-map-contains? shadows name))]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         false
@@ -8442,7 +8423,7 @@
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
-    [(TcTypeCache _ _ _ _) OkTcUnit]
+    [(TcTypeCache _ _ _ _ _) OkTcUnit]
     [(TcTypeBind key ty rest)
       (cond
         [(or

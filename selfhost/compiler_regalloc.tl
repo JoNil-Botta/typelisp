@@ -2363,7 +2363,7 @@
       (compiler-reg-live-intervals func liveness)
       (compiler-reg-ineligible-vars-simd func liveness types))))
 
-;; Scalar register plan (#perf, opt level 3): cheap block-level live intervals,
+;; Scalar register plan (#perf, opt level 2): cheap block-level live intervals,
 ;; structural ineligibility that keeps call-spanning integers/handles in
 ;; callee-saved registers, and float-call-spanning exclusion for the caller-saved
 ;; XMM pool.

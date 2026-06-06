@@ -1969,7 +1969,7 @@ Example:
   the current directory upward.
 - Package builds accept `--profile dev|release` and `--release`. The default
   profile is `release`; `--release` is an alias for `--profile release`.
-  `--opt-level 0|1|2|3` overrides the profile's optimizer level. Without an
+  `--opt-level 0|1|2` overrides the profile's optimizer level. Without an
   explicit level, `release` uses level 2 and `dev` uses level 0.
 - Build outputs are written under
   `target/typelisp/<profile>/<package-name>/` in the package root. `bin`

@@ -8056,10 +8056,10 @@
     [(StringI64MapMissing) (OptNoFunction)]))
 
 ;; ---------------------------------------------------------------------------
-;; Function inlining (opt level 3 only). Splices the body of small single-block
+;; Function inlining (opt level 2 only). Splices the body of small single-block
 ;; leaf callees into their call sites, removing call/return overhead and exposing
 ;; the callee's instructions to the caller's folding/DCE/GVN and to register
-;; allocation. Reserved for opt3 (the quality build) so the cheap opt1/opt2
+;; allocation. Reserved for opt2 (the quality build) so the cheap opt1
 ;; self-compile path pays nothing for it.
 ;;
 ;; Determinism: fresh var ids are minted from the caller function's `vars`

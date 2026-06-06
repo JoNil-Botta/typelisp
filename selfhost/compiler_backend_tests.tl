@@ -1877,10 +1877,14 @@
           (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
           (compiler-backend-string-contains? asm "    call _write\n")
           (compiler-backend-string-contains? asm "    call _read\n")
-          (compiler-backend-string-contains?
-            asm
-            "    .extern SystemFunction036\n")
-          (compiler-backend-string-contains? asm "    call SystemFunction036\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    .extern SystemFunction036\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    call SystemFunction036\n"))
           (compiler-backend-string-contains? asm "    call _lseeki64\n")
           (compiler-backend-string-contains? asm "tl_process_output:\n"))
         (and
@@ -1890,7 +1894,8 @@
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n")
             (compiler-backend-string-contains? asm "tl_int_to_string:\n")
-            (compiler-backend-string-contains? asm "tl_random_system_seed:\n")
+            (not
+              (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
             (not
               (compiler-backend-string-contains?
                 asm

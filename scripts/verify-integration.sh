@@ -860,9 +860,7 @@ run_windows_backend_fixtures() {
         "movq %rdx, .L_tl_argv(%rip)" \
         ".extern VirtualAlloc" \
         ".extern exit" \
-        ".extern SystemFunction036" \
         "call VirtualAlloc" \
-        "call SystemFunction036" \
         "movq %rcx, %rbx" \
         "movq %r12, %rcx" \
         "movq %rcx, %r10" \
@@ -911,6 +909,8 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_stdin_eof" \
         ".extern .L_tl_flush_stdout" \
         ".extern tl_random_system_seed" \
+        ".extern SystemFunction036" \
+        "call SystemFunction036" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
         ".L_tl_string_concat_copy_b:" \

@@ -3442,7 +3442,6 @@ stdlib code needs capabilities that are not expressible as ordinary FFI calls.
 | `tl_div_abort` | Integer division/remainder trap |
 | `tl_shift_abort` | Shift-count trap |
 | `tl_process_output` | Spawn a process and capture output |
-| `tl_random_system_seed` | Fetch system entropy for random seeding |
 | `tl_windows_setup_instances` | Windows SetupConfiguration enumeration |
 | `tl_windows_sdk_registry_install` | Windows SDK registry lookup |
 

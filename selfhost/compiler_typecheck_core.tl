@@ -12892,6 +12892,142 @@
         moved)]
     [(TcNoString) moved]))
 
+(define (tc-move-check-lambda-owner-captures-scan
+  [ctx : TcContext]
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [bound : TcStringList]
+  [seen : TcStringList]
+  [body : AstExpr]) : TcMoveResult
+  (match env
+    [(TcTypeNil) (OkTcMove moved)]
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-move-check-lambda-owner-captures-scan
+        ctx
+        root
+        (box-get rest)
+        locals
+        loop-carried
+        moved
+        bound
+        seen
+        body)]
+    [(TcTypeBind key ty rest)
+      (let
+        [rest-env : TcTypeEnv (box-get rest)]
+        (cond
+          [(or
+              (string-eq key (tc-region-marker-name))
+              (or
+                (string-eq key (tc-default-boundary-name))
+                (tc-cleanup-owner-marker-entry? key ty)))
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              seen
+              body)]
+          [(tc-string-list-contains seen key)
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              seen
+              body)]
+          [(not (tc-moved-contains? locals key))
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              (tc-string-list-add seen key)
+              body)]
+          [(not (tc-expr-uses-free-name? body key bound))
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              (tc-string-list-add seen key)
+              body)]
+          [else
+            (match (tc-lookup root key)
+              [(OkTcType visible-ty)
+                (if (tc-type-consuming-by-value-now? ctx visible-ty)
+                  (if (or
+                    (tc-moved-contains? moved key)
+                    (tc-moved-partial? moved key))
+                    (ErrTcMove (tc-move-use-message key))
+                    (if (tc-moved-contains? loop-carried key)
+                      (ErrTcMove (tc-move-loop-carried-message key))
+                      (tc-move-check-lambda-owner-captures-scan
+                        ctx
+                        root
+                        rest-env
+                        locals
+                        loop-carried
+                        (tc-moved-add moved key)
+                        bound
+                        (tc-string-list-add seen key)
+                        body)))
+                  (tc-move-check-lambda-owner-captures-scan
+                    ctx
+                    root
+                    rest-env
+                    locals
+                    loop-carried
+                    moved
+                    bound
+                    (tc-string-list-add seen key)
+                    body))]
+              [(ErrTcType _)
+                (tc-move-check-lambda-owner-captures-scan
+                  ctx
+                  root
+                  rest-env
+                  locals
+                  loop-carried
+                  moved
+                  bound
+                  (tc-string-list-add seen key)
+                  body)])]))]))
+
+(define (tc-move-check-lambda-owner-captures
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [params : AstParamList]
+  [body : AstExpr]) : TcMoveResult
+  (tc-move-check-lambda-owner-captures-scan
+    ctx
+    env
+    env
+    locals
+    loop-carried
+    moved
+    (tc-param-bound-names params)
+    TcStringNil
+    body))
+
 (define (tc-move-check-exprs-with-types
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13205,7 +13341,7 @@
           [(OkTcMoveBindings env2 moved2 locals2 loop-carried2)
             (tc-move-check-expr ctx env2 locals2 loop-carried2 moved2 body)]
           [(ErrTcMoveBindings message) (ErrTcMove message)]))]
-    [(AstExprLambda _ _ body-box)
+    [(AstExprLambda params _ body-box)
       (let
         [body : AstExpr (box-get body-box)]
         (match (tc-move-check-expr
@@ -13215,7 +13351,15 @@
           (tc-moved-empty)
           (tc-moved-clone moved)
           body)
-          [(OkTcMove _) (OkTcMove moved)]
+          [(OkTcMove _)
+            (tc-move-check-lambda-owner-captures
+              ctx
+              env
+              locals
+              loop-carried
+              moved
+              params
+              body)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprTuple exprs)
       (match (tc-expr-list-types ctx env exprs)

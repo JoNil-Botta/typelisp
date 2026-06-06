@@ -762,7 +762,7 @@
         module
         name
         (lower-decl-logical-name entry-path decl-path module name))]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (lower-name-env-add-module-binding
         names
         module
@@ -870,7 +870,7 @@
   [module : String]
   [decl : AstDecl]) : LowerNameEnv
   (match decl
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (if (lower-name-has-clone-prefix? name)
         (lower-name-env-add-module-binding
           names
@@ -963,7 +963,7 @@
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
         (box names))]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (LowerNameBind
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
@@ -1196,7 +1196,7 @@
         name
         (lower-current-decl-logical-name-cache name-cache module name)
         (box names))]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (LowerNameBind
         name
         (lower-current-decl-logical-name-cache name-cache module name)
@@ -1263,7 +1263,7 @@
   (match decl
     [(AstDeclDef name _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclDefDispatch name _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
@@ -1429,7 +1429,7 @@
               entry-path
               next-module
               out)]
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (lower-function-set-from-decls-in-module
               rest
               rest-paths
@@ -2261,7 +2261,9 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (lower-clone-roots-expr ctx env decls able roots index))]))
+        (lower-clone-roots-expr ctx env decls able roots index))]
+    [(AstExprSyscall args)
+      (lower-clone-roots-expr-list ctx env decls able roots args)]))
 
 (define (lower-clone-roots-decls-in-module
   [ctx : TcContext]
@@ -2311,7 +2313,7 @@
                   expr)
                 names
                 module))]
-          [(AstDeclDefFn _ params ret body-box)
+          [(AstDeclDefFn _ params ret body-box _)
             (let
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
               [body : AstExpr (box-get body-box)]
@@ -2754,7 +2756,9 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (lower-reach-expr all-functions names state index))]))
+        (lower-reach-expr all-functions names state index))]
+    [(AstExprSyscall args)
+      (lower-reach-expr-list all-functions names state args)]))
 
 (define (lower-reach-global-decls
   [all-functions : StringI64Map]
@@ -2803,23 +2807,25 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+          [(AstDeclDefFn _ _ _ _ _) (+ 1 (lower-function-decl-count rest))]
           [(AstDeclComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+                [(AstDeclDefFn _ _ _ _ _)
+                  (+ 1 (lower-function-decl-count rest))]
                 [_ (lower-function-decl-count rest)]))]
           [(AstDeclUnsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+                [(AstDeclDefFn _ _ _ _ _)
+                  (+ 1 (lower-function-decl-count rest))]
                 [(AstDeclComptimeDecl _ comptime-box)
                   (let
                     [template : AstDecl (box-get comptime-box)]
                     (match template
-                      [(AstDeclDefFn _ _ _ _)
+                      [(AstDeclDefFn _ _ _ _ _)
                         (+ 1 (lower-function-decl-count rest))]
                       [_ (lower-function-decl-count rest)]))]
                 [_ (lower-function-decl-count rest)]))]
@@ -2878,7 +2884,7 @@
               entry-path
               next-module
               index)]
-          [(AstDeclDefFn name _ _ body-box)
+          [(AstDeclDefFn name _ _ body-box _)
             (let
               [body : AstExpr (box-get body-box)]
               (lower-function-body-index-from-decls-in-module
@@ -2903,7 +2909,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn name _ _ body-box)
+                [(AstDeclDefFn name _ _ body-box _)
                   (let
                     [body : AstExpr (box-get body-box)]
                     (lower-function-body-index-from-decls-in-module
@@ -3203,7 +3209,7 @@
                 next-module
                 reachable
                 dispatch-variants))]
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (if (lower-function-kept-by-reach-or-dispatch?
               reachable
               dispatch-variants
@@ -3269,7 +3275,7 @@
                 next-module
                 reachable
                 dispatch-variants))]
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (if (lower-function-kept-by-reach-or-dispatch?
               reachable
               dispatch-variants
@@ -9351,6 +9357,7 @@
       (let
         [index : AstExpr (box-get index-box)]
         (lower-xgetbv ctx state env type-env index))]
+    [(AstExprSyscall args) (lower-syscall ctx state env type-env args)]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -12532,6 +12539,53 @@
               arr
               "lower: array-push! requires a dynamic array"))])]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
+
+;; Lower each syscall operand and widen it to i64 (the kernel reads the full
+;; 64-bit registers). Mirrors `lower-args` but inserts the cast.
+(define (lower-syscall-args
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : ResultLowerArgs
+  (match args
+    [(AstExprNil) (OkLowerArgs state IrValueNil)]
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (box-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match (lower-expr ctx state env type-env arg)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr arg-state value value-ty)
+                (match (lower-cast-value arg-state value value-ty (AstTyI64))
+                  [(LowerExpr cast-state cast-value _)
+                    (match (lower-syscall-args ctx cast-state env type-env rest)
+                      [(OkLowerArgs rest-state rest-values)
+                        (OkLowerArgs
+                          rest-state
+                          (compiler-ir-value-cons cast-value rest-values))]
+                      [(ErrLowerArgs message) (ErrLowerArgs message)])])])]
+          [(ErrLowerExpr message) (ErrLowerArgs message)]))]))
+
+(define (lower-syscall
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : ResultLowerExpr
+  (match (lower-syscall-args ctx state env type-env args)
+    [(OkLowerArgs args-state values)
+      (match (lower-state-alloc-var args-state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit
+                allocated
+                (IrInstrSyscall var-id (compiler-ir-call-args-from-list values)))
+              (IrValueVar var-id)
+              (AstTyI64)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-args
   [ctx : TcContext]
@@ -16411,10 +16465,34 @@
       (compiler-source-spans-insert spans name span)]
     [(CompilerNoSourceSpan) spans]))
 
-;; Direct lowering is now comfortably below the self-build memory budget, so
-;; avoid the old per-function scratch arena and deep clone. Keep only
-;; function-level source spans to preserve the previous backend diagnostic
-;; surface and emitted assembly.
+;; Reusable per-function lowering scratch arena (#1917). Lowering one function
+;; allocates a fresh `LowerState` plus the transient IR/AST-walk scratch the bump
+;; allocator never frees; summed across cli.tl's ~5000 functions this transient
+;; dominates the lower phase's peak live (the headline self-build memory number).
+;; We lower each function inside one shared scratch arena and `arena-rewind` it
+;; after deep-`clone`ing ONLY the produced IR function list back into the
+;; enclosing (program) arena -- reclaiming the per-function transient before the
+;; next function. The arena is created lazily once and reused (rewound, never
+;; remapped) per function, mirroring the optimizer's per-function escape
+;; (`optimize-function-escaping`). The spans side-table insertion is recomputed
+;; in the enclosing arena (it never affects emitted assembly, only backend-error
+;; source locations). `lower-function-escaping` is only ever called at decl
+;; granularity (never re-entrant within `lower-function`'s body walk), so a
+;; single shared mark/rewind region is sound. Output stays byte-identical: the
+;; clone is a structural deep copy, so the escaped IR lowers to the same assembly
+;; as the in-place IR did.
+(define lower-scratch-arena : i64
+  0)
+
+(define (lower-scratch-arena-get) : i64
+  (if (= lower-scratch-arena 0)
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (set! lower-scratch-arena scratch)
+        scratch))
+    lower-scratch-arena))
+
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -16426,20 +16504,58 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (match (lower-function
-    ctx
-    top-env
-    type-cache
-    logical-name
-    params
-    ret
-    body
-    spans
-    names
-    mode)
-    [(OkLowerFunction fns _function-spans)
-      (OkLowerFunction fns (lower-record-function-span spans logical-name body))]
-    [(ErrLowerFunction message) (ErrLowerFunction message)]))
+  (let
+    [enclosing : i64 (arena-current)]
+    [scratch : i64 (lower-scratch-arena-get)]
+    (begin
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [mark : i64 (arena-mark)]
+        (match (lower-function
+          ctx
+          top-env
+          type-cache
+          logical-name
+          params
+          ret
+          body
+          spans
+          names
+          mode)
+          [(OkLowerFunction fns _function-spans)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (unsafe
+                  (arena-set! enclosing))
+                (let
+                  [escaped-fns : CompilerIrFunctionList
+                    (compiler-ir-clone-function-list fns)]
+                  [escaped-spans : CompilerSourceSpans
+                    (lower-record-function-span spans logical-name body)]
+                  [new-enclosing : i64 (arena-current)]
+                  (begin
+                    (unsafe
+                      (arena-set! scratch-head)
+                      (arena-rewind mark)
+                      (arena-set! new-enclosing))
+                    (OkLowerFunction escaped-fns escaped-spans)))))]
+          [(ErrLowerFunction message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (unsafe
+                  (arena-set! enclosing))
+                (let
+                  [escaped-message : CompilerDiagnostic (clone message)]
+                  [new-enclosing : i64 (arena-current)]
+                  (begin
+                    (unsafe
+                      (arena-set! scratch-head)
+                      (arena-rewind mark)
+                      (arena-set! new-enclosing))
+                    (ErrLowerFunction escaped-message)))))])))))
 
 (define (lower-struct-cleanup-param-name) : String
   "__tl_cleanup_value")
@@ -17064,7 +17180,7 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (match decl
-    [(AstDeclDefFn _ params ret body-box)
+    [(AstDeclDefFn _ params ret body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (lower-function-escaping
@@ -17404,7 +17520,8 @@
                       (tc-type-without-regions (tc-resolve-type decl-ctx ty))
                       (ast-extern-metadata-abi metadata)
                       (ast-extern-metadata-symbol metadata)
-                      (ast-extern-metadata-link-inputs metadata))
+                      (ast-extern-metadata-link-inputs metadata)
+                      false)
                     externs)
                   spans
                   names
@@ -17413,7 +17530,7 @@
                   dispatch-variants
                   mode
                   module)))]
-          [(AstDeclDefFn name params ret body-box)
+          [(AstDeclDefFn name params ret body-box export)
             (let
               [body : AstExpr (box-get body-box)]
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
@@ -17449,29 +17566,47 @@
                     name-cache
                     mode)
                     [(OkLowerFunction lowered-functions function-spans)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-detail-finish
-                            "function"
-                            logical-name))
-                        (lower-decls-in-module
-                          ctx
-                          top-env
-                          local-top-env
-                          rest
-                          globals
-                          (lower-function-list-append
-                            lowered-functions
-                            functions)
-                          externs
-                          function-spans
-                          names
-                          name-cache
-                          type-cache
-                          dispatch-variants
-                          mode
-                          module))]
+                      (let
+                        [next-externs : CompilerIrExternList
+                          (match export
+                            [(AstFnNoExport) externs]
+                            [(AstFnExport symbol)
+                              (compiler-ir-extern-cons
+                                (IrExtern
+                                  logical-name
+                                  (ast-ty-func
+                                    (tc-type-list-without-regions
+                                      (tc-param-type-list decl-ctx params))
+                                    (tc-type-without-regions
+                                      (tc-resolve-type decl-ctx ret)))
+                                  (AstExternAbiC)
+                                  symbol
+                                  AstExternLinkInputNil
+                                  true)
+                                externs)])]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-detail-finish
+                              "function"
+                              logical-name))
+                          (lower-decls-in-module
+                            ctx
+                            top-env
+                            local-top-env
+                            rest
+                            globals
+                            (lower-function-list-append
+                              lowered-functions
+                              functions)
+                            next-externs
+                            function-spans
+                            names
+                            name-cache
+                            type-cache
+                            dispatch-variants
+                            mode
+                            module)))]
                     [(ErrLowerFunction message)
                       (begin
                         (cfg
@@ -21111,7 +21246,9 @@
       (match program
         [(IrProgram _ _ externs)
           (match externs
-            [(IrExternCons (IrExtern name _ abi symbol link-inputs) IrExternNil)
+            [(IrExternCons
+                (IrExtern name _ abi symbol link-inputs _)
+                IrExternNil)
               (and
                 (string-eq name "ffi-add")
                 (and
@@ -23596,7 +23733,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefFn found _ _ _)
+          [(AstDeclDefFn found _ _ _ _)
             (if (string-eq found name)
               true
               (lower-test-decl-list-defines? rest name))]

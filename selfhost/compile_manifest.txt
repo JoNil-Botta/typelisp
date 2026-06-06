@@ -273,14 +273,15 @@ contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
 contains|_tl_compiler_backend_runtime_windows_alloc_functions:
-contains|_tl_compiler_backend_runtime_file_open_status_functions:
-contains|_tl_compiler_backend_runtime_file_close_status_functions:
-contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
-contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
+contains|_tl_compiler_backend_runtime_fs_functions:
 contains|_tl_compiler_backend_runtime_env_var_value_functions:
 contains|foreign_exact
 contains|backend: too many call args
+not-contains|_tl_compiler_backend_runtime_file_open_status_functions:
+not-contains|_tl_compiler_backend_runtime_file_close_status_functions:
+not-contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
+not-contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
+not-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
@@ -898,6 +899,14 @@ contains|_tl_lsp_analyze_document:
 contains|Content-Length
 contains|textDocument/publishDiagnostics
 contains|Method not found
+end
+
+case|selfhost_lsp_frame_smoke|selfhost/lsp_frame_smoke.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
+contains|_tl_lsp_diagnostic_metadata_smoke:
+contains|_tl_lsp_compiler_diagnostic_code_ok_question:
+contains|_tl_lsp_compiler_diagnostic_uncoded_ok_question:
+contains|_tl_compiler_diagnostic_code_or_empty:
 end
 
 case|selfhost_parse|selfhost/parse.tl|assembly|exactly-one|direct

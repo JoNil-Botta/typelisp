@@ -276,7 +276,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn name params ret body-box)
+                [(AstDeclDefFn name params ret body-box _)
                   (let
                     [body : AstExpr (box-get body-box)]
                     (if (spec-param-list-has-comptime? params)
@@ -285,7 +285,7 @@
                         (spec-collect-templates rest))
                       (spec-collect-templates rest)))]
                 [_ (spec-collect-templates rest)]))]
-          [(AstDeclDefFn name params ret body-box)
+          [(AstDeclDefFn name params ret body-box _)
             (let
               [body : AstExpr (box-get body-box)]
               (if (spec-param-list-has-comptime? params)
@@ -485,7 +485,7 @@
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
     [(AstDeclDef name _ _) (SpecSomeString name)]
-    [(AstDeclDefFn name _ _ _) (SpecSomeString name)]
+    [(AstDeclDefFn name _ _ _ _) (SpecSomeString name)]
     [(AstDeclDefEnum name _) (SpecSomeString name)]
     [(AstDeclDefEnumLifetimes name _ _) (SpecSomeString name)]
     [(AstDeclDefStruct name _ _ _) (SpecSomeString name)]
@@ -628,6 +628,17 @@
                 (gen-variant-list-eq? a-rest b-rest)))]
           [_ false]))]))
 
+(define (gen-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
+  (match a
+    [(AstFnNoExport)
+      (match b
+        [(AstFnNoExport) true]
+        [_ false])]
+    [(AstFnExport a-symbol)
+      (match b
+        [(AstFnExport b-symbol) (string-eq a-symbol b-symbol)]
+        [_ false])]))
+
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
   (match a
     [(AstDeclDef a-name a-ty a-value-box)
@@ -643,18 +654,22 @@
                   (gen-maybe-type-eq? a-ty b-ty)
                   (gen-expr-eq? a-value b-value))))]
           [_ false]))]
-    [(AstDeclDefFn a-name a-params a-ret a-body-box)
+    [(AstDeclDefFn a-name a-params a-ret a-body-box a-export)
       (let
         [a-body : AstExpr (box-get a-body-box)]
         (match b
-          [(AstDeclDefFn b-name b-params b-ret b-body-box)
+          [(AstDeclDefFn b-name b-params b-ret b-body-box b-export)
             (let
               [b-body : AstExpr (box-get b-body-box)]
               (and
                 (string-eq a-name b-name)
                 (and
                   (gen-param-list-eq? a-params b-params)
-                  (and (ctfe-type-eq a-ret b-ret) (gen-expr-eq? a-body b-body)))))]
+                  (and
+                    (ctfe-type-eq a-ret b-ret)
+                    (and
+                      (gen-expr-eq? a-body b-body)
+                      (gen-fn-export-eq? a-export b-export))))))]
           [_ false]))]
     [(AstDeclDefEnum a-name a-variants)
       (match b
@@ -1444,6 +1459,50 @@
       (set! buf (gen-tb2 buf "-remove-borrowed map (& key)))\n" ""))
       (set!
         buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-insert-into-empty\n  [slots : (Array "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          slot
+          ")]\n  [capacity : i64]\n  [key : String]\n  [value : "
+          value-type
+          "]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
+          prefix
+          "-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "      [walked : i64 0]\n      [done : bool false]\n      (begin\n        (while (if done false (< walked capacity))\n          (match (array-ref slots cursor)\n            [("
+          empty
+          ")\n              (begin\n                (array-set! slots cursor ("
+          occupied
+          " key value hash))\n                (set! done true))]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            [_\n              (begin\n                (set! cursor ("
+          prefix
+          "-next-index cursor capacity))\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "                (set! walked (+ walked 1)))]))\n        unit))))\n"
+          ""))
+      (set!
+        buf
         (gen-tb3 buf "(define (" prefix "-rehash-from\n  [src : (Array "))
       (set!
         buf
@@ -1464,37 +1523,11 @@
         (gen-tb4
           buf
           occupied
-          " key value hash)\n          (match ("
+          " key value hash)\n          ("
           prefix
-          "-probe-borrowed dst dst-capacity (& key) hash)\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-absent
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-found
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-full
-          ") unit])]\n        [("
-          empty
-          ") unit]\n        [("))
-      (set! buf (gen-tb3 buf tombstone ") unit])\n      (" prefix))
+          "-insert-into-empty dst dst-capacity key value hash)]\n        [("))
+      (set! buf (gen-tb3 buf empty ") unit]\n        [(" tombstone))
+      (set! buf (gen-tb2 buf ") unit])\n      (" prefix))
       (set!
         buf
         (gen-tb2
@@ -2197,6 +2230,50 @@
         (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
       (set!
         buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-insert-into-empty\n  [slots : (Array "))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          slot
+          ")]\n  [capacity : i64]\n  [key : i64]\n  [value : "
+          value-type
+          "]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
+          prefix
+          "-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "      [walked : i64 0]\n      [done : bool false]\n      (begin\n        (while (if done false (< walked capacity))\n          (match (array-ref slots cursor)\n            [("
+          empty
+          ")\n              (begin\n                (array-set! slots cursor ("
+          occupied
+          " key value hash))\n                (set! done true))]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            [_\n              (begin\n                (set! cursor ("
+          prefix
+          "-next-index cursor capacity))\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "                (set! walked (+ walked 1)))]))\n        unit))))\n"
+          ""))
+      (set!
+        buf
         (gen-tb3 buf "(define (" prefix "-rehash-from\n  [src : (Array "))
       (set!
         buf
@@ -2217,37 +2294,11 @@
         (gen-tb4
           buf
           occupied
-          " key value hash)\n          (match ("
+          " key value hash)\n          ("
           prefix
-          "-probe dst dst-capacity key hash)\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-absent
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-found
-          " slot)\n              (array-set! dst slot ("
-          occupied
-          " key value hash))]\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "            [("
-          probe-full
-          ") unit])]\n        [("
-          empty
-          ") unit]\n        [("))
-      (set! buf (gen-tb3 buf tombstone ") unit])\n      (" prefix))
+          "-insert-into-empty dst dst-capacity key value hash)]\n        [("))
+      (set! buf (gen-tb3 buf empty ") unit]\n        [(" tombstone))
+      (set! buf (gen-tb2 buf ") unit])\n      (" prefix))
       (set!
         buf
         (gen-tb2
@@ -3899,6 +3950,11 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-xgetbv rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (spec-rewrite-expr-list args templates state)
+        [(OkSpecExprList rewritten-args args-state)
+          (OkSpecExpr (ast-expr-syscall rewritten-args) args-state)]
+        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -4403,6 +4459,11 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (spec-substitute-values-expr-list args subs)
+        [(OkSpecSubExprList rewritten-args)
+          (OkSpecSubExpr (ast-expr-syscall rewritten-args))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -4994,6 +5055,11 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (spec-substitute-types-expr-list args subs)
+        [(OkSpecSubExprList rewritten-args)
+          (OkSpecSubExpr (ast-expr-syscall rewritten-args))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -5108,7 +5174,7 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecDecl (SpecSomeDecl (ast-decl-def name ty rewritten)) state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
-    [(AstDeclDefFn name params ret body-box)
+    [(AstDeclDefFn name params ret body-box export)
       (let
         [body : AstExpr (box-get body-box)]
         (if (spec-param-list-has-comptime? params)
@@ -5119,7 +5185,8 @@
             state)
             [(OkSpecExpr rewritten state2)
               (OkSpecDecl
-                (SpecSomeDecl (ast-decl-def-fn name params ret rewritten))
+                (SpecSomeDecl
+                  (ast-decl-def-fn-export name params ret rewritten export))
                 state2)]
             [(ErrSpecExpr diag) (ErrSpecDecl diag)])))]
     [(AstDeclUnsafe inner-box)
@@ -5217,7 +5284,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
@@ -5225,13 +5292,13 @@
                   (let
                     [template : AstDecl (box-get template-box)]
                     (match template
-                      [(AstDeclDefFn fn-name _ _ _)
+                      [(AstDeclDefFn fn-name _ _ _ _)
                         (if (string-eq fn-name name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
-          [(AstDeclDefFn fn-name _ _ _)
+          [(AstDeclDefFn fn-name _ _ _ _)
             (if (string-eq fn-name name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
@@ -5239,7 +5306,7 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
@@ -5387,7 +5454,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
@@ -5395,7 +5462,7 @@
                   (let
                     [template : AstDecl (box-get template-box)]
                     (match template
-                      [(AstDeclDefFn fn-name _ _ _)
+                      [(AstDeclDefFn fn-name _ _ _ _)
                         (if (string-eq fn-name name)
                           (+
                             1
@@ -5403,7 +5470,7 @@
                           (compiler-specialize-decl-list-count-defs rest name))]
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
-          [(AstDeclDefFn fn-name _ _ _)
+          [(AstDeclDefFn fn-name _ _ _ _)
             (if (string-eq fn-name name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
@@ -5411,7 +5478,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]

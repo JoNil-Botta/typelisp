@@ -297,7 +297,7 @@
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
     [(AstDeclDef name _ _) (string-eq name "main")]
-    [(AstDeclDefFn name _ _ _) (string-eq name "main")]
+    [(AstDeclDefFn name _ _ _ _) (string-eq name "main")]
     [(AstDeclDefMacro _ _ _ _) false]
     [(AstDeclUnsafe inner-box)
       (let
@@ -875,7 +875,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tltest-reach-mark-expr index names))]))
+        (tltest-reach-mark-expr index names))]
+    [(AstExprSyscall args) (tltest-reach-mark-expr-list args names)]))
 
 (define (tltest-reach-mark-tests-from
   [tests : (Array InlineTest)]
@@ -905,7 +906,7 @@
         (if (string-i64-map-contains? names name)
           (tltest-reach-mark-expr expr names)
           names))]
-    [(AstDeclDefFn name _ _ body-box)
+    [(AstDeclDefFn name _ _ body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (if (string-i64-map-contains? names name)
@@ -958,7 +959,7 @@
 (define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
   (match decl
     [(AstDeclDef name _ _) (string-i64-map-contains? names name)]
-    [(AstDeclDefFn name _ _ _) (string-i64-map-contains? names name)]
+    [(AstDeclDefFn name _ _ _ _) (string-i64-map-contains? names name)]
     [(AstDeclExtern name _ _) (string-i64-map-contains? names name)]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
@@ -1049,7 +1050,7 @@
 (define (tltest-decl-name [decl : AstDecl]) : String
   (match decl
     [(AstDeclDef name _ _) name]
-    [(AstDeclDefFn name _ _ _) name]
+    [(AstDeclDefFn name _ _ _ _) name]
     [(AstDeclExtern name _ _) name]
     [(AstDeclUnsafe inner-box)
       (let

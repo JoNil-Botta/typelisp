@@ -57,9 +57,9 @@
       [(ErrCompilerSymbols message) (ErrTcType message)])))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
-  (match (parse-ast-source src)
-    [(OkAstProgram program) (typecheck-compiler-program program)]
-    [(ErrAstProgram message) (ErrCompilerTypecheck (tc-diag-at-start message))]))
+  (match (parse-ast-source-diagnostic "" src)
+    [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
+    [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)]))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string-append
@@ -164,6 +164,23 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-error-code-ok?
+  [src : String]
+  [want-code : String]
+  [want-category : String]) : bool
+  (match (typecheck-compiler-source src)
+    [(ErrCompilerTypecheck diag)
+      (match (compiler-diagnostic-code diag)
+        [(CompilerDiagnosticSomeString code)
+          (if (string-eq code want-code)
+            (match (compiler-diagnostic-category diag)
+              [(CompilerDiagnosticSomeString category)
+                (string-eq category want-category)]
+              [CompilerDiagnosticNoString false])
+            false)]
+        [CompilerDiagnosticNoString false])]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-program-error-ok?
   [program : AstProgram]
   [want : String]) : bool
@@ -193,6 +210,17 @@
 (define (compiler-typecheck-branch-mismatch-source) : String
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
+
+(define (compiler-typecheck-diagnostic-code-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-code-ok?
+      "(define (main) : i64 (+ 1))"
+      (compiler-diagnostic-code-parse)
+      "parse")
+    (compiler-typecheck-error-code-ok?
+      (compiler-typecheck-branch-mismatch-source)
+      (compiler-diagnostic-code-typecheck)
+      "typecheck")))
 
 (define (compiler-typecheck-type-parameter-source) : String
   "(define (id [x : T]) : T x)")
@@ -6574,6 +6602,9 @@
     (if (compiler-typecheck-move-tests-ok?)
       unit
       (panic "typecheck: move checker tests failed"))
+    (if (compiler-typecheck-diagnostic-code-tests-ok?)
+      unit
+      (panic "typecheck: diagnostic code tests failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")

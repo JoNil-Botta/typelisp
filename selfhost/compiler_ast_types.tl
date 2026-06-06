@@ -152,6 +152,10 @@
   (AstExternLinkInputNil)
   (AstExternLinkInputCons AstExternLinkInput (Box AstExternLinkInputList)))
 
+(defenum AstFnExport
+  (AstFnNoExport)
+  (AstFnExport String))
+
 (defenum AstExternMetadata
   (AstExternMetadata AstExternAbi String AstExternLinkInputList bool))
 
@@ -292,7 +296,11 @@
   (AstExprCpuIdEbx (Box AstExpr) (Box AstExpr))
   (AstExprCpuIdEcx (Box AstExpr) (Box AstExpr))
   (AstExprCpuIdEdx (Box AstExpr) (Box AstExpr))
-  (AstExprXgetbv (Box AstExpr)))
+  (AstExprXgetbv (Box AstExpr))
+  ;; Raw Linux x86_64 syscall. `(syscall number a0 .. a5)` lowers directly to a
+  ;; `syscall` instruction: the number plus up to six arguments. Returns the raw
+  ;; kernel result in an i64 (negative is `-errno`); callers translate errno.
+  (AstExprSyscall AstExprList))
 
 (defenum AstExprList
   (AstExprNil)
@@ -340,7 +348,7 @@
 (defenum AstDecl
   (AstDeclModule String)
   (AstDeclDef String AstMaybeType (Box AstExpr))
-  (AstDeclDefFn String AstParamList AstType (Box AstExpr))
+  (AstDeclDefFn String AstParamList AstType (Box AstExpr) AstFnExport)
   (AstDeclDefMacro String AstMacroParamList AstType (Box AstExpr))
   (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
@@ -632,6 +640,9 @@
 (define (ast-expr-xgetbv [index : AstExpr]) : AstExpr
   (AstExprXgetbv (box index)))
 
+(define (ast-expr-syscall [args : AstExprList]) : AstExpr
+  (AstExprSyscall args))
+
 (define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
   (AstExportItemCons head (box rest)))
 
@@ -654,7 +665,15 @@
   [params : AstParamList]
   [ret : AstType]
   [body : AstExpr]) : AstDecl
-  (AstDeclDefFn name params ret (box body)))
+  (AstDeclDefFn name params ret (box body) AstFnNoExport))
+
+(define (ast-decl-def-fn-export
+  [name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [export : AstFnExport]) : AstDecl
+  (AstDeclDefFn name params ret (box body) export))
 
 (define (ast-decl-def-macro
   [name : String]
@@ -784,7 +803,8 @@
     [(AstExprCpuIdEbx _ _) 56]
     [(AstExprCpuIdEcx _ _) 57]
     [(AstExprCpuIdEdx _ _) 58]
-    [(AstExprXgetbv _) 59]))
+    [(AstExprXgetbv _) 59]
+    [(AstExprSyscall _) 60]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
@@ -797,7 +817,7 @@
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
     [(AstDeclDef _ _ _) 1]
-    [(AstDeclDefFn _ _ _ _) 2]
+    [(AstDeclDefFn _ _ _ _ _) 2]
     [(AstDeclDefMacro _ _ _ _) 10]
     [(AstDeclExtern _ _ _) 3]
     [(AstDeclDefEnum _ _) 4]

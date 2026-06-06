@@ -494,12 +494,6 @@ if [ "$HOST_OS" = linux ] && [ -n "$STAGE1_TEST_BIN" ]; then
     INLINE_TEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
-# Borrowed-str stdlib source gate (#1557): verify the borrowed-str stdlib
-# fixtures through the bootstrapped stage1 compiler on Linux.
-if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib borrowed-str source gate" scripts/verify-stdlib.sh --borrowed-str-only
-fi
-
 # The public-tool corpus is the broadest CLI behavior witness. On Linux it must
 # run on a branch-built compiler; use the fresh cli.tl artifact when the
 # compile-only stage1 does not expose host-action commands.
@@ -630,10 +624,10 @@ if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
         run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
         run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
         run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 stdlib modules and fixtures" \
-            env TYPELISP_STDLIB_BORROWED_STR_BIN="$BOOTSTRAPPED_STAGE1" scripts/verify-stdlib.sh
+            scripts/verify-stdlib.sh
     else
         run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI stdlib modules and fixtures" \
-            env TYPELISP_STDLIB_BORROWED_STR_BIN="$BOOTSTRAPPED_STAGE1" scripts/verify-stdlib.sh
+            scripts/verify-stdlib.sh
     fi
 elif [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
@@ -649,18 +643,13 @@ elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
     # fails closed; fresh cli.tl direct build/run is covered earlier,
     # while this broad path still has package/generated-program parity gaps.
     # cli.tl's compile/check coverage for these sources stays exercised by the
-    # deterministic assembly + selfhost compile manifest gates and the
-    # borrowed-str check gate.
+    # deterministic assembly + selfhost compile manifest gates.
     required_gate_unavailable "native integration corpus, examples, stdlib modules and fixtures" \
         "stage1 host-action drivers are unavailable"
 else
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
-    if [ "$HOST_OS" = linux ]; then
-        run_gate "stdlib modules and fixtures" env TYPELISP_STDLIB_BORROWED_STR_BIN="$STAGE1_TYPELISP_BIN" scripts/verify-stdlib.sh
-    else
-        run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
-    fi
+    run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
 fi
 
 if [ "$HOST_OS" = linux ]; then

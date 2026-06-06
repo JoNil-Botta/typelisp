@@ -9,30 +9,18 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-stdlib.sh [--borrowed-str-only]
+usage: scripts/verify-stdlib.sh
 
 Verifies canonical stdlib modules and fixtures through --stdlib-root.
-Set TYPELISP_STDLIB_BORROWED_STR_BIN to route fixtures marked
-requires-borrowed-str-capable through a compiler path that can parse/check
-`(& lifetime str)` signatures, such as the Linux no-Rust bootstrapped stage1.
-In full mode, marked rows run through TYPELISP_BIN unless this override is set.
 EOF
 }
 
-BORROWED_STR_ONLY=0
 case "$#" in
     0) ;;
     1)
         case "$1" in
-            --borrowed-str-only) BORROWED_STR_ONLY=1 ;;
-            -h | --help)
-                usage
-                exit 0
-                ;;
-            *)
-                usage
-                exit 2
-                ;;
+            -h | --help) usage; exit 0 ;;
+            *) usage; exit 2 ;;
         esac
         ;;
     *)
@@ -114,20 +102,8 @@ else
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
-BORROWED_STR_COMPILER=$COMPILER
-BORROWED_STR_COMPILER_EXPLICIT=0
-if [ -n "${TYPELISP_STDLIB_BORROWED_STR_BIN:-}" ]; then
-    BORROWED_STR_COMPILER=$TYPELISP_STDLIB_BORROWED_STR_BIN
-    BORROWED_STR_COMPILER_EXPLICIT=1
-fi
-
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
-if { [ "$BORROWED_STR_COMPILER_EXPLICIT" -eq 1 ] || [ "$BORROWED_STR_ONLY" -eq 1 ]; } &&
-    [ ! -x "$BORROWED_STR_COMPILER" ]; then
-    echo "borrowed-str capable compiler is not executable: $BORROWED_STR_COMPILER" >&2
     exit 1
 fi
 
@@ -270,28 +246,25 @@ EOF
 # Use these for stdlib fixtures that only need the typechecker, including
 # platform-independent with-arena policy tests. The expected status is `fail`
 # or `pass`; failure rows must include a diagnostic substring that should
-# appear on stderr. Pass rows may use "-" for the diagnostic field. A row marked
-# `requires-borrowed-str-capable` runs through TYPELISP_STDLIB_BORROWED_STR_BIN
-# when it is set, allowing no-Rust gates to use the bootstrapped stage1 for source
-# that the published seed compiler cannot parse yet.
+# appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/core_macros_api.tl|pass|-
-stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
+stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
-stdlib/tests/borrowed_str_gate.tl|pass|-|requires-borrowed-str-capable
-stdlib/tests/io_caller_result_check.tl|pass|-|requires-borrowed-str-capable
-stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
-stdlib/tests/process_borrowed_check.tl|pass|-|requires-borrowed-str-capable
-stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
-stdlib/tests/string_caller_result_check.tl|pass|-|requires-borrowed-str-capable
-stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
-stdlib/tests/text_buf_borrowed_check.tl|pass|-|requires-borrowed-str-capable
-stdlib/tests/vector_slice_check.tl|pass|-|requires-borrowed-str-capable
-stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
+stdlib/tests/borrowed_str_gate.tl|pass|-
+stdlib/tests/io_caller_result_check.tl|pass|-
+stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/process_borrowed_check.tl|pass|-
+stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/string_caller_result_check.tl|pass|-
+stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/text_buf_borrowed_check.tl|pass|-
+stdlib/tests/vector_slice_check.tl|pass|-
+stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
 EOF
 }
 
@@ -495,7 +468,6 @@ export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
 skipped=0
-if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -597,46 +569,43 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     passed=$((passed + 1))
 done < "$TEST_MANIFEST"
-fi
 
 pipe_regressions=0
-if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
-    fixture=stdlib/tests/io_stdio_pipe_short_read.tl
-    copied="$TEST_COPY_ROOT/$fixture"
-    stem="$RUN_ROOT/stdlib_tests_io_stdio_pipe_short_read.pipe"
-    stdout="$stem.stdout"
-    stderr="$stem.stderr"
+fixture=stdlib/tests/io_stdio_pipe_short_read.tl
+copied="$TEST_COPY_ROOT/$fixture"
+stem="$RUN_ROOT/stdlib_tests_io_stdio_pipe_short_read.pipe"
+stdout="$stem.stdout"
+stderr="$stem.stderr"
 
-    mkdir -p "$(dirname "$copied")"
-    cp "$fixture" "$copied"
+mkdir -p "$(dirname "$copied")"
+cp "$fixture" "$copied"
 
-    echo "[stdlib] building+running $fixture through native pipe (--stdlib-root)"
-    stdlib_build_fixture "$copied" "$stem"
-    if [ "$build_status" -ne 0 ]; then
-        echo "FAIL: $fixture pipe regression failed to build" >&2
-        sed 's/^/  /' "$stem.build.err" >&2 || true
-        exit 1
-    fi
-
-    set +e
-    dd if=/dev/zero bs=4096 count=512 2>/dev/null |
-        tr '\000' x |
-        (
-            stdlib_restore_fixture_tool_env
-            "$stem$NL_BIN_EXT" > "$stdout" 2> "$stderr"
-        )
-    got=$?
-    set -e
-
-    if [ "$got" -ne 42 ]; then
-        echo "FAIL: $fixture pipe regression expected exit 42, got $got" >&2
-        show_streams "$stdout" "$stderr"
-        exit 1
-    fi
-    compare_stream "$fixture pipe regression" stdout "-" "$stdout" "$stdout" "$stderr"
-    compare_stream "$fixture pipe regression" stderr "-" "$stderr" "$stdout" "$stderr"
-    pipe_regressions=1
+echo "[stdlib] building+running $fixture through native pipe (--stdlib-root)"
+stdlib_build_fixture "$copied" "$stem"
+if [ "$build_status" -ne 0 ]; then
+    echo "FAIL: $fixture pipe regression failed to build" >&2
+    sed 's/^/  /' "$stem.build.err" >&2 || true
+    exit 1
 fi
+
+set +e
+dd if=/dev/zero bs=4096 count=512 2>/dev/null |
+    tr '\000' x |
+    (
+        stdlib_restore_fixture_tool_env
+        "$stem$NL_BIN_EXT" > "$stdout" 2> "$stderr"
+    )
+got=$?
+set -e
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: $fixture pipe regression expected exit 42, got $got" >&2
+    show_streams "$stdout" "$stderr"
+    exit 1
+fi
+compare_stream "$fixture pipe regression" stdout "-" "$stdout" "$stdout" "$stderr"
+compare_stream "$fixture pipe regression" stderr "-" "$stderr" "$stdout" "$stderr"
+pipe_regressions=1
 
 checked=0
 while IFS='|' read -r fixture want stderr_snippet extra; do
@@ -663,26 +632,14 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
             ;;
     esac
 
-    check_compiler=$COMPILER
-    check_label=--stdlib-root
-    borrowed_str_row=0
     case "${extra:-}" in
-        '')
-            ;;
-        requires-borrowed-str-capable)
-            check_compiler=$BORROWED_STR_COMPILER
-            check_label="--stdlib-root, borrowed-str-capable"
-            borrowed_str_row=1
-            ;;
+        '') ;;
         *)
-            echo "FAIL: malformed stdlib check manifest capability for $fixture: $extra" >&2
+            echo "FAIL: malformed stdlib check manifest row has too many fields: $fixture" >&2
             exit 1
             ;;
     esac
 
-    if [ "$BORROWED_STR_ONLY" -eq 1 ] && [ "$borrowed_str_row" -eq 0 ]; then
-        continue
-    fi
     case "$fixture" in
         stdlib/tests/*.tl) ;;
         *)
@@ -705,9 +662,9 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     stdout="$stem.stdout"
     stderr="$stem.stderr"
 
-    echo "[stdlib] checking $fixture ($check_label)"
+    echo "[stdlib] checking $fixture (--stdlib-root)"
     set +e
-    "$check_compiler" check "$copied" --stdlib-root "$ROOT/stdlib" \
+    "$COMPILER" check "$copied" --stdlib-root "$ROOT/stdlib" \
         > "$stdout" 2> "$stderr"
     got=$?
     set -e
@@ -734,15 +691,6 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
 
     checked=$((checked + 1))
 done < "$CHECK_MANIFEST"
-
-if [ "$BORROWED_STR_ONLY" -eq 1 ]; then
-    if [ "$checked" -eq 0 ]; then
-        echo "stdlib borrowed-str verification did not run any fixture" >&2
-        exit 1
-    fi
-    echo "stdlib borrowed-str verification passed for $checked check fixture(s)"
-    exit 0
-fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 

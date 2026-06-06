@@ -135,9 +135,19 @@
 ;; call is needed. The former pool also offered %r8/%r9, which are caller-saved
 ;; under both SysV and Win64 and are clobbered by an intervening call — a value
 ;; homed there and read after the call (e.g. the first operand of `(+ a (f))`)
-;; would silently observe garbage. The four registers below are exactly those
+;; would silently observe garbage. The five registers below are exactly those
 ;; the backend prologue/epilogue save and restore. Mirrors the former Rust
 ;; backend's `SYSV_ALLOCATABLE_INTEGER_REGS` (callee-saved only).
+;;
+;; %rbx is callee-saved under both SysV and Win64 and was historically reserved
+;; as the backend's hard scratch register for the right-hand operand of integer
+;; binops/compares/gep/div/shift. That scratch role moved to %r8 (caller-saved
+;; under both ABIs, only ever live inside a single instruction's emission, never
+;; across a call), freeing %rbx to join the allocatable pool. It is added LAST so
+;; functions needing four or fewer registers keep their previous r12-r15 homes;
+;; %rbx only homes a value once the four call-safe registers are exhausted, and
+;; when it does the backend prologue/epilogue saves/restores it into a frame slot
+;; exactly like r12-r15.
 (define (compiler-reg-sysv-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
     "%r12"
@@ -145,7 +155,9 @@
       "%r13"
       (compiler-reg-string-cons
         "%r14"
-        (compiler-reg-string-cons "%r15" CompilerRegStringNil)))))
+        (compiler-reg-string-cons
+          "%r15"
+          (compiler-reg-string-cons "%rbx" CompilerRegStringNil))))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -481,6 +493,7 @@
     [(IrInstrCpuId dst _ _ _)
       (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrXgetbv dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
+    [(IrInstrSyscall dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))
@@ -2954,20 +2967,21 @@
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
     [(CompilerRegPlan assignments _ _ _)
-      ;; Seven simultaneously live values against a four-register callee-saved
-      ;; pool: the first four take %r12..%r15 and the remaining three spill.
+      ;; Seven simultaneously live values against a five-register callee-saved
+      ;; pool: the first five take %r12..%r15 and %rbx, and the remaining two
+      ;; spill. %rbx joined the pool once its hard-scratch role moved to %r8.
       (and
         (= (compiler-reg-assignment-count assignments) 7)
         (and
-          (= (compiler-reg-spill-count assignments) 3)
+          (= (compiler-reg-spill-count assignments) 2)
           (and
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 3)
               "%r15")
             (and
-              (compiler-reg-location-spill-offset?
+              (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 4)
-                (compiler-reg-stack-slot-offset 4))
+                "%rbx")
               (compiler-reg-location-spill-offset?
                 (compiler-reg-assignment-lookup assignments 6)
                 (compiler-reg-stack-slot-offset 6))))))]))

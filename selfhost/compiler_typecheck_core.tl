@@ -242,8 +242,13 @@
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
+(define (tc-canonical-diagnostic [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (compiler-diagnostic-with-category
+    (compiler-diagnostic-with-code diag (compiler-diagnostic-code-typecheck))
+    "typecheck"))
+
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start "" message))
+  (tc-canonical-diagnostic (compiler-diagnostic-at-start "" message)))
 
 (cfg
   compile-profile
@@ -536,7 +541,7 @@
         (begin
           (compiler-tc-decl-profile-count-def)
           (compiler-tc-decl-profile-add-def-expr))]
-      [(AstDeclDefFn name _ _ _)
+      [(AstDeclDefFn name _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-fn)
           (compiler-tc-decl-profile-add-fn-expr-named name))]
@@ -606,7 +611,8 @@
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
-      (compiler-diagnostic-from-ast-span "" span message)]
+      (tc-canonical-diagnostic
+        (compiler-diagnostic-from-ast-span "" span message))]
     [_ (tc-diag-at-start message)]))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
@@ -637,7 +643,7 @@
       (let
         [expr : AstExpr (box-get expr-box)]
         (tc-expr-diag expr message))]
-    [(AstDeclDefFn _ _ _ body-box)
+    [(AstDeclDefFn _ _ _ body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (tc-expr-diag body message))]
@@ -645,7 +651,9 @@
       (let
         [body : AstExpr (box-get body-box)]
         (tc-expr-diag body message))]
-    [(AstDeclTest _ _ span) (compiler-diagnostic-from-ast-span "" span message)]
+    [(AstDeclTest _ _ span)
+      (tc-canonical-diagnostic
+        (compiler-diagnostic-from-ast-span "" span message))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -3256,6 +3264,7 @@
       (let
         [index : AstExpr (box-get index-box)]
         (tc-source-expr-policy-ok ctx index))]
+    [(AstExprSyscall args) (tc-source-expr-list-policy-ok ctx args)]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -3270,7 +3279,7 @@
                 "typecheck: storing references in top-level values requires lifetime support (#804)")
               (tc-source-expr-policy-ok ctx expr))]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
-    [(AstDeclDefFn _ params ret body-box)
+    [(AstDeclDefFn _ params ret body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (match (tc-source-param-list-policy-ok ctx params)
@@ -4268,7 +4277,7 @@
               [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
               [(AstExprAnn _ ty) (OkTcType (tc-resolve-type ctx ty))]
               [_ (ErrTcType "typecheck: top-level value requires annotation")])]))]
-    [(AstDeclDefFn _ params ret _)
+    [(AstDeclDefFn _ params ret _ _)
       (OkTcType
         (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
     [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
@@ -4399,7 +4408,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
@@ -4417,7 +4426,7 @@
         decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -4564,7 +4573,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv
@@ -4588,7 +4597,7 @@
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
@@ -4821,7 +4830,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type ctx inner)
               [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
@@ -4834,7 +4843,7 @@
       (match (tc-top-decl-type-with-env ctx env decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -7420,7 +7429,18 @@
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
                 (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]))
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprSyscall args)
+      (match (tc-spmd-expr-list ctx env spmd-env args)
+        [(OkTcSpmdExprListInfo args-info)
+          (match args-info
+            [(TcSpmdExprListInfo args-class args-env)
+              (match (tc-spmd-require-uniform
+                args-class
+                "typecheck: foreach calls with varying arguments are not supported")
+                [(OkTcUnit) (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]))
 
 (define (tc-param-list-add-bound-names
   [params : AstParamList]
@@ -7869,7 +7889,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-expr-uses-free-name? index name bound))]))
+        (tc-expr-uses-free-name? index name bound))]
+    [(AstExprSyscall args) (tc-expr-list-uses-free-name? args name bound)]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
@@ -8247,7 +8268,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-expr-sets-free-name? index name bound))]))
+        (tc-expr-sets-free-name? index name bound))]
+    [(AstExprSyscall args) (tc-expr-list-sets-free-name? args name bound)]))
 
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
@@ -11134,6 +11156,30 @@
         (ErrTcType "typecheck: xgetbv index must be integer"))]
     [(ErrTcType message) (ErrTcType message)]))
 
+;; Each syscall operand (number and arguments) must be an integer; the raw
+;; kernel result is an i64.
+(define (tc-syscall-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcUnit
+  (match args
+    [(AstExprNil) (OkTcUnit)]
+    [(AstExprCons arg rest)
+      (match (tc-expr ctx env (box-get arg))
+        [(OkTcType arg-ty)
+          (if (tc-integer-type? arg-ty)
+            (tc-syscall-args ctx env (box-get rest))
+            (ErrTcUnit "typecheck: syscall operands must be integer"))]
+        [(ErrTcType message) (ErrTcUnit message)])]))
+
+(define (tc-syscall-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match (tc-syscall-args ctx env args)
+    [(OkTcUnit) (OkTcType (AstTyI64))]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
 (define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
   (match (tc-ensure-cleanup-resource-not-stored-expr env inner)
     [(OkTcUnit)
@@ -12017,6 +12063,7 @@
       (let
         [index : AstExpr (box-get index-box)]
         (tc-xgetbv-expr ctx env index))]
+    [(AstExprSyscall args) (tc-syscall-expr ctx env args)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-extern-abi-enum-aggregate-type? [ty : AstType]) : bool
@@ -12119,7 +12166,7 @@
       (match decl
         [(AstDeclDef _ _ _)
           (CompilerTypecheckSummary (+ values 1) functions externs)]
-        [(AstDeclDefFn _ _ _ _)
+        [(AstDeclDefFn _ _ _ _ _)
           (CompilerTypecheckSummary values (+ functions 1) externs)]
         [(AstDeclExtern _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
@@ -13746,7 +13793,9 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved index))]))
+        (tc-move-check-expr ctx env locals loop-carried moved index))]
+    [(AstExprSyscall args)
+      (tc-move-check-exprs ctx env locals loop-carried moved args)]))
 
 (define (tc-move-check-body
   [ctx : TcContext]
@@ -14348,6 +14397,8 @@
       (let
         [index : AstExpr (box-get index-box)]
         (ast-expr-xgetbv (macro-hygiene-expr index env macro-name depth)))]
+    [(AstExprSyscall args)
+      (ast-expr-syscall (macro-hygiene-expr-list args env macro-name depth))]
     [(AstExprQuote _) expr]
     [(AstExprQuasiquote _) expr]
     [(AstExprUnquote _) expr]
@@ -15268,6 +15319,10 @@
           (match (macro-expand-expr ctx env decls depth index)
             [(OkMacroExpr nindex) (OkMacroExpr (ast-expr-xgetbv nindex))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprSyscall args)
+        (match (macro-expand-exprs ctx env decls depth args)
+          [(OkMacroExprList nargs) (OkMacroExpr (ast-expr-syscall nargs))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [_ (OkMacroExpr expr)])))
 
 (define (macro-expand-decl
@@ -15285,7 +15340,7 @@
             [(OkMacroExpr nexpr)
               (OkMacroDecl (ast-decl-def name maybe-ty nexpr))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclDefFn name params ret body-box)
+      [(AstDeclDefFn name params ret body-box export)
         (let
           [body : AstExpr (box-get body-box)]
           (match (macro-expand-expr
@@ -15297,7 +15352,8 @@
             0
             body)
             [(OkMacroExpr nbody)
-              (OkMacroDecl (ast-decl-def-fn name params ret nbody))]
+              (OkMacroDecl
+                (ast-decl-def-fn-export name params ret nbody export))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
       [(AstDeclTest name expr-box span)
         (let
@@ -15378,7 +15434,7 @@
       (let
         [expr : AstExpr (box-get expr-box)]
         (macro-expr-needs-compat-expansion? expr))]
-    [(AstDeclDefFn _ _ _ body-box)
+    [(AstDeclDefFn _ _ _ body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
@@ -15681,7 +15737,7 @@
             (match (tc-expr ctx global-env expr)
               [(OkTcType _) OkTcUnit]
               [(ErrTcType message) (ErrTcUnit message)])]))]
-    [(AstDeclDefFn _ params ret body-box)
+    [(AstDeclDefFn _ params ret body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         [env : TcTypeEnv
@@ -15802,7 +15858,7 @@
 (define (tc-generated-clone-decl-with-path? [decl : AstDecl] [path : String]) : bool
   (if (string-eq path "")
     (match decl
-      [(AstDeclDefFn name _ _ _) (tc-generated-clone-name? name)]
+      [(AstDeclDefFn name _ _ _ _) (tc-generated-clone-name? name)]
       [_ false])
     false))
 

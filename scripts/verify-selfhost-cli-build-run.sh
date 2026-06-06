@@ -168,7 +168,7 @@ refresh_compiler_for_host_actions() {
         "$COMPILER" compile selfhost/compile.tl -o "$stage1_asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
-        --stdlib-root stdlib --stdlib-root selfhost --opt-level 2; then
+        --stdlib-root stdlib --stdlib-root selfhost --opt-level 1; then
         echo "refresh stage1 stdout:" >&2
         sed 's/^/  /' "$stage1_out" >&2 || true
         echo "refresh stage1 stderr:" >&2
@@ -190,7 +190,7 @@ refresh_compiler_for_host_actions() {
         "$stage1_bin" compile selfhost/cli.tl -o "$refresh_asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
-        --stdlib-root stdlib --stdlib-root selfhost --opt-level 2; then
+        --stdlib-root stdlib --stdlib-root selfhost --opt-level 1; then
         echo "refresh cli stdout:" >&2
         sed 's/^/  /' "$refresh_out" >&2 || true
         echo "refresh cli stderr:" >&2

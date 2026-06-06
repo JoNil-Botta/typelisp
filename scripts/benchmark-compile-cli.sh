@@ -61,7 +61,10 @@ if [ ! -x "$SEED" ]; then
 fi
 
 WORKDIR=${TYPELISP_COMPILE_BENCH_OUT:-"$ROOT/target/compile-cli-benchmark"}
-OPT_LEVELS=$(printf '%s' "${TYPELISP_COMPILE_BENCH_OPT_LEVELS:-2 3}" | tr ',' ' ')
+# We ship three opt levels: 0 (none), 1 (cheap stack-only), 2 (full optimizer +
+# scalar register allocation + inlining). Benchmark all three so every shipped
+# level keeps its self-compile fixpoint.
+OPT_LEVELS=$(printf '%s' "${TYPELISP_COMPILE_BENCH_OPT_LEVELS:-0 1 2}" | tr ',' ' ')
 RATIO_LIMIT=${TYPELISP_COMPILE_BENCH_RATIO_LIMIT:-2}
 
 set -- $OPT_LEVELS
@@ -71,9 +74,9 @@ if [ "$#" -eq 0 ]; then
 fi
 for candidate do
     case "$candidate" in
-        0 | 1 | 2 | 3) ;;
+        0 | 1 | 2) ;;
         *)
-            echo "TYPELISP_COMPILE_BENCH_OPT_LEVELS must contain only 0, 1, 2, or 3" >&2
+            echo "TYPELISP_COMPILE_BENCH_OPT_LEVELS must contain only 0, 1, or 2" >&2
             exit 2
             ;;
     esac
@@ -363,25 +366,52 @@ check_ratio() {
     candidate=$3
     limit=$((base * RATIO_LIMIT))
     if [ "$candidate" -gt "$limit" ]; then
-        fail "opt3 $name $candidate exceeds ${RATIO_LIMIT}x opt2 $base"
+        fail "opt2 (quality) $name $candidate exceeds ${RATIO_LIMIT}x opt1 (cheap) $base"
     fi
-    echo "[compile-bench] opt3 $name $candidate within ${RATIO_LIMIT}x opt2 $base"
+    echo "[compile-bench] opt2 (quality) $name $candidate within ${RATIO_LIMIT}x opt1 (cheap) $base"
+}
+
+# The headline number: the high-quality (opt2-built, register-allocated) stage2
+# compiling cli.tl at the CHEAP level (opt1). A fast binary doing cheap work --
+# this is "stage2 compiling stage3" for the goal. Its output must match the
+# cheap-built stage2's cheap output (cross-fixpoint), since both run opt1 logic.
+run_cross_level() {
+    cheap=1
+    quality=2
+    quality_bin="$WORKDIR/opt$quality/stage2$NL_BIN_EXT"
+    cheap_ref="$WORKDIR/opt$cheap/stage3.s"
+    if [ ! -x "$quality_bin" ] || [ ! -f "$cheap_ref" ]; then
+        echo "[compile-bench] cross-level metric skipped (need opt$cheap and opt$quality builds)" >&2
+        return 0
+    fi
+    crossdir="$WORKDIR/cross"
+    mkdir -p "$crossdir"
+    main_asm="$crossdir/main.s"
+    measure_compile_cli_to_asm "$cheap" "cross-main-metric" "$quality_bin" "$main_asm" "$crossdir"
+    CROSS_MAIN_MS=$LAST_MEASURE_MS
+    compare_text "cross-fixpoint (opt$quality-built @opt$cheap == opt$cheap stage3)" "$cheap_ref" "$main_asm"
+    printf 'cross\t%s\t%s\t%s\n' "$CROSS_MAIN_MS" "" "" >> "$SUMMARY_TSV"
+    echo "[compile-bench] ============================================================"
+    echo "[compile-bench] MAIN METRIC opt$quality-built stage2 @opt$cheap: ${CROSS_MAIN_MS}ms   <-- goal < 500ms"
+    echo "[compile-bench] ============================================================"
 }
 
 for opt_level in $OPT_LEVELS; do
     run_opt_level "$opt_level"
 done
 
+run_cross_level
+
 if [ "${TYPELISP_COMPILE_BENCH_CHECK:-}" = 1 ]; then
+    opt1_compile=$(summary_value 1 2 || true)
     opt2_compile=$(summary_value 2 2 || true)
-    opt3_compile=$(summary_value 3 2 || true)
+    opt1_peak=$(summary_value 1 4 || true)
     opt2_peak=$(summary_value 2 4 || true)
-    opt3_peak=$(summary_value 3 4 || true)
-    if [ -n "$opt2_compile" ] && [ -n "$opt3_compile" ] && [ -n "$opt2_peak" ] && [ -n "$opt3_peak" ]; then
-        check_ratio "compile_ms" "$opt2_compile" "$opt3_compile"
-        check_ratio "profile_peak_live_delta_bytes" "$opt2_peak" "$opt3_peak"
+    if [ -n "$opt1_compile" ] && [ -n "$opt2_compile" ] && [ -n "$opt1_peak" ] && [ -n "$opt2_peak" ]; then
+        check_ratio "compile_ms" "$opt1_compile" "$opt2_compile"
+        check_ratio "profile_peak_live_delta_bytes" "$opt1_peak" "$opt2_peak"
     else
-        fail "check mode requires opt2 and opt3 summaries"
+        fail "check mode requires opt1 and opt2 summaries"
     fi
 fi
 

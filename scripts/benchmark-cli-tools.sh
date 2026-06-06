@@ -80,7 +80,7 @@ case "$RUNS" in
         ;;
 esac
 
-OPT_LEVEL=${TYPELISP_TOOL_BENCH_OPT_LEVEL:-2}
+OPT_LEVEL=${TYPELISP_TOOL_BENCH_OPT_LEVEL:-1}
 case "$OPT_LEVEL" in
     0 | 1 | 2 | 3) ;;
     *)

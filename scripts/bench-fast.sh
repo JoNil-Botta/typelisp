@@ -23,7 +23,7 @@ cd "$ROOT"
 native_link_detect_host
 configure_toolchain
 
-OPT_LEVEL=${BENCH_OPT_LEVEL:-2}
+OPT_LEVEL=${BENCH_OPT_LEVEL:-1}
 REPS=${BENCH_REPS:-5}
 WORKDIR=${BENCH_OUT:-"$ROOT/target/bench-fast"}
 

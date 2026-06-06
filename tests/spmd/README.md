@@ -6,11 +6,12 @@ Programs whose exit code is computed by a SIMD-lowered `foreach` map or
 code as the `scalar` reference — the comparison the SPMD acceptance criteria
 (#1011–#1014) need, beyond #1148's single full-width program.
 
-`SPEC.md` also defines the future `defdispatch` declaration form for runtime
-SIMD dispatch: one logical function lists scalar, AVX2, and AVX-512 variant
+`SPEC.md` also defines the `defdispatch` declaration form for runtime SIMD
+dispatch: one logical function lists scalar, AVX2, and AVX-512 variant
 functions, and ordinary calls choose the best runnable variant once per process.
-Until that parser/compiler support lands, this corpus keeps using explicit
-`--backend-mode` builds to compare the same source under each backend mode.
+`scripts/verify-spmd-runtime-dispatch.sh` builds one dispatched binary and
+checks that the runtime-selected variant is AVX-512 on AVX-512 hosts, AVX2 on
+AVX2-only hosts, and scalar otherwise.
 
 The corpus emphasizes the cases where SIMD bugs hide:
 
@@ -23,20 +24,27 @@ The corpus emphasizes the cases where SIMD bugs hide:
   exact-lane, and tail lengths. Exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64 across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+- `runtime_dispatch_select.tl` — one `defdispatch` binary whose variants share
+  the same i64 SPMD checksum and encode the selected variant in the exit code.
+  Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.
 
 ## Running
 
 ```sh
 # Uses the release compiler unless TYPELISP_BIN is set.
 scripts/verify-spmd-simd.sh
+scripts/verify-spmd-runtime-dispatch.sh
 TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
+TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-runtime-dispatch.sh
 ```
 
 SIMD modes are gated by `scripts/detect-simd-isa.sh` (real CPUID capability, not
-host OS), so a mode is skipped cleanly when its ISA is absent. **AVX-512 only
-runs on the fleet's AVX-512 Windows box** (the only AVX-512 machine): from Git
-Bash / MSYS with `clang` on `PATH`, all of scalar/avx2/avx512 are exercised
-there. Linux and `windows-latest` CI run scalar+avx2 and skip avx512.
+host OS), so explicit SIMD modes are skipped cleanly when their ISA is absent.
+The runtime-dispatch harness never skips the dispatch path; it expects scalar,
+AVX2, or AVX-512 based on the same capability probe. **AVX-512 only runs on the
+fleet's AVX-512 Windows box** (the only AVX-512 machine): from Git Bash / MSYS
+with `clang` on `PATH`, both scripts exercise AVX-512 there. Linux and
+`windows-latest` CI run the best variant available on those hosts.
 
 To make a new SPMD reference program (e.g. for #1011/#1012/#1013/#1014)
 Windows-verifiable, add it here and to the `spmd_corpus` list in

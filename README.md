@@ -370,11 +370,10 @@ reference loops; `--backend-mode avx2|avx512` supports a first contiguous
 map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes. Runtime-dispatched
 SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
-using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
-`defdispatch` is pending. `spmd-reduce` scalar lowering is implemented, and
-SIMD backend modes vectorize eligible contiguous array reductions: `sum` over
-`i32`, `i64`, and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over
-`i64`.
+using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`.
+`spmd-reduce` scalar lowering is implemented, and SIMD backend modes vectorize
+eligible contiguous array reductions: `sum` over `i32`, `i64`, and `f64`;
+`min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`.
 
 ### Builtins
 

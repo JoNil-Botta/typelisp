@@ -302,6 +302,45 @@
 (define (doc-symbol-text [stream : FormatTokenStream] [idx : i64]) : String
   (format-token-text (format-token-at stream idx)))
 
+(define (doc-skip-delimited [stream : FormatTokenStream] [idx : i64]) : i64
+  (let
+    [i : i64 idx]
+    [depth : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [tag : i64 (format-token-tag (format-token-at stream i))]
+          (begin
+            (cond
+              [(or (= tag (fmt-tag-lparen)) (= tag (fmt-tag-lbracket)))
+                (set! depth (+ depth 1))]
+              [(or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket)))
+                (begin
+                  (set! depth (- depth 1))
+                  (if (= depth 0)
+                    (set! done true)
+                    unit))]
+              [(= tag (fmt-tag-end)) (set! done true)]
+              [else unit])
+            (set! i (+ i 1)))))
+      i)))
+
+(define (doc-generated-metadata-form? [stream : FormatTokenStream] [idx : i64]) : bool
+  (if (= (format-token-tag (format-token-at stream idx)) (fmt-tag-lparen))
+    (let
+      [first : i64 (doc-next-code-token-index stream (+ idx 1))]
+      (if (= (format-token-tag (format-token-at stream first)) (fmt-tag-colon))
+        (let
+          [name-idx : i64 (doc-next-code-token-index stream (+ first 1))]
+          (and
+            (doc-token-symbol? stream name-idx)
+            (string-eq (doc-symbol-text stream name-idx) "generated")))
+        (and
+          (doc-token-symbol? stream first)
+          (string-eq (doc-symbol-text stream first) ":generated"))))
+    false))
+
 (define (doc-info-after-name
   [kind : DocItemKind]
   [stream : FormatTokenStream]
@@ -326,33 +365,45 @@
       (doc-info-after-name (DocKindDefMacro) stream (+ next 1))
       (DocNoDeclInfo))))
 
+(define (doc-decl-info-at-list [stream : FormatTokenStream] [open-idx : i64]) : DocMaybeDeclInfo
+  (if (= (format-token-tag (format-token-at stream open-idx)) (fmt-tag-lparen))
+    (let
+      [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
+      (if (doc-token-symbol? stream head-idx)
+        (let
+          [head : String (doc-symbol-text stream head-idx)]
+          [after-head : i64 (+ head-idx 1)]
+          (cond
+            [(string-eq head "define")
+              (doc-info-after-define stream after-head)]
+            [(string-eq head "extern")
+              (doc-info-after-name (DocKindExtern) stream after-head)]
+            [(string-eq head "defenum")
+              (doc-info-after-name (DocKindDefEnum) stream after-head)]
+            [(string-eq head "defstruct")
+              (doc-info-after-name (DocKindDefStruct) stream after-head)]
+            [(string-eq head "defmacro")
+              (doc-info-after-defmacro stream after-head)]
+            [(string-eq head "comptime-decl")
+              (doc-info-after-comptime-decl stream after-head)]
+            [else (DocNoDeclInfo)]))
+        (DocNoDeclInfo)))
+    (DocNoDeclInfo)))
+
+(define (doc-info-after-comptime-decl [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+  (let
+    [first : i64 (doc-next-code-token-index stream idx)]
+    [payload : i64
+      (if (doc-generated-metadata-form? stream first)
+        (doc-next-code-token-index stream (doc-skip-delimited stream first))
+        first)]
+    (doc-decl-info-at-list stream payload)))
+
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
   (let
     [stream : FormatTokenStream (format-lex signature)]
     [open-idx : i64 (doc-next-code-token-index stream 0)]
-    (if (=
-      (format-token-tag (format-token-at stream open-idx))
-      (fmt-tag-lparen))
-      (let
-        [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
-        (if (doc-token-symbol? stream head-idx)
-          (let
-            [head : String (doc-symbol-text stream head-idx)]
-            [after-head : i64 (+ head-idx 1)]
-            (cond
-              [(string-eq head "define")
-                (doc-info-after-define stream after-head)]
-              [(string-eq head "extern")
-                (doc-info-after-name (DocKindExtern) stream after-head)]
-              [(string-eq head "defenum")
-                (doc-info-after-name (DocKindDefEnum) stream after-head)]
-              [(string-eq head "defstruct")
-                (doc-info-after-name (DocKindDefStruct) stream after-head)]
-              [(string-eq head "defmacro")
-                (doc-info-after-defmacro stream after-head)]
-              [else (DocNoDeclInfo)]))
-          (DocNoDeclInfo)))
-      (DocNoDeclInfo))))
+    (doc-decl-info-at-list stream open-idx)))
 
 (define (doc-extract-source [src : String]) : DocExtraction
   (let
@@ -475,6 +526,17 @@
 ;: legacy item
 (define legacy : i64 1)")
 
+(define (doc-extract-generated-smoke-source) : String
+  ";: generated option doc
+(comptime-decl (:generated option-family Option_String \"String\")
+  (defenum Option_String
+    (None_String)
+    (Some_String String)))
+
+;: generated helper doc
+(comptime-decl (:generated option-family option-string-some? \"String\")
+  (define (option-string-some? [value : Option_String]) : bool true))")
+
 (define (doc-item-ok?
   [item : DocItem]
   [kind-tag : i64]
@@ -559,6 +621,32 @@
         [_ false])]
     [_ false]))
 
+(define (doc-extract-generated-smoke-ok?) : bool
+  (match (doc-extract-source (doc-extract-generated-smoke-source))
+    [(DocExtraction _ items)
+      (match items
+        [(DocItemCons option-item rest-option)
+          (match (box-get rest-option)
+            [(DocItemCons helper-item rest-helper)
+              (match (box-get rest-helper)
+                [(DocItemNil)
+                  (and
+                    (doc-item-ok?
+                      option-item
+                      4
+                      "Option_String"
+                      "generated option doc"
+                      "(:generated option-family Option_String")
+                    (doc-item-ok?
+                      helper-item
+                      2
+                      "option-string-some?"
+                      "generated helper doc"
+                      "(:generated option-family option-string-some?"))]
+                [_ false])]
+            [_ false])]
+        [_ false])]))
+
 (define (doc-extract-smoke) : i64
   (match (doc-extract-source (doc-extract-smoke-source))
     [(DocExtraction module-doc items)
@@ -582,6 +670,12 @@
           (return
             (begin
               (panic "doc-extract: item doc smoke mismatch")
+              0)))
+        (unless
+          (doc-extract-generated-smoke-ok?)
+          (return
+            (begin
+              (panic "doc-extract: generated item mismatch")
               0)))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction legacy-module legacy-items)

@@ -335,7 +335,7 @@
 
 (defenum AstGeneratedDeclMeta
   (AstNoGeneratedDeclMeta)
-  (AstSomeGeneratedDeclMeta String String AstExprList))
+  (AstSomeGeneratedDeclMeta String String AstExprList String))
 
 (defenum AstDecl
   (AstDeclModule String)

@@ -2657,11 +2657,24 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+          [(AstDeclComptimeDecl _ inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+                [_ (lower-function-decl-count rest)]))]
           [(AstDeclUnsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+                [(AstDeclComptimeDecl _ comptime-box)
+                  (let
+                    [template : AstDecl (box-get comptime-box)]
+                    (match template
+                      [(AstDeclDefFn _ _ _ _)
+                        (+ 1 (lower-function-decl-count rest))]
+                      [_ (lower-function-decl-count rest)]))]
                 [_ (lower-function-decl-count rest)]))]
           [_ (lower-function-decl-count rest)]))]))
 
@@ -2730,6 +2743,15 @@
                   index
                   (lower-decl-logical-name entry-path decl-path module name)
                   body)))]
+          [(AstDeclComptimeDecl _ template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (lower-function-body-index-from-decls-in-module
+                (ast-decl-cons template rest)
+                (ast-decl-path-cons decl-path rest-paths)
+                entry-path
+                module
+                index))]
           [(AstDeclUnsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
@@ -2750,6 +2772,13 @@
                           module
                           name)
                         body)))]
+                [(AstDeclComptimeDecl _ _)
+                  (lower-function-body-index-from-decls-in-module
+                    (ast-decl-cons inner rest)
+                    (ast-decl-path-cons decl-path rest-paths)
+                    entry-path
+                    module
+                    index)]
                 [_
                   (lower-function-body-index-from-decls-in-module
                     rest
@@ -16687,22 +16716,24 @@
               dispatch-variants
               mode
               module)]
-          [(AstDeclComptimeDecl _ _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]))]))
+          [(AstDeclComptimeDecl _ template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (lower-decls-in-module
+                ctx
+                top-env
+                local-top-env
+                (ast-decl-cons template rest)
+                globals
+                functions
+                externs
+                spans
+                names
+                name-cache
+                type-cache
+                dispatch-variants
+                mode
+                module))]))]))
 
 (define (lower-compiler-program-checked-with-names-mode
   [ctx : TcContext]

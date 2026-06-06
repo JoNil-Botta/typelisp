@@ -237,12 +237,15 @@
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (compiler-ir-instr-seq-to-list-rev
-      slots
-      (- index 1)
-      (compiler-ir-instr-cons (array-ref slots index) acc))))
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrInstrList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set! out (IrInstrCons (array-ref slots cursor) (box out)))
+          (set! cursor (- cursor 1))))
+      out)))
 
 (define (compiler-ir-instr-seq-to-list [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (compiler-ir-instr-seq-to-list-rev

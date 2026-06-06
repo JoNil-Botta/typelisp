@@ -1,6 +1,7 @@
 param(
     [string]$BenchmarkDir = $(Join-Path $PSScriptRoot "..\target\compile-cli-benchmark"),
     [string]$OutDir = $(Join-Path $PSScriptRoot "..\target\superluminal"),
+    [int]$OptLevel = 2,
     [int]$FrequencyHz = 8190,
     [switch]$SkipBenchmark,
     [switch]$SkipCapture,
@@ -151,11 +152,25 @@ function Find-WindowsSdkLibRoot {
 }
 
 function Invoke-Benchmark {
+    param(
+        [int]$OptLevel
+    )
+
     $bash = Resolve-BenchmarkBash
     Write-Host "[superluminal] running scripts/benchmark-compile-cli.sh"
-    & $bash "scripts/benchmark-compile-cli.sh"
-    if ($LASTEXITCODE -ne 0) {
-        throw "benchmark-compile-cli.sh failed with exit code $LASTEXITCODE"
+    $oldOptLevels = ${env:TYPELISP_COMPILE_BENCH_OPT_LEVELS}
+    try {
+        $env:TYPELISP_COMPILE_BENCH_OPT_LEVELS = "$OptLevel"
+        & $bash "scripts/benchmark-compile-cli.sh"
+        if ($LASTEXITCODE -ne 0) {
+            throw "benchmark-compile-cli.sh failed with exit code $LASTEXITCODE"
+        }
+    } finally {
+        if ($null -eq $oldOptLevels) {
+            Remove-Item Env:TYPELISP_COMPILE_BENCH_OPT_LEVELS -ErrorAction SilentlyContinue
+        } else {
+            $env:TYPELISP_COMPILE_BENCH_OPT_LEVELS = $oldOptLevels
+        }
     }
 }
 
@@ -280,6 +295,7 @@ function Invoke-SuperluminalCapture {
     param(
         [string]$Stage2Exe,
         [string]$OutDir,
+        [int]$OptLevel,
         [int]$FrequencyHz
     )
 
@@ -315,7 +331,7 @@ function Invoke-SuperluminalCapture {
         "--cfg", "os-windows",
         "--stdlib-root", "stdlib",
         "--stdlib-root", "selfhost",
-        "--opt-level", "2"
+        "--opt-level", "$OptLevel"
     )
 
     Write-Host "[superluminal] capturing stage2 compile"
@@ -336,6 +352,7 @@ function Invoke-ElevatedCapture {
     param(
         [string]$BenchmarkDir,
         [string]$OutDir,
+        [int]$OptLevel,
         [int]$FrequencyHz
     )
 
@@ -343,6 +360,7 @@ function Invoke-ElevatedCapture {
         & $PSCommandPath `
             -BenchmarkDir $BenchmarkDir `
             -OutDir $OutDir `
+            -OptLevel $OptLevel `
             -FrequencyHz $FrequencyHz `
             -SkipBenchmark `
             -CaptureOnly
@@ -355,7 +373,7 @@ function Invoke-ElevatedCapture {
     $command = "& " + (Quote-PowerShellString $PSCommandPath) +
         " -BenchmarkDir " + (Quote-PowerShellString $BenchmarkDir) +
         " -OutDir " + (Quote-PowerShellString $OutDir) +
-        " -FrequencyHz $FrequencyHz -SkipBenchmark -CaptureOnly"
+        " -OptLevel $OptLevel -FrequencyHz $FrequencyHz -SkipBenchmark -CaptureOnly"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 
     Write-Host "[superluminal] requesting UAC elevation for capture"
@@ -759,6 +777,26 @@ function Assert-ProfileOutputMatchesBenchmark {
     Write-Host "[superluminal] verified captured stage3 assembly hash matches stage2.s"
 }
 
+function Resolve-BenchmarkOutputDir {
+    param(
+        [string]$BenchmarkDir,
+        [int]$OptLevel
+    )
+
+    $directStage2 = Join-Path $BenchmarkDir "stage2.s"
+    if (Test-Path -LiteralPath $directStage2 -PathType Leaf) {
+        return $BenchmarkDir
+    }
+
+    $optDir = Join-Path $BenchmarkDir "opt$OptLevel"
+    $optStage2 = Join-Path $optDir "stage2.s"
+    if (Test-Path -LiteralPath $optStage2 -PathType Leaf) {
+        return $optDir
+    }
+
+    return $BenchmarkDir
+}
+
 Require-WindowsHost
 $script:Root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $BenchmarkDir = Resolve-FullPath $BenchmarkDir
@@ -766,7 +804,8 @@ $OutDir = Resolve-FullPath $OutDir
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-$stage2Asm = Join-Path $BenchmarkDir "stage2.s"
+$BenchmarkOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $OptLevel
+$stage2Asm = Join-Path $BenchmarkOutputDir "stage2.s"
 $profileAsm = Join-Path $OutDir "stage2-profile.s"
 $profileObj = Join-Path $OutDir "stage2-profile.obj"
 $stage2Exe = Join-Path $OutDir "stage2-profile.exe"
@@ -777,12 +816,14 @@ $capturedStage3 = Join-Path $OutDir "stage3-super.s"
 if ($CaptureOnly) {
     Require-File $stage2Exe "debug-linked stage2 executable"
     Require-File $stage2Pdb "debug-linked stage2 PDB"
-    Invoke-SuperluminalCapture $stage2Exe $OutDir $FrequencyHz
+    Invoke-SuperluminalCapture $stage2Exe $OutDir $OptLevel $FrequencyHz
     exit 0
 }
 
 if (-not $SkipBenchmark) {
-    Invoke-Benchmark
+    Invoke-Benchmark $OptLevel
+    $BenchmarkOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $OptLevel
+    $stage2Asm = Join-Path $BenchmarkOutputDir "stage2.s"
 }
 
 Require-File $stage2Asm "benchmark stage2 assembly"
@@ -791,7 +832,7 @@ Invoke-ProfileAssemble $profileAsm $profileObj
 Invoke-DebugRelink $profileObj $stage2Exe $stage2Pdb
 
 if (-not $SkipCapture) {
-    Invoke-ElevatedCapture $BenchmarkDir $OutDir $FrequencyHz
+    Invoke-ElevatedCapture $BenchmarkDir $OutDir $OptLevel $FrequencyHz
     Assert-ProfileOutputMatchesBenchmark $stage2Asm $capturedStage3
     Invoke-XperfProfileExport $OutDir $symbolMap
 }

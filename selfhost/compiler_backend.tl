@@ -14868,7 +14868,7 @@ tl_profile_alloc_reset_peak:
     incq %r10
     jmp .L_tl_fs_read_dir_status_win_path_copy_loop
 .L_tl_fs_read_dir_status_win_path_copy_done:
-    movb $47, (%r13,%r12)
+    movb $92, (%r13,%r12)
     movb $42, 1(%r13,%r12)
     movb $0, 2(%r13,%r12)
     movq $320, %rcx
@@ -14878,23 +14878,20 @@ tl_profile_alloc_reset_peak:
     movq %r13, %rcx
     movq %rax, %rdx
     sub $32, %rsp
-    call _findfirst32
+    call FindFirstFileA
     add $32, %rsp
     cmpq $-1, %rax
     je .L_tl_fs_read_dir_status_win_errno
     movq %rax, %rcx
     sub $32, %rsp
-    call _findclose
+    call FindClose
     add $32, %rsp
     testl %eax, %eax
-    js .L_tl_fs_read_dir_status_win_errno
+    jz .L_tl_fs_read_dir_status_win_errno
     xorq %rax, %rax
     jmp .L_tl_fs_read_dir_status_win_return
 .L_tl_fs_read_dir_status_win_errno:
-    sub $32, %rsp
-    call _errno
-    add $32, %rsp
-    movslq (%rax), %rax
+    call .L_tl_fs_win_last_error_status
     testq %rax, %rax
     jne .L_tl_fs_read_dir_status_win_return
     movq $1, %rax
@@ -14940,7 +14937,7 @@ tl_profile_alloc_reset_peak:
     incq %r10
     jmp .L_tl_fs_read_dir_win_path_copy_loop
 .L_tl_fs_read_dir_win_path_copy_done:
-    movb $47, (%rbx,%r12)
+    movb $92, (%rbx,%r12)
     movb $42, 1(%rbx,%r12)
     movb $0, 2(%rbx,%r12)
     movq $320, %rcx
@@ -14951,14 +14948,14 @@ tl_profile_alloc_reset_peak:
     movq %rbx, %rcx
     movq %r12, %rdx
     sub $32, %rsp
-    call _findfirst32
+    call FindFirstFileA
     add $32, %rsp
     cmpq $-1, %rax
     je .L_tl_fs_read_dir_win_empty
     movq %rax, %rdi
     xorq %r13, %r13
 .L_tl_fs_read_dir_win_first_entry:
-    leaq 20(%r12), %rsi
+    leaq 44(%r12), %rsi
     movzbl (%rsi), %edx
     cmpb $46, %dl
     jne .L_tl_fs_read_dir_win_first_count_name
@@ -14985,13 +14982,13 @@ tl_profile_alloc_reset_peak:
     movq %rdi, %rcx
     movq %r12, %rdx
     sub $32, %rsp
-    call _findnext32
+    call FindNextFileA
     add $32, %rsp
     testl %eax, %eax
-    je .L_tl_fs_read_dir_win_first_entry
+    jne .L_tl_fs_read_dir_win_first_entry
     movq %rdi, %rcx
     sub $32, %rsp
-    call _findclose
+    call FindClose
     add $32, %rsp
     movq %r13, %rcx
     cmpq $0, %rcx
@@ -15007,14 +15004,14 @@ tl_profile_alloc_reset_peak:
     movq %rbx, %rcx
     movq %r12, %rdx
     sub $32, %rsp
-    call _findfirst32
+    call FindFirstFileA
     add $32, %rsp
     cmpq $-1, %rax
     je .L_tl_fs_read_dir_win_empty
     movq %rax, %rdi
     xorq %r15, %r15
 .L_tl_fs_read_dir_win_second_entry:
-    leaq 20(%r12), %rsi
+    leaq 44(%r12), %rsi
     movzbl (%rsi), %edx
     cmpb $46, %dl
     jne .L_tl_fs_read_dir_win_second_count_name
@@ -15051,13 +15048,13 @@ tl_profile_alloc_reset_peak:
     movq %rdi, %rcx
     movq %r12, %rdx
     sub $32, %rsp
-    call _findnext32
+    call FindNextFileA
     add $32, %rsp
     testl %eax, %eax
-    je .L_tl_fs_read_dir_win_second_entry
+    jne .L_tl_fs_read_dir_win_second_entry
     movq %rdi, %rcx
     sub $32, %rsp
-    call _findclose
+    call FindClose
     add $32, %rsp
     jmp .L_tl_fs_read_dir_win_return_string
 .L_tl_fs_read_dir_win_empty:
@@ -15107,26 +15104,22 @@ tl_profile_alloc_reset_peak:
     jmp .L_tl_fs_file_kind_status_win_path_copy_loop
 .L_tl_fs_file_kind_status_win_path_copy_done:
     movb $0, (%r13,%r12)
-    movq $64, %rcx
+    movq $40, %rcx
     sub $32, %rsp
     call tl_alloc
     add $32, %rsp
     movq %rax, %r12
     movq %r13, %rcx
-    movq %r12, %rdx
+    xorq %rdx, %rdx
+    movq %r12, %r8
     sub $32, %rsp
-    call _stat64
+    call GetFileAttributesExA
     add $32, %rsp
     testl %eax, %eax
-    js .L_tl_fs_file_kind_status_win_errno
-    movzwl 6(%r12), %eax
-    andl $61440, %eax
-    cmpl $32768, %eax
-    je .L_tl_fs_file_kind_status_win_regular
-    cmpl $16384, %eax
-    je .L_tl_fs_file_kind_status_win_directory
-    movq $-3, %rax
-    jmp .L_tl_fs_file_kind_status_win_return
+    jz .L_tl_fs_file_kind_status_win_errno
+    movl 0(%r12), %eax
+    testl $16, %eax
+    jnz .L_tl_fs_file_kind_status_win_directory
 .L_tl_fs_file_kind_status_win_regular:
     movq $-1, %rax
     jmp .L_tl_fs_file_kind_status_win_return
@@ -15134,10 +15127,7 @@ tl_profile_alloc_reset_peak:
     movq $-2, %rax
     jmp .L_tl_fs_file_kind_status_win_return
 .L_tl_fs_file_kind_status_win_errno:
-    sub $32, %rsp
-    call _errno
-    add $32, %rsp
-    movslq (%rax), %rax
+    call .L_tl_fs_win_last_error_status
     testq %rax, %rax
     jne .L_tl_fs_file_kind_status_win_return
     movq $1, %rax
@@ -15180,25 +15170,23 @@ tl_profile_alloc_reset_peak:
     jmp .L_tl_fs_file_size_status_win_path_copy_loop
 .L_tl_fs_file_size_status_win_path_copy_done:
     movb $0, (%r13,%r12)
-    movq $64, %rcx
+    movq $40, %rcx
     sub $32, %rsp
     call tl_alloc
     add $32, %rsp
     movq %rax, %r12
     movq %r13, %rcx
-    movq %r12, %rdx
+    xorq %rdx, %rdx
+    movq %r12, %r8
     sub $32, %rsp
-    call _stat64
+    call GetFileAttributesExA
     add $32, %rsp
     testl %eax, %eax
-    js .L_tl_fs_file_size_status_win_errno
+    jz .L_tl_fs_file_size_status_win_errno
     xorq %rax, %rax
     jmp .L_tl_fs_file_size_status_win_return
 .L_tl_fs_file_size_status_win_errno:
-    sub $32, %rsp
-    call _errno
-    add $32, %rsp
-    movslq (%rax), %rax
+    call .L_tl_fs_win_last_error_status
     testq %rax, %rax
     jne .L_tl_fs_file_size_status_win_return
     movq $1, %rax
@@ -15241,19 +15229,23 @@ tl_profile_alloc_reset_peak:
     jmp .L_tl_fs_file_size_win_path_copy_loop
 .L_tl_fs_file_size_win_path_copy_done:
     movb $0, (%r13,%r12)
-    movq $64, %rcx
+    movq $40, %rcx
     sub $32, %rsp
     call tl_alloc
     add $32, %rsp
     movq %rax, %r12
     movq %r13, %rcx
-    movq %r12, %rdx
+    xorq %rdx, %rdx
+    movq %r12, %r8
     sub $32, %rsp
-    call _stat64
+    call GetFileAttributesExA
     add $32, %rsp
     testl %eax, %eax
-    js .L_tl_fs_file_size_win_zero
-    movq 24(%r12), %rax
+    jz .L_tl_fs_file_size_win_zero
+    movl 32(%r12), %eax
+    movl 28(%r12), %edx
+    shlq $32, %rdx
+    orq %rdx, %rax
     jmp .L_tl_fs_file_size_win_return
 .L_tl_fs_file_size_win_zero:
     xorq %rax, %rax
@@ -15263,6 +15255,44 @@ tl_profile_alloc_reset_peak:
     pop %r12
     pop %rbx
     pop %rbp
+    ret
+
+.L_tl_fs_win_last_error_status:
+    sub $40, %rsp
+    call GetLastError
+    add $40, %rsp
+    movl %eax, %eax
+    cmpq $2, %rax
+    je .L_tl_fs_win_status_not_found
+    cmpq $3, %rax
+    je .L_tl_fs_win_status_not_directory
+    cmpq $5, %rax
+    je .L_tl_fs_win_status_permission
+    cmpq $87, %rax
+    je .L_tl_fs_win_status_invalid
+    cmpq $123, %rax
+    je .L_tl_fs_win_status_invalid
+    cmpq $161, %rax
+    je .L_tl_fs_win_status_invalid
+    cmpq $206, %rax
+    je .L_tl_fs_win_status_name_too_long
+    cmpq $267, %rax
+    je .L_tl_fs_win_status_not_directory
+    ret
+.L_tl_fs_win_status_not_found:
+    movq $2, %rax
+    ret
+.L_tl_fs_win_status_not_directory:
+    movq $20, %rax
+    ret
+.L_tl_fs_win_status_permission:
+    movq $13, %rax
+    ret
+.L_tl_fs_win_status_invalid:
+    movq $22, %rax
+    ret
+.L_tl_fs_win_status_name_too_long:
+    movq $36, %rax
     ret
 
 
@@ -19977,11 +20007,11 @@ tl_windows_sdk_registry_install:
 "
         (string-append
           (if (compiler-backend-plan-provides? plan ".L_tl_fs_read_dir_status")
-            "    .extern _findfirst32
-    .extern _findnext32
-    .extern _findclose
-    .extern _stat64
-    .extern _errno
+            "    .extern FindFirstFileA
+    .extern FindNextFileA
+    .extern FindClose
+    .extern GetFileAttributesExA
+    .extern GetLastError
 "
             "")
           (string-append

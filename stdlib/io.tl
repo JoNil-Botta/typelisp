@@ -35,24 +35,6 @@
 ;# ```
 (import "string.tl")
 
-;: Linux `open` binding used by file and path helpers.
-(extern io-linux-open (:symbol "open") : (-> (Ptr u8) i32 i32 i32))
-
-;: Linux `read` binding used by file, stdin, and path helpers.
-(extern io-linux-read (:symbol "read") : (-> i32 (MutPtr u8) i64 i64))
-
-;: Linux `write` binding used by print, stdout, stderr, and file helpers.
-(extern io-linux-write (:symbol "write") : (-> i32 (Ptr u8) i64 i64))
-
-;: Linux `close` binding used by file and path helpers.
-(extern io-linux-close (:symbol "close") : (-> i32 i32))
-
-;: Linux `lseek` binding used by whole-file reads.
-(extern io-linux-lseek (:symbol "lseek") : (-> i32 i64 i32 i64))
-
-;: Linux `access` binding used by file existence probes.
-(extern io-linux-access (:symbol "access") : (-> (Ptr u8) i32 i32))
-
 ;: Linux errno-location binding used to recover host error codes.
 (extern io-linux-errno-location (:symbol "__errno_location") : (-> (MutPtr i32)))
 
@@ -329,47 +311,95 @@
     :
     i64))
 
+;: Translate a raw Linux syscall return into libc `-1` + `errno` semantics.
+;: Syscalls report errors as a small negative `-errno` in `[-4095, -1]`; the
+;: stdlib reads the host error code through `io-last-error-code`, so failures are
+;: surfaced by storing `errno` and returning `-1`, matching the former asm shim.
+(define (io-linux-syscall-status [result : i64]) : i64
+  (if (and (>= result -4095) (< result 0))
+    (begin
+      (unsafe
+        (ptr-write! (io-linux-errno-location) (cast (- 0 result) : i32)))
+      -1)
+    result))
+
+;: Convert a read-only byte pointer into an integer syscall argument.
+(define (io-linux-ptr-arg [ptr : (Ptr u8)]) : i64
+  (unsafe
+    (cast (ptr->int ptr) : i64)))
+
+;: Linux `open` via the `openat`-style `open` syscall (number 2).
+(define (io-linux-syscall-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
+  (io-linux-syscall-status (syscall 2 (io-linux-ptr-arg path) flags mode)))
+
+;: Linux `read` via the `read` syscall (number 0).
+(define (io-linux-syscall-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
+  (io-linux-syscall-status
+    (syscall
+      0
+      fd
+      (io-linux-ptr-arg
+        (unsafe
+          (ptr-cast buf : (Ptr u8))))
+      count)))
+
+;: Linux `write` via the `write` syscall (number 1).
+(define (io-linux-syscall-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
+  (io-linux-syscall-status (syscall 1 fd (io-linux-ptr-arg buf) count)))
+
+;: Linux `close` via the `close` syscall (number 3).
+(define (io-linux-syscall-close [fd : i64]) : i64
+  (io-linux-syscall-status (syscall 3 fd)))
+
+;: Linux `lseek` via the `lseek` syscall (number 8).
+(define (io-linux-syscall-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
+  (io-linux-syscall-status (syscall 8 fd offset whence)))
+
+;: Linux `access` via the `access` syscall (number 21).
+(define (io-linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
+  (io-linux-syscall-status (syscall 21 (io-linux-ptr-arg path) mode)))
+
 ;: Dispatch a platform `open` call and return its file descriptor or negative status.
 (define (io-platform-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
   (cfg
     windows
     (cast (io-windows-open path (cast flags : i32) (cast mode : i32)) : i64)
-    (cast (io-linux-open path (cast flags : i32) (cast mode : i32)) : i64)))
+    (io-linux-syscall-open path flags mode)))
 
 ;: Dispatch a platform `read` call and return its byte count or negative status.
 (define (io-platform-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
   (cfg
     windows
     (cast (io-windows-read (cast fd : i32) buf (cast count : i32)) : i64)
-    (io-linux-read (cast fd : i32) buf count)))
+    (io-linux-syscall-read fd buf count)))
 
 ;: Dispatch a platform `write` call and return its byte count or negative status.
 (define (io-platform-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
   (cfg
     windows
     (cast (io-windows-write (cast fd : i32) buf (cast count : i32)) : i64)
-    (io-linux-write (cast fd : i32) buf count)))
+    (io-linux-syscall-write fd buf count)))
 
 ;: Dispatch a platform `close` call and return zero or negative status.
 (define (io-platform-close [fd : i64]) : i64
   (cfg
     windows
     (cast (io-windows-close (cast fd : i32)) : i64)
-    (cast (io-linux-close (cast fd : i32)) : i64)))
+    (io-linux-syscall-close fd)))
 
 ;: Dispatch a platform seek call and return the resulting offset or negative status.
 (define (io-platform-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
   (cfg
     windows
     (io-windows-lseek (cast fd : i32) offset (cast whence : i32))
-    (io-linux-lseek (cast fd : i32) offset (cast whence : i32))))
+    (io-linux-syscall-lseek fd offset whence)))
 
 ;: Dispatch a platform existence/access probe and return zero or negative status.
 (define (io-platform-access [path : (Ptr u8)] [mode : i64]) : i64
   (cfg
     windows
     (cast (io-windows-access path (cast mode : i32)) : i64)
-    (cast (io-linux-access path (cast mode : i32)) : i64)))
+    (io-linux-syscall-access path mode)))
 
 ;: Return platform flags for opening a path read-only.
 (define (io-open-read-flags) : i64

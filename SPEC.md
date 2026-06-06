@@ -3895,7 +3895,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous map/zip subset over `i32`, `i64`, `f32`, and `f64` |
 | Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred |
-| Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
+| Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |

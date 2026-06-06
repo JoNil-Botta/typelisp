@@ -959,7 +959,6 @@
 ;; loop-carried value is live-out of the body and live-in of the header, so its
 ;; interval covers the whole loop). 63 data bits per word avoid the i64 sign bit.
 ;; ---------------------------------------------------------------------------
-
 (define (compiler-reg-bits-words [vars : i64]) : i64
   (/ (+ vars 62) 63))
 
@@ -1085,7 +1084,13 @@
               (* idx words)
               words)]
           [(StringI64MapMissing) unit])
-        (compiler-reg-bits-or-succs! live-out live-in (box-get rest) idmap b words))]))
+        (compiler-reg-bits-or-succs!
+          live-out
+          live-in
+          (box-get rest)
+          idmap
+          b
+          words))]))
 
 (define (compiler-reg-bits-update-live-in!
   [live-in : (Array i64)]
@@ -1304,7 +1309,8 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [live-blocks : CompilerLiveBlockList (compiler-live-build-blocks blocks)]
+        [live-blocks : CompilerLiveBlockList
+          (compiler-live-build-blocks blocks)]
         [count : i64 (compiler-reg-live-block-list-count live-blocks)]
         [words : i64 (compiler-reg-bits-words vars)]
         [cells : i64 (* count words)]
@@ -1327,7 +1333,8 @@
               (compiler-reg-bits-build-rows!
                 live-blocks
                 arr
-                (string-i64-map-with-capacity (compiler-reg-bits-map-capacity count))
+                (string-i64-map-with-capacity
+                  (compiler-reg-bits-map-capacity count))
                 use-rows
                 def-rows
                 words
@@ -2221,7 +2228,10 @@
 (define (compiler-reg-call-points [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func
     [(IrFunction _ _ _ _ blocks)
-      (match (compiler-reg-call-points-blocks blocks 0 (compiler-live-set-empty))
+      (match (compiler-reg-call-points-blocks
+        blocks
+        0
+        (compiler-live-set-empty))
         [(CompilerRegCallScan _ set) set])]))
 
 (define (compiler-reg-call-word-in-range?
@@ -2234,7 +2244,9 @@
     (let
       [i : i64 (compiler-reg-low-bit-index bits)]
       [c : i64 (+ var-base i)]
-      (if (if (< start c) (< c end) false)
+      (if (if (< start c)
+        (< c end)
+        false)
         true
         (compiler-reg-call-word-in-range?
           (bit-and bits (- bits 1))
@@ -3017,7 +3029,8 @@
 ;; Scalar plan correctness: a FLOAT value live across a call must NOT be homed in
 ;; the caller-saved XMM pool, so it stays ineligible even on the scalar path.
 (define (compiler-reg-scalar-f64-call-live-ok?) : bool
-  (match (compiler-reg-plan-function-scalar (compiler-reg-f64-call-live-function))
+  (match (compiler-reg-plan-function-scalar
+    (compiler-reg-f64-call-live-function))
     [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)

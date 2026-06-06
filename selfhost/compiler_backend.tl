@@ -271,7 +271,8 @@
 ;; it is set deterministically per compile so a given opt level always produces
 ;; identical assembly (the stage2==stage3 fixpoint holds within each level). SIMD
 ;; (Avx2/Avx512) functions always use register allocation regardless.
-(define compiler-backend-scalar-registers-enabled : bool false)
+(define compiler-backend-scalar-registers-enabled : bool
+  false)
 
 (define (compiler-backend-set-scalar-registers! [enabled : bool]) : unit
   (set! compiler-backend-scalar-registers-enabled enabled))
@@ -3707,9 +3708,15 @@
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
         ;; Load rhs into %rbx FIRST: lhs goes into dst's home register, which may
         ;; itself be rhs's home — loading lhs first would clobber rhs.
-        (match (compiler-backend-emit-load-value-with-plan assignments rhs "%rbx")
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          rhs
+          "%rbx")
           [(OkCompilerBackend rhs-asm)
-            (match (compiler-backend-emit-load-value-with-plan assignments lhs dst-home)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              lhs
+              dst-home)
               [(OkCompilerBackend lhs-asm)
                 (OkCompilerBackend
                   (string-append
@@ -3719,61 +3726,65 @@
                       (backend-cat5 "    " mnem " %rbx, " dst-home "\n"))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-      (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
-        [(OkCompilerBackend lhs-asm)
-          (match (compiler-backend-immediate-operand rhs)
-            [(CompilerBackendSomeImmediate imm)
-              (match (compiler-backend-binop-immediate-asm op imm operand-ty)
-                [(CompilerBackendSomeAsm op-asm)
-                  (OkCompilerBackend
-                    (string-append
-                      lhs-asm
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          lhs
+          "%rax")
+          [(OkCompilerBackend lhs-asm)
+            (match (compiler-backend-immediate-operand rhs)
+              [(CompilerBackendSomeImmediate imm)
+                (match (compiler-backend-binop-immediate-asm op imm operand-ty)
+                  [(CompilerBackendSomeAsm op-asm)
+                    (OkCompilerBackend
                       (string-append
-                        op-asm
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          "%rax"
-                          ty))))]
-                [(CompilerBackendNoAsm)
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    rhs
-                    "%rbx")
-                    [(OkCompilerBackend rhs-asm)
-                      (OkCompilerBackend
+                        lhs-asm
                         (string-append
-                          lhs-asm
-                          (string-append
-                            rhs-asm
-                            (string-append
-                              (compiler-backend-binop-asm op operand-ty)
-                              (compiler-backend-emit-store-typed-var-with-plan
-                                assignments
-                                dst
-                                "%rax"
-                                ty)))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-            [(CompilerBackendNoImmediate)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                rhs
-                "%rbx")
-                [(OkCompilerBackend rhs-asm)
-                  (OkCompilerBackend
-                    (string-append
-                      lhs-asm
-                      (string-append
-                        rhs-asm
-                        (string-append
-                          (compiler-backend-binop-asm op operand-ty)
+                          op-asm
                           (compiler-backend-emit-store-typed-var-with-plan
                             assignments
                             dst
                             "%rax"
-                            ty)))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+                            ty))))]
+                  [(CompilerBackendNoAsm)
+                    (match (compiler-backend-emit-load-value-with-plan
+                      assignments
+                      rhs
+                      "%rbx")
+                      [(OkCompilerBackend rhs-asm)
+                        (OkCompilerBackend
+                          (string-append
+                            lhs-asm
+                            (string-append
+                              rhs-asm
+                              (string-append
+                                (compiler-backend-binop-asm op operand-ty)
+                                (compiler-backend-emit-store-typed-var-with-plan
+                                  assignments
+                                  dst
+                                  "%rax"
+                                  ty)))))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])])]
+              [(CompilerBackendNoImmediate)
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  rhs
+                  "%rbx")
+                  [(OkCompilerBackend rhs-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        lhs-asm
+                        (string-append
+                          rhs-asm
+                          (string-append
+                            (compiler-backend-binop-asm op operand-ty)
+                            (compiler-backend-emit-store-typed-var-with-plan
+                              assignments
+                              dst
+                              "%rax"
+                              ty)))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop-return
   [source-function : String]
@@ -6310,7 +6321,8 @@
         [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
         [(CompilerBackendNoAsm)
           (let
-            [dst-home : String (compiler-backend-var-register-home assignments dst)]
+            [dst-home : String
+              (compiler-backend-var-register-home assignments dst)]
             ;; Full-width (8-byte) value into a register home: load src straight
             ;; into that register (a plain movq / leaq), skipping the %rax store.
             ;; emit-load-value-with-plan handles var/global/global-addr/immediate
@@ -6318,7 +6330,10 @@
             (if (if (= (compiler-backend-type-size ty) 8)
               (not (string-eq dst-home ""))
               false)
-              (compiler-backend-emit-load-value-with-plan assignments src dst-home)
+              (compiler-backend-emit-load-value-with-plan
+                assignments
+                src
+                dst-home)
               (match (match src
                 [(IrValueGlobalAddr name)
                   (OkCompilerBackend
@@ -7794,7 +7809,8 @@
                     program-index
                     spans
                     func-diag
-                    use-counts buf)]
+                    use-counts
+                    buf)]
                 [(IrInstrReturn maybe)
                   (match (box-get after-jump)
                     [(IrInstrNil)
@@ -7841,7 +7857,8 @@
                               program-index
                               spans
                               func-diag
-                              use-counts buf))]
+                              use-counts
+                              buf))]
                         [(IrNoValue)
                           (compiler-backend-emit-instrs-normal
                             target
@@ -7863,7 +7880,8 @@
                             program-index
                             spans
                             func-diag
-                            use-counts buf)])]
+                            use-counts
+                            buf)])]
                     [_
                       (compiler-backend-emit-instrs-normal
                         target
@@ -7885,7 +7903,8 @@
                         program-index
                         spans
                         func-diag
-                        use-counts buf)])]
+                        use-counts
+                        buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
                     target
@@ -7907,7 +7926,8 @@
                     program-index
                     spans
                     func-diag
-                    use-counts buf)])]
+                    use-counts
+                    buf)])]
             [_
               (compiler-backend-emit-instrs-normal
                 target
@@ -7929,7 +7949,8 @@
                 program-index
                 spans
                 func-diag
-                use-counts buf)])]
+                use-counts
+                buf)])]
         [(IrInstrCall dst name args ty)
           (match (box-get rest)
             [(IrInstrCons next after-return)
@@ -7982,7 +8003,8 @@
                               program-index
                               spans
                               func-diag
-                              use-counts buf))]
+                              use-counts
+                              buf))]
                         [(IrNoValue)
                           (compiler-backend-emit-instrs-normal
                             target
@@ -8004,7 +8026,8 @@
                             program-index
                             spans
                             func-diag
-                            use-counts buf)])]
+                            use-counts
+                            buf)])]
                     [_
                       (compiler-backend-emit-instrs-normal
                         target
@@ -8026,7 +8049,8 @@
                         program-index
                         spans
                         func-diag
-                        use-counts buf)])]
+                        use-counts
+                        buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
                     target
@@ -8048,7 +8072,8 @@
                     program-index
                     spans
                     func-diag
-                    use-counts buf)])]
+                    use-counts
+                    buf)])]
             [_
               (compiler-backend-emit-instrs-normal
                 target
@@ -8070,7 +8095,8 @@
                 program-index
                 spans
                 func-diag
-                use-counts buf)])]
+                use-counts
+                buf)])]
         [(IrInstrGep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
@@ -8147,7 +8173,8 @@
                                                   program-index
                                                   spans
                                                   func-diag
-                                                  use-counts buf)
+                                                  use-counts
+                                                  buf)
                                                 (compiler-backend-emit-fused-gep-load-rest
                                                   target
                                                   function
@@ -8173,7 +8200,8 @@
                                                   program-index
                                                   spans
                                                   func-diag
-                                                  use-counts buf))]
+                                                  use-counts
+                                                  buf))]
                                             [_
                                               (compiler-backend-emit-fused-gep-load-rest
                                                 target
@@ -8200,7 +8228,8 @@
                                                 program-index
                                                 spans
                                                 func-diag
-                                                use-counts buf)])]
+                                                use-counts
+                                                buf)])]
                                         [_
                                           (compiler-backend-emit-fused-gep-load-rest
                                             target
@@ -8227,7 +8256,8 @@
                                             program-index
                                             spans
                                             func-diag
-                                            use-counts buf)])
+                                            use-counts
+                                            buf)])
                                       (compiler-backend-emit-fused-gep-load-rest
                                         target
                                         function
@@ -8253,7 +8283,8 @@
                                         program-index
                                         spans
                                         func-diag
-                                        use-counts buf))]
+                                        use-counts
+                                        buf))]
                                   [_
                                     (compiler-backend-emit-fused-gep-load-rest
                                       target
@@ -8280,7 +8311,8 @@
                                       program-index
                                       spans
                                       func-diag
-                                      use-counts buf)])]
+                                      use-counts
+                                      buf)])]
                               [_
                                 (compiler-backend-emit-fused-gep-load-rest
                                   target
@@ -8307,7 +8339,8 @@
                                   program-index
                                   spans
                                   func-diag
-                                  use-counts buf)])
+                                  use-counts
+                                  buf)])
                             (compiler-backend-emit-fused-gep-load-rest
                               target
                               function
@@ -8333,7 +8366,8 @@
                               program-index
                               spans
                               func-diag
-                              use-counts buf))
+                              use-counts
+                              buf))
                           (compiler-backend-emit-instrs-normal
                             target
                             function
@@ -8354,7 +8388,8 @@
                             program-index
                             spans
                             func-diag
-                            use-counts buf))]
+                            use-counts
+                            buf))]
                       [(IrInstrStorePtr dst value store-ty)
                         (if (compiler-backend-branch-uses-var? dst gep-dst)
                           (compiler-backend-emit-fused-gep-store-rest
@@ -8382,7 +8417,8 @@
                             program-index
                             spans
                             func-diag
-                            use-counts buf)
+                            use-counts
+                            buf)
                           (compiler-backend-emit-instrs-normal
                             target
                             function
@@ -8403,7 +8439,8 @@
                             program-index
                             spans
                             func-diag
-                            use-counts buf))]
+                            use-counts
+                            buf))]
                       [_
                         (compiler-backend-emit-instrs-normal
                           target
@@ -8425,7 +8462,8 @@
                           program-index
                           spans
                           func-diag
-                          use-counts buf)])]
+                          use-counts
+                          buf)])]
                   [_
                     (compiler-backend-emit-instrs-normal
                       target
@@ -8447,7 +8485,8 @@
                       program-index
                       spans
                       func-diag
-                      use-counts buf)])]
+                      use-counts
+                      buf)])]
               [(CompilerBackendNoI64)
                 (compiler-backend-emit-instrs-normal
                   target
@@ -8469,7 +8508,8 @@
                   program-index
                   spans
                   func-diag
-                  use-counts buf)])
+                  use-counts
+                  buf)])
             (compiler-backend-emit-instrs-normal
               target
               function
@@ -8490,7 +8530,8 @@
               program-index
               spans
               func-diag
-              use-counts buf))]
+              use-counts
+              buf))]
         [(IrInstrLoad load-dst ptr load-ty)
           (if (and
             (compiler-backend-load-compare-type? load-ty)
@@ -8547,7 +8588,8 @@
                                   program-index
                                   spans
                                   func-diag
-                                  use-counts buf)
+                                  use-counts
+                                  buf)
                                 (compiler-backend-emit-instrs-normal
                                   target
                                   function
@@ -8568,7 +8610,8 @@
                                   program-index
                                   spans
                                   func-diag
-                                  use-counts buf))]
+                                  use-counts
+                                  buf))]
                             [_
                               (compiler-backend-emit-instrs-normal
                                 target
@@ -8590,7 +8633,8 @@
                                 program-index
                                 spans
                                 func-diag
-                                use-counts buf)])]
+                                use-counts
+                                buf)])]
                         [_
                           (compiler-backend-emit-instrs-normal
                             target
@@ -8612,7 +8656,8 @@
                             program-index
                             spans
                             func-diag
-                            use-counts buf)])
+                            use-counts
+                            buf)])
                       (compiler-backend-emit-instrs-normal
                         target
                         function
@@ -8633,7 +8678,8 @@
                         program-index
                         spans
                         func-diag
-                        use-counts buf))]
+                        use-counts
+                        buf))]
                   [_
                     (compiler-backend-emit-instrs-normal
                       target
@@ -8655,7 +8701,8 @@
                       program-index
                       spans
                       func-diag
-                      use-counts buf)])]
+                      use-counts
+                      buf)])]
               [_
                 (compiler-backend-emit-instrs-normal
                   target
@@ -8677,7 +8724,8 @@
                   program-index
                   spans
                   func-diag
-                  use-counts buf)])
+                  use-counts
+                  buf)])
             (compiler-backend-emit-instrs-normal
               target
               function
@@ -8698,7 +8746,8 @@
               program-index
               spans
               func-diag
-              use-counts buf))]
+              use-counts
+              buf))]
         [(IrInstrBinOp dst op lhs rhs ty)
           (if (and
             (compiler-backend-compare-op? op)
@@ -8747,7 +8796,8 @@
                                 program-index
                                 spans
                                 func-diag
-                                use-counts buf))]
+                                use-counts
+                                buf))]
                           [(IrNoValue)
                             (compiler-backend-emit-instrs-normal
                               target
@@ -8769,7 +8819,8 @@
                               program-index
                               spans
                               func-diag
-                              use-counts buf)])]
+                              use-counts
+                              buf)])]
                       [_
                         (compiler-backend-emit-instrs-normal
                           target
@@ -8791,7 +8842,8 @@
                           program-index
                           spans
                           func-diag
-                          use-counts buf)])]
+                          use-counts
+                          buf)])]
                   [(IrInstrBranch cond true-label false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-compare-branch-rest
@@ -8820,7 +8872,8 @@
                         program-index
                         spans
                         func-diag
-                        use-counts buf)
+                        use-counts
+                        buf)
                       (compiler-backend-emit-instrs-normal
                         target
                         function
@@ -8841,7 +8894,8 @@
                         program-index
                         spans
                         func-diag
-                        use-counts buf))]
+                        use-counts
+                        buf))]
                   [_
                     (compiler-backend-emit-instrs-normal
                       target
@@ -8863,7 +8917,8 @@
                       program-index
                       spans
                       func-diag
-                      use-counts buf)])]
+                      use-counts
+                      buf)])]
               [_
                 (compiler-backend-emit-instrs-normal
                   target
@@ -8885,7 +8940,8 @@
                   program-index
                   spans
                   func-diag
-                  use-counts buf)])
+                  use-counts
+                  buf)])
             (compiler-backend-emit-instrs-normal
               target
               function
@@ -8906,7 +8962,8 @@
               program-index
               spans
               func-diag
-              use-counts buf))]
+              use-counts
+              buf))]
         [_
           (compiler-backend-emit-instrs-normal
             target
@@ -8928,7 +8985,8 @@
             program-index
             spans
             func-diag
-            use-counts buf)])]))
+            use-counts
+            buf)])]))
 
 (define (compiler-backend-emit-block
   [target : CompilerBackendTarget]

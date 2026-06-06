@@ -5545,16 +5545,38 @@
 (define (bad-owner-tuple-ref-nested [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
   (take-handle (tuple-ref (tuple-ref p 0) 0)))")
 
-(define (compiler-typecheck-move-owner-array-ref-reuse-source) : String
+(define (compiler-typecheck-move-owner-array-ref-other-element-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-array-ref [items : (Array FileHandle 1)]) : i64
+(define (owner-array-ref-other-element [items : (Array FileHandle 2)]) : i64
   (begin
     (take-handle (array-ref items 0))
-    (struct-get (array-ref items 0) fd)))")
+    (struct-get (array-ref items 1) fd)))")
+
+(define (compiler-typecheck-move-owner-array-ref-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-repeat [items : (Array FileHandle 1)]) : unit
+  (begin
+    (take-handle (array-ref items 0))
+    (take-handle (array-ref items 0))))")
+
+(define (compiler-typecheck-move-owner-array-ref-nonliteral-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-nonliteral
+  [items : (Array FileHandle 2)]
+  [index : i64]) : unit
+  (take-handle (array-ref items index)))")
 
 (define (compiler-typecheck-move-owner-dyn-array-ref-call-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -5704,8 +5726,17 @@
         "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-array-ref-other-element-source))
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-array-ref-reuse-source)
+        (compiler-typecheck-move-owner-array-ref-repeat-source)
+        "typecheck: use of moved value `items.#array.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-array-ref-nonliteral-source)
         "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))

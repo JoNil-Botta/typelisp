@@ -198,6 +198,21 @@
       [(OkIoStringList entries)
         (package-source-scan-entries command root relative entries acc)])))
 
+(define (package-source-scan-optional-dir
+  [command : String]
+  [root : String]
+  [relative : String]
+  [acc : StringList]) : ResultPackageSourceList
+  (let
+    [dir : String (package-source-root-join root relative)]
+    (match (try-read-dir (& dir))
+      [(ErrIoStringList error)
+        (if (or (io-error-not-found? error) (io-error-unsupported? error))
+          (OkPackageSourceList acc)
+          (package-source-read-dir-error command dir error))]
+      [(OkIoStringList entries)
+        (package-source-scan-entries command root relative entries acc)])))
+
 (define (package-source-scan-root
   [command : String]
   [source-set : PackageSourceSet]) : ResultPackageSourceList
@@ -283,6 +298,13 @@
                 (struct-get base manifest-dir)
                 (struct-get base manifest)
                 sources)))])]))
+
+(define (package-source-discover-tests-for
+  [command : String]
+  [source-set : PackageSourceSet]) : ResultPackageSourceList
+  (let
+    [root : String (struct-get source-set manifest-dir)]
+    (package-source-scan-optional-dir command root "tests" StringNil)))
 
 (define (package-source-discover [manifest-path : String] [has-manifest : bool]) : ResultPackageSourceSet
   (package-source-discover-for "check" manifest-path has-manifest))

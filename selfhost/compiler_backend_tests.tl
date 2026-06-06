@@ -3379,6 +3379,21 @@
           (compiler-backend-string-contains? asm "\ntl_fs_read_dir_status:\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-windows-private-fs-crt-ok? [asm : String]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-string-contains? asm "    .extern _findfirst32\n")
+      (compiler-backend-string-contains? asm "    .extern _findnext32\n")
+      (compiler-backend-string-contains? asm "    .extern _findclose\n")
+      (compiler-backend-string-contains? asm "    .extern _stat64\n")
+      (compiler-backend-string-contains? asm "    .extern _errno\n")
+      (compiler-backend-string-contains? asm "    call _findfirst32\n")
+      (compiler-backend-string-contains? asm "    call _findnext32\n")
+      (compiler-backend-string-contains? asm "    call _findclose\n"))
+    (and
+      (compiler-backend-string-contains? asm "    call _stat64\n")
+      (compiler-backend-string-contains? asm "    call _errno\n"))))
+
 (define (compiler-backend-windows-fs-read-dir-runtime-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-fs-read-dir-runtime-source)
@@ -3387,7 +3402,7 @@
       (backend-and8
         (compiler-backend-string-contains? asm ".L_tl_fs_read_dir_status:\n")
         (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")
-        (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+        (compiler-backend-windows-private-fs-crt-ok? asm)
         (not (compiler-backend-string-contains? asm "    syscall"))
         (not (compiler-backend-string-contains? asm ".globl tl_fs_read_dir\n"))
         (not
@@ -3437,7 +3452,7 @@
       (and
         (compiler-backend-string-contains? asm ".L_tl_fs_file_kind_status:\n")
         (and
-          (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+          (compiler-backend-windows-private-fs-crt-ok? asm)
           (and
             (not (compiler-backend-string-contains? asm "    syscall"))
             (and
@@ -3498,7 +3513,7 @@
         (and
           (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n")
           (and
-            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+            (compiler-backend-windows-private-fs-crt-ok? asm)
             (and
               (not (compiler-backend-string-contains? asm "    syscall"))
               (not

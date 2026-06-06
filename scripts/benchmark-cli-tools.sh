@@ -35,6 +35,8 @@ Environment:
   TYPELISP_TOOL_BENCH_OPT_LEVEL        Compile optimization level for rebuilt tools (default 2).
   TYPELISP_TOOL_BENCH_UPDATE_BASELINE  Force baseline refresh after a successful full run.
   TYPELISP_TOOL_BENCH_STRICT_BASELINE  Fail instead of refreshing when the corpus changed.
+
+Timings include setup, measured, and all totals. Setup covers the rebuilt CLI.
 EOF
 }
 
@@ -102,6 +104,7 @@ FINGERPRINTS="$RUNDIR/fingerprints.tsv"
 CASE_LIST="$RUNDIR/cases.txt"
 CHOOSER_QUEUE_FIXTURE="$ROOT/benchmarks/cli-tools/chooser-queue.json"
 TOTAL_MS=0
+SETUP_MS=0
 
 rm -rf "$RUNDIR"
 mkdir -p "$BUILDDIR" "$OUTPUTS" "$ARTIFACTS" "$TMPDIR_BENCH" "$BASELINE_DIR"
@@ -131,11 +134,12 @@ record_timing() {
     TOTAL_MS=$((TOTAL_MS + elapsed))
 }
 
-record_timing_no_total() {
+record_setup_timing() {
     step=$1
     iteration=$2
     elapsed=$3
     printf '%s\t%s\t%s\n' "$step" "$iteration" "$elapsed" >> "$TIMINGS"
+    SETUP_MS=$((SETUP_MS + elapsed))
 }
 
 fail() {
@@ -190,7 +194,7 @@ compile_cli_to_asm() {
         exit 1
     fi
     end=$(now_ms)
-    record_timing_no_total "$label" compile "$((end - start))"
+    record_setup_timing "$label" compile "$((end - start))"
     [ -s "$asm" ] || fail "$label did not produce assembly: $asm"
 }
 
@@ -239,7 +243,7 @@ measure_setup_step_no_total() {
         fail "$step_label failed"
     fi
     end=$(now_ms)
-    record_timing_no_total "$step_label" step "$((end - start))"
+    record_setup_timing "$step_label" step "$((end - start))"
 }
 
 compare_text() {
@@ -657,7 +661,10 @@ verify_chooser_output
 
 [ -s "$CASE_LIST" ] || fail "no benchmark cases matched filter: $FILTER"
 
-printf 'total\tall\t%s\n' "$TOTAL_MS" >> "$TIMINGS"
+ALL_MS=$((SETUP_MS + TOTAL_MS))
+printf 'total\tsetup\t%s\n' "$SETUP_MS" >> "$TIMINGS"
+printf 'total\tmeasured\t%s\n' "$TOTAL_MS" >> "$TIMINGS"
+printf 'total\tall\t%s\n' "$ALL_MS" >> "$TIMINGS"
 fingerprint_outputs
 verify_previous_run
 

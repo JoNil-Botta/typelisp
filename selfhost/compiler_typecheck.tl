@@ -5636,9 +5636,47 @@
   "(define (lambda-body-discard [s : String]) : String
   (begin (lambda () : unit (let [t : String s] unit)) s))")
 
-(define (compiler-typecheck-move-while-body-discard-source) : String
-  "(define (while-body-discard [flag : bool] [s : String]) : String
+(define (compiler-typecheck-move-while-loop-carried-param-source) : String
+  "(define (bad-while-loop-carried-param [flag : bool] [s : String]) : String
   (begin (while flag (let [t : String s] unit)) s))")
+
+(define (compiler-typecheck-move-while-loop-carried-local-source) : String
+  "(define (bad-while-loop-carried-local [flag : bool]) : unit
+  (let
+    [s : String (int->string 1)]
+    (while flag (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-while-body-local-owner-source) : String
+  "(define (while-body-local-owner [flag : bool]) : unit
+  (while flag
+    (let
+      [s : String (int->string 1)]
+      (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-while-copyable-source) : String
+  "(define (while-copyable [flag : bool] [n : i64]) : i64
+  (begin (while flag (let [m : i64 n] unit)) n))")
+
+(define (compiler-typecheck-move-foreach-loop-carried-param-source) : String
+  "(define (bad-foreach-loop-carried-param [n : i64] [s : String]) : unit
+  (foreach ([i : i64 0 n]) (let [t : String s] unit)))")
+
+(define (compiler-typecheck-move-foreach-loop-carried-local-source) : String
+  "(define (bad-foreach-loop-carried-local [n : i64]) : unit
+  (let
+    [s : String (int->string 1)]
+    (foreach ([i : i64 0 n]) (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-foreach-body-local-owner-source) : String
+  "(define (foreach-body-local-owner [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [s : String (int->string 1)]
+      (let [t : String s] unit))))")
+
+(define (compiler-typecheck-move-foreach-copyable-source) : String
+  "(define (foreach-copyable [n : i64] [x : i64]) : i64
+  (begin (foreach ([i : i64 0 n]) (let [y : i64 x] unit)) x))")
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
@@ -5661,8 +5699,8 @@
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
-;; aggregate/projection sharing, one-shot owner transfers, and branch/deferred
-;; body isolation pass.
+;; aggregate/projection sharing, one-shot owner transfers, branch/deferred body
+;; isolation, and conservative repeated-loop owner moves pass.
 (define (compiler-typecheck-move-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -5809,8 +5847,40 @@
         (compiler-typecheck-move-lambda-body-discard-source))
         unit
         (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-while-loop-carried-param-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-while-loop-carried-local-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
       (if (compiler-typecheck-ok?
-        (compiler-typecheck-move-while-body-discard-source))
+        (compiler-typecheck-move-while-body-local-owner-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-while-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-foreach-loop-carried-param-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-foreach-loop-carried-local-source)
+        "typecheck: cannot move loop-carried owner value `s`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-foreach-body-local-owner-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-foreach-copyable-source))
         unit
         (set! ok false))
       ok)))

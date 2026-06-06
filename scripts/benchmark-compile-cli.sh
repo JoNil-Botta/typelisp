@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
 set -eu
 
-# benchmark-compile-cli.sh - benchmark the optimized selfhost CLI self-build.
+# benchmark-compile-cli.sh - benchmark optimized selfhost CLI self-builds.
 #
-# The primary measured operation is the real optimized stage2 CLI compiling
-# selfhost/cli.tl into stage3.s. The measured stage3 assembly must be
-# byte-identical to stage2.s. A profile-enabled compile driver, compiled by
-# stage2 with --cfg compile-profile, provides phase timing and allocator
-# peak-live counters while reusing the normal compiler driver pipeline.
+# For each requested optimization level, the script builds stage1 and stage2
+# CLIs, measures the real stage2 CLI compiling selfhost/cli.tl into stage3.s,
+# and verifies that stage3.s is byte-identical to stage2.s. A profile-enabled
+# compile driver then records phase timing and allocator peak-live counters for
+# the same opt-level compile pipeline.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -18,9 +18,30 @@ export TYPELISP_WINDOWS_LINK_REPRO
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
+usage() {
+    cat <<'EOF'
+usage: scripts/benchmark-compile-cli.sh [typelisp-seed]
+
+Environment:
+  TYPELISP_BIN                         Seed compiler when no argument is given.
+  TYPELISP_COMPILE_BENCH_OUT           Output root (default target/compile-cli-benchmark).
+  TYPELISP_COMPILE_BENCH_OPT_LEVELS    Space- or comma-separated opt levels (default "2 3").
+  TYPELISP_COMPILE_BENCH_CHECK         Set to 1 to enforce the opt3/opt2 ratio limit.
+  TYPELISP_COMPILE_BENCH_RATIO_LIMIT   Integer opt3/opt2 limit for check mode (default 2).
+EOF
+}
+
 if [ "$#" -gt 1 ]; then
-    echo "usage: $0 [typelisp-seed]" >&2
+    usage >&2
     exit 2
+fi
+if [ "$#" -eq 1 ]; then
+    case "$1" in
+        -h | --help)
+            usage
+            exit 0
+            ;;
+    esac
 fi
 
 if [ "$#" -eq 1 ]; then
@@ -38,23 +59,59 @@ if [ ! -x "$SEED" ]; then
 fi
 
 WORKDIR=${TYPELISP_COMPILE_BENCH_OUT:-"$ROOT/target/compile-cli-benchmark"}
+OPT_LEVELS=$(printf '%s' "${TYPELISP_COMPILE_BENCH_OPT_LEVELS:-2 3}" | tr ',' ' ')
+RATIO_LIMIT=${TYPELISP_COMPILE_BENCH_RATIO_LIMIT:-2}
+
+set -- $OPT_LEVELS
+if [ "$#" -eq 0 ]; then
+    echo "TYPELISP_COMPILE_BENCH_OPT_LEVELS must name at least one opt level" >&2
+    exit 2
+fi
+for candidate do
+    case "$candidate" in
+        0 | 1 | 2 | 3) ;;
+        *)
+            echo "TYPELISP_COMPILE_BENCH_OPT_LEVELS must contain only 0, 1, 2, or 3" >&2
+            exit 2
+            ;;
+    esac
+done
+
+case "$RATIO_LIMIT" in
+    "" | *[!0-9]* | 0)
+        echo "TYPELISP_COMPILE_BENCH_RATIO_LIMIT must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 configure_toolchain
 
-STAGE1_ASM="$WORKDIR/stage1.s"
-STAGE1_OBJ="$WORKDIR/stage1.$NL_OBJ_EXT"
-STAGE1_BIN="$WORKDIR/stage1$NL_BIN_EXT"
-STAGE2_ASM="$WORKDIR/stage2.s"
-STAGE2_OBJ="$WORKDIR/stage2.$NL_OBJ_EXT"
-STAGE2_BIN="$WORKDIR/stage2$NL_BIN_EXT"
-STAGE3_ASM="$WORKDIR/stage3.s"
-PROFILE_ASM="$WORKDIR/compile_profile.s"
-PROFILE_OBJ="$WORKDIR/compile_profile.$NL_OBJ_EXT"
-PROFILE_BIN="$WORKDIR/compile_profile$NL_BIN_EXT"
-PROFILE_CLI_ASM="$WORKDIR/profile-cli.s"
 TIMINGS="$WORKDIR/timings.tsv"
 PROFILE_TSV="$WORKDIR/profile.tsv"
+SUMMARY_TSV="$WORKDIR/summary.tsv"
+printf 'opt_level\tphase\telapsed_ms\n' > "$TIMINGS"
+printf 'opt_level\tphase\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\n' > "$PROFILE_TSV"
+printf 'opt_level\tcompile_ms\tprofile_total_ms\tprofile_peak_live_delta_bytes\n' > "$SUMMARY_TSV"
+
+fail() {
+    echo "[compile-bench] $*" >&2
+    exit 1
+}
+
+show_failure_logs() {
+    stdout=$1
+    stderr=$2
+    if [ -s "$stdout" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+    fi
+    if [ -s "$stderr" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+    fi
+}
 
 now_ms() {
     value=$(date +%s%3N 2>/dev/null || true)
@@ -65,65 +122,17 @@ now_ms() {
     perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'
 }
 
+record_timing() {
+    opt_level=$1
+    phase=$2
+    elapsed=$3
+    printf '%s\t%s\t%s\n' "$opt_level" "$phase" "$elapsed" >> "$TIMINGS"
+}
+
 sha_files() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$@" >&2 || true
     fi
-}
-
-compile_cli_to_asm() {
-    label=$1
-    compiler=$2
-    asm=$3
-    stdout="$WORKDIR/$label.stdout"
-    stderr="$WORKDIR/$label.stderr"
-    echo "[compile-bench] $label"
-    if ! run_with_heartbeat "$label" \
-        "$compiler" compile selfhost/cli.tl -o "$asm" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib \
-        --stdlib-root selfhost \
-        --opt-level 2 \
-        >"$stdout" 2>"$stderr"; then
-        echo "[compile-bench] $label failed" >&2
-        sed 's/^/  /' "$stdout" >&2 || true
-        sed 's/^/  /' "$stderr" >&2 || true
-        exit 1
-    fi
-    [ -s "$asm" ] || {
-        echo "[compile-bench] $label did not produce assembly: $asm" >&2
-        exit 1
-    }
-}
-
-measure_compile_cli_to_asm() {
-    label=$1
-    compiler=$2
-    asm=$3
-    stdout="$WORKDIR/$label.stdout"
-    stderr="$WORKDIR/$label.stderr"
-    echo "[compile-bench] measure $label"
-    start=$(now_ms)
-    if ! run_with_heartbeat "$label" \
-        "$compiler" compile selfhost/cli.tl -o "$asm" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib \
-        --stdlib-root selfhost \
-        --opt-level 2 \
-        >"$stdout" 2>"$stderr"; then
-        echo "[compile-bench] $label failed" >&2
-        sed 's/^/  /' "$stdout" >&2 || true
-        sed 's/^/  /' "$stderr" >&2 || true
-        exit 1
-    fi
-    end=$(now_ms)
-    [ -s "$asm" ] || {
-        echo "[compile-bench] $label did not produce assembly: $asm" >&2
-        exit 1
-    }
-    printf '%s\t%s\n' "$label" "$((end - start))" >> "$TIMINGS"
 }
 
 strip_if_needed() {
@@ -149,58 +158,233 @@ compare_text() {
     fi
 }
 
-: > "$TIMINGS"
-printf 'phase\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\n' > "$PROFILE_TSV"
+compile_cli_to_asm() {
+    opt_level=$1
+    label=$2
+    compiler=$3
+    asm=$4
+    logdir=$5
+    stdout="$logdir/$label.stdout"
+    stderr="$logdir/$label.stderr"
+    echo "[compile-bench] opt$opt_level $label"
+    start=$(now_ms)
+    if ! run_with_heartbeat "$label" \
+        "$compiler" compile selfhost/cli.tl -o "$asm" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib \
+        --stdlib-root selfhost \
+        --opt-level "$opt_level" \
+        >"$stdout" 2>"$stderr"; then
+        echo "[compile-bench] $label failed" >&2
+        show_failure_logs "$stdout" "$stderr"
+        exit 1
+    fi
+    end=$(now_ms)
+    record_timing "$opt_level" "$label" "$((end - start))"
+    [ -s "$asm" ] || fail "$label did not produce assembly: $asm"
+}
 
-compile_cli_to_asm "seed-to-stage1" "$SEED" "$STAGE1_ASM"
-assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
-strip_if_needed "$STAGE1_BIN"
+measure_step() {
+    opt_level=$1
+    step_label=$2
+    shift 2
+    echo "[compile-bench] opt$opt_level $step_label"
+    start=$(now_ms)
+    if ! "$@"; then
+        fail "$step_label failed"
+    fi
+    end=$(now_ms)
+    record_timing "$opt_level" "$step_label" "$((end - start))"
+}
 
-compile_cli_to_asm "stage1-to-stage2" "$STAGE1_BIN" "$STAGE2_ASM"
-assemble_and_link "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN"
-strip_if_needed "$STAGE2_BIN"
+measure_compile_cli_to_asm() {
+    opt_level=$1
+    label=$2
+    compiler=$3
+    asm=$4
+    logdir=$5
+    stdout="$logdir/$label.stdout"
+    stderr="$logdir/$label.stderr"
+    echo "[compile-bench] opt$opt_level measure $label"
+    start=$(now_ms)
+    if ! run_with_heartbeat "$label" \
+        "$compiler" compile selfhost/cli.tl -o "$asm" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib \
+        --stdlib-root selfhost \
+        --opt-level "$opt_level" \
+        >"$stdout" 2>"$stderr"; then
+        echo "[compile-bench] $label failed" >&2
+        show_failure_logs "$stdout" "$stderr"
+        exit 1
+    fi
+    end=$(now_ms)
+    LAST_MEASURE_MS=$((end - start))
+    record_timing "$opt_level" "$label" "$LAST_MEASURE_MS"
+    [ -s "$asm" ] || fail "$label did not produce assembly: $asm"
+}
 
-measure_compile_cli_to_asm "stage2-to-stage3-cli" "$STAGE2_BIN" "$STAGE3_ASM"
-compare_text "stage2.s vs measured stage3.s" "$STAGE2_ASM" "$STAGE3_ASM"
+append_profile_rows() {
+    opt_level=$1
+    stderr=$2
+    if ! grep '^compile-profile|' "$stderr" >/dev/null 2>&1; then
+        fail "profiled compile did not emit compile-profile rows: $stderr"
+    fi
+    grep '^compile-profile|' "$stderr" \
+        | awk -F'|' -v opt_level="$opt_level" '$2 != "phase" {
+              printf "%s\t%s\t%s\t%s\t%s\t%s\n", opt_level, $2, $3, $4, $5, $6
+          }' \
+        >> "$PROFILE_TSV"
+}
 
-echo "[compile-bench] build profile-enabled compile driver with stage2"
-if ! run_with_heartbeat "stage2 -> profile compile driver" \
-    "$STAGE2_BIN" compile selfhost/compile.tl -o "$PROFILE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root selfhost \
-    --opt-level 2 \
-    --cfg compile-profile \
-    >"$WORKDIR/compile_profile-build.stdout" \
-    2>"$WORKDIR/compile_profile-build.stderr"; then
-    echo "[compile-bench] profile compile driver build failed" >&2
-    sed 's/^/  /' "$WORKDIR/compile_profile-build.stdout" >&2 || true
-    sed 's/^/  /' "$WORKDIR/compile_profile-build.stderr" >&2 || true
-    exit 1
+profile_total_ms() {
+    stderr=$1
+    awk -F'|' '$1 == "compile-profile" && $2 == "total" { value = $3 }
+        END {
+            if (value == "") {
+                value = 0
+            }
+            print value
+        }' "$stderr"
+}
+
+profile_peak_live_delta() {
+    stderr=$1
+    awk -F'|' '$1 == "compile-profile" && $2 != "phase" {
+            if (($6 + 0) > peak) {
+                peak = $6 + 0
+            }
+        }
+        END { printf "%.0f\n", peak + 0 }' "$stderr"
+}
+
+run_opt_level() {
+    opt_level=$1
+    optdir="$WORKDIR/opt$opt_level"
+    mkdir -p "$optdir"
+
+    stage1_asm="$optdir/stage1.s"
+    stage1_obj="$optdir/stage1.$NL_OBJ_EXT"
+    stage1_bin="$optdir/stage1$NL_BIN_EXT"
+    stage2_asm="$optdir/stage2.s"
+    stage2_obj="$optdir/stage2.$NL_OBJ_EXT"
+    stage2_bin="$optdir/stage2$NL_BIN_EXT"
+    stage3_asm="$optdir/stage3.s"
+    profile_asm="$optdir/compile_profile.s"
+    profile_obj="$optdir/compile_profile.$NL_OBJ_EXT"
+    profile_bin="$optdir/compile_profile$NL_BIN_EXT"
+    profile_cli_asm="$optdir/profile-cli.s"
+
+    compile_cli_to_asm "$opt_level" "seed-to-stage1" "$SEED" "$stage1_asm" "$optdir"
+    measure_step "$opt_level" "stage1-link" assemble_and_link "stage1-opt$opt_level" "$stage1_asm" "$stage1_obj" "$stage1_bin"
+    strip_if_needed "$stage1_bin"
+
+    compile_cli_to_asm "$opt_level" "stage1-to-stage2" "$stage1_bin" "$stage2_asm" "$optdir"
+    measure_step "$opt_level" "stage2-link" assemble_and_link "stage2-opt$opt_level" "$stage2_asm" "$stage2_obj" "$stage2_bin"
+    strip_if_needed "$stage2_bin"
+
+    measure_compile_cli_to_asm "$opt_level" "stage2-to-stage3-cli" "$stage2_bin" "$stage3_asm" "$optdir"
+    compile_ms=$LAST_MEASURE_MS
+    compare_text "opt$opt_level stage2.s vs measured stage3.s" "$stage2_asm" "$stage3_asm"
+
+    echo "[compile-bench] opt$opt_level build profile-enabled compile driver with stage2"
+    profile_build_stdout="$optdir/compile_profile-build.stdout"
+    profile_build_stderr="$optdir/compile_profile-build.stderr"
+    start=$(now_ms)
+    if ! run_with_heartbeat "opt$opt_level-profile-compile-driver" \
+        "$stage2_bin" compile selfhost/compile.tl -o "$profile_asm" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib \
+        --stdlib-root selfhost \
+        --opt-level "$opt_level" \
+        --cfg compile-profile \
+        >"$profile_build_stdout" \
+        2>"$profile_build_stderr"; then
+        echo "[compile-bench] profile compile driver build failed" >&2
+        show_failure_logs "$profile_build_stdout" "$profile_build_stderr"
+        exit 1
+    fi
+    end=$(now_ms)
+    record_timing "$opt_level" "profile-driver-build" "$((end - start))"
+    [ -s "$profile_asm" ] || fail "profile driver build did not produce assembly: $profile_asm"
+    measure_step "$opt_level" "profile-driver-link" assemble_and_link "compile-profile-opt$opt_level" "$profile_asm" "$profile_obj" "$profile_bin"
+    strip_if_needed "$profile_bin"
+
+    echo "[compile-bench] opt$opt_level run profiled phase breakdown"
+    profile_run_stdout="$optdir/profile-run.stdout"
+    profile_run_stderr="$optdir/profile-run.stderr"
+    start=$(now_ms)
+    if ! "$profile_bin" compile selfhost/cli.tl -o "$profile_cli_asm" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib \
+        --stdlib-root selfhost \
+        --opt-level "$opt_level" \
+        >"$profile_run_stdout" \
+        2>"$profile_run_stderr"; then
+        echo "[compile-bench] profiled compile failed" >&2
+        show_failure_logs "$profile_run_stdout" "$profile_run_stderr"
+        exit 1
+    fi
+    end=$(now_ms)
+    record_timing "$opt_level" "profile-run" "$((end - start))"
+    append_profile_rows "$opt_level" "$profile_run_stderr"
+    compare_text "opt$opt_level profiled cli asm vs measured stage3.s" "$stage3_asm" "$profile_cli_asm"
+
+    profile_total=$(profile_total_ms "$profile_run_stderr")
+    profile_peak=$(profile_peak_live_delta "$profile_run_stderr")
+    printf '%s\t%s\t%s\t%s\n' "$opt_level" "$compile_ms" "$profile_total" "$profile_peak" >> "$SUMMARY_TSV"
+}
+
+summary_value() {
+    opt_level=$1
+    column=$2
+    awk -F'\t' -v opt_level="$opt_level" -v column="$column" '
+        NR > 1 && $1 == opt_level {
+            print $column
+            found = 1
+            exit
+        }
+        END {
+            if (!found) {
+                exit 1
+            }
+        }' "$SUMMARY_TSV"
+}
+
+check_ratio() {
+    name=$1
+    base=$2
+    candidate=$3
+    limit=$((base * RATIO_LIMIT))
+    if [ "$candidate" -gt "$limit" ]; then
+        fail "opt3 $name $candidate exceeds ${RATIO_LIMIT}x opt2 $base"
+    fi
+    echo "[compile-bench] opt3 $name $candidate within ${RATIO_LIMIT}x opt2 $base"
+}
+
+for opt_level in $OPT_LEVELS; do
+    run_opt_level "$opt_level"
+done
+
+if [ "${TYPELISP_COMPILE_BENCH_CHECK:-}" = 1 ]; then
+    opt2_compile=$(summary_value 2 2 || true)
+    opt3_compile=$(summary_value 3 2 || true)
+    opt2_peak=$(summary_value 2 4 || true)
+    opt3_peak=$(summary_value 3 4 || true)
+    if [ -n "$opt2_compile" ] && [ -n "$opt3_compile" ] && [ -n "$opt2_peak" ] && [ -n "$opt3_peak" ]; then
+        check_ratio "compile_ms" "$opt2_compile" "$opt3_compile"
+        check_ratio "profile_peak_live_delta_bytes" "$opt2_peak" "$opt3_peak"
+    else
+        fail "check mode requires opt2 and opt3 summaries"
+    fi
 fi
-assemble_and_link "compile-profile" "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFILE_BIN"
-strip_if_needed "$PROFILE_BIN"
 
-echo "[compile-bench] run profiled phase breakdown"
-if ! "$PROFILE_BIN" compile selfhost/cli.tl -o "$PROFILE_CLI_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root selfhost \
-    --opt-level 2 \
-    >"$WORKDIR/profile-run.stdout" \
-    2>"$WORKDIR/profile-run.stderr"; then
-    echo "[compile-bench] profiled compile failed" >&2
-    sed 's/^/  /' "$WORKDIR/profile-run.stdout" >&2 || true
-    sed 's/^/  /' "$WORKDIR/profile-run.stderr" >&2 || true
-    exit 1
-fi
-grep '^compile-profile|' "$WORKDIR/profile-run.stderr" \
-    | awk -F'|' 'NR > 1 { printf "%s\t%s\t%s\t%s\t%s\n", $2, $3, $4, $5, $6 }' \
-    >> "$PROFILE_TSV"
-compare_text "profiled cli asm vs measured stage3.s" "$STAGE3_ASM" "$PROFILE_CLI_ASM"
-
+echo "[compile-bench] summary: $SUMMARY_TSV"
+cat "$SUMMARY_TSV"
 echo "[compile-bench] timings: $TIMINGS"
 cat "$TIMINGS"
 echo "[compile-bench] profile: $PROFILE_TSV"

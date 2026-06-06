@@ -12515,10 +12515,22 @@ _mkdir:
     xorq %rdx, %rdx
     subq $40, %rsp
     call CreateDirectoryA
-    addq $40, %rsp
     testl %eax, %eax
-    je .L_tl_dir_err
+    je .L_tl_mkdir_err
+    addq $40, %rsp
     xorq %rax, %rax
+    ret
+.L_tl_mkdir_err:
+    call GetLastError
+    addq $40, %rsp
+    cmpl $183, %eax
+    je .L_tl_mkdir_exists
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+.L_tl_mkdir_exists:
+    movl $17, tl_errno(%rip)
+    movq $-1, %rax
     ret
     .globl _rmdir
 _rmdir:

@@ -12249,6 +12249,15 @@
   (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
   (ErrTcMoveBindings String))
 
+(defenum TcMoveResourceBindings
+  (OkTcMoveResourceBindings
+    TcTypeEnv
+    TcMovedSet
+    TcMovedSet
+    TcMovedSet
+    TcStringList)
+  (ErrTcMoveResourceBindings String))
+
 (defenum TcMoveMaybeIndex
   (TcMoveNoIndex)
   (TcMoveSomeIndex i64))
@@ -12288,6 +12297,11 @@
   (string-append
     (string-append "typecheck: cannot move loop-carried owner value `" name)
     "`"))
+
+(define (tc-move-cleanup-owner-exit-message [name : String]) : String
+  (string-append
+    (string-append "typecheck: cleanup owner `" name)
+    "` moved before with scope exit"))
 
 (define (tc-moved-path-key [path : String]) : String
   (string-append "\npath:" path))
@@ -13000,6 +13014,74 @@
                     [(ErrTcMove message) (ErrTcMoveBindings message)])]
                 [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
 
+(define (tc-move-check-resource-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [bindings : AstResourceBindingList]) : TcMoveResourceBindings
+  (match bindings
+    [(AstResourceBindingNil)
+      (OkTcMoveResourceBindings env moved locals loop-carried TcStringNil)]
+    [(AstResourceBindingCons binding rest)
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding name init-box _)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-move-check-expr ctx env locals loop-carried moved init)
+                [(OkTcMove moved1)
+                  (match (tc-move-after-bind
+                    ctx
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    init)
+                    [(OkTcMove moved2)
+                      (match (tc-expr ctx env init)
+                        [(OkTcType init-ty)
+                          (match (tc-move-check-resource-bindings
+                            ctx
+                            (tc-bind
+                              (tc-bind-cleanup-owner env name)
+                              name
+                              (tc-type-without-regions init-ty))
+                            (tc-moved-add locals name)
+                            (tc-moved-remove-root-state loop-carried name)
+                            (tc-moved-remove-root-state moved2 name)
+                            rest)
+                            [(OkTcMoveResourceBindings
+                                env2
+                                moved3
+                                locals2
+                                loop-carried2
+                                roots)
+                              (OkTcMoveResourceBindings
+                                env2
+                                moved3
+                                locals2
+                                loop-carried2
+                                (tc-string-list-add roots name))]
+                            [(ErrTcMoveResourceBindings message)
+                              (ErrTcMoveResourceBindings message)])]
+                        [(ErrTcType message)
+                          (ErrTcMoveResourceBindings message)])]
+                    [(ErrTcMove message) (ErrTcMoveResourceBindings message)])]
+                [(ErrTcMove message) (ErrTcMoveResourceBindings message)]))]))]))
+
+(define (tc-move-check-cleanup-owner-exit
+  [moved : TcMovedSet]
+  [roots : TcStringList]) : TcMoveResult
+  (match roots
+    [(TcStringNil) (OkTcMove moved)]
+    [(TcStringCons name rest)
+      (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
+        (ErrTcMove (tc-move-cleanup-owner-exit-message name))
+        (tc-move-check-cleanup-owner-exit moved (box-get rest)))]))
+
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
 ;; a place moved on any arm is considered moved after the match.
 (define (tc-move-check-arms
@@ -13349,8 +13431,25 @@
           [(OkTcMove moved1)
             (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
           [(ErrTcMove message) (ErrTcMove message)]))]
-    [(AstExprWithResource _ exprs)
-      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
+    [(AstExprWithResource bindings exprs)
+      (match (tc-move-check-resource-bindings
+        ctx
+        env
+        locals
+        loop-carried
+        moved
+        bindings)
+        [(OkTcMoveResourceBindings body-env moved1 body-locals body-loop roots)
+          (match (tc-move-check-exprs
+            ctx
+            body-env
+            body-locals
+            body-loop
+            moved1
+            exprs)
+            [(OkTcMove moved2) (tc-move-check-cleanup-owner-exit moved2 roots)]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMoveResourceBindings message) (ErrTcMove message)])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]

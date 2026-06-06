@@ -33,18 +33,14 @@
 (defenum InlineTest
   (InlineTest String String i64 AstExpr String))
 
-(defenum InlineTestList
-  (InlineTestNil)
-  (InlineTestCons InlineTest (Box InlineTestList)))
-
 (defenum InlineCollect
-  (InlineCollect AstDeclList AstDeclPathList InlineTestList i64))
+  (InlineCollect (Array AstDecl) (Array String) (Array InlineTest)))
 
 (defenum InlineHarness
   (InlineHarness AstProgram AstDeclPathList i64))
 
 (defenum InlineRuntimeDecls
-  (InlineRuntimeDecls AstDeclList AstDeclPathList))
+  (InlineRuntimeDecls (Array AstDecl) (Array String)))
 
 (defenum ResultTestPackageTotals
   (OkTestPackageTotals i64 i64)
@@ -276,68 +272,27 @@
     (compiler-optimize-default-level)
     TestModeRun))
 
-(define (tltest-decl-list-reverse-in [items : AstDeclList] [out : AstDeclList]) : AstDeclList
-  (match items
-    [(AstDeclNil) out]
-    [(AstDeclCons head rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (tltest-decl-list-reverse-in rest (ast-decl-cons head out)))]))
+(define (tltest-decls-onto
+  [items : (Array AstDecl)]
+  [index : i64]
+  [out : AstDeclList]) : AstDeclList
+  (if (< index 0)
+    out
+    (tltest-decls-onto
+      items
+      (- index 1)
+      (ast-decl-cons (array-ref items index) out))))
 
-(define (tltest-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (tltest-decl-list-reverse-in items AstDeclNil))
-
-(define (tltest-path-list-reverse-in
-  [items : AstDeclPathList]
+(define (tltest-paths-onto
+  [items : (Array String)]
+  [index : i64]
   [out : AstDeclPathList]) : AstDeclPathList
-  (match items
-    [(AstDeclPathNil) out]
-    [(AstDeclPathCons head rest)
-      (let
-        [rest : AstDeclPathList (box-get rest)]
-        (tltest-path-list-reverse-in rest (ast-decl-path-cons head out)))]))
-
-(define (tltest-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
-  (tltest-path-list-reverse-in items AstDeclPathNil))
-
-(define (tltest-inline-list-reverse-in
-  [items : InlineTestList]
-  [out : InlineTestList]) : InlineTestList
-  (match items
-    [(InlineTestNil) out]
-    [(InlineTestCons head rest)
-      (tltest-inline-list-reverse-in
-        (box-get rest)
-        (InlineTestCons head (box out)))]))
-
-(define (tltest-inline-list-reverse [items : InlineTestList]) : InlineTestList
-  (tltest-inline-list-reverse-in items InlineTestNil))
-
-(define (tltest-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
-  (match left
-    [(AstDeclNil) right]
-    [(AstDeclCons head rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (ast-decl-cons head (tltest-decl-list-append rest right)))]))
-
-(define (tltest-decl-list-count [items : AstDeclList]) : i64
-  (match items
-    [(AstDeclNil) 0]
-    [(AstDeclCons _ rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (+ 1 (tltest-decl-list-count rest)))]))
-
-(define (tltest-path-list-append
-  [left : AstDeclPathList]
-  [right : AstDeclPathList]) : AstDeclPathList
-  (match left
-    [(AstDeclPathNil) right]
-    [(AstDeclPathCons head rest)
-      (let
-        [rest : AstDeclPathList (box-get rest)]
-        (ast-decl-path-cons head (tltest-path-list-append rest right)))]))
+  (if (< index 0)
+    out
+    (tltest-paths-onto
+      items
+      (- index 1)
+      (ast-decl-path-cons (array-ref items index) out))))
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
@@ -356,20 +311,14 @@
 (define (tltest-private-name [idx : i64]) : String
   (string-append "__tl_inline_test_" (int->string idx)))
 
-(define (tltest-collect
+(define (tltest-collect-in
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [runtime-rev : AstDeclList]
-  [path-rev : AstDeclPathList]
-  [tests-rev : InlineTestList]
-  [test-count : i64]) : InlineCollect
+  [runtime-decls : (Array AstDecl)]
+  [runtime-paths : (Array String)]
+  [tests : (Array InlineTest)]) : InlineCollect
   (match decls
-    [(AstDeclNil)
-      (InlineCollect
-        (tltest-decl-list-reverse runtime-rev)
-        (tltest-path-list-reverse path-rev)
-        (tltest-inline-list-reverse tests-rev)
-        test-count)]
+    [(AstDeclNil) (InlineCollect runtime-decls runtime-paths tests)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -388,52 +337,61 @@
           [(AstDeclTest name body-box span)
             (let
               [body : AstExpr (box-get body-box)]
-              (tltest-collect
-                rest
-                rest-paths
-                runtime-rev
-                path-rev
-                (InlineTestCons
+              [test-count : i64 (array-length tests)]
+              (begin
+                (array-push!
+                  tests
                   (InlineTest
                     name
                     decl-path
                     (tltest-source-line span)
                     body
-                    (tltest-private-name test-count))
-                  (box tests-rev))
-                (+ test-count 1)))]
+                    (tltest-private-name test-count)))
+                (tltest-collect-in
+                  rest
+                  rest-paths
+                  runtime-decls
+                  runtime-paths
+                  tests)))]
           [(AstDeclImport _)
-            (tltest-collect
+            (tltest-collect-in
               rest
               rest-paths
-              runtime-rev
-              path-rev
-              tests-rev
-              test-count)]
+              runtime-decls
+              runtime-paths
+              tests)]
           [(AstDeclIncludeStr _ _)
-            (tltest-collect
+            (tltest-collect-in
               rest
               rest-paths
-              runtime-rev
-              path-rev
-              tests-rev
-              test-count)]
+              runtime-decls
+              runtime-paths
+              tests)]
           [_
             (if (tltest-main-decl? decl)
-              (tltest-collect
+              (tltest-collect-in
                 rest
                 rest-paths
-                runtime-rev
-                path-rev
-                tests-rev
-                test-count)
-              (tltest-collect
-                rest
-                rest-paths
-                (ast-decl-cons decl runtime-rev)
-                (ast-decl-path-cons decl-path path-rev)
-                tests-rev
-                test-count))]))]))
+                runtime-decls
+                runtime-paths
+                tests)
+              (begin
+                (array-push! runtime-decls decl)
+                (array-push! runtime-paths decl-path)
+                (tltest-collect-in
+                  rest
+                  rest-paths
+                  runtime-decls
+                  runtime-paths
+                  tests)))]))]))
+
+(define (tltest-collect [decls : AstDeclList] [paths : AstDeclPathList]) : InlineCollect
+  (tltest-collect-in
+    decls
+    paths
+    (make-array AstDecl 0)
+    (make-array String 0)
+    (make-array InlineTest 0)))
 
 (define (tltest-print-expr [text : String]) : AstExpr
   (ast-expr-call
@@ -519,11 +477,6 @@
         (tltest-print-runtime-write-call)
         (ast-expr-cons (AstExprLiteral (AstLitUnit)) AstExprNil)))))
 
-(define (tltest-print-runtime-decls [target : CompilerBackendTarget]) : AstDeclList
-  (ast-decl-cons
-    (tltest-print-runtime-write-decl target)
-    (ast-decl-cons (tltest-print-runtime-print-decl) AstDeclNil)))
-
 (define (tltest-program-with-print-runtime
   [program : AstProgram]
   [target : CompilerBackendTarget]) : AstProgram
@@ -532,54 +485,85 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (ast-program
-          (tltest-decl-list-append (tltest-print-runtime-decls target) decls)))]))
+          (ast-decl-cons
+            (tltest-print-runtime-write-decl target)
+            (ast-decl-cons (tltest-print-runtime-print-decl) decls))))]))
 
 (define (tltest-paths-with-print-runtime [paths : AstDeclPathList]) : AstDeclPathList
   (ast-decl-path-cons
     "<generated test runtime>"
     (ast-decl-path-cons "<generated test runtime>" paths)))
 
-(define (tltest-main-exprs [tests : InlineTestList] [count : i64]) : AstExprList
-  (match tests
-    [(InlineTestNil)
-      (ast-expr-cons
-        (tltest-print-expr (tltest-summary-line count))
-        (ast-expr-cons (AstExprLiteral (AstLitInt 0)) AstExprNil))]
-    [(InlineTestCons test rest)
+(define (tltest-main-exprs-from
+  [tests : (Array InlineTest)]
+  [index : i64]
+  [out : AstExprList]) : AstExprList
+  (if (< index 0)
+    out
+    (let
+      [test : InlineTest (array-ref tests index)]
       (match test
         [(InlineTest _ _ _ _ private-name)
-          (ast-expr-cons
-            (tltest-print-expr (tltest-running-line test))
+          (tltest-main-exprs-from
+            tests
+            (- index 1)
             (ast-expr-cons
-              (tltest-call-expr private-name)
+              (tltest-print-expr (tltest-running-line test))
               (ast-expr-cons
-                (tltest-print-expr (tltest-ok-line test))
-                (tltest-main-exprs (box-get rest) count))))])]))
+                (tltest-call-expr private-name)
+                (ast-expr-cons (tltest-print-expr (tltest-ok-line test)) out))))]))))
 
-(define (tltest-test-decls [tests : InlineTestList]) : AstDeclList
-  (match tests
-    [(InlineTestNil) AstDeclNil]
-    [(InlineTestCons test rest)
+(define (tltest-main-exprs [tests : (Array InlineTest)]) : AstExprList
+  (let
+    [count : i64 (array-length tests)]
+    (tltest-main-exprs-from
+      tests
+      (- count 1)
+      (ast-expr-cons
+        (tltest-print-expr (tltest-summary-line count))
+        (ast-expr-cons (AstExprLiteral (AstLitInt 0)) AstExprNil)))))
+
+(define (tltest-test-decls-onto
+  [tests : (Array InlineTest)]
+  [index : i64]
+  [out : AstDeclList]) : AstDeclList
+  (if (< index 0)
+    out
+    (let
+      [test : InlineTest (array-ref tests index)]
       (match test
         [(InlineTest _ _ _ body private-name)
-          (ast-decl-cons
-            (ast-decl-def-fn private-name AstParamNil (AstTyUnit) body)
-            (tltest-test-decls (box-get rest)))])]))
+          (tltest-test-decls-onto
+            tests
+            (- index 1)
+            (ast-decl-cons
+              (ast-decl-def-fn private-name AstParamNil (AstTyUnit) body)
+              out))]))))
 
-(define (tltest-test-paths [tests : InlineTestList]) : AstDeclPathList
-  (match tests
-    [(InlineTestNil) AstDeclPathNil]
-    [(InlineTestCons test rest)
+(define (tltest-test-paths-onto
+  [tests : (Array InlineTest)]
+  [index : i64]
+  [out : AstDeclPathList]) : AstDeclPathList
+  (if (< index 0)
+    out
+    (let
+      [test : InlineTest (array-ref tests index)]
       (match test
         [(InlineTest _ path _ _ _)
-          (ast-decl-path-cons path (tltest-test-paths (box-get rest)))])]))
+          (tltest-test-paths-onto
+            tests
+            (- index 1)
+            (ast-decl-path-cons path out))]))))
 
-(define (tltest-main-decl [tests : InlineTestList] [count : i64]) : AstDecl
+(define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
   (ast-decl-def-fn
     "main"
     AstParamNil
     (AstTyI64)
-    (AstExprBegin (tltest-main-exprs tests count))))
+    (AstExprBegin (tltest-main-exprs tests))))
+
+(define (tltest-empty-main-decl) : AstDecl
+  (tltest-main-decl (make-array InlineTest 0)))
 
 (define (tltest-reach-mark-name [names : StringI64Map] [name : String]) : StringI64Map
   (if (string-i64-map-contains? names name)
@@ -892,17 +876,25 @@
         [index : AstExpr (box-get index-box)]
         (tltest-reach-mark-expr index names))]))
 
-(define (tltest-reach-mark-tests
-  [tests : InlineTestList]
+(define (tltest-reach-mark-tests-from
+  [tests : (Array InlineTest)]
+  [index : i64]
   [names : StringI64Map]) : StringI64Map
-  (match tests
-    [(InlineTestNil) names]
-    [(InlineTestCons test rest)
+  (if (< index 0)
+    names
+    (let
+      [test : InlineTest (array-ref tests index)]
       (match test
         [(InlineTest _ _ _ body _)
-          (tltest-reach-mark-tests
-            (box-get rest)
-            (tltest-reach-mark-expr body names))])]))
+          (tltest-reach-mark-tests-from
+            tests
+            (- index 1)
+            (tltest-reach-mark-expr body names))]))))
+
+(define (tltest-reach-mark-tests
+  [tests : (Array InlineTest)]
+  [names : StringI64Map]) : StringI64Map
+  (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : StringI64Map]) : StringI64Map
   (match decl
@@ -925,13 +917,16 @@
         (tltest-reach-mark-decl inner names))]
     [_ names]))
 
-(define (tltest-reach-mark-decls [decls : AstDeclList] [names : StringI64Map]) : StringI64Map
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (tltest-reach-mark-decls rest (tltest-reach-mark-decl decl names)))]))
+(define (tltest-reach-mark-decls-from
+  [decls : (Array AstDecl)]
+  [index : i64]
+  [names : StringI64Map]) : StringI64Map
+  (if (>= index (array-length decls))
+    names
+    (tltest-reach-mark-decls-from
+      decls
+      (+ index 1)
+      (tltest-reach-mark-decl (array-ref decls index) names))))
 
 ;; Iterate the reachability marker to a fixpoint. The reachable-name set only
 ;; ever grows (marking is monotonic and dedup'd), so a pass that adds no new
@@ -939,22 +934,24 @@
 ;; a safety bound, but convergence normally takes only a handful of passes -
 ;; avoiding the previous unconditional O(decls^2) full-program walks.
 (define (tltest-reach-fixed
-  [decls : AstDeclList]
+  [decls : (Array AstDecl)]
   [fuel : i64]
   [names : StringI64Map]) : StringI64Map
   (if (<= fuel 0)
     names
     (let
       [before : i64 (string-i64-map-len names)]
-      [next : StringI64Map (tltest-reach-mark-decls decls names)]
+      [next : StringI64Map (tltest-reach-mark-decls-from decls 0 names)]
       (if (= (string-i64-map-len next) before)
         next
         (tltest-reach-fixed decls (- fuel 1) next)))))
 
-(define (tltest-reachable-names [decls : AstDeclList] [tests : InlineTestList]) : StringI64Map
+(define (tltest-reachable-names
+  [decls : (Array AstDecl)]
+  [tests : (Array InlineTest)]) : StringI64Map
   (tltest-reach-fixed
     decls
-    (tltest-decl-list-count decls)
+    (array-length decls)
     (tltest-reach-mark-tests tests (string-i64-map-with-capacity 64))))
 
 (define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
@@ -970,79 +967,173 @@
     [_ true]))
 
 (define (tltest-prune-runtime-decls-in
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : (Array AstDecl)]
+  [paths : (Array String)]
+  [index : i64]
   [names : StringI64Map]
-  [decls-rev : AstDeclList]
-  [paths-rev : AstDeclPathList]) : InlineRuntimeDecls
-  (match decls
-    [(AstDeclNil)
-      (InlineRuntimeDecls
-        (tltest-decl-list-reverse decls-rev)
-        (tltest-path-list-reverse paths-rev))]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (if (tltest-reachable-runtime-decl? decl names)
+  [out-decls : (Array AstDecl)]
+  [out-paths : (Array String)]) : InlineRuntimeDecls
+  (if (>= index (array-length decls))
+    (InlineRuntimeDecls out-decls out-paths)
+    (let
+      [decl : AstDecl (array-ref decls index)]
+      [decl-path : String (array-ref paths index)]
+      (if (tltest-reachable-runtime-decl? decl names)
+        (begin
+          (array-push! out-decls decl)
+          (array-push! out-paths decl-path)
           (tltest-prune-runtime-decls-in
-            rest
-            rest-paths
+            decls
+            paths
+            (+ index 1)
             names
-            (ast-decl-cons decl decls-rev)
-            (ast-decl-path-cons decl-path paths-rev))
-          (tltest-prune-runtime-decls-in
-            rest
-            rest-paths
-            names
-            decls-rev
-            paths-rev)))]))
+            out-decls
+            out-paths))
+        (tltest-prune-runtime-decls-in
+          decls
+          paths
+          (+ index 1)
+          names
+          out-decls
+          out-paths)))))
 
 (define (tltest-prune-runtime-decls
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [tests : InlineTestList]) : InlineRuntimeDecls
+  [decls : (Array AstDecl)]
+  [paths : (Array String)]
+  [tests : (Array InlineTest)]) : InlineRuntimeDecls
   (tltest-prune-runtime-decls-in
     decls
     paths
+    0
     (tltest-reachable-names decls tests)
-    AstDeclNil
-    AstDeclPathNil))
+    (make-array AstDecl 0)
+    (make-array String 0)))
 
 (define (tltest-build-harness
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : InlineHarness
-  (match (tltest-collect decls paths AstDeclNil AstDeclPathNil InlineTestNil 0)
-    [(InlineCollect runtime-decls runtime-paths tests count)
-      (let
-        [test-decls : AstDeclList (tltest-test-decls tests)]
-        [test-paths : AstDeclPathList (tltest-test-paths tests)]
-        (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
-          [(InlineRuntimeDecls pruned-decls pruned-paths)
+  (match (tltest-collect decls paths)
+    [(InlineCollect runtime-decls runtime-paths tests)
+      (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+        [(InlineRuntimeDecls pruned-decls pruned-paths)
+          (let
+            [count : i64 (array-length tests)]
             (InlineHarness
               (ast-program
-                (tltest-decl-list-append
+                (tltest-decls-onto
                   pruned-decls
-                  (tltest-decl-list-append
-                    test-decls
-                    (ast-decl-cons (tltest-main-decl tests count) AstDeclNil))))
-              (tltest-path-list-append
+                  (- (array-length pruned-decls) 1)
+                  (tltest-test-decls-onto
+                    tests
+                    (- count 1)
+                    (ast-decl-cons (tltest-main-decl tests) AstDeclNil))))
+              (tltest-paths-onto
                 pruned-paths
-                (tltest-path-list-append
-                  test-paths
+                (- (array-length pruned-paths) 1)
+                (tltest-test-paths-onto
+                  tests
+                  (- count 1)
                   (ast-decl-path-cons source AstDeclPathNil)))
-              count)]))]))
+              count))])]))
+
+(define (tltest-path-at [paths : AstDeclPathList] [index : i64]) : String
+  (match paths
+    [(AstDeclPathNil) ""]
+    [(AstDeclPathCons path rest)
+      (if (= index 0)
+        path
+        (tltest-path-at (box-get rest) (- index 1)))]))
+
+(define (tltest-decl-name [decl : AstDecl]) : String
+  (match decl
+    [(AstDeclDef name _ _) name]
+    [(AstDeclDefFn name _ _ _) name]
+    [(AstDeclExtern name _ _) name]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-decl-name inner))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-decl-name inner))]
+    [_ ""]))
+
+(define (tltest-decl-name-at [decls : AstDeclList] [index : i64]) : String
+  (match decls
+    [(AstDeclNil) ""]
+    [(AstDeclCons decl rest)
+      (if (= index 0)
+        (tltest-decl-name decl)
+        (tltest-decl-name-at (box-get rest) (- index 1)))]))
+
+(define (tltest-vector-builders-self-test?) : bool
+  (let
+    [helper-name : String "__tl_fixture_helper"]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        helper-name
+        AstParamNil
+        (AstTyUnit)
+        (AstExprLiteral (AstLitUnit)))]
+    [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
+    [second-span : AstSourceSpan (AstSourceSpan 22 1 22 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        helper-decl
+        (ast-decl-cons
+          (ast-decl-test "first" (tltest-call-expr helper-name) first-span)
+          (ast-decl-cons
+            (ast-decl-test "second" (tltest-call-expr helper-name) second-span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "runtime.tl"
+        (ast-decl-path-cons
+          "one.tl"
+          (ast-decl-path-cons "two.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program harness-paths count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 2)
+                (and
+                  (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
+                  (and
+                    (string-eq
+                      (tltest-decl-name-at harness-decls 1)
+                      "__tl_inline_test_0")
+                    (and
+                      (string-eq
+                        (tltest-decl-name-at harness-decls 2)
+                        "__tl_inline_test_1")
+                      (and
+                        (string-eq (tltest-decl-name-at harness-decls 3) "main")
+                        (and
+                          (string-eq
+                            (tltest-path-at harness-paths 0)
+                            "runtime.tl")
+                          (and
+                            (string-eq
+                              (tltest-path-at harness-paths 1)
+                              "one.tl")
+                            (and
+                              (string-eq
+                                (tltest-path-at harness-paths 2)
+                                "two.tl")
+                              (string-eq
+                                (tltest-path-at harness-paths 3)
+                                "driver.tl"))))))))))])])))
+
+(test
+  test-cli-vector-builders-preserve-order
+  (if (tltest-vector-builders-self-test?)
+    unit
+    (panic "test CLI vector builder order mismatch")))
 
 (define (tltest-check-only
   [program : AstProgram]
@@ -1243,7 +1334,7 @@
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
   (tltest-run-direct
     source
-    (ast-program (ast-decl-cons (tltest-main-decl InlineTestNil 0) AstDeclNil))
+    (ast-program (ast-decl-cons (tltest-empty-main-decl) AstDeclNil))
     (ast-decl-path-cons source AstDeclPathNil)
     target
     opt-level))

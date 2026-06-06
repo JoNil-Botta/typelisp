@@ -122,6 +122,10 @@ end
 
 decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by selfhost/ast.tl and has no functions to compile directly
 
+# Retained command-driver wrappers. `selfhost/cli.tl` is the published single
+# entry point; these cases intentionally keep focused bootstrap or compatibility
+# coverage for smaller command binaries. See selfhost/TESTING.md for the full
+# inventory and removal policy.
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
 requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_build_cli_config_from:
@@ -168,23 +172,23 @@ contains|Enable a compile-time cfg predicate name
 end
 
 # Per-command logic modules shared by the unified dispatcher (selfhost/cli.tl)
-# and each standalone driver. Main-less; compiled transitively through their
-# driver's case (and the selfhost_cli case), so they get a decision row rather
-# than a standalone compile case.
-decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by selfhost/build.tl and selfhost/cli.tl and exercised through the selfhost_build and selfhost_cli cases
-decision|selfhost/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by selfhost/clean.tl and selfhost/cli.tl and exercised through the selfhost_clean and selfhost_cli cases
-decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by selfhost/run.tl and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
-decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by selfhost/check.tl and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
+# and retained compatibility/coverage wrappers. Main-less; compiled
+# transitively through their wrapper case (and the selfhost_cli case), so they
+# get a decision row rather than a direct compile case.
+decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by the retained selfhost/build.tl wrapper and selfhost/cli.tl and exercised through the selfhost_build and selfhost_cli cases
+decision|selfhost/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by the retained selfhost/clean.tl wrapper and selfhost/cli.tl and exercised through the selfhost_clean and selfhost_cli cases
+decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by the retained selfhost/run.tl wrapper and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
+decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing plus file/package full-frontend checks; main-less, imported by the retained selfhost/check.tl wrapper and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
 decision|selfhost/package_source_core.tl|package source discovery helper (#1986/#1987): resolves typelisp.pkg, loads the manifest, and walks regular package .tl sources while excluding target, VCS, and nested package roots; main-less, imported by check/fmt/lint command cores and exercised through their driver cases plus selfhost_cli
 decision|selfhost/package_cache_core.tl|package cache helper layer (#2002): parses normalized remote dependency pins, plans deterministic v1 cache paths, validates metadata/complete-marker state, and exposes staging/finalize helpers; main-less and exercised through the selfhost_package_cache_smoke case
 decision|selfhost/package_lock_core.tl|package lockfile parser/emitter (#1993): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, and emits stable alias-sorted lockfile text; main-less and exercised through the selfhost_package_lock_smoke case
-decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
-decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
-decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
-decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by selfhost/compile.tl and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
-decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by selfhost/repl.tl and selfhost/cli.tl and exercised through the selfhost_repl and selfhost_cli cases
-decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by selfhost/scaffold.tl and selfhost/cli.tl; main-less and exercised through the selfhost_scaffold and selfhost_cli cases
-decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by selfhost/lsp_frame.tl and selfhost/cli.tl and exercised through selfhost_lsp_frame and selfhost_cli cases
+decision|selfhost/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by the retained selfhost/format.tl wrapper and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
+decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by the retained selfhost/test.tl wrapper and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
+decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by the retained selfhost/doc.tl wrapper and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
+decision|selfhost/compile_cli_core.tl|compile/check command logic (#565/#1639): arg parsing and compile/check dispatch + execution (compile-cli-run); main-less, imported by the required bootstrap selfhost/compile.tl driver and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
+decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by the retained selfhost/repl.tl wrapper and selfhost/cli.tl and exercised through the selfhost_repl and selfhost_cli cases
+decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by the retained selfhost/scaffold.tl wrapper and selfhost/cli.tl; main-less and exercised through the selfhost_scaffold and selfhost_cli cases
+decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by the retained selfhost/lsp_frame.tl wrapper and selfhost/cli.tl and exercised through selfhost_lsp_frame and selfhost_cli cases
 decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
@@ -992,7 +996,7 @@ contains|_tl_lint_walk_expr:
 contains|_tl_lint_ladder_length:
 end
 
-decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by selfhost/lint.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
+decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by the retained selfhost/lint.tl wrapper and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
 
 case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
 requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size

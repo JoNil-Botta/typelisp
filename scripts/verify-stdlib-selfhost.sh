@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # verify-stdlib-selfhost.sh — prove the canonical stdlib witness programs are
 # accepted (or correctly rejected) by the SELFHOST compiler frontend
-# (selfhost/check.tl: parse + typecheck via the selfhost parser/typechecker),
-# complementing scripts/verify-stdlib.sh which drives the same witnesses through
-# the full self-hosted compiler. Part of #842 (prove stdlib modules with the selfhost
+# (retained selfhost/check.tl wrapper: parse + typecheck via the selfhost
+# parser/typechecker), complementing scripts/verify-stdlib.sh which drives the
+# same witnesses through the full self-hosted compiler. Part of #842 (prove
+# stdlib modules with the selfhost
 # compiler). This slice covers the selfhost frontend (parse + typecheck);
 # selfhost compile+run of witnesses remains future work on #842.
 set -euo pipefail
@@ -48,11 +49,12 @@ reject_diag() {
     esac
 }
 
-# Each witness is a separate selfhost/check.tl binary invocation, and the Windows
-# build intermittently SEGFAULTs mid-compile (#1204). A segfault exits non-zero
-# with no diagnostic, which would otherwise look like "a positive witness was
-# rejected" or "a reject witness rejected without its diagnostic" and spuriously
-# fail this gate. Retry an UNEXPECTED outcome a few times: a transient segfault
+# Each witness is a separate retained selfhost/check.tl binary invocation, and
+# the Windows build intermittently SEGFAULTs mid-compile (#1204). A segfault
+# exits non-zero with no diagnostic, which would otherwise look like "a
+# positive witness was rejected" or "a reject witness rejected without its
+# diagnostic" and spuriously fail this gate. Retry an UNEXPECTED outcome a few
+# times: a transient segfault
 # clears on retry, while a genuine regression reproduces across every attempt and
 # still fails.
 # Default 6 (not 3): this gate makes ~23 separate check.tl invocations, so the

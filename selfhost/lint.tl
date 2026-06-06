@@ -1,14 +1,18 @@
-;; lint.tl - selfhost `typelisp lint` driver (#1163). Reads a TypeLisp file,
+;; lint.tl - Retained selfhost lint compatibility/coverage driver (#1163).
+;;
+;; Reads a TypeLisp file,
 ;; runs the lint_core rules over its program, and prints each
 ;; finding as `path:line:col: message` followed by a count summary. Warn-only by
 ;; default: exits 0 even with findings. Pass `--check` to exit non-zero when
 ;; findings remain. With no explicit file, the nearest package is linted. Load
 ;; failures exit 1, and bad arguments exit 2.
 ;;
-;; The command logic lives in `lint_driver_core.tl` so the unified `cli.tl`
-;; dispatcher can share it without a duplicate `main`.
+;; The published entry point is `selfhost/cli.tl lint`. This wrapper stays as a
+;; focused lint-driver compile target for manifest and driver-smoke coverage.
+;; The command logic lives in `lint_driver_core.tl`, shared with the unified
+;; dispatcher.
 ;;
-;; Run directly (until the public `typelisp lint` subcommand lands):
+;; Focused wrapper invocation:
 ;;   typelisp run selfhost/lint.tl -- [<file.tl>...] [--check] [--manifest-path typelisp.pkg] [--stdlib-root <dir>]...
 (import "../stdlib/io.tl")
 

@@ -1,4 +1,4 @@
-;; compile.tl - Standalone selfhost compile driver (#565).
+;; compile.tl - Required bootstrap selfhost compile driver (#565).
 ;;
 ;; A thin `main` wrapper over the main-free `compile_cli_core.tl`, kept as the
 ;; minimal bootstrap entry point: `scripts/check-bootstrap-fixpoint.sh` compiles

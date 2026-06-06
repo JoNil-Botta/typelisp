@@ -143,9 +143,10 @@ follow-up. Other fence languages are ignored; unknown TypeLisp fence options,
 empty TypeLisp examples, and unterminated TypeLisp fences are malformed
 doctests.
 
-The self-hosted Markdown generator driver is `selfhost/doc.tl`. In this slice it
-renders one input file to one output path via `typelisp run selfhost/doc.tl --
-input.tl output.md`; package/module graph traversal is not part of this driver.
+The public self-hosted Markdown generator command is `typelisp doc`. In this
+slice it renders one input file to one output path via
+`typelisp doc input.tl -o output.md`; package/module graph traversal is not
+part of this command.
 
 ### 2.3 String escapes
 
@@ -4230,7 +4231,7 @@ and emits a console `.exe`.
 
 `check` is accepted as the public top-level type-check command.
 
-The selfhost `repl` driver supports `.help`, `.type <expr>`, and `.exit`.
+The public `typelisp repl` command supports `.help`, `.type <expr>`, and `.exit`.
 Top-level declarations are remembered for later commands. `.type` parses and
 typechecks the expression against the current session and prints the inferred
 type without compiling or running native code. Bare expressions are typechecked

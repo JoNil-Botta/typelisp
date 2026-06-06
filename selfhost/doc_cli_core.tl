@@ -1,12 +1,12 @@
 ;; doc_cli_core.tl - Selfhost doc command logic.
 ;;
 ;; Usage through the current compiler runner:
-;;   typelisp run selfhost/doc.tl -- input.tl output.md
-;;   typelisp run selfhost/doc.tl -- entry.tl imported.tl output.md
-;;   typelisp run selfhost/doc.tl -- --html input.tl output.html
-;;   typelisp run selfhost/doc.tl -- --html entry.tl imported.tl output.html
-;;   typelisp run selfhost/doc.tl -- --test input.tl
-;;   typelisp run selfhost/doc.tl -- --load input.tl output.md [--stdlib-root <dir>...]
+;;   typelisp run selfhost/cli.tl -- doc input.tl output.md
+;;   typelisp run selfhost/cli.tl -- doc entry.tl imported.tl output.md
+;;   typelisp run selfhost/cli.tl -- doc --html input.tl output.html
+;;   typelisp run selfhost/cli.tl -- doc --html entry.tl imported.tl output.html
+;;   typelisp run selfhost/cli.tl -- doc --test input.tl
+;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")
@@ -535,7 +535,8 @@
 
 ;; The doc subcommands below take a `base` offset: `base` is the index of the
 ;; command-kind argument, so kind-relative arguments are at `base+1`, `base+2`,
-;; ... The standalone driver passes base=1; the unified dispatcher passes base=2.
+;; ... The retained doc wrapper passes base=1; the unified dispatcher passes
+;; base=2.
 (define (doc-main-test [base : i64]) : i64
   (match (doc-test-config-from base (arg-count))
     [(OkDocTestCliConfig config)

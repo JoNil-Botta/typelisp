@@ -937,11 +937,11 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains_any "$err" "cannot read module" "cannot read import"
 fi
 
-# Standalone selfhost build/run tool executables. The public cli.tl path above is
-# the primary surface; these checks keep the shared build/run cores covered as
-# separate compiled tools on every supported host. These gates must run on every
-# supported host because omitted build/run tools can hide target-specific
-# compiler bugs.
+# Retained selfhost build/run compatibility executables. The public cli.tl path
+# above is the primary surface; these checks keep the shared build/run cores
+# covered as separate compiled tools on every supported host. These gates must
+# run on every supported host because omitted build/run tools can hide
+# target-specific compiler bugs.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
@@ -1131,7 +1131,7 @@ EOF
         assert_stderr_empty
         assert_contains "$out" "hello"
     else
-        echo "[public-tools] not applicable: standalone selfhost run --backend-mode avx2 requires avx2 on this $HOST_OS host"
+        echo "[public-tools] not applicable: retained selfhost run --backend-mode avx2 requires avx2 on this $HOST_OS host"
     fi
 
     SELFHOST_PKG="$SELFHOST_PLANNER_DIR/pkg"

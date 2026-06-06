@@ -4,7 +4,8 @@
 ;; in-process, instead of compiling and spawning a separate per-command driver
 ;; (build.tl, run.tl, check.tl, format.tl, lint.tl, test.tl, doc.tl). Each
 ;; command's logic lives in a main-free `*_cli_core.tl` (or `*_driver_core.tl`)
-;; module shared with its standalone driver, so this file only routes:
+;; module shared with retained compatibility/coverage wrappers, so this file
+;; only routes:
 ;;
 ;;   typelisp run selfhost/cli.tl -- <command> <args...>
 ;;

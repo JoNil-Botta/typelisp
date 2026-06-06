@@ -118,6 +118,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   for append-heavy private sequences and keep recursive enum lists for AST/list
   structures where the cons shape is the modeled data. Import it with
   `(import "stdlib/vector.tl")`.
+- `vector_slice.tl`: lifetime-scoped `I64Slice` views over `I64Vec` and
+  `(Array i64)` live prefixes. Slice constructors take the backing handle plus a
+  matching owner borrow such as `(& v)` / `(& items)`, return empty views for
+  invalid ranges, and provide explicit `to-array` / `to-vec` copy boundaries.
+  Import it with `(import "stdlib/vector_slice.tl")`.
 - `windows_registry.tl`: narrow Windows Kits registry lookup used by SDK
   discovery. Import it with `(import "stdlib/windows_registry.tl")`.
 - `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
@@ -192,6 +197,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, and `to-array` allocate backing arrays in the active arena. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, and `contains?` are non-allocating aside from caller-provided fallback/value storage. |
+| `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `json-*` helpers | Parser, lookup, and escaping helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, and list/member spines allocate owned results in the active arena. |
 | `string-eq`, `string=?`, `string-eq-borrowed`, `string->int`, `string->int-borrowed` | Equality and integer parsing helpers inspect string bytes without allocating. The owned wrappers borrow their inputs internally; the borrowed variants are available to stdlib code that already has `(& r str)` values. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |

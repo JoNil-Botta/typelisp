@@ -354,11 +354,51 @@
     (struct-get collections strings)
     (compiler-backend-string-set-add (struct-get collections floats) text)))
 
+;; Concatenate fixed string groups with one allocation and one linear copy per
+;; piece, instead of the right-nested `string-append` chain that reallocates and
+;; recopies each growing suffix. Output is byte-identical; this only removes the
+;; quadratic copy amplification and the intermediate allocations.
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
+  (let
+    [la : i64 (string-length a)]
+    [lb : i64 (string-length b)]
+    [lc : i64 (string-length c)]
+    [total : i64 (+ la (+ lb lc))]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-copy-chunk-into (& a) dst 0)
+          (text-buf-copy-chunk-into (& b) dst la)
+          (text-buf-copy-chunk-into (& c) dst (+ la lb))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 (define (backend-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-append a (string-append b (string-append c d))))
+  (let
+    [la : i64 (string-length a)]
+    [lb : i64 (string-length b)]
+    [lc : i64 (string-length c)]
+    [ld : i64 (string-length d)]
+    [total : i64 (+ la (+ lb (+ lc ld)))]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-copy-chunk-into (& a) dst 0)
+          (text-buf-copy-chunk-into (& b) dst la)
+          (text-buf-copy-chunk-into (& c) dst (+ la lb))
+          (text-buf-copy-chunk-into (& d) dst (+ la (+ lb lc)))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 (define (backend-cat5
   [a : String]
@@ -366,7 +406,28 @@
   [c : String]
   [d : String]
   [e : String]) : String
-  (string-append a (string-append b (string-append c (string-append d e)))))
+  (let
+    [la : i64 (string-length a)]
+    [lb : i64 (string-length b)]
+    [lc : i64 (string-length c)]
+    [ld : i64 (string-length d)]
+    [le : i64 (string-length e)]
+    [total : i64 (+ la (+ lb (+ lc (+ ld le))))]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-copy-chunk-into (& a) dst 0)
+          (text-buf-copy-chunk-into (& b) dst la)
+          (text-buf-copy-chunk-into (& c) dst (+ la lb))
+          (text-buf-copy-chunk-into (& d) dst (+ la (+ lb lc)))
+          (text-buf-copy-chunk-into (& e) dst (+ la (+ lb (+ lc ld))))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a (and b (and c d))))
@@ -10973,46 +11034,61 @@
 ;; boundary table for helper names accepted by `compiler-backend-plan-provides?`.
 ;; New runtime-plan symbols must be classified here before the plan can provide
 ;; them.
+;; Every runtime-helper name below begins with 't' (tl_...), '.' (.L_tl_...), or
+;; 'e' (env-...). The overwhelming majority of queried names are ordinary
+;; compiler/user symbols that match none, so a single first-byte test lets them
+;; bail before the dozen+ non-short-circuiting string-eq comparisons run.
+(define (compiler-backend-runtime-helper-name-plausible? [name : String]) : bool
+  (if (= (string-length name) 0)
+    false
+    (let
+      [c : char (string-ref name 0)]
+      (or (char-eq c #t') (or (char-eq c #.') (char-eq c #e'))))))
+
 (define (compiler-backend-runtime-helper-core? [name : String]) : bool
-  (or
-    (backend-or8
-      (string-eq name "tl_alloc")
-      (string-eq name "tl_oob_abort")
-      (string-eq name "tl_div_abort")
-      (string-eq name "tl_shift_abort")
-      (string-eq name ".L_tl_abort")
-      (string-eq name "tl_region_mark")
-      (string-eq name "tl_region_reset")
-      (string-eq name "tl_arena_make"))
-    (backend-or4
-      (string-eq name "tl_arena_current")
-      (string-eq name "tl_arena_set")
-      (string-eq name "tl_arena_destroy")
-      (string-eq name "tl_arena_poison_enable"))))
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    false
+    (or
+      (backend-or8
+        (string-eq name "tl_alloc")
+        (string-eq name "tl_oob_abort")
+        (string-eq name "tl_div_abort")
+        (string-eq name "tl_shift_abort")
+        (string-eq name ".L_tl_abort")
+        (string-eq name "tl_region_mark")
+        (string-eq name "tl_region_reset")
+        (string-eq name "tl_arena_make"))
+      (backend-or4
+        (string-eq name "tl_arena_current")
+        (string-eq name "tl_arena_set")
+        (string-eq name "tl_arena_destroy")
+        (string-eq name "tl_arena_poison_enable")))))
 
 ;; Current stdlib modules still depend on these backend runtime shims for
 ;; unavoidable OS/process/profile operations. `stdlib/fs.tl` read-dir and
 ;; metadata probes are tracked by #2047.
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
-  (or
-    (backend-or8
-      (string-eq name "tl_process_output")
-      (string-eq name "tl_process_start")
-      (string-eq name "tl_process_wait")
-      (string-eq name "tl_profile_now_ms")
-      (string-eq name "tl_profile_alloc_total")
-      (string-eq name "tl_profile_alloc_live")
-      (string-eq name "tl_profile_alloc_peak")
-      (string-eq name "tl_profile_alloc_reset_peak"))
-    (backend-or8
-      (string-eq name ".L_tl_fs_read_dir_status")
-      (string-eq name ".L_tl_fs_read_dir")
-      (string-eq name ".L_tl_fs_file_kind_status")
-      (string-eq name ".L_tl_fs_file_size_status")
-      (string-eq name ".L_tl_fs_file_size")
-      false
-      false
-      false)))
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    false
+    (or
+      (backend-or8
+        (string-eq name "tl_process_output")
+        (string-eq name "tl_process_start")
+        (string-eq name "tl_process_wait")
+        (string-eq name "tl_profile_now_ms")
+        (string-eq name "tl_profile_alloc_total")
+        (string-eq name "tl_profile_alloc_live")
+        (string-eq name "tl_profile_alloc_peak")
+        (string-eq name "tl_profile_alloc_reset_peak"))
+      (backend-or8
+        (string-eq name ".L_tl_fs_read_dir_status")
+        (string-eq name ".L_tl_fs_read_dir")
+        (string-eq name ".L_tl_fs_file_kind_status")
+        (string-eq name ".L_tl_fs_file_size_status")
+        (string-eq name ".L_tl_fs_file_size")
+        false
+        false
+        false))))
 
 ;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
 ;; string equality/parsing moved in #2036, allocating string helpers in #2037,
@@ -11020,21 +11096,23 @@
 ;; IO/stdin/file/argv/print helpers are deliberately absent here: those names
 ;; are stdlib-owned and must remain external from the backend runtime plan.
 (define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
-  (or
-    (backend-or8
-      (string-eq name "tl_substring")
-      (string-eq name "tl_string_concat")
-      (string-eq name "tl_string_concat3")
-      (string-eq name "tl_string_concat4")
-      (string-eq name "tl_string_concat5")
-      (string-eq name "tl_string_eq")
-      (string-eq name "tl_string_to_int")
-      (string-eq name "tl_int_to_string"))
-    (backend-or4
-      (string-eq name "tl_hash_string")
-      (string-eq name "tl_env_var_exists")
-      (string-eq name "tl_env_var_value")
-      (string-eq name "env-path-separator"))))
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    false
+    (or
+      (backend-or8
+        (string-eq name "tl_substring")
+        (string-eq name "tl_string_concat")
+        (string-eq name "tl_string_concat3")
+        (string-eq name "tl_string_concat4")
+        (string-eq name "tl_string_concat5")
+        (string-eq name "tl_string_eq")
+        (string-eq name "tl_string_to_int")
+        (string-eq name "tl_int_to_string"))
+      (backend-or4
+        (string-eq name "tl_hash_string")
+        (string-eq name "tl_env_var_exists")
+        (string-eq name "tl_env_var_value")
+        (string-eq name "env-path-separator")))))
 
 (define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
   (let

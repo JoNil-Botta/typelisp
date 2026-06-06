@@ -17,11 +17,15 @@ EOF
 
 case "$#" in
     0) ;;
-    *)
+    1)
         case "$1" in
             -h | --help) usage; exit 0 ;;
             *) usage; exit 2 ;;
         esac
+        ;;
+    *)
+        usage
+        exit 2
         ;;
 esac
 

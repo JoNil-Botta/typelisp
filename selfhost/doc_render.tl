@@ -7,6 +7,8 @@
 
 (import "doc_extract.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum DocModule
   (DocModule String DocExtraction))
 

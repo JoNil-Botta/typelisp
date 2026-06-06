@@ -22,6 +22,8 @@
 
 (import "compiler_driver_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum CompileCliConfig
   (CompileCliConfig
     String

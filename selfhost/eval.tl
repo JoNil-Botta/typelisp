@@ -49,6 +49,8 @@
 
 (import "read.tl")
 
+(import "../stdlib/string.tl")
+
 ;; --------------------------------------------------------------------------
 ;; The VALUE domain: a tagged union of the things an expression denotes (#27).
 ;; --------------------------------------------------------------------------

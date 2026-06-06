@@ -14,6 +14,8 @@
 
 (import "package_source_core.tl")
 
+(import "../stdlib/string.tl")
+
 ;; Parsed lint CLI config: input paths, stdlib roots, and whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present).
 (defenum SelfhostLintPathList

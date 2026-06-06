@@ -11,6 +11,8 @@
 
 (import "../stdlib/process.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum SourceToolCommandStatus
   (SourceToolCommandOk)
   (SourceToolCommandErr String))

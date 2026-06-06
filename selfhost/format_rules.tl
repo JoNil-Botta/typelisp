@@ -11,6 +11,8 @@
 
 (import "format_doc.tl")
 
+(import "../stdlib/string.tl")
+
 (define (format-rules-node-symbol? [node : FormatCst] [wanted : String]) : bool
   (match node
     [(FmtCstAtom tok)

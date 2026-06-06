@@ -3,6 +3,8 @@
 
 (import "compiler_typecheck.tl")
 
+(import "../stdlib/string.tl")
+
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
   (let

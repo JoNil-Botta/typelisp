@@ -19,6 +19,8 @@
 
 (import "compiler_embedded_stdlib.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
   (ErrCompilerLoad CompilerDiagnostic))

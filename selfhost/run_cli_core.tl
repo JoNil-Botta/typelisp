@@ -8,6 +8,8 @@
 
 (import "build_run_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum RunPlanConfig
   (RunPlanConfig String String String String String String))
 

@@ -16,6 +16,8 @@
 
 (import "compiler_diagnostic.tl")
 
+(import "../stdlib/string.tl")
+
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
 ;; from #1137 for macro transformers.
 (defenum CompilerCtfeValue

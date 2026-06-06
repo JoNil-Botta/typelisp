@@ -5,6 +5,8 @@
 ;; with deterministic width-aware grouping and indentation.
 (import "../stdlib/text_buf.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum Doc
   (DEmpty)
   (DText String)

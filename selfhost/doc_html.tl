@@ -7,6 +7,8 @@
 
 (import "doc_render.tl")
 
+(import "../stdlib/string.tl")
+
 (define (doc-html-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 

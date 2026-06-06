@@ -9,6 +9,8 @@
 
 (import "compiler_check_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum LspFrameRead
   (LspFrameOk String)
   (LspFrameEof)

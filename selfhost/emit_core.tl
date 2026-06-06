@@ -5,6 +5,8 @@
 
 (import "sym_i64_env.tl")
 
+(import "../stdlib/string.tl")
+
 (define (max-i64 [a : i64] [b : i64]) : i64
   (if (< a b)
     b

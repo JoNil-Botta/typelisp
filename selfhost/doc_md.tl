@@ -12,6 +12,8 @@
 ;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
 (import "doc_html.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum MdStringList
   (MdStringNil)
   (MdStringCons String (Box MdStringList)))

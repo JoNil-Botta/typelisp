@@ -39,6 +39,8 @@
 
 (import "../stdlib/text_buf.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum ResultTokens
   (OkTokens (Array Token))
   (ErrTokens String))

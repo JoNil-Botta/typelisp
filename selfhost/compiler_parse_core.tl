@@ -14,6 +14,8 @@
 
 (import "sym_i64_env.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum ResultAstType
   (OkAstType AstType)
   (ErrAstType String))

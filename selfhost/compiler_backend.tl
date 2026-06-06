@@ -15,6 +15,8 @@
 
 (import "../stdlib/hashmap.tl")
 
+(import "../stdlib/string.tl")
+
 (cfg
   compile-profile
   (define compiler-backend-profile-start-ms : i64
@@ -271,7 +273,7 @@
 ;; Whether scalar functions get full register allocation (#perf). Register
 ;; allocation makes the EMITTED binary faster but its planning + register-aware
 ;; emission cost more compile time than it saves on a single self-compile, so it
-;; is reserved for opt level 2 — the high-quality path whose extra cost the
+;; is reserved for opt level 2 â€” the high-quality path whose extra cost the
 ;; benchmark's 2x budget accommodates. opt levels 0-2 stay on the cheap
 ;; stack-only homing. The driver sets this from the opt level before emitting;
 ;; it is set deterministically per compile so a given opt level always produces
@@ -3713,7 +3715,7 @@
           false))
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
         ;; Load rhs into %rbx FIRST: lhs goes into dst's home register, which may
-        ;; itself be rhs's home — loading lhs first would clobber rhs.
+        ;; itself be rhs's home â€” loading lhs first would clobber rhs.
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           rhs
@@ -6474,7 +6476,7 @@
     [else "%rax"]))
 
 ;; Load each operand into %rax and push it, so the operand registers are filled
-;; only in the pop phase below — this avoids any hazard where loading one operand
+;; only in the pop phase below â€” this avoids any hazard where loading one operand
 ;; clobbers a register still holding an unloaded operand.
 (define (compiler-backend-emit-syscall-pushes
   [assignments : CompilerRegAssignmentList]
@@ -11756,7 +11758,7 @@
 ;; exactly ONE object per executable (the entry object, `emit-entry=true`);
 ;; library/dependency objects (`emit-entry=false`) emit none of the runtime and
 ;; reference this slot as an extern, so a multi-object link (a package plus its
-;; dependency .a archive) resolves to the single shared slot â€” no duplicate
+;; dependency .a archive) resolves to the single shared slot Ã¢â‚¬â€ no duplicate
 ;; definition.
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
@@ -13090,11 +13092,11 @@ tl_boot_pool:
 ;;
 ;; These are `.globl` symbols. The runtime (arena primitives, tl_alloc, the
 ;; region runtime, and the `tl_current_arena` slot) is emitted in exactly ONE
-;; object per executable â€” the entry/executable object (`emit-entry=true`).
+;; object per executable Ã¢â‚¬â€ the entry/executable object (`emit-entry=true`).
 ;; Library/dependency objects (`emit-entry=false`) emit none of the runtime and
 ;; reference these symbols as externs, so a multi-object link (a package plus its
 ;; dependency .a archive) resolves every object's calls to the single definition
-;; in the entry object â€” no `multiple definition` collision.
+;; in the entry object Ã¢â‚¬â€ no `multiple definition` collision.
 (define (compiler-backend-runtime-arena-functions [profile : bool]) : String
   (string-append
     "    .globl tl_arena_current
@@ -13835,7 +13837,7 @@ _tl_env_var_value:
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end;
 ;; the arena header sits at the VirtualAlloc base). The only difference is how
 ;; newer arenas are released: Linux uses `munmap`, Windows uses
-;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` â€” the
+;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` Ã¢â‚¬â€ the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
 (define (compiler-backend-runtime-windows-region-reset-functions
@@ -17930,8 +17932,8 @@ tl_process_output:
   (compiler-backend-target-entry-text-with-crt target emit-entry false))
 
 ;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
-;; recurses far deeper than the default 8 MiB stack rlimit allows â€” type-directed
-;; `clone` of large IR values during arena escapes (#1633) is the worst case â€” so
+;; recurses far deeper than the default 8 MiB stack rlimit allows Ã¢â‚¬â€ type-directed
+;; `clone` of large IR values during arena escapes (#1633) is the worst case Ã¢â‚¬â€ so
 ;; a self-hosted compiler segfaults compiling a large program on the default
 ;; stack. argc/argv/envp are already captured into globals before this runs, so
 ;; switching %rsp is safe (main reads them from globals, not the stack). A failed

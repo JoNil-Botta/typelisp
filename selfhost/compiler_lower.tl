@@ -20,6 +20,8 @@
 
 (import "../stdlib/hashmap.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum LowerNameEnv
   (LowerNameNil)
   (LowerNameBind String String (Box LowerNameEnv)))
@@ -23136,7 +23138,7 @@
                     42))))))))))
 
 ;; `size-of`/`align-of` comptime layout queries (#989 slice 1): a scalar type
-;; folds to its byte size / alignment (equal for primitives) inside `(comptime …)`.
+;; folds to its byte size / alignment (equal for primitives) inside `(comptime â€¦)`.
 (define (compiler-lower-layout-query-fold-tests-ok?) : bool
   (and
     (compiler-lower-comptime-fold-ok?

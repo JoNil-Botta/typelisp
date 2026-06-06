@@ -9,6 +9,8 @@
 
 (import "../stdlib/fs.tl")
 
+(import "../stdlib/string.tl")
+
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
 (define (scaffold-name-bad-char? [name : String] [idx : i64]) : bool

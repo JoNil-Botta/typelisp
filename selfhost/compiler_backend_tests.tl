@@ -3,6 +3,8 @@
 
 (import "compiler_backend.tl")
 
+(import "../stdlib/string.tl")
+
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))

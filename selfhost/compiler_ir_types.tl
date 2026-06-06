@@ -7,6 +7,8 @@
 
 (import "compiler_ast_types.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum CompilerIrBinOp
   (IrBinAdd)
   (IrBinSub)

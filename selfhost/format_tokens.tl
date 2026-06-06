@@ -5,6 +5,8 @@
 ;; as trivia tokens so later layout rules can place them deliberately.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum FormatToken
   (FmtLParen)
   (FmtRParen)

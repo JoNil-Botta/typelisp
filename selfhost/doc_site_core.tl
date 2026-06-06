@@ -11,6 +11,8 @@
 
 (import "../stdlib/fs.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum DocSiteModule
   (DocSiteModule String String))
 

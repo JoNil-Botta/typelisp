@@ -38,6 +38,8 @@
 ;; token accessors all flow through one implementation.
 (import "lex.tl")
 
+(import "../stdlib/string.tl")
+
 ;; Count the TSym tokens in `toks` up to and including the TEnd sentinel: walk
 ;; the array, tallying each token whose tag is `tag-sym`, and stop at TEnd. An
 ;; observable, count-based result that depends on the symbol classification.

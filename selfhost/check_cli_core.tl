@@ -11,6 +11,8 @@
 
 (import "package_source_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum SelfhostCheckConfig
   (SelfhostCheckFileConfig String StringVec)
   (SelfhostCheckPackageConfig String bool StringVec))

@@ -5,6 +5,8 @@
 
 (import "compiler_ast_types.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
   (CompilerDiagnosticWarning)

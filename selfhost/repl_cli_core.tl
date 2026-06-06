@@ -28,6 +28,8 @@
 
 (import "build_run_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum ReplTypeCommand
   (ReplNoTypeCommand)
   (ReplTypeCommandExpr String))

@@ -5,6 +5,8 @@
 
 (import "compiler_specialize.tl")
 
+(import "../stdlib/string.tl")
+
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
@@ -3101,7 +3103,7 @@
       ok)))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
-;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
+;; the diagnostic must locate it there (not at the 1:1 fallback) â€” proving the
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
@@ -4140,7 +4142,7 @@
 ;; Closure capture typing (#1542, migrated from src/typechecker.rs): a lambda
 ;; that reads outer locals/params type-checks like its declared `(-> ...)` type.
 ;; Covers scalar, multi-scalar, String, struct capture, and aggregate-returning
-;; lambdas — the capture shapes the selfhost typechecker currently accepts.
+;; lambdas â€” the capture shapes the selfhost typechecker currently accepts.
 (define (compiler-typecheck-lambda-capture-scalar-source) : String
   "(define (main) : i64 (let [n : i64 7] (let [g : (-> i64) (lambda () : i64 n)] (g))))")
 
@@ -4311,7 +4313,7 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
-;; spmd-reduce purity rules (#1011, SPEC.md §5.15): the per-lane value
+;; spmd-reduce purity rules (#1011, SPEC.md Â§5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
@@ -4323,18 +4325,18 @@
     (and
       (compiler-typecheck-error-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.15)")
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.15)")
       (and
         (compiler-typecheck-error-ok?
           "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
-          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.15)")
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md Â§5.15)")
         (and
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
-            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.15)"))))))
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md Â§5.15)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array

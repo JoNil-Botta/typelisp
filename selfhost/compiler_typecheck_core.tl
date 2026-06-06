@@ -11,6 +11,8 @@
 
 (import "compiler_clone.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType (Box TcTypeEnv))
@@ -10794,7 +10796,7 @@
     [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
     [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
 
-;; spmd-reduce purity/effect rules (#1011, SPEC.md §5.15): mirror the Rust
+;; spmd-reduce purity/effect rules (#1011, SPEC.md Â§5.15): mirror the Rust
 ;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
 ;; narrow, clearly-pure surface and rejects everything else with a focused
 ;; diagnostic rather than guessing at varying/uniform semantics not yet
@@ -10850,40 +10852,40 @@
         [index : AstExpr (box-get index-box)]
         (if in-index
           (ErrTcUnit
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.15)")
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md Â§5.15)")
           (match (tc-spmd-value-pure-at array false)
             [(OkTcUnit) (tc-spmd-value-pure-at index true)]
             [(ErrTcUnit message) (ErrTcUnit message)])))]
     [(AstExprSet _ _)
       (ErrTcUnit
-        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md §5.15)")]
+        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md Â§5.15)")]
     [(AstExprArraySet _ _ _)
       (ErrTcUnit
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.15)")]
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.15)")]
     [(AstExprArrayPush _ _)
       (ErrTcUnit
-        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.15)")]
+        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.15)")]
     [(AstExprCall _ _)
       (ErrTcUnit
-        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.15)")]
+        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md Â§5.15)")]
     [(AstExprForeach _ _ _ _ _)
       (ErrTcUnit
-        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md §5.15)")]
+        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md Â§5.15)")]
     [(AstExprSpmdReduce _ _ _ _ _ _ _)
       (ErrTcUnit
-        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md §5.15)")]
+        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md Â§5.15)")]
     [(AstExprIf _ _ _)
       (ErrTcUnit
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")]
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")]
     [(AstExprWhile _ _)
       (ErrTcUnit
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")]
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")]
     [(AstExprMatch _ _)
       (ErrTcUnit
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")]
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")]
     [_
       (ErrTcUnit
-        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md §5.15)")]))
+        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md Â§5.15)")]))
 
 (define (tc-spmd-value-let-bindings-pure-at
   [bindings : AstLetBindingList]

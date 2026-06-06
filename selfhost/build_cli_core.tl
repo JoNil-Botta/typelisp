@@ -86,6 +86,27 @@
   (OkBuildPackageGraphNode BuildPackageGraphNode)
   (ErrBuildPackageGraphNode String))
 
+(defenum ResultBuildPkgDep
+  (OkBuildPkgDep CompilerPkgDep)
+  (ErrBuildPkgDep String))
+
+(defenum ResultBuildPkgDepList
+  (OkBuildPkgDepList CompilerPkgDepList)
+  (ErrBuildPkgDepList String))
+
+(defstruct BuildGitDependency
+  (remote String)
+  (pin-kind String)
+  (pin-value String))
+
+(defenum ResultBuildGitDependency
+  (OkBuildGitDependency BuildGitDependency)
+  (ErrBuildGitDependency String))
+
+(defenum ResultBuildString
+  (OkBuildString String)
+  (ErrBuildString String))
+
 (defenum BuildPackagePathList
   (BuildPackagePathNil)
   (BuildPackagePathCons String (Box BuildPackagePathList)))
@@ -861,6 +882,262 @@
       (build-package-dep-root manifest-dir dep)
       "typelisp.pkg")))
 
+(define (build-string-index-from
+  [s : String]
+  [needle : char]
+  [i : i64]
+  [n : i64]) : i64
+  (if (>= i n)
+    -1
+    (if (= (string-ref s i) needle)
+      i
+      (build-string-index-from s needle (+ i 1) n))))
+
+(define (build-github-dep-relative-root [alias : String]) : String
+  (compiler-load-join-root-path
+    (compiler-load-join-root-path
+      (compiler-load-join-root-path "target" "typelisp")
+      "git-deps")
+    alias))
+
+(define (build-github-dep-cache-root [manifest-dir : String] [alias : String]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path
+      manifest-dir
+      (build-github-dep-relative-root alias))))
+
+(define (build-github-dep-cache-manifest-path
+  [manifest-dir : String]
+  [alias : String]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path
+      (build-github-dep-cache-root manifest-dir alias)
+      "typelisp.pkg")))
+
+(define (build-git-dep-error [alias : String] [message : String]) : String
+  (string-append
+    "build: GitHub dependency `"
+    (string-append alias (string-append "` " message))))
+
+(define (build-parse-git-dependency [alias : String] [path : String]) : ResultBuildGitDependency
+  (let
+    [n : i64 (string-length path)]
+    [hash : i64 (build-string-index-from path ##' 0 n)]
+    (if (<= hash 0)
+      (ErrBuildGitDependency
+        (build-git-dep-error alias "has invalid normalized path"))
+      (let
+        [remote : String (substring path 0 hash)]
+        [pin : String (substring path (+ hash 1) (- n (+ hash 1)))]
+        [pin-len : i64 (string-length pin)]
+        [eq : i64 (build-string-index-from pin #=' 0 pin-len)]
+        (if (<= eq 0)
+          (ErrBuildGitDependency (build-git-dep-error alias "has invalid pin"))
+          (let
+            [kind : String (substring pin 0 eq)]
+            [value : String (substring pin (+ eq 1) (- pin-len (+ eq 1)))]
+            (if (= (string-length value) 0)
+              (ErrBuildGitDependency
+                (build-git-dep-error alias "has empty pin"))
+              (if (compiler-load-github-pin-kind-valid? kind)
+                (OkBuildGitDependency (BuildGitDependency remote kind value))
+                (ErrBuildGitDependency
+                  (build-git-dep-error alias "has invalid pin kind"))))))))))
+
+(define (build-git-checkout-ref [dep : BuildGitDependency]) : String
+  (if (string-eq (struct-get dep pin-kind) "branch")
+    (string-append "origin/" (struct-get dep pin-value))
+    (struct-get dep pin-value)))
+
+(define (build-process-output-detail [output : ProcessOutput]) : String
+  (let
+    [stderr : String (process-output-stderr output)]
+    [stdout : String (process-output-stdout output)]
+    (if (> (string-length stderr) 0)
+      (string-append ": " stderr)
+      (if (> (string-length stdout) 0)
+        (string-append ": " stdout)
+        ""))))
+
+(define (build-run-captured [context : String] [command : ProcessCommand]) : ResultBuildString
+  (match (process-output command)
+    [(OkProcessOutput output)
+      (if (process-success? output)
+        (OkBuildString (process-output-stdout output))
+        (ErrBuildString
+          (string-append
+            context
+            (string-append
+              " failed with status "
+              (string-append
+                (int->string (process-output-status output))
+                (build-process-output-detail output))))))]
+    [(ErrProcessOutput error)
+      (ErrBuildString
+        (string-append
+          context
+          (string-append ": " (process-error-message error))))]))
+
+(define (build-git-clone-command [remote : String] [root : String]) : ProcessCommand
+  (process-command
+    "git"
+    (source-tool-args-append
+      (source-tool-args-append
+        (source-tool-args-append (process-args-empty) "clone")
+        remote)
+      root)))
+
+(define (build-git-checkout-command [root : String] [checkout-ref : String]) : ProcessCommand
+  (process-command
+    "git"
+    (source-tool-args-append
+      (source-tool-args-append
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append (process-args-empty) "-C")
+            root)
+          "checkout")
+        "--detach")
+      checkout-ref)))
+
+(define (build-git-rev-parse-command [root : String]) : ProcessCommand
+  (process-command
+    "git"
+    (source-tool-args-append
+      (source-tool-args-append
+        (source-tool-args-append
+          (source-tool-args-append (process-args-empty) "-C")
+          root)
+        "rev-parse")
+      "HEAD")))
+
+(define (build-ensure-github-cache-parent
+  [manifest-dir : String]
+  [alias : String]) : ResultBuildString
+  (let
+    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
+    [deps-dir : String (compiler-load-join-root-path typelisp-dir "git-deps")]
+    (cond
+      [(not (build-mkdir-ok? target-dir))
+        (ErrBuildString
+          (build-git-dep-error alias "could not create target directory"))]
+      [(not (build-mkdir-ok? typelisp-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp directory"))]
+      [(not (build-mkdir-ok? deps-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/git-deps directory"))]
+      [else (OkBuildString deps-dir)])))
+
+(define (build-github-cache-git-dir [manifest-dir : String] [alias : String]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path
+      (build-github-dep-cache-root manifest-dir alias)
+      ".git")))
+
+(define (build-github-cache-needs-git? [manifest-dir : String] [alias : String]) : bool
+  (or
+    (not
+      (file-exists? (build-github-dep-cache-manifest-path manifest-dir alias)))
+    (file-exists? (build-github-cache-git-dir manifest-dir alias))))
+
+(define (build-git-clone-if-needed
+  [manifest-dir : String]
+  [alias : String]
+  [dep : BuildGitDependency]
+  [root : String]) : ResultBuildString
+  (if (file-exists? (build-github-cache-git-dir manifest-dir alias))
+    (OkBuildString root)
+    (build-run-captured
+      (build-git-dep-error alias "git clone")
+      (build-git-clone-command (struct-get dep remote) root))))
+
+(define (build-fetch-github-dependency
+  [manifest-dir : String]
+  [alias : String]
+  [dep : BuildGitDependency]) : ResultBuildString
+  (let
+    [root : String (build-github-dep-cache-root manifest-dir alias)]
+    [manifest-path : String
+      (build-github-dep-cache-manifest-path manifest-dir alias)]
+    (if (not (build-github-cache-needs-git? manifest-dir alias))
+      (OkBuildString manifest-path)
+      (match (build-ensure-github-cache-parent manifest-dir alias)
+        [(ErrBuildString message) (ErrBuildString message)]
+        [(OkBuildString _)
+          (match (build-git-clone-if-needed manifest-dir alias dep root)
+            [(ErrBuildString message) (ErrBuildString message)]
+            [(OkBuildString _)
+              (match (build-run-captured
+                (build-git-dep-error alias "git checkout")
+                (build-git-checkout-command root (build-git-checkout-ref dep)))
+                [(ErrBuildString message) (ErrBuildString message)]
+                [(OkBuildString _)
+                  (match (build-run-captured
+                    (build-git-dep-error alias "git rev-parse")
+                    (build-git-rev-parse-command root))
+                    [(ErrBuildString message) (ErrBuildString message)]
+                    [(OkBuildString _)
+                      (if (file-exists? manifest-path)
+                        (OkBuildString manifest-path)
+                        (ErrBuildString
+                          (build-git-dep-error
+                            alias
+                            "fetched package is missing typelisp.pkg")))])])])]))))
+
+(define (build-package-resolve-dep
+  [manifest-dir : String]
+  [dep : CompilerPkgDep]) : ResultBuildPkgDep
+  (let
+    [path : String (struct-get dep path)]
+    [alias : String (struct-get dep alias)]
+    (if (compiler-load-github-dependency-path? path)
+      (match (build-parse-git-dependency alias path)
+        [(ErrBuildGitDependency message) (ErrBuildPkgDep message)]
+        [(OkBuildGitDependency git-dep)
+          (match (build-fetch-github-dependency manifest-dir alias git-dep)
+            [(ErrBuildString message) (ErrBuildPkgDep message)]
+            [(OkBuildString _)
+              (OkBuildPkgDep
+                (CompilerPkgDep alias (build-github-dep-relative-root alias)))])])
+      (OkBuildPkgDep dep))))
+
+(define (build-package-resolve-deps
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultBuildPkgDepList
+  (match deps
+    [(CompilerPkgDepNil) (OkBuildPkgDepList CompilerPkgDepNil)]
+    [(CompilerPkgDepCons dep rest)
+      (match (build-package-resolve-dep manifest-dir dep)
+        [(ErrBuildPkgDep message) (ErrBuildPkgDepList message)]
+        [(OkBuildPkgDep resolved-dep)
+          (match (build-package-resolve-deps manifest-dir (box-get rest))
+            [(ErrBuildPkgDepList message) (ErrBuildPkgDepList message)]
+            [(OkBuildPkgDepList resolved-rest)
+              (OkBuildPkgDepList
+                (CompilerPkgDepCons resolved-dep (box resolved-rest)))])])]))
+
+(define (build-package-resolve-manifest-deps
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]) : ResultBuildManifest
+  (match (build-package-resolve-deps
+    (compiler-load-dirname manifest-path)
+    (struct-get manifest deps))
+    [(ErrBuildPkgDepList message) (ErrBuildManifest message)]
+    [(OkBuildPkgDepList deps)
+      (OkBuildManifest
+        (CompilerPkgManifest
+          (struct-get manifest name)
+          (struct-get manifest version)
+          (struct-get manifest kind)
+          (struct-get manifest entry)
+          deps))]))
+
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))
 
@@ -912,38 +1189,40 @@
 (define (build-package-load-dep-node
   [manifest-dir : String]
   [dep : CompilerPkgDep]) : ResultBuildPackageGraphNode
-  (if (compiler-load-github-dependency-path? (struct-get dep path))
-    (ErrBuildPackageGraphNode
-      (string-append
-        "build: GitHub dependency `"
-        (string-append
-          (struct-get dep alias)
-          "` requires git dependency fetch support (#1157)")))
-    (let
-      [dep-manifest-path : String
-        (build-package-dep-manifest-path manifest-dir dep)]
-      (match (build-load-manifest dep-manifest-path)
-        [(ErrBuildManifest message)
-          (ErrBuildPackageGraphNode
-            (string-append
-              "dependency `"
-              (string-append
-                (struct-get dep alias)
-                (string-append "`: " message))))]
-        [(OkBuildManifest dep-manifest)
-          (if (not (build-package-kind-lib? (struct-get dep-manifest kind)))
+  (match (build-package-resolve-dep manifest-dir dep)
+    [(ErrBuildPkgDep message) (ErrBuildPackageGraphNode message)]
+    [(OkBuildPkgDep resolved-dep)
+      (let
+        [dep-manifest-path : String
+          (build-package-dep-manifest-path manifest-dir resolved-dep)]
+        (match (build-load-manifest dep-manifest-path)
+          [(ErrBuildManifest message)
             (ErrBuildPackageGraphNode
               (string-append
-                "build: dependency `"
+                "dependency `"
                 (string-append
-                  (struct-get dep alias)
-                  (string-append
-                    "` at "
+                  (struct-get resolved-dep alias)
+                  (string-append "`: " message))))]
+          [(OkBuildManifest dep-manifest)
+            (match (build-package-resolve-manifest-deps
+              dep-manifest-path
+              dep-manifest)
+              [(ErrBuildManifest message) (ErrBuildPackageGraphNode message)]
+              [(OkBuildManifest resolved-manifest)
+                (if (not
+                  (build-package-kind-lib? (struct-get resolved-manifest kind)))
+                  (ErrBuildPackageGraphNode
                     (string-append
-                      dep-manifest-path
-                      " must be a staticlib package")))))
-            (OkBuildPackageGraphNode
-              (BuildPackageGraphNode dep-manifest-path dep-manifest)))]))))
+                      "build: dependency `"
+                      (string-append
+                        (struct-get resolved-dep alias)
+                        (string-append
+                          "` at "
+                          (string-append
+                            dep-manifest-path
+                            " must be a staticlib package")))))
+                  (OkBuildPackageGraphNode
+                    (BuildPackageGraphNode dep-manifest-path resolved-manifest)))])]))]))
 
 (define (build-package-graph-add-node
   [node : BuildPackageGraphNode]
@@ -1268,20 +1547,29 @@
               (print-error (string-append "Error: " message))
               1)]
           [(OkBuildManifest manifest)
-            (if (build-package-kind-lib? (struct-get manifest kind))
-              (build-package-emit-one
-                normalized-path
-                manifest
-                (struct-get config target)
-                (struct-get config opt-level)
-                (struct-get config profile)
-                (struct-get config mode)
-                (struct-get config stdlib-roots)
-                (process-args-empty))
-              (begin
-                (print-error
-                  "build: package worker can only build staticlib packages")
-                1))]))]))
+            (match (build-package-resolve-manifest-deps
+              normalized-path
+              manifest)
+              [(ErrBuildManifest message)
+                (begin
+                  (print-error message)
+                  1)]
+              [(OkBuildManifest resolved-manifest)
+                (if (build-package-kind-lib?
+                  (struct-get resolved-manifest kind))
+                  (build-package-emit-one
+                    normalized-path
+                    resolved-manifest
+                    (struct-get config target)
+                    (struct-get config opt-level)
+                    (struct-get config profile)
+                    (struct-get config mode)
+                    (struct-get config stdlib-roots)
+                    (process-args-empty))
+                  (begin
+                    (print-error
+                      "build: package worker can only build staticlib packages")
+                    1))])]))]))
 
 (define (build-package-async-process-supported?) : bool
   (not (string-eq (env-path-list-separator) ";")))
@@ -1643,33 +1931,41 @@
       (let
         [normalized-path : String
           (build-package-normalize-manifest-path manifest-path)]
-        (match (build-package-dependency-graph normalized-path manifest)
-          [(ErrBuildPackageGraph message)
+        (match (build-package-resolve-manifest-deps normalized-path manifest)
+          [(ErrBuildManifest message)
             (begin
               (print-error message)
               1)]
-          [(OkBuildPackageGraph graph)
-            (let
-              [nodes : BuildPackageGraphNodeList (struct-get graph order)]
-              [dep-status : i64
-                (build-package-emit-graph-nodes
-                  nodes
-                  target
-                  opt-level
-                  profile
-                  mode
-                  stdlib-roots)]
-              (if (= dep-status 0)
-                (build-package-emit-one
-                  normalized-path
-                  manifest
-                  target
-                  opt-level
-                  profile
-                  mode
-                  stdlib-roots
-                  (build-package-graph-link-libs nodes profile target))
-                dep-status))]))]))
+          [(OkBuildManifest resolved-manifest)
+            (match (build-package-dependency-graph
+              normalized-path
+              resolved-manifest)
+              [(ErrBuildPackageGraph message)
+                (begin
+                  (print-error message)
+                  1)]
+              [(OkBuildPackageGraph graph)
+                (let
+                  [nodes : BuildPackageGraphNodeList (struct-get graph order)]
+                  [dep-status : i64
+                    (build-package-emit-graph-nodes
+                      nodes
+                      target
+                      opt-level
+                      profile
+                      mode
+                      stdlib-roots)]
+                  (if (= dep-status 0)
+                    (build-package-emit-one
+                      normalized-path
+                      resolved-manifest
+                      target
+                      opt-level
+                      profile
+                      mode
+                      stdlib-roots
+                      (build-package-graph-link-libs nodes profile target))
+                    dep-status))])]))]))
 
 (define (build-package-from-path
   [manifest-path : String]

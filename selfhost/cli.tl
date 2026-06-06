@@ -53,7 +53,7 @@
 Usage:
     typelisp lsp                            Start stdio LSP diagnostics server
     typelisp repl                           Start minimal stdio REPL
-    typelisp check <file.tl> [--stdlib-root <dir>...]
+    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
@@ -73,7 +73,7 @@ Usage:
     --link-arg <arg>               Pass a raw native linker argument
     --backend-mode <mode>          scalar, avx2, or avx512; avx2/avx512 support simple foreach maps
     --target <target>              linux-x86_64 or windows-x86_64
-    --manifest-path <file>         Package manifest for build
+    --manifest-path <file>         Package manifest for build/check/clean
     --stdlib-root <dir>            Search root for stdlib/... imports before env/embedded fallback
     --cfg <name>                   Enable a compile-time cfg predicate name
     TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
@@ -88,6 +88,8 @@ Options for build:
     --opt-level <0|1|2|3>          Package-build optimizer level (default 2; 0 skips it)
 Options for clean:
     --dry-run                      List artifacts without deleting them
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+Options for check:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for fmt:
     --check                        Report files that would change without writing them

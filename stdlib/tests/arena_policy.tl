@@ -18,8 +18,10 @@
         [outer-suffix : String "-append"]
         [outer-appended : String
           (string-append-borrowed (& outer-trimmed) (& outer-suffix))]
+        [outer-number : String (int->string 12345)]
         [outer-expected : String "outer"]
         [outer-appended-expected : String "outer-append"]
+        [outer-number-expected : String "12345"]
         (begin
           (assert-string-eq
             (& outer-trimmed)
@@ -33,6 +35,10 @@
             (& outer-appended)
             (& outer-appended-expected)
             "outer stdlib string append allocation")
+          (assert-string-eq
+            (& outer-number)
+            (& outer-number-expected)
+            "outer stdlib int->string allocation")
           (with-arena
             inner
             (let
@@ -40,6 +46,7 @@
               [inner-slice : String (string-slice "alphabet" 2 3)]
               [inner-appended : String (string-append "inner" "-append")]
               [inner-concat : String (string-concat "inner" "-concat")]
+              [inner-number : String (int->string -6789)]
               [inner-borrowed : String
                 (string-append-borrowed (& inner-slice) (& inner-replaced))]
               [inner-rendered : String (text-buf-render program-buf)]
@@ -47,6 +54,7 @@
               [inner-slice-expected : String "pha"]
               [inner-appended-expected : String "inner-append"]
               [inner-concat-expected : String "inner-concat"]
+              [inner-number-expected : String "-6789"]
               [inner-borrowed-expected : String "phaalrena"]
               [inner-rendered-expected : String "scoped"]
               (begin
@@ -67,6 +75,10 @@
                   (& inner-concat-expected)
                   "inner stdlib string concat allocation")
                 (assert-string-eq
+                  (& inner-number)
+                  (& inner-number-expected)
+                  "inner stdlib int->string allocation")
+                (assert-string-eq
                   (& inner-borrowed)
                   (& inner-borrowed-expected)
                   "inner borrowed string append allocation")
@@ -82,4 +94,8 @@
                   (string-length outer-appended)
                   12
                   "outer append value remains readable in inner arena")
+                (assert-i64-eq
+                  (string-length outer-number)
+                  5
+                  "outer int string value remains readable in inner arena")
                 42))))))))

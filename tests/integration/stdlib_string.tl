@@ -13,6 +13,11 @@
 ;;   missing
 ;;   hippo
 ;;   abx
+;;   0
+;;   123456789
+;;   -42
+;;   9223372036854775807
+;;   -9223372036854775808
 ;; Exit code: 42
 (import "stdlib/io.tl")
 
@@ -68,6 +73,16 @@
     (print-string (string-replace "hello" "ell" "ipp"))
     (print-newline)
     (print-string (string-replace "abc" "c" "x"))
+    (print-newline)
+    (print-string (int->string 0))
+    (print-newline)
+    (print-string (int->string 123456789))
+    (print-newline)
+    (print-string (int->string -42))
+    (print-newline)
+    (print-string (int->string 9223372036854775807))
+    (print-newline)
+    (print-string (int->string (- (- 0 9223372036854775807) 1)))
     (print-newline)
     (if (and
       (string-eq "same" (string-append "sa" "me"))

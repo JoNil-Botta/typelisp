@@ -121,6 +121,23 @@
       (string-test-to-int-borrowed "12a")
       169
       "borrowed parser keeps legacy non-digit arithmetic")
+    (assert-owned-string-eq (int->string 0) "0" "int->string renders zero")
+    (assert-owned-string-eq
+      (int->string 123456789)
+      "123456789"
+      "int->string renders positive values")
+    (assert-owned-string-eq
+      (int->string -42)
+      "-42"
+      "int->string renders negative values")
+    (assert-owned-string-eq
+      (int->string 9223372036854775807)
+      "9223372036854775807"
+      "int->string renders i64 max")
+    (assert-owned-string-eq
+      (int->string (- (- 0 9223372036854775807) 1))
+      "-9223372036854775808"
+      "int->string renders i64 min")
     (assert-owned-string-eq
       (substring "abcdef" 2 3)
       "cde"

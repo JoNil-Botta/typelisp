@@ -92,8 +92,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   weighted-index selection for selfhost tools, plus an OS-entropy seed source.
   Import it with `(import "stdlib/random.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
-  including append/concat, substring, equality, and integer parsing helpers. Import it with
-  `(import "stdlib/string.tl")`.
+  including append/concat, substring, equality, integer rendering, and integer parsing
+  helpers. Import it with `(import "stdlib/string.tl")`.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it
@@ -170,6 +170,7 @@ owned stdlib imports keep the compatibility wrappers.
 |-----------|---------------------|
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-append`, `string-concat`, `string-copy-borrowed`, `string-append-borrowed`, `string-concat-borrowed` | Append/concat helpers allocate fresh active-arena `String` storage and copy bytes from their inputs. The public append/concat wrappers take owned `String` values; stdlib borrowed call sites use the borrowed variants or `string-copy-borrowed` explicitly. |
+| `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Unimported builtin callers keep the compatibility runtime path until final retirement. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `try-read-file` | Performs host file inspection through stdlib FFI; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |

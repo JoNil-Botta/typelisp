@@ -861,9 +861,6 @@ run_windows_backend_fixtures() {
         ".extern VirtualAlloc" \
         ".extern exit" \
         "call VirtualAlloc" \
-        "call GetSystemTimeAsFileTime" \
-        "call GetCurrentProcessId" \
-        "call GetCurrentThreadId" \
         "movq %rcx, %rbx" \
         "movq %r12, %rcx" \
         "movq %rcx, %r10" \

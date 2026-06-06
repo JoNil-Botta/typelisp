@@ -1880,20 +1880,6 @@
             (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
             (compiler-backend-string-contains? asm "    call _write\n")
             (compiler-backend-string-contains? asm "    call _read\n"))]
-        [kernel-seed : bool
-          (backend-and4
-            (compiler-backend-string-contains?
-              asm
-              "    call QueryPerformanceCounter\n")
-            (compiler-backend-string-contains?
-              asm
-              "    call GetSystemTimeAsFileTime\n")
-            (compiler-backend-string-contains?
-              asm
-              "    call GetCurrentProcessId\n")
-            (compiler-backend-string-contains?
-              asm
-              "    call GetCurrentThreadId\n"))]
         [process-runtime : bool
           (and
             (compiler-backend-string-contains? asm "    call _lseeki64\n")
@@ -1905,7 +1891,8 @@
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n")
             (compiler-backend-string-contains? asm "tl_int_to_string:\n")
-            (compiler-backend-string-contains? asm "tl_random_system_seed:\n")
+            (not
+              (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -1930,7 +1917,7 @@
           (not (compiler-backend-string-contains? asm "SystemFunction036"))]
         (backend-and8
           kernel-io
-          kernel-seed
+          true
           process-runtime
           string-runtime
           entry-shape

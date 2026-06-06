@@ -1,9 +1,10 @@
 ;# Deterministic pseudo-random helpers for TypeLisp tools (#882).
 ;#
 ;# This module provides a small seeded, deterministic, non-cryptographic
-;# generator plus weighted index selection for selfhost tooling. It does not
-;# read host entropy; callers choose the seed, commonly from a literal in
-;# tests or from argv in local tools that want variation.
+;# generator plus weighted index selection for selfhost tooling. Deterministic
+;# draws do not read host entropy; callers choose the seed, commonly from a
+;# literal in tests or from argv in local tools that want variation. The
+;# optional `random-system-seed` wrapper reads a platform seed through direct FFI.
 ;#
 ;# Usage: `(import "stdlib/random.tl")`
 ;#
@@ -55,6 +56,41 @@
 (defenum ResultSystemSeed
   (OkSystemSeed i64)
   (ErrSystemSeed RandomSystemSeedError))
+
+;: Linux `getrandom` binding used by `random-system-seed`.
+(cfg
+  (not windows)
+  (extern random-linux-getrandom (:symbol "getrandom") : (->
+    (MutPtr u8)
+    i64
+    u32
+    i64)))
+
+;: Windows kernel32 `QueryPerformanceCounter` binding used for seed variation.
+(cfg
+  windows
+  (extern random-windows-query-performance-counter (:symbol "QueryPerformanceCounter") : (->
+    (MutPtr i64)
+    i32)))
+
+;: Windows kernel32 `GetSystemTimeAsFileTime` binding used for seed variation.
+(cfg
+  windows
+  (extern random-windows-get-system-time-as-file-time (:symbol "GetSystemTimeAsFileTime") : (->
+    (MutPtr i64)
+    unit)))
+
+;: Windows kernel32 `GetCurrentProcessId` binding used for seed variation.
+(cfg
+  windows
+  (extern random-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (->
+    u32)))
+
+;: Windows kernel32 `GetCurrentThreadId` binding used for seed variation.
+(cfg
+  windows
+  (extern random-windows-get-current-thread-id (:symbol "GetCurrentThreadId") : (->
+    u32)))
 
 ;: Linear list of non-negative weights.
 (defenum RandomWeightList
@@ -196,13 +232,75 @@
               (random-weighted-index-scan weights target 0))]
           [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))]))
 
-;: Backend runtime hook: read host entropy and return a structured result.
-(extern tl_random_system_seed : (-> ResultSystemSeed))
+;: Return the shared system-seed failure result.
+(define (random-system-seed-unavailable) : ResultSystemSeed
+  (ErrSystemSeed
+    (RandomSystemSeedUnavailable "random: system entropy unavailable")))
+
+;: Read a Linux system seed through `getrandom`.
+(cfg
+  (not windows)
+  (define (random-linux-system-seed) : ResultSystemSeed
+    (let
+      [seed : (Array i64) (make-array i64 1)]
+      [read-count : i64
+        (random-linux-getrandom
+          (unsafe
+            (ptr-cast (array-data seed) : (MutPtr u8)))
+          8
+          (cast 0 : u32))]
+      (if (= read-count 8)
+        (OkSystemSeed (array-ref seed 0))
+        (random-system-seed-unavailable)))))
+
+;: Rotate a 64-bit value left by 17 bits.
+(cfg
+  windows
+  (define (random-rotl64-17 [value : u64]) : u64
+    (bit-or (shl value 17) (shr value 47))))
+
+;: Finalize a mixed 64-bit seed using the SplitMix64 avalanche step from #2100.
+(cfg
+  windows
+  (define (random-splitmix64-finalize [seed : u64]) : u64
+    (let
+      [z0 : u64 (+ seed (cast -7046029254386353131 : u64))]
+      [z1 : u64 (bit-xor z0 (shr z0 30))]
+      [z2 : u64 (* z1 (cast -4658895280553007687 : u64))]
+      [z3 : u64 (bit-xor z2 (shr z2 27))]
+      [z4 : u64 (* z3 (cast -7723592293110705685 : u64))]
+      (bit-xor z4 (shr z4 31)))))
+
+;: Build a Windows seed from kernel32 timing and process/thread identifiers.
+(cfg
+  windows
+  (define (random-windows-system-seed) : ResultSystemSeed
+    (let
+      [counter : (Array i64) (make-array i64 1)]
+      [file-time : (Array i64) (make-array i64 1)]
+      [_counter-ok : i32
+        (random-windows-query-performance-counter
+          (unsafe
+            (array-data counter)))]
+      [_file-time-ok : unit
+        (random-windows-get-system-time-as-file-time
+          (unsafe
+            (array-data file-time)))]
+      [counter-seed : u64 (cast (array-ref counter 0) : u64)]
+      [time-seed : u64 (random-rotl64-17 (cast (array-ref file-time 0) : u64))]
+      [pid-seed : u64
+        (shl (cast (random-windows-get-current-process-id) : u64) 32)]
+      [thread-seed : u64 (cast (random-windows-get-current-thread-id) : u64)]
+      [mixed : u64
+        (bit-xor
+          (bit-xor (bit-xor counter-seed time-seed) pid-seed)
+          thread-seed)]
+      (OkSystemSeed (cast (random-splitmix64-finalize mixed) : i64)))))
 
 ;: Return a system-provided random seed, or a diagnostic when entropy is
 ;: unavailable. The seed is normalized to the valid MINSTD range.
 (define (random-system-seed) : ResultSystemSeed
-  (match (tl_random_system_seed)
+  (match (cfg windows (random-windows-system-seed) (random-linux-system-seed))
     [(OkSystemSeed seed) (OkSystemSeed (random-normalize-seed-value seed))]
     [(ErrSystemSeed err) (ErrSystemSeed err)]))
 

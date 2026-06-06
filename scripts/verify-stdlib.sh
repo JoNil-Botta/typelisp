@@ -256,7 +256,7 @@ stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/profile_api.tl|42|-|-
 stdlib/tests/queue_api.tl|42|-|-
-stdlib/tests/random_api.tl|42|-|-|-|requires-stage0-symbol:tl_random_system_seed
+stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-

@@ -646,8 +646,6 @@ run_linux_backend_fixtures() {
     for _snippet in \
         ".globl tl_alloc" \
         "tl_alloc:" \
-        ".globl tl_oob_abort" \
-        "tl_oob_abort:" \
         ".globl tl_substring" \
         "tl_substring:" \
         ".globl tl_string_concat" \
@@ -673,6 +671,8 @@ run_linux_backend_fixtures() {
     for _snippet in \
         ".extern tl_alloc" \
         ".extern tl_oob_abort" \
+        ".globl tl_oob_abort" \
+        "tl_oob_abort:" \
         ".extern tl_substring" \
         ".extern tl_string_concat" \
         ".extern tl_string_eq" \
@@ -756,6 +756,8 @@ run_linux_backend_fixtures() {
     mkdir -p "$_raw_ptr_dir"
     _raw_ptr_asm="$_raw_ptr_dir/raw_pointer.s"
     _raw_ptr_obj="$_raw_ptr_dir/raw_pointer.o"
+    _raw_ptr_abort_asm="$_raw_ptr_dir/raw_pointer_abort.s"
+    _raw_ptr_abort_obj="$_raw_ptr_dir/raw_pointer_abort.o"
     _raw_ptr_bin="$_raw_ptr_dir/raw_pointer"
     _raw_ptr_driver="$_raw_ptr_dir/raw_pointer_fixture_driver"
 
@@ -775,8 +777,20 @@ run_linux_backend_fixtures() {
         assert_contains "$_raw_ptr_asm" "$_snippet" backend-raw-pointer
     done
     assert_not_contains "$_raw_ptr_asm" "# TODO" backend-raw-pointer
+    # This direct backend fixture bypasses the driver-owned runtime prelude.
+    # Provide a freestanding link-only abort target for bounds-check calls; the
+    # happy-path fixture must not execute it.
+    cat > "$_raw_ptr_abort_asm" <<'EOF'
+    .text
+    .globl tl_oob_abort
+tl_oob_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+EOF
     as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
-    ld "$_raw_ptr_obj" -o "$_raw_ptr_bin"
+    as "$_raw_ptr_abort_asm" -o "$_raw_ptr_abort_obj"
+    ld "$_raw_ptr_obj" "$_raw_ptr_abort_obj" -o "$_raw_ptr_bin"
     set +e
     "$_raw_ptr_bin" < /dev/null > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
     _got=$?
@@ -838,8 +852,6 @@ run_windows_backend_fixtures() {
         ".globl tl_alloc" \
         "tl_alloc:" \
         "tl_current_arena:" \
-        ".globl tl_oob_abort" \
-        "tl_oob_abort:" \
         ".globl tl_substring" \
         "tl_substring:" \
         ".globl tl_string_concat" \
@@ -878,6 +890,8 @@ run_windows_backend_fixtures() {
         ".globl _start" \
         ".extern tl_alloc" \
         ".extern tl_oob_abort" \
+        ".globl tl_oob_abort" \
+        "tl_oob_abort:" \
         ".extern tl_substring" \
         ".extern tl_string_concat" \
         ".extern tl_string_eq" \

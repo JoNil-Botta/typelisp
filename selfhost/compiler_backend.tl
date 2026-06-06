@@ -2118,10 +2118,22 @@
 (define (compiler-backend-runtime-user-symbol? [name : String]) : bool
   (string-eq name "env-path-separator"))
 
+(define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
+  (or
+    (string-eq name "tl_oob_abort")
+    (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort"))))
+
+(define (compiler-backend-call-raw-symbol?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (or
+    (compiler-backend-plan-provides? plan name)
+    (compiler-backend-fixed-fault-symbol? name)))
+
 (define (compiler-backend-link-symbol
   [name : String]
   [plan : CompilerBackendRuntimePlan]) : String
-  (if (compiler-backend-plan-provides? plan name)
+  (if (compiler-backend-call-raw-symbol? plan name)
     (if (compiler-backend-runtime-user-symbol? name)
       (compiler-backend-user-symbol name)
       name)
@@ -2139,14 +2151,14 @@
       (if (and
         (and
           (string-eq link-symbol name)
-          (compiler-backend-plan-provides? plan name))
+          (compiler-backend-call-raw-symbol? plan name))
         (not (compiler-backend-function-list-defines? functions name)))
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
           name)
         (compiler-backend-link-symbol link-symbol plan)))
     (if (and
-      (compiler-backend-plan-provides? plan name)
+      (compiler-backend-call-raw-symbol? plan name)
       (not (compiler-backend-function-list-defines? functions name)))
       (if (compiler-backend-runtime-user-symbol? name)
         (compiler-backend-user-symbol name)
@@ -2167,7 +2179,7 @@
         (if (and
           (and
             (string-eq link-symbol name)
-            (compiler-backend-plan-provides? plan name))
+            (compiler-backend-call-raw-symbol? plan name))
           (not (compiler-backend-index-function-defines? index name)))
           (if (compiler-backend-runtime-user-symbol? name)
             (compiler-backend-user-symbol name)
@@ -2175,7 +2187,7 @@
           (compiler-backend-link-symbol link-symbol plan)))]
     [else
       (if (and
-        (compiler-backend-plan-provides? plan name)
+        (compiler-backend-call-raw-symbol? plan name)
         (not (compiler-backend-index-function-defines? index name)))
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
@@ -18834,24 +18846,20 @@ tl_process_output:
   (compiler-ir-extern-cons
     (compiler-ir-extern-default "tl_alloc" (AstTyI64))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_oob_abort" (AstTyUnit))
+      (compiler-ir-extern-default "tl_substring" (AstTyI64))
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_substring" (AstTyI64))
+        (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
+          (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
           (compiler-ir-extern-cons
-            (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
+            (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
             (compiler-ir-extern-cons
-              (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
+              (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
               (compiler-ir-extern-cons
-                (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
-                (compiler-ir-extern-cons
-                  (compiler-ir-extern-default
-                    "tl_process_output"
-                    (ast-ty-func
-                      (ast-type-cons (AstTyI64) AstTypeNil)
-                      (AstTyI64)))
-                  IrExternNil)))))))))
+                (compiler-ir-extern-default
+                  "tl_process_output"
+                  (ast-ty-func (ast-type-cons (AstTyI64) AstTypeNil) (AstTyI64)))
+                IrExternNil))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -18904,7 +18912,6 @@ tl_process_output:
 
 (define (compiler-backend-runtime-helper-source) : String
   "(extern tl_alloc : (-> i64 i64))
-(extern tl_oob_abort : (-> unit))
 (extern tl_substring : (-> i64 i64 i64 i64))
 (extern tl_string_concat : (-> i64 i64 i64 i64 i64))
 (extern tl_string_eq : (-> String String bool))
@@ -18987,8 +18994,8 @@ tl_process_output:
         (backend-and8
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (compiler-backend-string-contains? asm "tl_alloc:\n")
-          (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
-          (compiler-backend-string-contains? asm "tl_oob_abort:\n")
+          (not (compiler-backend-string-contains? asm ".globl tl_oob_abort\n"))
+          (not (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
           (compiler-backend-string-contains? asm ".globl tl_substring\n")
           (compiler-backend-string-contains? asm "tl_substring:\n")
           (compiler-backend-string-contains? asm ".globl tl_string_concat\n")

@@ -2544,7 +2544,7 @@
       false
       false
       false
-      (CompilerBackendRuntimeTailPlan false false false))
+      (CompilerBackendRuntimeTailPlan false false))
     IrFunctionNil
     IrExternNil
     (compiler-backend-program-index-build IrFunctionNil IrExternNil)
@@ -3055,12 +3055,14 @@
             "tl_fs_remove_dir_status")
           (compiler-backend-no-public-runtime-symbol? asm "tl_fs_rename_status")
           (compiler-backend-no-public-runtime-symbol? asm "tl_fs_process_id")
+          (compiler-backend-no-public-runtime-symbol?
+            asm
+            "tl_fs_current_dir_status")
+          (compiler-backend-no-public-runtime-symbol? asm "tl_fs_current_dir")
           (compiler-backend-no-public-runtime-symbol? asm "tl_read_stdin_line")
           (compiler-backend-no-public-runtime-symbol? asm "tl_read_stdin_bytes")
-          (compiler-backend-no-public-runtime-symbol? asm "tl_stdin_eof")
-          (compiler-backend-no-public-runtime-symbol? asm "tl_flush_stdout")
-          true)
-        true))))
+          (compiler-backend-no-public-runtime-symbol? asm "tl_stdin_eof"))
+        (compiler-backend-no-public-runtime-symbol? asm "tl_flush_stdout")))))
 
 (define (compiler-backend-private-io-fs-runtime-source) : String
   "(extern runtime-read-file (:symbol \".L_tl_read_file\") : (->
@@ -3521,44 +3523,62 @@
 (define (main) : i64
   (+ (tl_fs_current_dir_status) (string-length (tl_fs_current_dir))))")
 
-(define (compiler-backend-fs-current-dir-runtime-source-ok? [source : String]) : bool
+(define (compiler-backend-fs-current-dir-extern-only-source-ok?
+  [source : String]) : bool
   (match (compiler-backend-emit-source source)
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_fs_current_dir_status\n")
         (and
-          (compiler-backend-string-contains? asm "tl_fs_current_dir:\n")
+          (compiler-backend-string-contains? asm ".extern tl_fs_current_dir\n")
           (and
-            (compiler-backend-string-contains? asm "    movq $79, %rax\n")
-            (and
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_fs_current_dir_status\n")
+            (backend-and4
+              (compiler-backend-no-public-runtime-symbol?
+                asm
+                "tl_fs_current_dir_status")
+              (compiler-backend-no-public-runtime-symbol?
+                asm
+                "tl_fs_current_dir")
+              (not
+                (compiler-backend-string-contains? asm "    movq $79, %rax\n"))
               (not
                 (compiler-backend-string-contains?
                   asm
-                  ".L_tl_fs_mkdir_status:\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_fs_current_dir\n"))))))]
+                  ".L_tl_fs_mkdir_status:\n"))))))]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-fs-current-dir-runtime-ok?) : bool
+(define (compiler-backend-fs-current-dir-extern-only-ok?) : bool
   (and
-    (compiler-backend-fs-current-dir-runtime-source-ok?
+    (compiler-backend-fs-current-dir-extern-only-source-ok?
       (compiler-backend-fs-current-dir-source))
-    (compiler-backend-fs-current-dir-runtime-source-ok?
+    (compiler-backend-fs-current-dir-extern-only-source-ok?
       (compiler-backend-fs-current-dir-extern-source))))
 
-(define (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+(define (compiler-backend-windows-fs-current-dir-extern-only-source-ok?
   [source : String]) : bool
   (match (compiler-backend-emit-source-for-target source (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_fs_current_dir_status\n")
         (and
-          (compiler-backend-string-contains? asm "tl_fs_current_dir:\n")
+          (compiler-backend-string-contains? asm ".extern tl_fs_current_dir\n")
           (and
-            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
-            (and
+            (compiler-backend-no-public-runtime-symbol?
+              asm
+              "tl_fs_current_dir_status")
+            (backend-and4
+              (compiler-backend-no-public-runtime-symbol?
+                asm
+                "tl_fs_current_dir")
+              (not
+                (compiler-backend-string-contains? asm "    movq $38, %rax\n"))
               (not (compiler-backend-string-contains? asm "    syscall"))
               (not
                 (compiler-backend-string-contains?
@@ -3566,11 +3586,11 @@
                   ".L_tl_fs_mkdir_status:\n"))))))]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-windows-fs-current-dir-runtime-ok?) : bool
+(define (compiler-backend-windows-fs-current-dir-extern-only-ok?) : bool
   (and
-    (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+    (compiler-backend-windows-fs-current-dir-extern-only-source-ok?
       (compiler-backend-fs-current-dir-source))
-    (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+    (compiler-backend-windows-fs-current-dir-extern-only-source-ok?
       (compiler-backend-fs-current-dir-extern-source))))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
@@ -4559,9 +4579,9 @@
                     (compiler-backend-windows-fs-file-kind-runtime-ok?)
                     (compiler-backend-windows-fs-file-size-runtime-ok?)))
                 (and
-                  (compiler-backend-fs-current-dir-runtime-ok?)
+                  (compiler-backend-fs-current-dir-extern-only-ok?)
                   (and
-                    (compiler-backend-windows-fs-current-dir-runtime-ok?)
+                    (compiler-backend-windows-fs-current-dir-extern-only-ok?)
                     (and
                       (backend-and8
                         (compiler-backend-user-helper-name-ok?)

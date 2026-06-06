@@ -173,7 +173,6 @@
   (ErrCompilerBackend CompilerDiagnostic))
 
 (defstruct CompilerBackendRuntimeTailPlan
-  (fs-current-dir bool)
   (profile bool)
   (hash-string bool))
 
@@ -238,10 +237,6 @@
 (defstruct CompilerBackendSourceSpanIndex
   (entries StringI64Map)
   (values (Array CompilerMaybeSourceSpan)))
-
-(define (compiler-backend-runtime-tail-fs-current-dir?
-  [tail : CompilerBackendRuntimeTailPlan]) : bool
-  (struct-get tail fs-current-dir))
 
 (define (compiler-backend-runtime-tail-profile?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
@@ -10903,16 +10898,8 @@
                       name
                       ".L_tl_fs_file_size"
                       provides-fs)
-                    (compiler-backend-provides-runtime-name?
-                      name
-                      "tl_fs_current_dir_status"
-                      (compiler-backend-runtime-tail-fs-current-dir?
-                        provides-tail))
-                    (compiler-backend-provides-runtime-name?
-                      name
-                      "tl_fs_current_dir"
-                      (compiler-backend-runtime-tail-fs-current-dir?
-                        provides-tail))
+                    false
+                    false
                     false)
                   (or
                     (compiler-backend-provides-runtime-name?
@@ -11143,10 +11130,6 @@
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_read_dir_status")]
     [extern-fs-read-dir : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_read_dir")]
-    [extern-fs-current-dir-status : bool
-      (compiler-backend-runtime-index-extern? index "tl_fs_current_dir_status")]
-    [extern-fs-current-dir : bool
-      (compiler-backend-runtime-index-extern? index "tl_fs_current_dir")]
     [extern-read-line : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_read_stdin_line")]
     [extern-read-bytes : bool
@@ -11281,10 +11264,6 @@
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_read_dir_status")]
     [calls-fs-read-dir : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_read_dir")]
-    [calls-fs-current-dir-status : bool
-      (compiler-backend-runtime-index-calls? index "tl_fs_current_dir_status")]
-    [calls-fs-current-dir : bool
-      (compiler-backend-runtime-index-calls? index "tl_fs_current_dir")]
     [calls-read-line : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
@@ -11392,10 +11371,6 @@
             false
             false)
           (or calls-fs-file-size-status calls-fs-file-size)))]
-    [needs-fs-current-dir : bool
-      (or
-        (or extern-fs-current-dir-status extern-fs-current-dir)
-        (or calls-fs-current-dir-status calls-fs-current-dir))]
     [needs-read-line : bool false]
     [needs-read-bytes : bool false]
     [needs-stdin-eof : bool false]
@@ -11466,11 +11441,11 @@
             needs-file-handle
             needs-file-read-chunk
             needs-fs-runtime
-            needs-fs-current-dir
             needs-process-output
             needs-read-line
             needs-read-bytes
-            needs-random-system-seed)
+            needs-random-system-seed
+            false)
           (or
             needs-windows-setup-instances
             (backend-or4
@@ -11533,10 +11508,7 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        (CompilerBackendRuntimeTailPlan
-          needs-fs-current-dir
-          needs-profile
-          needs-hash-string)))))
+        (CompilerBackendRuntimeTailPlan needs-profile needs-hash-string)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -14694,65 +14666,6 @@ tl_profile_alloc_reset_peak:
 
 ")
 
-(define (compiler-backend-runtime-fs-current-dir-functions) : String
-  "tl_fs_current_dir_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    sub $8, %rsp
-    movq $4096, %rdi
-    call tl_alloc
-    movq %rax, %rbx
-    movq $79, %rax
-    movq %rbx, %rdi
-    movq $4096, %rsi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_current_dir_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_current_dir_status_return
-.L_tl_fs_current_dir_status_error_from_rax:
-    negq %rax
-.L_tl_fs_current_dir_status_return:
-    add $8, %rsp
-    pop %rbx
-    pop %rbp
-    ret
-
-tl_fs_current_dir:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq $4096, %rdi
-    call tl_alloc
-    movq %rax, %rbx
-    movq $79, %rax
-    movq %rbx, %rdi
-    movq $4096, %rsi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_current_dir_empty
-    decq %rax
-    movq %rax, %r12
-    jmp .L_tl_fs_current_dir_alloc_result
-.L_tl_fs_current_dir_empty:
-    xorq %r12, %r12
-.L_tl_fs_current_dir_alloc_result:
-    call .L_tl_alloc16
-    movq %rbx, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
-
 (define (compiler-backend-runtime-windows-fs-mkdir-status-functions) : String
   ".L_tl_fs_mkdir_status:
     push %rbp
@@ -14960,35 +14873,6 @@ tl_fs_current_dir:
 
 
 ")
-
-(define (compiler-backend-runtime-windows-fs-current-dir-functions) : String
-  "tl_fs_current_dir_status:
-    movq $38, %rax
-    ret
-
-tl_fs_current_dir:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    sub $40, %rsp
-    xorq %rcx, %rcx
-    call tl_alloc
-    movq %rax, %rbx
-    call .L_tl_alloc16
-    movq %rbx, 0(%rax)
-    movq $0, 8(%rax)
-    add $40, %rsp
-    pop %rbx
-    pop %rbp
-    ret
-
-")
-
-(define (compiler-backend-runtime-fs-current-dir-functions-for-target
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    (compiler-backend-runtime-windows-fs-current-dir-functions)
-    (compiler-backend-runtime-fs-current-dir-functions)))
 
 (define (compiler-backend-runtime-fs-functions-for-target
   [target : CompilerBackendTarget]) : String
@@ -19112,8 +18996,6 @@ tl_windows_sdk_registry_install:
         shift-abort
         tail-plan)
       (let
-        [fs-current-dir : bool
-          (compiler-backend-runtime-tail-fs-current-dir? tail-plan)]
         [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
         [hash-string : bool
           (compiler-backend-runtime-tail-hash-string? tail-plan)]
@@ -19273,11 +19155,6 @@ tl_windows_sdk_registry_install:
           (if fs-runtime
             (compiler-backend-runtime-fs-functions-for-target target)
             "")]
-        [fs-current-dir-asm : String
-          (if fs-current-dir
-            (compiler-backend-runtime-fs-current-dir-functions-for-target
-              target)
-            "")]
         [process-output-asm : String
           (if process-output
             (if (compiler-backend-target-windows? target)
@@ -19416,7 +19293,7 @@ tl_windows_sdk_registry_install:
           (backend-cat5
             file-handle-asm
             file-read-chunk-asm
-            (string-append fs-asm fs-current-dir-asm)
+            fs-asm
             runtime-tail-asm
             (backend-cat5
               random-and-windows-asm
@@ -19663,10 +19540,8 @@ tl_windows_sdk_registry_install:
             div-abort
             shift-abort
             (or
-              (compiler-backend-runtime-tail-fs-current-dir? tail-plan)
-              (or
-                (compiler-backend-runtime-tail-profile? tail-plan)
-                (compiler-backend-runtime-tail-hash-string? tail-plan))))]
+              (compiler-backend-runtime-tail-profile? tail-plan)
+              (compiler-backend-runtime-tail-hash-string? tail-plan)))]
         (not
           (or
             front-runtime

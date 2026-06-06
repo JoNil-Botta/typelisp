@@ -403,26 +403,30 @@
     (and (= (string-ref path 1) #:') (fs-path-separator? (string-ref path 2)))))
 
 (define (assert-current-dir-api) : unit
-  (match (try-current-dir)
-    [(OkIoString cwd)
-      (begin
-        (assert-true (> (string-length cwd) 0) "current dir is non-empty")
+  (begin
+    (assert-i64-eq (fs-current-dir-status) io-status-ok "current dir status ok")
+    (let
+      [direct-cwd : String (fs-current-dir)]
+      (assert-true
+        (> (string-length direct-cwd) 0)
+        "direct current dir is non-empty"))
+    (match (try-current-dir)
+      [(OkIoString cwd)
+        (begin
+          (assert-true (> (string-length cwd) 0) "current dir is non-empty")
+          (assert-true
+            (if (fs-windows?)
+              (or
+                (test-fs-path-starts-separator? cwd)
+                (fs-test-drive-absolute? cwd))
+              (test-fs-path-starts-separator? cwd))
+            "current dir has rooted shape"))]
+      [(ErrIoString error)
         (assert-true
-          (if (fs-windows?)
-            (or
-              (test-fs-path-starts-separator? cwd)
-              (fs-test-drive-absolute? cwd))
-            (test-fs-path-starts-separator? cwd))
-          "current dir has rooted shape"))]
-    [(ErrIoString error)
-      (if (fs-windows?)
-        (assert-true
-          (io-error-unsupported? error)
-          "windows current dir may be unsupported")
-        (panic
+          false
           (string-append
-            "linux current dir unexpectedly failed: "
-            (io-error-message error))))]))
+            "current dir unexpectedly failed: "
+            (io-error-message error)))])))
 
 (define (main) : i64
   (let

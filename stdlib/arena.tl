@@ -11,6 +11,7 @@
 ;#
 ;# ```typelisp
 ;# (import "stdlib/arena.tl")
+;# (import "stdlib/string.tl")
 ;#
 ;# (define (scratch-score [n : i64]) : i64
 ;#   (with-arena scratch
@@ -27,6 +28,7 @@
 ;#
 ;# ```typelisp
 ;# (import "stdlib/arena.tl")
+;# (import "stdlib/string.tl")
 ;#
 ;# (define (build-message [scratch : i64] [n : i64]) : String
 ;#   (with-escape

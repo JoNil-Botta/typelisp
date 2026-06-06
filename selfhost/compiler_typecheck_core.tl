@@ -12313,6 +12313,9 @@
 (define (tc-move-dynamic-array-element-message) : String
   "typecheck: cannot move owner-consuming value out of dynamic array element")
 
+(define (tc-move-box-projection-message) : String
+  "typecheck: cannot move owner-consuming value out of box")
+
 (define (tc-move-aggregate-path-message) : String
   "typecheck: cannot move owner-consuming value out of aggregate path")
 
@@ -12470,6 +12473,35 @@
     (tc-moved-add moved (tc-moved-path-key path))
     (tc-moved-partial-key root)))
 
+(define (tc-move-box-projection? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-box-projection? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-box-projection? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-box-projection? inner))]
+    [(AstExprStructGet inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-box-projection? inner))]
+    [(AstExprTupleRef inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-box-projection? inner))]
+    [(AstExprArrayRef array-box _)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-move-box-projection? array))]
+    [(AstExprBoxGet _) true]
+    [_ false]))
+
 (define (tc-move-dynamic-array-element-projection?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12557,28 +12589,32 @@
           (if (tc-type-consuming-by-value-now? ctx init-ty)
             (if (tc-move-dynamic-array-element-projection? ctx env init)
               (ErrTcMove (tc-move-dynamic-array-element-message))
-              (match (tc-move-projection-path init)
-                [(TcSomeString path)
-                  (match (tc-move-root-projection-var init)
-                    [(TcSomeString root)
-                      (if (tc-moved-contains? locals root)
-                        (if (tc-moved-contains? moved (tc-moved-path-key path))
-                          (ErrTcMove (tc-move-use-message path))
-                          (OkTcMove
-                            (tc-moved-add-projection-path moved root path)))
-                        (OkTcMove moved))]
-                    [(TcNoString) (OkTcMove moved)])]
-                [(TcNoString)
-                  (if (tc-move-aggregate-path-projection? init)
-                    (ErrTcMove (tc-move-aggregate-path-message))
+              (if (tc-move-box-projection? init)
+                (ErrTcMove (tc-move-box-projection-message))
+                (match (tc-move-projection-path init)
+                  [(TcSomeString path)
                     (match (tc-move-root-projection-var init)
                       [(TcSomeString root)
                         (if (tc-moved-contains? locals root)
-                          (if (tc-moved-partial? moved root)
-                            (ErrTcMove (tc-move-use-message root))
-                            (OkTcMove (tc-moved-add moved root)))
+                          (if (tc-moved-contains?
+                            moved
+                            (tc-moved-path-key path))
+                            (ErrTcMove (tc-move-use-message path))
+                            (OkTcMove
+                              (tc-moved-add-projection-path moved root path)))
                           (OkTcMove moved))]
-                      [(TcNoString) (OkTcMove moved)]))]))
+                      [(TcNoString) (OkTcMove moved)])]
+                  [(TcNoString)
+                    (if (tc-move-aggregate-path-projection? init)
+                      (ErrTcMove (tc-move-aggregate-path-message))
+                      (match (tc-move-root-projection-var init)
+                        [(TcSomeString root)
+                          (if (tc-moved-contains? locals root)
+                            (if (tc-moved-partial? moved root)
+                              (ErrTcMove (tc-move-use-message root))
+                              (OkTcMove (tc-moved-add moved root)))
+                            (OkTcMove moved))]
+                        [(TcNoString) (OkTcMove moved)]))])))
             (OkTcMove moved))]
         [(ErrTcType _) (OkTcMove moved)])]))
 
@@ -12592,27 +12628,29 @@
   (if (tc-type-consuming-by-value-now? ctx target-ty)
     (if (tc-move-dynamic-array-element-projection? ctx env expr)
       (ErrTcMove (tc-move-dynamic-array-element-message))
-      (match (tc-move-projection-path expr)
-        [(TcSomeString path)
-          (match (tc-move-root-projection-var expr)
-            [(TcSomeString root)
-              (if (tc-moved-contains? locals root)
-                (if (tc-moved-contains? moved (tc-moved-path-key path))
-                  (ErrTcMove (tc-move-use-message path))
-                  (OkTcMove (tc-moved-add-projection-path moved root path)))
-                (OkTcMove moved))]
-            [(TcNoString) (OkTcMove moved)])]
-        [(TcNoString)
-          (if (tc-move-aggregate-path-projection? expr)
-            (ErrTcMove (tc-move-aggregate-path-message))
+      (if (tc-move-box-projection? expr)
+        (ErrTcMove (tc-move-box-projection-message))
+        (match (tc-move-projection-path expr)
+          [(TcSomeString path)
             (match (tc-move-root-projection-var expr)
               [(TcSomeString root)
                 (if (tc-moved-contains? locals root)
-                  (if (tc-moved-partial? moved root)
-                    (ErrTcMove (tc-move-use-message root))
-                    (OkTcMove (tc-moved-add moved root)))
+                  (if (tc-moved-contains? moved (tc-moved-path-key path))
+                    (ErrTcMove (tc-move-use-message path))
+                    (OkTcMove (tc-moved-add-projection-path moved root path)))
                   (OkTcMove moved))]
-              [(TcNoString) (OkTcMove moved)]))]))
+              [(TcNoString) (OkTcMove moved)])]
+          [(TcNoString)
+            (if (tc-move-aggregate-path-projection? expr)
+              (ErrTcMove (tc-move-aggregate-path-message))
+              (match (tc-move-root-projection-var expr)
+                [(TcSomeString root)
+                  (if (tc-moved-contains? locals root)
+                    (if (tc-moved-partial? moved root)
+                      (ErrTcMove (tc-move-use-message root))
+                      (OkTcMove (tc-moved-add moved root)))
+                    (OkTcMove moved))]
+                [(TcNoString) (OkTcMove moved)]))])))
     (OkTcMove moved)))
 
 (define (tc-move-after-match-scrutinee

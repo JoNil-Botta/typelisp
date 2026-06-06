@@ -800,6 +800,93 @@ assert_status package-graph-github-prefetch-program "$status" 43
 assert_empty package-graph-github-prefetch-program "$WORKDIR/package-graph-github-prefetch-program.out"
 assert_empty package-graph-github-prefetch-program "$WORKDIR/package-graph-github-prefetch-program.err"
 
+GITHUB_CACHE_DIR="$WORKDIR/ghc"
+GITHUB_CACHE_ROOT="$GITHUB_CACHE_DIR/root"
+GITHUB_CACHE_REMOTE="$GITHUB_CACHE_DIR/remote"
+GITHUB_CACHE_REMOTE_OFFLINE="$GITHUB_CACHE_DIR/remote.offline"
+GITHUB_CACHE_CONFIG="$GITHUB_CACHE_DIR/gitconfig"
+GITHUB_CACHE_URL="https://github.com/a/b.git"
+mkdir -p "$GITHUB_CACHE_ROOT/src" "$GITHUB_CACHE_REMOTE/src"
+cat > "$GITHUB_CACHE_REMOTE/typelisp.pkg" <<'EOF'
+(package
+  (name "gc_remote")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$GITHUB_CACHE_REMOTE/src/lib.tl" <<'EOF'
+(define (remote-answer) : i64 47)
+EOF
+git -C "$GITHUB_CACHE_REMOTE" init -q
+git -C "$GITHUB_CACHE_REMOTE" add typelisp.pkg src/lib.tl
+git -C "$GITHUB_CACHE_REMOTE" \
+    -c user.email=typelisp@example.invalid \
+    -c user.name=typelisp \
+    commit -q -m "seed cache smoke remote"
+GITHUB_CACHE_REV=$(git -C "$GITHUB_CACHE_REMOTE" rev-parse HEAD)
+cat > "$GITHUB_CACHE_ROOT/typelisp.pkg" <<EOF
+(package
+  (name "gc_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (rev "$GITHUB_CACHE_REV")))))
+EOF
+cat > "$GITHUB_CACHE_ROOT/src/main.tl" <<'EOF'
+(import "pkg:remote/src/lib.tl")
+(define (main) : i64 (remote-answer))
+EOF
+cat > "$GITHUB_CACHE_CONFIG" <<EOF
+[url "$GITHUB_CACHE_REMOTE"]
+    insteadOf = $GITHUB_CACHE_URL
+EOF
+GITHUB_CACHE_EXE="$GITHUB_CACHE_ROOT/target/typelisp/release/gc_root/gc_root"
+if [ "$HOST_OS" = windows ]; then
+    GITHUB_CACHE_EXE="$GITHUB_CACHE_EXE.exe"
+fi
+
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-first.out" 2> "$WORKDIR/package-graph-github-cache-first.err"
+status=$?
+set -e
+assert_status package-graph-github-cache-first "$status" 0
+assert_empty package-graph-github-cache-first "$WORKDIR/package-graph-github-cache-first.err"
+assert_contains package-graph-github-cache-first "$WORKDIR/package-graph-github-cache-first.out" "Generated: $(generated_path "$GITHUB_CACHE_EXE")"
+GITHUB_CACHE_ENTRY_MANIFEST=$(find "$GITHUB_CACHE_ROOT/target/typelisp/cache/packages/v1/git" -name typelisp.pkg -print | head -n 1)
+[ -n "$GITHUB_CACHE_ENTRY_MANIFEST" ] || fail "package-graph-github-cache-first did not create a package cache entry"
+GITHUB_CACHE_ENTRY=${GITHUB_CACHE_ENTRY_MANIFEST%/typelisp.pkg}
+assert_file_exists package-graph-github-cache-first "$GITHUB_CACHE_ENTRY/.typelisp-cache-complete"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "url=$GITHUB_CACHE_URL"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "commit=$GITHUB_CACHE_REV"
+
+mv "$GITHUB_CACHE_REMOTE" "$GITHUB_CACHE_REMOTE_OFFLINE"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-hit.out" 2> "$WORKDIR/package-graph-github-cache-hit.err"
+status=$?
+set -e
+assert_status package-graph-github-cache-hit "$status" 0
+assert_empty package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.err"
+assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.out" "Generated: $(generated_path "$GITHUB_CACHE_EXE")"
+
+mv "$GITHUB_CACHE_REMOTE_OFFLINE" "$GITHUB_CACHE_REMOTE"
+printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' "$GITHUB_CACHE_URL" > "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-refetch.out" 2> "$WORKDIR/package-graph-github-cache-refetch.err"
+status=$?
+set -e
+assert_status package-graph-github-cache-refetch "$status" 0
+assert_empty package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.err"
+assert_contains package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.out" "Generated: $(generated_path "$GITHUB_CACHE_EXE")"
+[ -d "$GITHUB_CACHE_ENTRY.corrupt.1" ] || fail "package-graph-github-cache-refetch did not preserve corrupt cache entry"
+assert_contains package-graph-github-cache-refetch "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "commit=$GITHUB_CACHE_REV"
+
+set +e
+"$GITHUB_CACHE_EXE" > "$WORKDIR/package-graph-github-cache-program.out" 2> "$WORKDIR/package-graph-github-cache-program.err"
+status=$?
+set -e
+assert_status package-graph-github-cache-program "$status" 47
+assert_empty package-graph-github-cache-program "$WORKDIR/package-graph-github-cache-program.out"
+assert_empty package-graph-github-cache-program "$WORKDIR/package-graph-github-cache-program.err"
+
 DIAMOND_DIR="$WORKDIR/package-graph-diamond"
 DIAMOND_ROOT="$DIAMOND_DIR/root"
 DIAMOND_LEFT="$DIAMOND_DIR/left"

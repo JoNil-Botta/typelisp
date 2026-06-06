@@ -14,6 +14,8 @@
 
 (import "build_run_core.tl")
 
+(import "package_cache_core.tl")
+
 (import "compiler_driver_core.tl")
 
 (defenum BuildConfig
@@ -949,6 +951,9 @@
     (string-append "origin/" (struct-get dep pin-value))
     (struct-get dep pin-value)))
 
+(define (build-git-executable) : String
+  (source-tool-resolve-command "git"))
+
 (define (build-process-output-detail [output : ProcessOutput]) : String
   (let
     [stderr : String (process-output-stderr output)]
@@ -980,21 +985,29 @@
 
 (define (build-git-clone-command [remote : String] [root : String]) : ProcessCommand
   (process-command
-    "git"
+    (build-git-executable)
     (source-tool-args-append
       (source-tool-args-append
-        (source-tool-args-append (process-args-empty) "clone")
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append (process-args-empty) "-c")
+            "core.longpaths=true")
+          "clone")
         remote)
       root)))
 
 (define (build-git-checkout-command [root : String] [checkout-ref : String]) : ProcessCommand
   (process-command
-    "git"
+    (build-git-executable)
     (source-tool-args-append
       (source-tool-args-append
         (source-tool-args-append
           (source-tool-args-append
-            (source-tool-args-append (process-args-empty) "-C")
+            (source-tool-args-append
+              (source-tool-args-append
+                (source-tool-args-append (process-args-empty) "-c")
+                "core.longpaths=true")
+              "-C")
             root)
           "checkout")
         "--detach")
@@ -1002,11 +1015,15 @@
 
 (define (build-git-rev-parse-command [root : String]) : ProcessCommand
   (process-command
-    "git"
+    (build-git-executable)
     (source-tool-args-append
       (source-tool-args-append
         (source-tool-args-append
-          (source-tool-args-append (process-args-empty) "-C")
+          (source-tool-args-append
+            (source-tool-args-append
+              (source-tool-args-append (process-args-empty) "-c")
+              "core.longpaths=true")
+            "-C")
           root)
         "rev-parse")
       "HEAD")))
@@ -1046,6 +1063,285 @@
       (file-exists? (build-github-dep-cache-manifest-path manifest-dir alias)))
     (file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
+(define (build-git-dep-rev? [dep : BuildGitDependency]) : bool
+  (string-eq (struct-get dep pin-kind) "rev"))
+
+(define (build-package-cache-relative-root) : String
+  (compiler-load-join-root-path
+    (compiler-load-join-root-path
+      (compiler-load-join-root-path
+        (compiler-load-join-root-path "target" "typelisp")
+        "cache")
+      "packages")
+    package-cache-version))
+
+(define (build-package-cache-manifest-path [entry-path : String]) : String
+  (compiler-load-join-root-path entry-path "typelisp.pkg"))
+
+(define (build-ensure-package-cache-root
+  [manifest-dir : String]
+  [alias : String]) : ResultBuildString
+  (let
+    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
+    [cache-dir : String (compiler-load-join-root-path typelisp-dir "cache")]
+    [packages-dir : String (compiler-load-join-root-path cache-dir "packages")]
+    [root : String (package-cache-default-root manifest-dir)]
+    (cond
+      [(not (build-mkdir-ok? target-dir))
+        (ErrBuildString
+          (build-git-dep-error alias "could not create target directory"))]
+      [(not (build-mkdir-ok? typelisp-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp directory"))]
+      [(not (build-mkdir-ok? cache-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/cache directory"))]
+      [(not (build-mkdir-ok? packages-dir))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/cache/packages directory"))]
+      [(not (build-mkdir-ok? root))
+        (ErrBuildString
+          (build-git-dep-error
+            alias
+            "could not create target/typelisp/cache/packages/v1 directory"))]
+      [else (OkBuildString root)])))
+
+(define (build-package-cache-io-error
+  [alias : String]
+  [action : String]
+  [error : IoError]) : String
+  (build-git-dep-error
+    alias
+    (string-append action (string-append ": " (io-error-message error)))))
+
+(define (build-package-cache-staging-path
+  [alias : String]
+  [root : String]
+  [key : PackageCacheKey]
+  [attempt : i64]) : ResultBuildString
+  (if (> attempt 16)
+    (ErrBuildString
+      (build-git-dep-error alias "package cache has no free staging path"))
+    (let
+      [staged : String (package-cache-staging-path root key attempt)]
+      (if (file-exists? staged)
+        (build-package-cache-staging-path alias root key (+ attempt 1))
+        (OkBuildString staged)))))
+
+(define (build-package-cache-conflict-backup-path
+  [entry-path : String]
+  [attempt : i64]) : String
+  (string-append entry-path (string-append ".corrupt." (int->string attempt))))
+
+(define (build-package-cache-move-conflict-attempt
+  [alias : String]
+  [entry-path : String]
+  [attempt : i64]) : ResultBuildString
+  (if (> attempt 16)
+    (ErrBuildString
+      (build-git-dep-error
+        alias
+        "package cache has no free corrupt backup path"))
+    (let
+      [backup : String
+        (build-package-cache-conflict-backup-path entry-path attempt)]
+      (if (file-exists? backup)
+        (build-package-cache-move-conflict-attempt
+          alias
+          entry-path
+          (+ attempt 1))
+        (match (try-rename (& entry-path) (& backup))
+          [(OkIoUnit) (OkBuildString backup)]
+          [(ErrIoUnit error)
+            (ErrBuildString
+              (build-package-cache-io-error
+                alias
+                "package cache move corrupt entry"
+                error))])))))
+
+(define (build-package-cache-move-conflict
+  [alias : String]
+  [entry-path : String]) : ResultBuildString
+  (if (file-exists? entry-path)
+    (build-package-cache-move-conflict-attempt alias entry-path 1)
+    (OkBuildString entry-path)))
+
+(define (build-package-cache-hit-result
+  [alias : String]
+  [entry-path : String]
+  [relative-entry-root : String]) : ResultBuildString
+  (if (file-exists? (build-package-cache-manifest-path entry-path))
+    (OkBuildString relative-entry-root)
+    (ErrBuildString
+      (build-git-dep-error alias "cached package is missing typelisp.pkg"))))
+
+(define (build-package-cache-finalize-staged
+  [alias : String]
+  [staged-path : String]
+  [entry-path : String]
+  [relative-entry-root : String]
+  [key : PackageCacheKey]) : ResultBuildString
+  (match (package-cache-finalize-staged staged-path entry-path)
+    [(OkIoUnit) (OkBuildString relative-entry-root)]
+    [(ErrIoUnit error)
+      (match (package-cache-entry-state entry-path key)
+        [(PackageCacheCompleteHit _)
+          (build-package-cache-hit-result alias entry-path relative-entry-root)]
+        [_
+          (ErrBuildString
+            (build-package-cache-io-error alias "package cache finalize" error))])]))
+
+(define (build-package-cache-write-marker
+  [alias : String]
+  [staged-path : String]
+  [key : PackageCacheKey]) : ResultBuildString
+  (match (package-cache-write-complete-marker staged-path key)
+    [(OkIoUnit) (OkBuildString staged-path)]
+    [(ErrIoUnit error)
+      (ErrBuildString
+        (build-package-cache-io-error alias "package cache write marker" error))]))
+
+(define (build-package-cache-prepare-entry-parents-result
+  [alias : String]
+  [root : String]
+  [key : PackageCacheKey]) : ResultBuildString
+  (match (package-cache-prepare-entry-parents root key)
+    [(OkIoUnit) (OkBuildString root)]
+    [(ErrIoUnit error)
+      (ErrBuildString
+        (build-package-cache-io-error alias "package cache prepare entry" error))]))
+
+(define (build-package-cache-fetch-staged
+  [alias : String]
+  [dep : BuildGitDependency]
+  [root : String]
+  [key : PackageCacheKey]
+  [entry-path : String]
+  [relative-entry-root : String]
+  [replace-existing : bool]) : ResultBuildString
+  (match (package-cache-prepare-staging-parents root key)
+    [(ErrIoUnit error)
+      (ErrBuildString
+        (build-package-cache-io-error
+          alias
+          "package cache prepare staging"
+          error))]
+    [(OkIoUnit)
+      (match (build-package-cache-staging-path alias root key 1)
+        [(ErrBuildString message) (ErrBuildString message)]
+        [(OkBuildString staged-path)
+          (match (build-run-captured
+            (build-git-dep-error alias "git clone")
+            (build-git-clone-command (struct-get dep remote) staged-path))
+            [(ErrBuildString message) (ErrBuildString message)]
+            [(OkBuildString _)
+              (match (build-run-captured
+                (build-git-dep-error alias "git checkout")
+                (build-git-checkout-command
+                  staged-path
+                  (build-git-checkout-ref dep)))
+                [(ErrBuildString message) (ErrBuildString message)]
+                [(OkBuildString _)
+                  (match (build-run-captured
+                    (build-git-dep-error alias "git rev-parse")
+                    (build-git-rev-parse-command staged-path))
+                    [(ErrBuildString message) (ErrBuildString message)]
+                    [(OkBuildString _)
+                      (if (not
+                        (file-exists?
+                          (build-package-cache-manifest-path staged-path)))
+                        (ErrBuildString
+                          (build-git-dep-error
+                            alias
+                            "fetched package is missing typelisp.pkg"))
+                        (match (build-package-cache-write-marker
+                          alias
+                          staged-path
+                          key)
+                          [(ErrBuildString message) (ErrBuildString message)]
+                          [(OkBuildString _)
+                            (match (build-package-cache-prepare-entry-parents-result
+                              alias
+                              root
+                              key)
+                              [(ErrBuildString message)
+                                (ErrBuildString message)]
+                              [(OkBuildString _)
+                                (match (if replace-existing
+                                  (build-package-cache-move-conflict
+                                    alias
+                                    entry-path)
+                                  (OkBuildString entry-path))
+                                  [(ErrBuildString message)
+                                    (ErrBuildString message)]
+                                  [(OkBuildString _)
+                                    (build-package-cache-finalize-staged
+                                      alias
+                                      staged-path
+                                      entry-path
+                                      relative-entry-root
+                                      key)])])]))])])])])]))
+
+(define (build-fetch-github-dependency-cached
+  [manifest-dir : String]
+  [alias : String]
+  [dep : BuildGitDependency]) : ResultBuildString
+  (let
+    [key : PackageCacheKey
+      (PackageCacheKey (struct-get dep remote) (struct-get dep pin-value))]
+    [root : String (package-cache-default-root manifest-dir)]
+    [entry-path : String (package-cache-entry-path root key)]
+    [relative-entry-root : String
+      (compiler-load-normalize-path
+        (package-cache-entry-path (build-package-cache-relative-root) key))]
+    [state : PackageCacheEntryState (package-cache-entry-state entry-path key)]
+    (match state
+      [(PackageCacheCompleteHit _)
+        (if (file-exists? (build-package-cache-manifest-path entry-path))
+          (OkBuildString relative-entry-root)
+          (match (build-ensure-package-cache-root manifest-dir alias)
+            [(ErrBuildString message) (ErrBuildString message)]
+            [(OkBuildString _)
+              (build-package-cache-fetch-staged
+                alias
+                dep
+                root
+                key
+                entry-path
+                relative-entry-root
+                true)]))]
+      [(PackageCacheMiss _)
+        (match (build-ensure-package-cache-root manifest-dir alias)
+          [(ErrBuildString message) (ErrBuildString message)]
+          [(OkBuildString _)
+            (build-package-cache-fetch-staged
+              alias
+              dep
+              root
+              key
+              entry-path
+              relative-entry-root
+              false)])]
+      [(PackageCachePartialOrCorrupt _ _)
+        (match (build-ensure-package-cache-root manifest-dir alias)
+          [(ErrBuildString message) (ErrBuildString message)]
+          [(OkBuildString _)
+            (build-package-cache-fetch-staged
+              alias
+              dep
+              root
+              key
+              entry-path
+              relative-entry-root
+              true)])])))
+
 (define (build-git-clone-if-needed
   [manifest-dir : String]
   [alias : String]
@@ -1057,7 +1353,7 @@
       (build-git-dep-error alias "git clone")
       (build-git-clone-command (struct-get dep remote) root))))
 
-(define (build-fetch-github-dependency
+(define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]) : ResultBuildString
@@ -1084,11 +1380,21 @@
                     [(ErrBuildString message) (ErrBuildString message)]
                     [(OkBuildString _)
                       (if (file-exists? manifest-path)
-                        (OkBuildString manifest-path)
+                        (OkBuildString (build-github-dep-relative-root alias))
                         (ErrBuildString
                           (build-git-dep-error
                             alias
                             "fetched package is missing typelisp.pkg")))])])])]))))
+
+(define (build-fetch-github-dependency
+  [manifest-dir : String]
+  [alias : String]
+  [dep : BuildGitDependency]) : ResultBuildString
+  (if (not (build-github-cache-needs-git? manifest-dir alias))
+    (OkBuildString (build-github-dep-relative-root alias))
+    (if (build-git-dep-rev? dep)
+      (build-fetch-github-dependency-cached manifest-dir alias dep)
+      (build-fetch-github-dependency-legacy manifest-dir alias dep))))
 
 (define (build-package-resolve-dep
   [manifest-dir : String]
@@ -1102,9 +1408,8 @@
         [(OkBuildGitDependency git-dep)
           (match (build-fetch-github-dependency manifest-dir alias git-dep)
             [(ErrBuildString message) (ErrBuildPkgDep message)]
-            [(OkBuildString _)
-              (OkBuildPkgDep
-                (CompilerPkgDep alias (build-github-dep-relative-root alias)))])])
+            [(OkBuildString dep-root)
+              (OkBuildPkgDep (CompilerPkgDep alias dep-root))])])
       (OkBuildPkgDep dep))))
 
 (define (build-package-resolve-deps

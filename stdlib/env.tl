@@ -122,8 +122,7 @@
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (env-get [name : (& name str)]) : EnvMaybeString
   (let
-    [empty : String ""]
-    [owned-name : String (string-append name (& empty))]
+    [owned-name : String (string-copy-borrowed name)]
     (if (env-var-exists? owned-name)
       (EnvSomeString (env-var-value owned-name))
       (EnvNoString))))
@@ -179,7 +178,10 @@
     [(EnvStringNil) acc]
     [(EnvStringCons head rest)
       (env-path-join-tail
-        (string-append (string-append acc separator) head)
+        (let
+          [acc-with-separator : String
+            (string-append-borrowed (& acc) separator)]
+          (string-append acc-with-separator head))
         (box-get rest)
         separator)]))
 

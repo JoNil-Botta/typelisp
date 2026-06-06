@@ -455,6 +455,33 @@ EOF
     assemble_link_run_asm compiler-driver-string-runtime "$_asm" 42 - - 1
 }
 
+verify_compiler_driver_stdlib_string_runtime() {
+    _driver=$1
+    _dir="$WORKDIR/compiler-driver/stdlib-string-runtime"
+    mkdir -p "$_dir/stdlib"
+    cp stdlib/string.tl "$_dir/stdlib/string.tl"
+    _src="$_dir/input.tl"
+    _asm="$_dir/output.s"
+    cat > "$_src" <<'EOF'
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (let
+    [joined : String (string-append "foo" "bar")]
+    [extended : String (string-concat joined "!")]
+    [borrowed : String (string-append-borrowed (& extended) (& joined))]
+    (if (string-eq borrowed "foobar!foobar")
+      42
+      1)))
+EOF
+
+    echo "[selfhost-native] compiler_driver stdlib string append shadow"
+    run_compiler_driver "$_driver" compiler-driver-stdlib-string-runtime "$_src" "$_asm"
+    assert_not_contains "$_asm" "call tl_string_concat" compiler-driver-stdlib-string-runtime
+    assert_not_contains "$_asm" "tl_string_concat:" compiler-driver-stdlib-string-runtime
+    assemble_link_run_asm compiler-driver-stdlib-string-runtime "$_asm" 42 - - 1
+}
+
 verify_compiler_driver_stdlib_json() {
     _driver=$1
     _dir="$WORKDIR/compiler-driver/stdlib-json"
@@ -682,6 +709,7 @@ verify_compiler_driver_stack_args "$DRIVER"
 verify_compiler_driver_import "$DRIVER"
 verify_compiler_driver_pkg_import "$DRIVER"
 verify_compiler_driver_string_runtime "$DRIVER"
+verify_compiler_driver_stdlib_string_runtime "$DRIVER"
 verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"
 verify_compiler_driver_immutable_refs "$DRIVER"

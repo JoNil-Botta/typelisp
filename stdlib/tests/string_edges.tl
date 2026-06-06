@@ -29,6 +29,15 @@
 (define (string-test-to-int-borrowed [text : String]) : i64
   (string->int-borrowed (& text)))
 
+(define (string-test-copy-borrowed [text : String]) : String
+  (string-copy-borrowed (& text)))
+
+(define (string-test-append-borrowed [left : String] [right : String]) : String
+  (string-append-borrowed (& left) (& right)))
+
+(define (string-test-concat-borrowed [left : String] [right : String]) : String
+  (string-concat-borrowed (& left) (& right)))
+
 (define (string-test-substring-borrowed
   [text : String]
   [start : i64]
@@ -58,6 +67,44 @@
     (assert-true
       (string=? "alias" (string-append "ali" "as"))
       "string=? aliases string-eq")
+    (assert-owned-string-eq
+      (string-append "" "")
+      ""
+      "string-append handles two empty strings")
+    (assert-owned-string-eq
+      (string-append "" "right")
+      "right"
+      "string-append handles empty left")
+    (assert-owned-string-eq
+      (string-append "left" "")
+      "left"
+      "string-append handles empty right")
+    (assert-owned-string-eq
+      (string-append "foo" "bar")
+      "foobar"
+      "string-append concatenates short strings")
+    (assert-owned-string-eq
+      (string-append
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+      "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "string-append concatenates long strings")
+    (assert-owned-string-eq
+      (string-concat "con" "cat")
+      "concat"
+      "string-concat aliases string-append")
+    (assert-owned-string-eq
+      (string-test-copy-borrowed "borrow-copy")
+      "borrow-copy"
+      "string-copy-borrowed copies borrowed text")
+    (assert-owned-string-eq
+      (string-test-append-borrowed "bor" "row")
+      "borrow"
+      "string-append-borrowed concatenates borrowed inputs")
+    (assert-owned-string-eq
+      (string-test-concat-borrowed "" "borrowed")
+      "borrowed"
+      "string-concat-borrowed handles empty borrowed input")
     (assert-false (string-eq "hello" "world") "different strings differ")
     (assert-false (string-eq "hi" "high") "length mismatch differs")
     (assert-true

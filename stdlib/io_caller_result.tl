@@ -5,6 +5,8 @@
 ;# fallback text without copying.
 (import "io.tl")
 
+(import "string.tl")
+
 ;: Result for `read-file-or-result`.
 ;:
 ;: `fallback` is tied to the caller fallback lifetime. When `is-owned` is false,
@@ -42,9 +44,7 @@
 (define (read-file-or-result-string [result : (ReadFileOrResult fallback)]) : String
   (if (read-file-or-result-owned? result)
     (struct-get result owned)
-    (let
-      [empty : String ""]
-      (string-append (struct-get result fallback) (& empty)))))
+    (string-copy-borrowed (struct-get result fallback))))
 
 ;: Read `path`, returning fresh active-arena contents on success or a borrow of
 ;: `fallback` on any structured read error.

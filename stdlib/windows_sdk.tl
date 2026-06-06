@@ -165,9 +165,8 @@
 ;: Join two path components without normalizing interior separators.
 (define (windows-sdk-path-join2 [left : (& left str)] [right : (& right str)]) : String
   (let
-    [empty : String ""]
-    [left-text : String (string-append left (& empty))]
-    [right-text : String (string-append right (& empty))]
+    [left-text : String (string-copy-borrowed left)]
+    [right-text : String (string-copy-borrowed right)]
     (windows-sdk-path-join2-owned left-text right-text)))
 
 ;: Join three owned path components.
@@ -177,10 +176,9 @@
 ;: Join three path components.
 (define (windows-sdk-path-join3 [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
     (windows-sdk-path-join3-owned a-text b-text c-text)))
 
 ;: Join four owned path components.
@@ -198,11 +196,10 @@
   [c : (& c str)]
   [d : (& d str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
-    [d-text : String (string-append d (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
+    [d-text : String (string-copy-borrowed d)]
     (windows-sdk-path-join4-owned a-text b-text c-text d-text)))
 
 ;: Join five owned path components.
@@ -222,12 +219,11 @@
   [d : (& d str)]
   [e : (& e str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
-    [d-text : String (string-append d (& empty))]
-    [e-text : String (string-append e (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
+    [d-text : String (string-copy-borrowed d)]
+    [e-text : String (string-copy-borrowed e)]
     (windows-sdk-path-join5-owned a-text b-text c-text d-text e-text)))
 
 ;: Build a layout from an SDK root and version string without probing it.
@@ -235,9 +231,8 @@
   [root : (& root str)]
   [version : (& version str)]) : WindowsSdkLayout
   (let
-    [empty : String ""]
-    [root-text : String (string-append root (& empty))]
-    [version-text : String (string-append version (& empty))]
+    [root-text : String (string-copy-borrowed root)]
+    [version-text : String (string-copy-borrowed version)]
     [clean-root : String (windows-sdk-trim-trailing-separators-owned root-text)]
     [clean-version : String
       (windows-sdk-trim-trailing-separators-owned version-text)]

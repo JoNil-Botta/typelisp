@@ -2,7 +2,7 @@
 ;#
 ;# Provides string operations built on compiler/runtime primitives:
 ;# `string-length`, `string-ref`, `string-data`, `array-data`, and
-;# `string-append`.
+;# `string-from-bytes`.
 ;#
 ;# Usage: `(import "stdlib/string.tl")`
 ;#
@@ -54,6 +54,56 @@
           (set! i (+ i 1))))
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+
+;: Return a fresh active-arena String by concatenating two borrowed strings.
+(define (string-append-borrowed [left : (& left str)] [right : (& right str)]) : String
+  (let
+    [left-len : i64 (string-length left)]
+    [right-len : i64 (string-length right)]
+    [total-len : i64 (+ left-len right-len)]
+    [buf : (Array u8) (make-array u8 total-len)]
+    [left-src : (Ptr u8)
+      (unsafe
+        (string-data left))]
+    [right-src : (Ptr u8)
+      (unsafe
+        (string-data right))]
+    [dst : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
+    [i : i64 0]
+    (begin
+      (while (< i left-len)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset dst i) (ptr-read (ptr-offset left-src i))))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i right-len)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ left-len i))
+              (ptr-read (ptr-offset right-src i))))
+          (set! i (+ i 1))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
+
+;: Return a fresh active-arena copy of borrowed text.
+(define (string-copy-borrowed [text : (& text str)]) : String
+  (substring-borrowed text 0 (string-length text)))
+
+;: Borrowed alias for `string-append-borrowed`.
+(define (string-concat-borrowed [left : (& left str)] [right : (& right str)]) : String
+  (string-append-borrowed left right))
+
+;: Return a fresh active-arena String by concatenating two owned strings.
+(define (string-append [left : String] [right : String]) : String
+  (string-append-borrowed (& left) (& right)))
+
+;: Alias for `string-append`.
+(define (string-concat [left : String] [right : String]) : String
+  (string-append left right))
 
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring-borrowed [text : (& text str)] [start : i64] [len : i64]) : String

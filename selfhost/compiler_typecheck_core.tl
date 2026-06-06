@@ -4349,255 +4349,135 @@
   [env : TcTypeEnv]) : ResultTcEnv
   (tc-build-top-env-list-in-module ctx decls env ""))
 
+(define (tc-build-top-env-bind-decl-in-module
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [decl : AstDecl]) : ResultTcEnv
+  (match decl
+    [(AstDeclModule _) (OkTcEnv env)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (match inner
+          [(AstDeclDefFn name _ _ _)
+            (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
+              [(OkTcType ty)
+                (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
+              [(ErrTcType message) (ErrTcEnv message)])]
+          [(AstDeclExtern name _ _)
+            (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
+              [(OkTcType ty)
+                (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
+              [(ErrTcType message) (ErrTcEnv message)])]
+          [_ (OkTcEnv env)]))]
+    [(AstDeclDef name _ _)
+      (match (tc-top-decl-type-with-env
+        (tc-context-with-module ctx module)
+        env
+        decl)
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefFn name _ _ _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefDispatch name _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefMacro _ _ _ _) (OkTcEnv env)]
+    [(AstDeclExtern name _ _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefEnum name variants)
+      (tc-bind-enum-variants-in-module
+        (tc-context-with-module ctx module)
+        env
+        module
+        name
+        AstLifetimeNil
+        variants)]
+    [(AstDeclDefEnumLifetimes name lifetimes variants)
+      (tc-bind-enum-variants-in-module
+        (tc-context-with-module ctx module)
+        env
+        module
+        name
+        lifetimes
+        variants)]
+    [(AstDeclDefStruct name _ _ fields)
+      (let
+        [scoped-name : String (compiler-symbol-module-key module name)]
+        (OkTcEnv
+          (tc-bind-module-name
+            env
+            module
+            name
+            (ast-ty-func
+              (tc-field-type-list (tc-context-with-module ctx module) fields)
+              (AstTyStruct scoped-name)))))]
+    [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
+      (let
+        [scoped-name : String (compiler-symbol-module-key module name)]
+        (OkTcEnv
+          (tc-bind-module-name
+            env
+            module
+            name
+            (ast-ty-func
+              (tc-field-type-list (tc-context-with-module ctx module) fields)
+              (AstTyStructArgs scoped-name lifetimes)))))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (tc-build-top-env-bind-decl-in-module ctx env module template))]
+    [(AstDeclImport _) (OkTcEnv env)]
+    [(AstDeclIncludeStr _ _) (OkTcEnv env)]
+    [(AstDeclExport _) (OkTcEnv env)]
+    [(AstDeclTest _ _ _) (OkTcEnv env)]))
+
 (define (tc-build-top-env-list-in-module
   [ctx : TcContext]
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-build-top-env-list-in-module ctx rest env next-module)]
-          [(AstDeclUnsafe inner-box)
+  (let
+    [cursor : AstDeclList decls]
+    [current-env : TcTypeEnv env]
+    [current-module : String module]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cursor
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
             (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclDefFn name _ _ _)
-                  (match (tc-top-decl-type
-                    (tc-context-with-module ctx module)
-                    inner)
-                    [(OkTcType ty)
-                      (tc-build-top-env-list-in-module
-                        ctx
-                        rest
-                        (tc-bind-module-name-unsafe env module name ty)
-                        module)]
-                    [(ErrTcType message) (ErrTcEnv message)])]
-                [(AstDeclExtern name _ _)
-                  (match (tc-top-decl-type
-                    (tc-context-with-module ctx module)
-                    inner)
-                    [(OkTcType ty)
-                      (tc-build-top-env-list-in-module
-                        ctx
-                        rest
-                        (tc-bind-module-name-unsafe env module name ty)
-                        module)]
-                    [(ErrTcType message) (ErrTcEnv message)])]
-                [_ (tc-build-top-env-list-in-module ctx rest env module)]))]
-          [(AstDeclDef name _ _)
-            (match (tc-top-decl-type-with-env
-              (tc-context-with-module ctx module)
-              env
-              decl)
-              [(OkTcType ty)
-                (tc-build-top-env-list-in-module
-                  ctx
-                  rest
-                  (tc-bind-module-name env module name ty)
-                  module)]
-              [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclDefFn name _ _ _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-              [(OkTcType ty)
-                (tc-build-top-env-list-in-module
-                  ctx
-                  rest
-                  (tc-bind-module-name env module name ty)
-                  module)]
-              [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclDefDispatch name _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-              [(OkTcType ty)
-                (tc-build-top-env-list-in-module
-                  ctx
-                  rest
-                  (tc-bind-module-name env module name ty)
-                  module)]
-              [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclDefMacro _ _ _ _)
-            (tc-build-top-env-list-in-module ctx rest env module)]
-          [(AstDeclExtern name _ _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-              [(OkTcType ty)
-                (tc-build-top-env-list-in-module
-                  ctx
-                  rest
-                  (tc-bind-module-name env module name ty)
-                  module)]
-              [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclDefEnum name variants)
-            (match (tc-bind-enum-variants-in-module
-              (tc-context-with-module ctx module)
-              env
-              module
-              name
-              AstLifetimeNil
-              variants)
-              [(OkTcEnv next-env)
-                (tc-build-top-env-list-in-module ctx rest next-env module)]
-              [(ErrTcEnv message) (ErrTcEnv message)])]
-          [(AstDeclDefEnumLifetimes name lifetimes variants)
-            (match (tc-bind-enum-variants-in-module
-              (tc-context-with-module ctx module)
-              env
-              module
-              name
-              lifetimes
-              variants)
-              [(OkTcEnv next-env)
-                (tc-build-top-env-list-in-module ctx rest next-env module)]
-              [(ErrTcEnv message) (ErrTcEnv message)])]
-          [(AstDeclDefStruct name _ _ fields)
-            (let
-              [scoped-name : String (compiler-symbol-module-key module name)]
-              (tc-build-top-env-list-in-module
-                ctx
-                rest
-                (tc-bind-module-name
-                  env
-                  module
-                  name
-                  (ast-ty-func
-                    (tc-field-type-list
-                      (tc-context-with-module ctx module)
-                      fields)
-                    (AstTyStruct scoped-name)))
-                module))]
-          [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
-            (let
-              [scoped-name : String (compiler-symbol-module-key module name)]
-              (tc-build-top-env-list-in-module
-                ctx
-                rest
-                (tc-bind-module-name
-                  env
-                  module
-                  name
-                  (ast-ty-func
-                    (tc-field-type-list
-                      (tc-context-with-module ctx module)
-                      fields)
-                    (AstTyStructArgs scoped-name lifetimes)))
-                module))]
-          [(AstDeclComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDeclDef name _ _)
-                  (match (tc-top-decl-type-with-env
-                    (tc-context-with-module ctx module)
-                    env
-                    template)
-                    [(OkTcType ty)
-                      (tc-build-top-env-list-in-module
-                        ctx
-                        rest
-                        (tc-bind-module-name env module name ty)
-                        module)]
-                    [(ErrTcType message) (ErrTcEnv message)])]
-                [(AstDeclDefFn name _ _ _)
-                  (match (tc-top-decl-type
-                    (tc-context-with-module ctx module)
-                    template)
-                    [(OkTcType ty)
-                      (tc-build-top-env-list-in-module
-                        ctx
-                        rest
-                        (tc-bind-module-name env module name ty)
-                        module)]
-                    [(ErrTcType message) (ErrTcEnv message)])]
-                [(AstDeclDefDispatch name _)
-                  (match (tc-top-decl-type
-                    (tc-context-with-module ctx module)
-                    template)
-                    [(OkTcType ty)
-                      (tc-build-top-env-list-in-module
-                        ctx
-                        rest
-                        (tc-bind-module-name env module name ty)
-                        module)]
-                    [(ErrTcType message) (ErrTcEnv message)])]
-                [(AstDeclExtern name _ _)
-                  (match (tc-top-decl-type
-                    (tc-context-with-module ctx module)
-                    template)
-                    [(OkTcType ty)
-                      (tc-build-top-env-list-in-module
-                        ctx
-                        rest
-                        (tc-bind-module-name env module name ty)
-                        module)]
-                    [(ErrTcType message) (ErrTcEnv message)])]
-                [(AstDeclDefEnum name variants)
-                  (match (tc-bind-enum-variants-in-module
-                    (tc-context-with-module ctx module)
-                    env
-                    module
-                    name
-                    AstLifetimeNil
-                    variants)
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! current-module next-module)
+                    (set! cursor rest))]
+                [_
+                  (match (tc-build-top-env-bind-decl-in-module
+                    ctx
+                    current-env
+                    current-module
+                    decl)
                     [(OkTcEnv next-env)
-                      (tc-build-top-env-list-in-module ctx rest next-env module)]
-                    [(ErrTcEnv message) (ErrTcEnv message)])]
-                [(AstDeclDefEnumLifetimes name lifetimes variants)
-                  (match (tc-bind-enum-variants-in-module
-                    (tc-context-with-module ctx module)
-                    env
-                    module
-                    name
-                    lifetimes
-                    variants)
-                    [(OkTcEnv next-env)
-                      (tc-build-top-env-list-in-module ctx rest next-env module)]
-                    [(ErrTcEnv message) (ErrTcEnv message)])]
-                [(AstDeclDefStruct name _ _ fields)
-                  (let
-                    [scoped-name : String
-                      (compiler-symbol-module-key module name)]
-                    (tc-build-top-env-list-in-module
-                      ctx
-                      rest
-                      (tc-bind-module-name
-                        env
-                        module
-                        name
-                        (ast-ty-func
-                          (tc-field-type-list
-                            (tc-context-with-module ctx module)
-                            fields)
-                          (AstTyStruct scoped-name)))
-                      module))]
-                [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
-                  (let
-                    [scoped-name : String
-                      (compiler-symbol-module-key module name)]
-                    (tc-build-top-env-list-in-module
-                      ctx
-                      rest
-                      (tc-bind-module-name
-                        env
-                        module
-                        name
-                        (ast-ty-func
-                          (tc-field-type-list
-                            (tc-context-with-module ctx module)
-                            fields)
-                          (AstTyStructArgs scoped-name lifetimes)))
-                      module))]
-                [_ (tc-build-top-env-list-in-module ctx rest env module)]))]
-          [(AstDeclImport _)
-            (tc-build-top-env-list-in-module ctx rest env module)]
-          [(AstDeclIncludeStr _ _)
-            (tc-build-top-env-list-in-module ctx rest env module)]
-          [(AstDeclExport _)
-            (tc-build-top-env-list-in-module ctx rest env module)]
-          [(AstDeclTest _ _ _)
-            (tc-build-top-env-list-in-module ctx rest env module)]))]))
+                      (begin
+                        (set! current-env next-env)
+                        (set! cursor rest))]
+                    [(ErrTcEnv step-message)
+                      (begin
+                        (set! message step-message)
+                        (set! ok false))])]))]))
+      (if (string-eq message "")
+        (OkTcEnv current-env)
+        (ErrTcEnv message)))))
 
 (define (tc-bind-enum-variant-aliases
   [ctx : TcContext]

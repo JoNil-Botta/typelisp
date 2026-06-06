@@ -96,10 +96,7 @@ function Invoke-AssembleAndLink {
                 "/NODEFAULTLIB",
                 "/DYNAMICBASE:NO",
                 "/STACK:16777216",
-                "kernel32.lib",
-                "advapi32.lib",
-                "ole32.lib",
-                "oleaut32.lib"
+                "kernel32.lib"
             ) `
             (Join-Path $RunDir "link.stdout") `
             (Join-Path $RunDir "link.stderr")
@@ -113,7 +110,7 @@ function Invoke-AssembleAndLink {
         $link = Invoke-TimedCommand `
             "$Prefix link" `
             "ld" `
-            @($ObjPath, "-o", $BinPath, "-dynamic-linker", "/lib64/ld-linux-x86-64.so.2", "-lc") `
+            @("-static", $ObjPath, "-o", $BinPath) `
             (Join-Path $RunDir "link.stdout") `
             (Join-Path $RunDir "link.stderr")
     } else {

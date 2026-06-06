@@ -318,7 +318,7 @@ stage1_can_compile_native_windows() {
         return 1
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
-        -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib advapi32.lib ole32.lib oleaut32.lib \
+        -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
         > "$probe_dir/link.out" 2>&1; then
         echo "[no-rust-stage0] windows stage1 compile-native probe link failed"
         sed 's/^/  /' "$probe_dir/link.out" >&2 || true

@@ -30,10 +30,12 @@
 
 ;: Backend runtime hook used by `windows-registry-sdk-install`.
 ;:
-;: On Windows targets this calls `RegOpenKeyExW`, `RegQueryValueExW`,
-;: `RegEnumKeyExW`, and `RegCloseKey`, converting UTF-16 registry data into
-;: freshly allocated TypeLisp UTF-8 strings. On other targets it returns
-;: `WindowsRegistryUnsupported`.
+;: When implemented on Windows this must use the ANSI registry APIs
+;: (`RegOpenKeyExA`, `RegQueryValueExA`, `RegEnumKeyExA`, `RegCloseKey`):
+;: TypeLisp strings are UTF-8 and the freestanding runtime ships a UTF-8
+;: application manifest (activeCodePage = UTF-8), so the `*A` functions consume
+;: and return UTF-8 directly with no UTF-16 conversion. Do NOT add `*W` paths.
+;: Until implemented it returns `WindowsRegistryUnsupported`.
 (extern tl_windows_sdk_registry_install : (-> ResultWindowsRegistrySdkInstall))
 
 ;: Return the SDK root path.

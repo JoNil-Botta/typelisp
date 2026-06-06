@@ -12926,6 +12926,68 @@ tl_boot_pool:
     .space 524288
     .text
 
+    .section .rsrc,\"dr\"
+.L_tl_rsrc_base:
+    .long 0
+    .long 0
+    .short 0
+    .short 0
+    .short 0
+    .short 1
+    .long 24
+    .long 0x80000000 + (.L_tl_rsrc_type - .L_tl_rsrc_base)
+.L_tl_rsrc_type:
+    .long 0
+    .long 0
+    .short 0
+    .short 0
+    .short 0
+    .short 1
+    .long 1
+    .long 0x80000000 + (.L_tl_rsrc_lang - .L_tl_rsrc_base)
+.L_tl_rsrc_lang:
+    .long 0
+    .long 0
+    .short 0
+    .short 0
+    .short 0
+    .short 1
+    .long 1033
+    .long .L_tl_rsrc_data - .L_tl_rsrc_base
+.L_tl_rsrc_data:
+    .rva .L_tl_manifest
+    .long .L_tl_manifest_end - .L_tl_manifest
+    .long 0
+    .long 0
+    .balign 4
+.L_tl_manifest:
+    .byte 60,63,120,109,108,32,118,101,114,115,105,111,110,61,34,49
+    .byte 46,48,34,32,101,110,99,111,100,105,110,103,61,34,85,84
+    .byte 70,45,56,34,32,115,116,97,110,100,97,108,111,110,101,61
+    .byte 34,121,101,115,34,63,62,13,10,60,97,115,115,101,109,98
+    .byte 108,121,32,120,109,108,110,115,61,34,117,114,110,58,115,99
+    .byte 104,101,109,97,115,45,109,105,99,114,111,115,111,102,116,45
+    .byte 99,111,109,58,97,115,109,46,118,49,34,32,109,97,110,105
+    .byte 102,101,115,116,86,101,114,115,105,111,110,61,34,49,46,48
+    .byte 34,62,13,10,32,32,60,97,112,112,108,105,99,97,116,105
+    .byte 111,110,32,120,109,108,110,115,61,34,117,114,110,58,115,99
+    .byte 104,101,109,97,115,45,109,105,99,114,111,115,111,102,116,45
+    .byte 99,111,109,58,97,115,109,46,118,51,34,62,13,10,32,32
+    .byte 32,32,60,119,105,110,100,111,119,115,83,101,116,116,105,110
+    .byte 103,115,62,13,10,32,32,32,32,32,32,60,97,99,116,105
+    .byte 118,101,67,111,100,101,80,97,103,101,32,120,109,108,110,115
+    .byte 61,34,104,116,116,112,58,47,47,115,99,104,101,109,97,115
+    .byte 46,109,105,99,114,111,115,111,102,116,46,99,111,109,47,83
+    .byte 77,73,47,50,48,49,57,47,87,105,110,100,111,119,115,83
+    .byte 101,116,116,105,110,103,115,34,62,85,84,70,45,56,60,47
+    .byte 97,99,116,105,118,101,67,111,100,101,80,97,103,101,62,13
+    .byte 10,32,32,32,32,60,47,119,105,110,100,111,119,115,83,101
+    .byte 116,116,105,110,103,115,62,13,10,32,32,60,47,97,112,112
+    .byte 108,105,99,97,116,105,111,110,62,13,10,60,47,97,115,115
+    .byte 101,109,98,108,121,62,13,10
+.L_tl_manifest_end:
+    .text
+
 ")
 
 ;; First-class arena runtime (#1633). `tl_arena_make` maps a fresh INDEPENDENT
@@ -19498,19 +19560,43 @@ tl_random_system_seed:
     mov %rsp, %rbp
     push %r12
     push %r13
-    sub $16, %rsp
-    leaq (%rsp), %rcx
-    movl $8, %edx
-    sub $32, %rsp
-    call SystemFunction036
-    add $32, %rsp
-    testb %al, %al
-    jz .L_tl_random_system_seed_err
-    movq (%rsp), %r12
+    sub $48, %rsp
+    leaq 32(%rsp), %rcx
+    call QueryPerformanceCounter
+    movq 32(%rsp), %r12
+    leaq 40(%rsp), %rcx
+    call GetSystemTimeAsFileTime
+    movq 40(%rsp), %rax
+    rolq $17, %rax
+    xorq %rax, %r12
+    call GetCurrentProcessId
+    movl %eax, %eax
+    shlq $32, %rax
+    xorq %rax, %r12
+    call GetCurrentThreadId
+    movl %eax, %eax
+    xorq %rax, %r12
+    movabsq $0x9E3779B97F4A7C15, %rax
+    addq %rax, %r12
+    movq %r12, %rax
+    movq %r12, %rcx
+    shrq $30, %rcx
+    xorq %rcx, %rax
+    movabsq $0xBF58476D1CE4E5B9, %rcx
+    imulq %rcx, %rax
+    movq %rax, %rcx
+    shrq $27, %rcx
+    xorq %rcx, %rax
+    movabsq $0x94D049BB133111EB, %rcx
+    imulq %rcx, %rax
+    movq %rax, %rcx
+    shrq $31, %rcx
+    xorq %rcx, %rax
+    movq %rax, %r12
     call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
-    add $16, %rsp
+    add $48, %rsp
     pop %r13
     pop %r12
     pop %rbp
@@ -20319,10 +20405,7 @@ tl_windows_sdk_registry_install:
 "
               "")
             (string-append
-              (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
-                "    .extern SystemFunction036
-"
-                "")
+              ""
               (string-append
                 (if (compiler-backend-plan-provides? plan "tl_print_f64")
                   "    .extern _snprintf

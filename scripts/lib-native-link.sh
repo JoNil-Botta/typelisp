@@ -396,10 +396,7 @@ assemble_and_link_windows() {
         /NODEFAULTLIB \
         /DYNAMICBASE:NO \
         "/STACK:$NL_WINDOWS_STACK_RESERVE" \
-        kernel32.lib \
-        advapi32.lib \
-        ole32.lib \
-        oleaut32.lib
+        kernel32.lib
 }
 
 assemble_and_link() {

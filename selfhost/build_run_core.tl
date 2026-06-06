@@ -855,17 +855,13 @@ _tl_print_string:
               bin-path
               (source-tool-link-inputs-linux-args link-inputs))))))))
 
-;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt). The backend emits
-;; its own entry (_tl_start) plus kernel32-backed shims for the CRT-ABI symbols
-;; the runtime/stdlib reference, so only Win32 system libraries are linked.
+;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt) and only kernel32.
+;; The backend emits its own entry (_tl_start), kernel32-backed shims for the
+;; CRT-ABI symbols the runtime/stdlib reference, and a kernel32-only random seed
+;; (QueryPerformanceCounter/time/pid mixed) -- so no advapi32, and no COM
+;; (ole32/oleaut32) since the registry/setup hooks are stubs.
 (define (source-tool-windows-link-libs) : ProcessStringList
-  (process-args-cons
-    "kernel32.lib"
-    (process-args-cons
-      "advapi32.lib"
-      (process-args-cons
-        "ole32.lib"
-        (process-args-cons "oleaut32.lib" (process-args-empty))))))
+  (process-args-cons "kernel32.lib" (process-args-empty)))
 
 (define (source-tool-windows-link-search-args [dirs : ProcessStringList]) : ProcessStringList
   (match dirs

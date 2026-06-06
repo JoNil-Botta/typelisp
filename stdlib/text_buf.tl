@@ -167,15 +167,30 @@
     [src : (Ptr u8)
       (unsafe
         (string-data chunk))]
-    [i : i64 0]
+    [words : i64 (/ clen 8)]
+    [src64 : (Ptr i64)
+      (unsafe
+        (ptr-cast src : (Ptr i64)))]
+    [dst64 : (MutPtr i64)
+      (unsafe
+        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
+    [w : i64 0]
+    [b : i64 (* words 8)]
+    ;; Copy eight bytes per step (x86 tolerates the unaligned word stores) and
+    ;; finish the partial tail byte-wise so no read passes the chunk's end.
     (begin
-      (while (< i clen)
+      (while (< w words)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+          (set! w (+ w 1))))
+      (while (< b clen)
         (begin
           (unsafe
             (ptr-write!
-              (ptr-offset dst (+ start i))
-              (ptr-read (ptr-offset src i))))
-          (set! i (+ i 1))))
+              (ptr-offset dst (+ start b))
+              (ptr-read (ptr-offset src b))))
+          (set! b (+ b 1))))
       unit)))
 
 ;: Fill the reversed `chunks` into `dst`, ending at byte offset `pos`. The first

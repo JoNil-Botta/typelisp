@@ -347,11 +347,51 @@
     (struct-get collections strings)
     (compiler-backend-string-set-add (struct-get collections floats) text)))
 
+;; Concatenate fixed string groups with one allocation and one linear copy per
+;; piece, instead of the right-nested `string-append` chain that reallocates and
+;; recopies each growing suffix. Output is byte-identical; this only removes the
+;; quadratic copy amplification and the intermediate allocations.
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
+  (let
+    [la : i64 (string-length a)]
+    [lb : i64 (string-length b)]
+    [lc : i64 (string-length c)]
+    [total : i64 (+ la (+ lb lc))]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-copy-chunk-into (& a) dst 0)
+          (text-buf-copy-chunk-into (& b) dst la)
+          (text-buf-copy-chunk-into (& c) dst (+ la lb))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 (define (backend-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-append a (string-append b (string-append c d))))
+  (let
+    [la : i64 (string-length a)]
+    [lb : i64 (string-length b)]
+    [lc : i64 (string-length c)]
+    [ld : i64 (string-length d)]
+    [total : i64 (+ la (+ lb (+ lc ld)))]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-copy-chunk-into (& a) dst 0)
+          (text-buf-copy-chunk-into (& b) dst la)
+          (text-buf-copy-chunk-into (& c) dst (+ la lb))
+          (text-buf-copy-chunk-into (& d) dst (+ la (+ lb lc)))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 (define (backend-cat5
   [a : String]
@@ -359,7 +399,28 @@
   [c : String]
   [d : String]
   [e : String]) : String
-  (string-append a (string-append b (string-append c (string-append d e)))))
+  (let
+    [la : i64 (string-length a)]
+    [lb : i64 (string-length b)]
+    [lc : i64 (string-length c)]
+    [ld : i64 (string-length d)]
+    [le : i64 (string-length e)]
+    [total : i64 (+ la (+ lb (+ lc (+ ld le))))]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (text-buf-copy-chunk-into (& a) dst 0)
+          (text-buf-copy-chunk-into (& b) dst la)
+          (text-buf-copy-chunk-into (& c) dst (+ la lb))
+          (text-buf-copy-chunk-into (& d) dst (+ la (+ lb lc)))
+          (text-buf-copy-chunk-into (& e) dst (+ la (+ lb (+ lc ld))))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a (and b (and c d))))

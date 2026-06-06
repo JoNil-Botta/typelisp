@@ -35,6 +35,11 @@ Coverage notes:
   compatibility, `StringVec` growth/mutation/pop/snapshot/reverse paths, and a
   fixture-local generated enum-payload vector witness for nominal element
   metadata.
+- `vector_slice_check.tl` covers the lifetime-scoped `I64Slice` view API,
+  including vector and array constructors, invalid ranges producing empty views,
+  sub-slicing, fallback reads, and explicit array/vector copy boundaries.
+  `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
+  to a shorter-lived vector.
 - `core_macros_api.tl` covers explicit import of the stdlib core macro module
   and the qualified `core/when`, `core/unless`, `core/and`, and `core/or`
   macros.

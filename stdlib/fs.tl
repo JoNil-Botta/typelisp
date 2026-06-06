@@ -676,8 +676,8 @@
 
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
-;: Host replacement behavior is target-defined: Linux follows `rename(2)`,
-;: while Windows currently reports `IoUnsupported`.
+;: Host replacement behavior is target-defined: Linux follows `rename(2)`;
+;: Windows follows the CRT rename policy.
 (define (try-rename
   [source : (& source str)]
   [destination : (& destination str)]) : ResultIoUnit
@@ -698,8 +698,7 @@
 
 ;: Probe the coarse filesystem kind of `path`.
 ;:
-;: Linux reports regular files, directories, and other node kinds. Windows
-;: currently returns `IoUnsupported` through the runtime status helper.
+;: Linux and Windows report regular files, directories, and other node kinds.
 (define (try-file-kind [path : (& path str)]) : ResultFsFileKind
   (let
     [path-text : String (string-copy-borrowed path)]
@@ -735,9 +734,9 @@
 
 ;: Probe minimal metadata for `path`.
 ;:
-;: Linux reports the coarse kind and, for regular files, byte size through the
-;: runtime metadata helper. Directory and other node sizes are reported as zero.
-;: Windows currently returns `IoUnsupported` through the runtime status helper.
+;: Linux and Windows report the coarse kind and, for regular files, byte size
+;: through the runtime metadata helper. Directory and other node sizes are
+;: reported as zero.
 (define (try-file-metadata [path : (& path str)]) : ResultFsMetadata
   (let
     [path-text : String (string-copy-borrowed path)]

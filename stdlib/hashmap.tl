@@ -8,9 +8,9 @@
 ;# equality rules as `hash-string`; i64-key maps normalize the scalar key
 ;# directly and compare with `=`.
 ;#
-;# Capacity may be any positive `i64`: the start bucket is the normalized hash
-;# modulo capacity, and probing wraps with modulo arithmetic (no power-of-two
-;# requirement). Each occupied slot caches its key hash so probing compares the
+;# Capacity may be any positive `i64`: power-of-two capacities compute the start
+;# bucket with a mask, while other capacities fall back to modulo. Probing wraps
+;# with a branch. Each occupied slot caches its key hash so probing compares the
 ;# cheap `i64` hash before the full key comparison. The probe visits at most
 ;# `capacity` slots, so a full table terminates instead of looping forever.
 ;#
@@ -70,11 +70,6 @@
   (StringI64MapProbeAbsent i64)
   (StringI64MapProbeFull))
 
-;: Return the start bucket for `hash` in a table of `capacity` slots.
-;: `capacity` must be positive; the result is in `[0, capacity)`.
-(define (string-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
-  (% (hash-normalize hash) capacity))
-
 ;: Return whether `capacity` is positive and a power of two.
 (define (string-i64-map-power-two-capacity? [capacity : i64]) : bool
   (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))
@@ -85,6 +80,11 @@
   (if (string-i64-map-power-two-capacity? capacity)
     (bit-and hash (- capacity 1))
     (% hash capacity)))
+
+;: Return the start bucket for `hash` in a table of `capacity` slots.
+;: `capacity` must be positive; the result is in `[0, capacity)`.
+(define (string-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
+  (string-i64-map-normalized-bucket-index (hash-normalize hash) capacity))
 
 ;: Advance a bucket index by one slot, wrapping around the table.
 (define (string-i64-map-next-index [index : i64] [capacity : i64]) : i64

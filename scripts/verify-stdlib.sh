@@ -218,6 +218,7 @@ test.tl
 text_buf.tl
 text_buf_borrowed.tl
 vector.tl
+vector_slice.tl
 EOF
 }
 
@@ -289,6 +290,8 @@ stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would es
 stdlib/tests/string_caller_result_check.tl|pass|-|requires-borrowed-str-capable
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
 stdlib/tests/text_buf_borrowed_check.tl|pass|-|requires-borrowed-str-capable
+stdlib/tests/vector_slice_check.tl|pass|-|requires-borrowed-str-capable
+stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
 EOF
 }
 

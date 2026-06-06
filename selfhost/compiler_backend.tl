@@ -9198,7 +9198,10 @@
   [use-counts : (Array i64)]) : ResultCompilerBackend
   (match block
     [(IrBlock label instrs)
-      (match (compiler-backend-emit-instrs
+      ;; Pre-load the block label into the buffer that emit-instrs renders, so the
+      ;; label is just another chunk. The previous backend-cat4 re-copied the whole
+      ;; rendered body to prepend the label; threading it through avoids that pass.
+      (compiler-backend-emit-instrs
         target
         function
         source-function
@@ -9218,15 +9221,11 @@
         spans
         func-diag
         use-counts
-        (text-buf-empty))
-        [(OkCompilerBackend body)
-          (OkCompilerBackend
-            (backend-cat4
-              (compiler-backend-asm-label function label)
-              ":\n"
-              body
-              ""))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        (text-buf-append
+          (text-buf-append
+            (text-buf-empty)
+            (compiler-backend-asm-label function label))
+          ":\n"))]))
 
 (define (compiler-backend-next-block-label [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
   (match blocks
@@ -10922,7 +10921,22 @@
 ;; boundary table for helper names accepted by `compiler-backend-plan-provides?`.
 ;; New runtime-plan symbols must be classified here before the plan can provide
 ;; them.
+;; Every runtime-helper name below begins with 't' (tl_...), '.' (.L_tl_...), or
+;; 'e' (env-...). The overwhelming majority of queried names are ordinary
+;; compiler/user symbols that match none, so a single first-byte test lets them
+;; bail before the dozen+ non-short-circuiting string-eq comparisons run.
+(define (compiler-backend-runtime-helper-name-plausible? [name : String]) : bool
+  (if (= (string-length name) 0)
+    false
+    (let
+      [c : char (string-ref name 0)]
+      (or
+        (char-eq c #t')
+        (or (char-eq c #.') (char-eq c #e'))))))
+
 (define (compiler-backend-runtime-helper-core? [name : String]) : bool
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    false
   (or
     (backend-or8
       (string-eq name "tl_alloc")
@@ -10937,12 +10951,14 @@
       (string-eq name "tl_arena_current")
       (string-eq name "tl_arena_set")
       (string-eq name "tl_arena_destroy")
-      (string-eq name "tl_arena_poison_enable"))))
+      (string-eq name "tl_arena_poison_enable")))))
 
 ;; Current stdlib modules still depend on these backend runtime shims for
 ;; unavoidable OS/process/profile operations. `stdlib/fs.tl` read-dir and
 ;; metadata probes are tracked by #2047.
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    false
   (or
     (backend-or8
       (string-eq name "tl_process_output")
@@ -10961,7 +10977,7 @@
       (string-eq name ".L_tl_fs_file_size")
       false
       false
-      false)))
+      false))))
 
 ;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
 ;; string equality/parsing moved in #2036, allocating string helpers in #2037,
@@ -10969,6 +10985,8 @@
 ;; IO/stdin/file/argv/print helpers are deliberately absent here: those names
 ;; are stdlib-owned and must remain external from the backend runtime plan.
 (define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    false
   (or
     (backend-or8
       (string-eq name "tl_substring")
@@ -10983,7 +11001,7 @@
       (string-eq name "tl_hash_string")
       (string-eq name "tl_env_var_exists")
       (string-eq name "tl_env_var_value")
-      (string-eq name "env-path-separator"))))
+      (string-eq name "env-path-separator")))))
 
 (define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
   (let

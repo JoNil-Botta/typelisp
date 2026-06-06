@@ -420,7 +420,9 @@ using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`.
 `spmd-reduce` scalar lowering supports `sum` over `i32`, `i64`, and `f64`,
 `min`/`max` over `i32` and `i64`, and `all`/`any` over `bool`. SIMD backend
 modes vectorize eligible contiguous array reductions: `sum` over `i32`, `i64`,
-and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`.
+and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`. The
+SPEC also defines the next masked varying `if` slice; the current compiler
+still rejects varying `if` until that implementation lands.
 
 ### Builtins
 
@@ -654,6 +656,8 @@ eligible `spmd-reduce` array folds. Scalar `spmd-reduce` lowering supports
 AVX-512 uses ZMM vectors and opmask predicated tails, and additionally
 vectorizes `i64` min/max reductions.
 Unsupported vector IR falls back or rejects explicitly.
+Masked varying `if` semantics are specified in SPEC.md as the next SPMD slice,
+but are not implemented yet.
 
 `compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
 predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
@@ -699,8 +703,9 @@ map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. S
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element
 reference captures, tail calls, tuple/fixed-array by-value returns,
-general GC/free, ownership/borrowing, and later public SPMD/SIMD cross-lane
-work). Raw pointer types and unsafe pointer operations are
+general GC/free, ownership/borrowing, masked varying SPMD control flow, and
+later public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
+operations are
 implemented, while C-string/address-of ergonomics remain follow-up FFI work.
 
 ## Contributing

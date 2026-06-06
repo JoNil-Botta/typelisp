@@ -2645,12 +2645,14 @@ integer/`char` ↔ float conversions (float → integer truncates toward zero).
 
 ### 5.15 SPMD `foreach`
 
-This section defines the initial SPMD source surface. The current compiler
-parses and type-checks `foreach`, lowers it to scalar reference loops, and has
-AVX2 and AVX-512 backend paths for a first contiguous map/zip subset.
-`spmd-reduce` is also implemented: scalar lowering covers the supported
-operator/type surface below, and SIMD backend modes vectorize eligible
-contiguous array folds.
+This section defines the SPMD source surface. The current compiler parses and
+type-checks `foreach`, lowers it to scalar reference loops, and has AVX2 and
+AVX-512 backend paths for a first contiguous map/zip subset. `spmd-reduce` is
+also implemented: scalar lowering covers the supported operator/type surface
+below, and SIMD backend modes vectorize eligible contiguous array folds. The v2
+masked varying `if` contract is specified here before compiler implementation;
+until that implementation lands, the current checker still rejects varying
+control-flow conditions inside `foreach`.
 
 Initial syntax:
 
@@ -2703,10 +2705,12 @@ Uniform and varying rules:
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
 - Calls with varying arguments are rejected until an SPMD function ABI is
-  designed. The first slice only permits built-in arithmetic/comparison
-  operators and array operations over supported lane types.
-- `if` and `while` conditions must be uniform in the first slice. Divergent
-  varying control flow is deferred until mask semantics are implemented.
+  designed. The first implemented slice only permits built-in
+  arithmetic/comparison operators and array operations over supported lane
+  types.
+- In the current implemented slice, `if` and `while` conditions must be
+  uniform. The v2 masked-control-flow slice admits varying `if` with the
+  restrictions below; `while` remains uniform-only.
 
 Lane builtins:
 
@@ -2726,6 +2730,80 @@ Tail behavior:
   lane width all produce the same observable result.
 - Inactive tail lanes must not perform bounds checks, loads, stores, calls, or
   other side effects.
+
+Masked varying `if` (v2):
+
+- V2 includes varying `if` before gather/scatter, public lane-index builtins,
+  public vector types, or public mask types. Lane identity is not required to
+  write masked branches, and masks remain an internal lowering concept.
+- An `if` condition inside `foreach` may be varying when it has type `bool`.
+  If the condition is varying, the `if` creates two masked regions: the then
+  region is active only for lanes where the parent active mask and the
+  condition are both true, and the else region is active only for lanes where
+  the parent active mask is true and the condition is false.
+- Nested varying `if` composes masks by intersection with the enclosing active
+  mask. Exiting a branch restores the parent mask.
+- Tail masks are part of the parent active mask. Inactive tail lanes must not
+  evaluate branch contents, perform bounds checks, load, store, call, trap, or
+  otherwise affect program state.
+- Scalar fallback is the reference semantics: execute the `foreach` range in
+  increasing `i`, evaluate the condition for that logical iteration, and
+  evaluate exactly the selected branch. SIMD lowering must produce the same
+  observable result as this scalar fallback for every safe program.
+- Both branches must have the same type. A varying `if` expression may produce
+  `unit` or a supported lane value (`i32`, `i64`, `f32`, `f64`, or `bool`).
+  Aggregate, string, function, array, and public vector/mask results remain
+  deferred.
+- Branch bodies may use local `let`, `begin`, nested varying `if`, supported
+  arithmetic/comparison/boolean operators, and contiguous `array-ref` /
+  `array-set!` over supported lane element types. Array indexes must still be
+  the `foreach` index or a simple uniform offset from it.
+- `array-set!` in a masked branch writes only active lanes. `array-ref` in a
+  masked branch reads and checks bounds only for active lanes.
+- Side effects other than supported contiguous `array-set!` are rejected in
+  masked branches. This includes `set!` to bindings declared outside the
+  `foreach`, `print*`, file/process I/O, `panic`/`error`, allocation whose
+  result escapes the branch, nested `foreach`, nested `spmd-reduce`, and
+  user-defined calls with varying arguments or varying returns.
+- Varying `match` is not part of this slice. `match` on a varying scrutinee is
+  rejected; a `match` whose scrutinee is uniform follows ordinary scalar
+  control-flow rules.
+- Varying `while`, early exits, `return` from inside `foreach`, `break`,
+  `continue`, public mask values, gathers/scatters through index arrays,
+  overlapping writes, atomics, and user-defined SPMD calls remain deferred.
+- Diagnostics must reject unsupported constructs in masked branches at
+  type-check/lowering time and name the SPMD masked-control-flow restriction.
+  Scalar backend modes must not silently accept a broader source surface than
+  SIMD backend modes, and SIMD backend modes must not silently scalarize an
+  unsupported masked branch.
+
+```lisp test=ignore name=spmd-masked-if-scalar-fallback reason="masked varying if is specified before compiler implementation"
+(define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (< (array-ref xs i) 0)
+        (array-set! out i 0)
+        (array-set! out i (array-ref xs i)))))
+```
+
+```lisp test=ignore name=spmd-masked-if-tail reason="masked varying if is specified before compiler implementation"
+(define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (= (% i 2) 0)
+        (array-set! out i (array-ref xs i))
+        (array-set! out i 0))))
+```
+
+```lisp test=ignore name=spmd-masked-if-nested reason="masked varying if is specified before compiler implementation"
+(define (classify [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 (array-ref xs i)]
+      (if (< x 0)
+          (array-set! out i -1)
+          (if (= x 0)
+              (array-set! out i 0)
+              (array-set! out i 1))))))
+```
 
 SPMD reductions:
 
@@ -2903,19 +2981,30 @@ Unsupported in the initial SPMD surface:
 - Gather/scatter, indirect indexing through arrays, and non-contiguous memory.
 - Scans, general cross-lane operations, atomics, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
-- Varying `if`/`while`, early exits, `break`, and `continue`.
+- Varying `if` until the v2 masked-control-flow implementation lands; varying
+  `while`, varying `match`, early exits, `break`, and `continue`.
 - User-defined function calls with varying arguments or varying returns.
 - Struct, enum, tuple, string, function, and nested array lane values.
 - Task parallelism, multicore scheduling, and public AVX-specific intrinsics.
 
 Negative examples for later parser/typechecker tests:
 
-```lisp test=ignore name=spmd-reject-varying-if reason="future SPMD negative example"
-(define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+```lisp test=ignore name=spmd-reject-varying-while reason="varying while remains deferred after masked varying if"
+(define (clear-prefix [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (if (< (array-ref xs i) 0)
-        (array-set! out i 0)
-        (array-set! out i (array-ref xs i)))))
+    (while (< (array-ref xs i) 0)
+      (array-set! out i 0))))
+```
+
+```lisp test=ignore name=spmd-reject-gather-scatter reason="gather/scatter remains deferred after masked varying if"
+(define (permute [xs : (Array i64)]
+                 [index : (Array i64)]
+                 [out : (Array i64)]
+                 [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [j : i64 (array-ref index i)]
+      (array-set! out j (array-ref xs j)))))
 ```
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
@@ -3995,7 +4084,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
 | `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
 | Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds; masked varying `if` is specified as the next slice and implementation is pending |
 | Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |

@@ -200,9 +200,12 @@ requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-fil
 contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
+contains|_tl_check_cli_core_u2etl_colon_colonselfhost_check_package:
 contains|_tl_compiler_check_file_with_roots:
+contains|compiler_check_package_file_with_roots
+contains|package_source_discover
 contains|_tl_compiler_load_file_with_paths_and_roots
-contains|selfhost-check: expected input path
+contains|selfhost-check: cannot combine input path with --manifest-path
 contains|selfhost-check: --stdlib-root requires a value
 end
 

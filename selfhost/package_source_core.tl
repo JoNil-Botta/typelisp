@@ -2,7 +2,8 @@
 ;;
 ;; Package-wide tool commands should agree on which files belong to a package.
 ;; This module resolves a `typelisp.pkg` path, loads the manifest, and walks the
-;; package root for regular `.tl` files in deterministic order.
+;; package root for regular `.tl` files in deterministic order. Hosts without
+;; directory enumeration fall back to the manifest entry source.
 (import "../stdlib/fs.tl")
 
 (import "../stdlib/io.tl")
@@ -165,6 +166,16 @@
       path
       (string-append "': " (io-error-message error)))))
 
+(define (package-source-entry-list [source-set : PackageSourceSet]) : StringList
+  (let
+    [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+    [entry : String
+      (compiler-load-normalize-path
+        (package-source-root-join
+          (struct-get source-set manifest-dir)
+          (struct-get manifest entry)))]
+    (StringCons entry (box StringNil))))
+
 (define (package-source-scan-dir
   [root : String]
   [relative : String]
@@ -175,6 +186,17 @@
       [(ErrIoStringList error) (package-source-read-dir-error dir error)]
       [(OkIoStringList entries)
         (package-source-scan-entries root relative entries acc)])))
+
+(define (package-source-scan-root [source-set : PackageSourceSet]) : ResultPackageSourceList
+  (let
+    [root : String (struct-get source-set manifest-dir)]
+    (match (try-read-dir (& root))
+      [(ErrIoStringList error)
+        (if (io-error-unsupported? error)
+          (OkPackageSourceList (package-source-entry-list source-set))
+          (package-source-read-dir-error root error))]
+      [(OkIoStringList entries)
+        (package-source-scan-entries root "" entries StringNil)])))
 
 (define (package-source-scan-one
   [root : String]
@@ -220,20 +242,18 @@
   (match (package-source-resolve-manifest manifest-path has-manifest)
     [(ErrPackageSourceSet message) (ErrPackageSourceSet message)]
     [(OkPackageSourceSet base)
-      (let
-        [root : String (struct-get base manifest-dir)]
-        (match (package-source-scan-dir root "" (StringNil))
-          [(ErrPackageSourceList message) (ErrPackageSourceSet message)]
-          [(OkPackageSourceList sources)
-            (if (= (string-list-count sources) 0)
-              (ErrPackageSourceSet
-                (package-source-cat3
-                  "check: no TypeLisp source files found in package '"
-                  (struct-get base manifest-path)
-                  "'"))
-              (OkPackageSourceSet
-                (PackageSourceSet
-                  (struct-get base manifest-path)
-                  (struct-get base manifest-dir)
-                  (struct-get base manifest)
-                  sources)))]))]))
+      (match (package-source-scan-root base)
+        [(ErrPackageSourceList message) (ErrPackageSourceSet message)]
+        [(OkPackageSourceList sources)
+          (if (= (string-list-count sources) 0)
+            (ErrPackageSourceSet
+              (package-source-cat3
+                "check: no TypeLisp source files found in package '"
+                (struct-get base manifest-path)
+                "'"))
+            (OkPackageSourceSet
+              (PackageSourceSet
+                (struct-get base manifest-path)
+                (struct-get base manifest-dir)
+                (struct-get base manifest)
+                sources)))])]))

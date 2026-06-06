@@ -5422,6 +5422,19 @@
     (take-handle (struct-get p handle))
     (struct-get p size)))")
 
+(define (compiler-typecheck-move-owner-projection-one-shot-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-one-shot [p : Holder]) : unit
+  (take-handle (struct-get p handle)))")
+
 (define (compiler-typecheck-move-owner-projection-bind-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -5562,22 +5575,27 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-call-reuse-source)
-        "typecheck: use of moved value `p`")
+        "typecheck: cannot move owner-consuming value out of aggregate path")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-one-shot-source)
+        "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-bind-reuse-source)
-        "typecheck: use of moved value `p`")
+        "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-tuple-ref-reuse-source)
-        "typecheck: use of moved value `p`")
+        "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-reuse-source)
-        "typecheck: use of moved value `items`")
+        "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

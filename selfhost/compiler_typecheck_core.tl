@@ -12098,8 +12098,10 @@
 ;; merge by union (a place moved on any arm is moved afterward); loops and
 ;; lambdas discard their body's moves for the post-state because they may run
 ;; zero times or be deferred. Reassigning a slot with `set!` clears its moved
-;; mark. Owner-consuming aggregate projections are conservatively tracked by
-;; moving their root local; precise per-path state remains a future slice.
+;; mark. Owner-consuming aggregate projections are rejected until precise
+;; per-path state and reinitialization land; dynamic arrays have a separate
+;; diagnostic because element ownership cannot be made sound without an index
+;; policy.
 (defstruct TcMovedSet
   (map StringI64Map))
 
@@ -12235,6 +12237,29 @@
 (define (tc-move-dynamic-array-element-message) : String
   "typecheck: cannot move owner-consuming value out of dynamic array element")
 
+(define (tc-move-aggregate-path-message) : String
+  "typecheck: cannot move owner-consuming value out of aggregate path")
+
+(define (tc-move-aggregate-path-projection? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-aggregate-path-projection? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-aggregate-path-projection? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-aggregate-path-projection? inner))]
+    [(AstExprStructGet _ _) true]
+    [(AstExprTupleRef _ _) true]
+    [(AstExprArrayRef _ _) true]
+    [(AstExprBoxGet _) true]
+    [_ false]))
+
 (define (tc-move-dynamic-array-element-projection?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12320,12 +12345,14 @@
           (if (tc-type-consuming-by-value-now? ctx init-ty)
             (if (tc-move-dynamic-array-element-projection? ctx env init)
               (ErrTcMove (tc-move-dynamic-array-element-message))
-              (match (tc-move-root-projection-var init)
-                [(TcSomeString root)
-                  (if (tc-moved-contains? locals root)
-                    (OkTcMove (tc-moved-add moved root))
-                    (OkTcMove moved))]
-                [(TcNoString) (OkTcMove moved)]))
+              (if (tc-move-aggregate-path-projection? init)
+                (ErrTcMove (tc-move-aggregate-path-message))
+                (match (tc-move-root-projection-var init)
+                  [(TcSomeString root)
+                    (if (tc-moved-contains? locals root)
+                      (OkTcMove (tc-moved-add moved root))
+                      (OkTcMove moved))]
+                  [(TcNoString) (OkTcMove moved)])))
             (OkTcMove moved))]
         [(ErrTcType _) (OkTcMove moved)])]))
 
@@ -12339,12 +12366,14 @@
   (if (tc-type-consuming-by-value-now? ctx target-ty)
     (if (tc-move-dynamic-array-element-projection? ctx env expr)
       (ErrTcMove (tc-move-dynamic-array-element-message))
-      (match (tc-move-root-projection-var expr)
-        [(TcSomeString root)
-          (if (tc-moved-contains? locals root)
-            (OkTcMove (tc-moved-add moved root))
-            (OkTcMove moved))]
-        [(TcNoString) (OkTcMove moved)]))
+      (if (tc-move-aggregate-path-projection? expr)
+        (ErrTcMove (tc-move-aggregate-path-message))
+        (match (tc-move-root-projection-var expr)
+          [(TcSomeString root)
+            (if (tc-moved-contains? locals root)
+              (OkTcMove (tc-moved-add moved root))
+              (OkTcMove moved))]
+          [(TcNoString) (OkTcMove moved)])))
     (OkTcMove moved)))
 
 (define (tc-move-after-match-scrutinee

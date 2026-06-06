@@ -40,6 +40,8 @@ reject_diag() {
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/process_borrowed_escape.tl)
+            printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/string_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         *) printf '' ;;

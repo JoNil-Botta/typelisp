@@ -1348,7 +1348,8 @@
               true
               (compiler-optimize-default-level))
               [(OkCompilerDriver asm)
-                (OkSourceToolString (source-tool-augment-assembly asm))]
+                (OkSourceToolString
+                  (source-tool-augment-assembly-for-target asm target))]
               [(ErrCompilerDriver diag)
                 (ErrSourceToolString (compiler-diagnostic-render diag))])]
           [(ErrCompilerLower diag)

@@ -12348,12 +12348,6 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-struct-field-base-path inner))]
-    [(AstExprStructGet inner-box field)
-      (let
-        [inner : AstExpr (box-get inner-box)]
-        (match (tc-move-struct-field-base-path inner)
-          [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
-          [(TcNoString) (TcNoString)]))]
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
@@ -12371,7 +12365,12 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-struct-field-path inner))]
-    [(AstExprStructGet _ _) (tc-move-struct-field-base-path expr)]
+    [(AstExprStructGet inner-box field)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-move-struct-field-base-path inner)
+          [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
+          [(TcNoString) (TcNoString)]))]
     [_ (TcNoString)]))
 
 (define (tc-moved-add-struct-field

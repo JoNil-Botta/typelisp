@@ -5448,6 +5448,23 @@
   (let [h : FileHandle (struct-get p handle)]
     (struct-get p size)))")
 
+(define (compiler-typecheck-move-owner-projection-nested-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Inner
+  (:cleanup cleanup-inner)
+  (handle FileHandle (:owned))
+  (tag i64))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (inner Inner (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-nested [p : Holder]) : unit
+  (take-handle (struct-get (struct-get p inner) handle)))")
+
 (define (compiler-typecheck-move-owner-projection-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -5632,6 +5649,11 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-owner-projection-bind-other-field-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-projection-nested-source)
+        "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

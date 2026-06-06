@@ -157,14 +157,60 @@
       (text-buf-chunks-render-array-range items 0 count))))
 
 ;: Render `buf` to an owned String allocated in the active arena.
+;: Copy `chunk`'s bytes into `dst` starting at byte offset `start`.
+(define (text-buf-copy-chunk-into
+  [chunk : (& chunk str)]
+  [dst : (MutPtr u8)]
+  [start : i64]) : unit
+  (let
+    [clen : i64 (string-length chunk)]
+    [src : (Ptr u8)
+      (unsafe
+        (string-data chunk))]
+    [i : i64 0]
+    (begin
+      (while (< i clen)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ start i))
+              (ptr-read (ptr-offset src i))))
+          (set! i (+ i 1))))
+      unit)))
+
+;: Fill the reversed `chunks` into `dst`, ending at byte offset `pos`. The first
+;: node is the last-appended (rightmost) chunk, so it lands at the end and we walk
+;: leftward, reproducing append order.
+(define (text-buf-fill-rev-into
+  [chunks : TextBufChunkList]
+  [dst : (MutPtr u8)]
+  [pos : i64]) : unit
+  (match chunks
+    [(TextBufChunkNil) unit]
+    [(TextBufChunkCons chunk rest)
+      (let
+        [start : i64 (- pos (string-length (& chunk)))]
+        (begin
+          (text-buf-copy-chunk-into (& chunk) dst start)
+          (text-buf-fill-rev-into (box-get rest) dst start)))]))
+
+;: Render the buffer in O(total length): allocate the exact byte count once and
+;: copy each chunk into place (the cached length makes this a single allocation
+;: plus linear copies, vs the O(n^2) prefix concatenation of the fallbacks).
 (define (text-buf-render [buf : TextBuf]) : String
   (match buf
-    [(TextBuf chunks _)
-      (let
-        [count : i64 (text-buf-chunk-count chunks 0)]
-        (if (> count 32)
-          (text-buf-chunks-render-balanced chunks count)
-          (text-buf-chunks-render-rev chunks "")))]))
+    [(TextBuf chunks len)
+      (if (= len 0)
+        ""
+        (let
+          [out : (Array u8) (make-array u8 len)]
+          [dst : (MutPtr u8)
+            (unsafe
+              (array-data out))]
+          (begin
+            (text-buf-fill-rev-into chunks dst len)
+            (unsafe
+              (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))]))
 
 ;: Write chunks in insertion order to an open raw file handle.
 (define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64

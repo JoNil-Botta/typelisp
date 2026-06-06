@@ -1211,7 +1211,7 @@
         (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
         (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
         (compiler-backend-string-contains? asm "    movq -24(%rbp), %rax\n")
-        (compiler-backend-string-contains? asm "    imulq %rbx, %rax\n")
+        (compiler-backend-string-contains? asm "    imulq %r8, %rax\n")
         (not (compiler-backend-string-contains? asm "%r12"))
         true
         true)]
@@ -1403,7 +1403,7 @@
                             (not
                               (compiler-backend-string-contains?
                                 add-asm
-                                "    movq $5, %rbx\n"))
+                                "    movq $5, %r8\n"))
                             (and
                               (compiler-backend-string-contains?
                                 mul-asm
@@ -1412,7 +1412,7 @@
                                 (not
                                   (compiler-backend-string-contains?
                                     mul-asm
-                                    "    movq $3, %rbx\n"))
+                                    "    movq $3, %r8\n"))
                                 (and
                                   (compiler-backend-string-contains?
                                     shl-asm
@@ -1421,7 +1421,7 @@
                                     (not
                                       (compiler-backend-string-contains?
                                         shl-asm
-                                        "    movq $2, %rbx\n"))
+                                        "    movq $2, %r8\n"))
                                     (and
                                       (compiler-backend-string-contains?
                                         cmp-asm
@@ -2924,7 +2924,7 @@
       (and
         (compiler-backend-instr-contains?
           (IrInstrGep 3 (IrValueVar 1) (IrValueVar 2) (AstTyI32))
-          "    leaq (%rax,%rbx,4), %rax\n")
+          "    leaq (%rax,%r8,4), %rax\n")
         (and
           (compiler-backend-instr-contains?
             (IrInstrLoad 4 (IrValueVar 1) (AstTyU8))
@@ -3079,7 +3079,7 @@
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
           (compiler-backend-string-contains?
             asm
-            "    leaq (%rax,%rbx,8), %rax\n")
+            "    leaq (%rax,%r8,8), %rax\n")
           (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n")
           (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
           (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
@@ -4143,12 +4143,12 @@
     [(OkCompilerBackend asm)
       (backend-and8
         (or
-          (compiler-backend-string-contains? asm "    xorq %rbx, %rax\n")
+          (compiler-backend-string-contains? asm "    xorq %r8, %rax\n")
           (compiler-backend-string-contains? asm "    xorq %rcx, %rax\n"))
         (compiler-backend-string-contains? asm "    shlq %cl, %rax\n")
         (compiler-backend-string-contains? asm "    sarq %cl, %rax\n")
         (not (compiler-backend-string-contains? asm "    orq "))
-        (not (compiler-backend-string-contains? asm "    addq %rbx, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    addq %r8, %rax\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
         true
@@ -4167,15 +4167,15 @@
       (backend-and8
         (compiler-backend-string-contains?
           asm
-          "    testq %rbx, %rbx\n    jne 1f\n    call tl_div_abort\n1:\n")
+          "    testq %r8, %r8\n    jne 1f\n    call tl_div_abort\n1:\n")
         (compiler-backend-string-contains?
           asm
           "    cmpq %r10, %rax\n    jne 1f\n")
         (compiler-backend-string-contains?
           asm
-          "    cmpq %r11, %rbx\n    jne 1f\n    call tl_div_abort\n1:\n")
+          "    cmpq %r11, %r8\n    jne 1f\n    call tl_div_abort\n1:\n")
         (compiler-backend-string-contains? asm "    cqto\n")
-        (compiler-backend-string-contains? asm "    idivq %rbx\n")
+        (compiler-backend-string-contains? asm "    idivq %r8\n")
         (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
         (compiler-backend-string-contains? asm ".globl tl_div_abort\n")
         (not
@@ -4192,10 +4192,10 @@
         (compiler-backend-string-contains? asm "    movq $-1,")
         (compiler-backend-string-contains?
           asm
-          "    testq %rbx, %rbx\n    jge 1f\n    call tl_shift_abort\n1:\n")
+          "    testq %r8, %r8\n    jge 1f\n    call tl_shift_abort\n1:\n")
         (compiler-backend-string-contains?
           asm
-          "    cmpq $64, %rbx\n    jb 1f\n    call tl_shift_abort\n1:\n")
+          "    cmpq $64, %r8\n    jb 1f\n    call tl_shift_abort\n1:\n")
         (compiler-backend-string-contains? asm "    call tl_shift_abort\n")
         (compiler-backend-string-contains? asm ".globl tl_shift_abort\n")
         (compiler-backend-string-contains? asm ".L_tl_shift_msg:")
@@ -4295,7 +4295,7 @@
         (compiler-backend-string-contains? asm "movq $129, %rdi\n"))]
     [op-shapes : bool
       (backend-and4
-        (compiler-backend-string-contains? asm "    idivq %rbx\n")
+        (compiler-backend-string-contains? asm "    idivq %r8\n")
         (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
         (compiler-backend-string-contains? asm "    shlq $2, %rax\n")
         (not
@@ -4362,86 +4362,86 @@
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    addl %ebx, %eax\n"
-        "    addq %rbx, %rax\n")
+        "    addl %r8d, %eax\n"
+        "    addq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinMul)
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    imull %ebx, %eax\n"
-        "    imulq %rbx, %rax\n")
+        "    imull %r8d, %eax\n"
+        "    imulq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinDiv)
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    cdq\n    idivl %ebx\n"
-        "    idivq %rbx\n")
+        "    cdq\n    idivl %r8d\n"
+        "    idivq %r8\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinAdd)
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    addb %bl, %al\n"
-        "    addq %rbx, %rax\n")
+        "    addb %r8b, %al\n"
+        "    addq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinSub)
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    subb %bl, %al\n"
-        "    subq %rbx, %rax\n")
+        "    subb %r8b, %al\n"
+        "    subq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinLt)
         (AstTyI8)
         (AstTyI8)
         (AstTyBool)
-        "    cmpb %bl, %al\n    setl %al\n"
-        "    cmpq %rbx, %rax\n")
+        "    cmpb %r8b, %al\n    setl %al\n"
+        "    cmpq %r8, %rax\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinMod)
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    cbw\n    idivb %bl\n    movb %ah, %al\n"
-        "    idivq %rbx\n")
+        "    cbw\n    idivb %r8b\n    movb %ah, %al\n"
+        "    idivq %r8\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinBitAnd)
         (AstTyI16)
         (AstTyI16)
         (AstTyI16)
-        "    andw %bx, %ax\n"
-        "    andq %rbx, %rax\n"))
+        "    andw %r8w, %ax\n"
+        "    andq %r8, %rax\n"))
     (backend-and4
       (compiler-backend-narrow-binop-shape?
         (IrBinDiv)
         (AstTyI16)
         (AstTyI16)
         (AstTyI16)
-        "    cwd\n    idivw %bx\n"
-        "    idivq %rbx\n")
+        "    cwd\n    idivw %r8w\n"
+        "    idivq %r8\n")
       (compiler-backend-narrow-binop-shape?
         (IrBinMod)
         (AstTyU8)
         (AstTyU8)
         (AstTyU8)
-        "    andw $0x00ff, %ax\n    divb %bl\n    movb %ah, %al\n"
-        "    idivq %rbx\n")
+        "    andw $0x00ff, %ax\n    divb %r8b\n    movb %ah, %al\n"
+        "    idivq %r8\n")
       (and
         (compiler-backend-narrow-binop-shape?
           (IrBinShr)
           (AstTyI8)
           (AstTyU8)
           (AstTyI8)
-          "    movq %rbx, %rcx\n    sarb %cl, %al\n"
+          "    movq %r8, %rcx\n    sarb %cl, %al\n"
           "    sarq %cl, %rax\n")
         (compiler-backend-narrow-binop-shape?
           (IrBinShr)
           (AstTyU8)
           (AstTyU8)
           (AstTyU8)
-          "    movq %rbx, %rcx\n    shrb %cl, %al\n"
+          "    movq %r8, %rcx\n    shrb %cl, %al\n"
           "    sarb %cl, %al\n"))
       (and
         (compiler-backend-narrow-binop-shape?
@@ -4449,14 +4449,14 @@
           (AstTyU8)
           (AstTyU8)
           (AstTyU8)
-          "    movq %rbx, %rcx\n    shlb %cl, %al\n"
+          "    movq %r8, %rcx\n    shlb %cl, %al\n"
           "    shlq %cl, %rax\n")
         (compiler-backend-narrow-binop-shape?
           (IrBinLt)
           (AstTyU8)
           (AstTyU8)
           (AstTyBool)
-          "    cmpb %bl, %al\n    setb %al\n"
+          "    cmpb %r8b, %al\n    setb %al\n"
           "    setl %al\n")))))
 
 (define (compiler-backend-global-compare-types) : CompilerBackendGlobalTypeList
@@ -4481,8 +4481,8 @@
     (AstTyBool))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    cmpq %rbx, %rax\n")
-        (not (compiler-backend-string-contains? asm "    cmpb %bl, %al\n")))]
+        (compiler-backend-string-contains? asm "    cmpq %r8, %rax\n")
+        (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-global-compare-program) : CompilerIrProgram
@@ -4532,8 +4532,8 @@
     (compiler-backend-global-compare-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    cmpq %rbx, %rax\n")
-        (not (compiler-backend-string-contains? asm "    cmpb %bl, %al\n")))]
+        (compiler-backend-string-contains? asm "    cmpq %r8, %rax\n")
+        (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-global-compare-width-ok?) : bool

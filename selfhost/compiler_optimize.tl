@@ -7999,8 +7999,219 @@
 (define (opt-heavy-pass-block-limit) : i64
   64)
 
-(define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
+;; --- self-tail-recursion -> loop (tail-rec-loop) ---------------------------
+;;
+;; A call to the CURRENT function in tail position (its result flows straight
+;; into a `return`) is lowered as an `IrInstrTailCall` whose callee name equals
+;; the function name. The backend currently emits a real `call` for it, which
+;; grows the stack frame on every recursive step. This pass rewrites each such
+;; self-tail-call into a back-edge to the function entry block, turning the
+;; recursion into an in-place loop:
+;;
+;;   * evaluate every call argument into a fresh temp slot (so a parameter that
+;;     is read by a *later* argument still sees its old value),
+;;   * copy each temp into the matching parameter slot,
+;;   * jump to the entry block.
+;;
+;; Reassigning a parameter slot via `IrInstrMov` is exactly what a source-level
+;; `(set! param ...)` lowers to, so this stays inside the IR's existing
+;; "reassignment is allowed; redundancy passes invalidate on (re)definition"
+;; model. Re-running the whole entry block per iteration is precisely the
+;; tail-recursion semantics (a real recursive call re-executes the entire body),
+;; so no loop pre-header is required. The reassignments make the function
+;; non-SSA, so the SSA-gated passes (LICM, induction) simply skip it; the
+;; unconditional passes (GVN/SCCP/copy-prop/CFG/DCE) handle the reassignments
+;; the same way they handle ordinary loops built from `while`/`set!`.
+(define (opt-tailrec-param-count [params : CompilerIrParamList]) : i64
+  (match params
+    [(IrParamNil) 0]
+    [(IrParamCons _ rest) (+ 1 (opt-tailrec-param-count (box-get rest)))]))
+
+(define (opt-tailrec-array-values-to-list
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : CompilerIrValueList
+  (if (>= index (array-length values))
+    IrValueNil
+    (compiler-ir-value-cons
+      (array-ref values index)
+      (opt-tailrec-array-values-to-list values (+ index 1)))))
+
+(define (opt-tailrec-args-to-list [args : CompilerIrCallArgs]) : CompilerIrValueList
+  (match args
+    [(IrCallArgsNil) IrValueNil]
+    [(IrCallArgsOne a) (compiler-ir-value-cons a IrValueNil)]
+    [(IrCallArgsTwo a b)
+      (compiler-ir-value-cons a (compiler-ir-value-cons b IrValueNil))]
+    [(IrCallArgsArray values) (opt-tailrec-array-values-to-list values 0)]))
+
+;; Copy each parameter's staged temp back into the parameter slot, then append
+;; `tail` (the back-edge jump). Run after all of the staging moves so the temps
+;; already hold the new argument values.
+(define (opt-tailrec-assign-movs
+  [params : CompilerIrParamList]
+  [base : i64]
+  [index : i64]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (match params
+    [(IrParamNil) tail]
+    [(IrParamCons param prest)
+      (match param
+        [(IrParam _ ty var-id)
+          (compiler-ir-instr-cons
+            (IrInstrMov var-id (IrValueVar (+ base index)) ty)
+            (opt-tailrec-assign-movs (box-get prest) base (+ index 1) tail))])]))
+
+;; Evaluate each argument into a fresh temp slot (`base + i`) before any
+;; parameter slot is overwritten, so argument aliasing on the parameters is
+;; preserved.
+(define (opt-tailrec-stage-movs
+  [params : CompilerIrParamList]
+  [args : CompilerIrValueList]
+  [base : i64]
+  [index : i64]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (match params
+    [(IrParamNil) tail]
+    [(IrParamCons param prest)
+      (match args
+        [(IrValueNil) tail]
+        [(IrValueCons arg arest)
+          (match param
+            [(IrParam _ ty _)
+              (compiler-ir-instr-cons
+                (IrInstrMov (+ base index) arg ty)
+                (opt-tailrec-stage-movs
+                  (box-get prest)
+                  (box-get arest)
+                  base
+                  (+ index 1)
+                  tail))])])]))
+
+(define (opt-tailrec-self-call?
+  [instr : CompilerIrInstr]
+  [fname : String]
+  [n : i64]) : bool
+  (match instr
+    [(IrInstrTailCall name args _)
+      (and (string-eq name fname) (= (compiler-ir-call-args-count args) n))]
+    [_ false]))
+
+(define (opt-tailrec-rewrite-instrs
+  [instrs : CompilerIrInstrList]
+  [fname : String]
+  [params : CompilerIrParamList]
+  [n : i64]
+  [base : i64]
+  [entry-label : String]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) IrInstrNil]
+    [(IrInstrCons instr rest)
+      (if (opt-tailrec-self-call? instr fname n)
+        (match instr
+          [(IrInstrTailCall _ args _)
+            ;; `instr` is a terminator, so anything after it in `rest` is dead;
+            ;; drop it and emit stage moves, parameter writebacks, then the
+            ;; back-edge jump.
+            (opt-tailrec-stage-movs
+              params
+              (opt-tailrec-args-to-list args)
+              base
+              0
+              (opt-tailrec-assign-movs
+                params
+                base
+                0
+                (compiler-ir-instr-cons (IrInstrJump entry-label) IrInstrNil)))]
+          [_ IrInstrNil])
+        (compiler-ir-instr-cons
+          instr
+          (opt-tailrec-rewrite-instrs
+            (box-get rest)
+            fname
+            params
+            n
+            base
+            entry-label)))]))
+
+(define (opt-tailrec-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [fname : String]
+  [params : CompilerIrParamList]
+  [n : i64]
+  [base : i64]
+  [entry-label : String]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              label
+              (opt-tailrec-rewrite-instrs
+                (compiler-ir-instr-seq-to-list instrs)
+                fname
+                params
+                n
+                base
+                entry-label))
+            (opt-tailrec-rewrite-blocks
+              (box-get rest)
+              fname
+              params
+              n
+              base
+              entry-label))])]))
+
+(define (opt-tailrec-instrs-have-convertible?
+  [instrs : CompilerIrInstrList]
+  [fname : String]
+  [n : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (if (opt-tailrec-self-call? instr fname n)
+        true
+        (opt-tailrec-instrs-have-convertible? (box-get rest) fname n))]))
+
+(define (opt-tailrec-blocks-have-convertible?
+  [blocks : CompilerIrBlockList]
+  [fname : String]
+  [n : i64]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-tailrec-instrs-have-convertible?
+            (compiler-ir-instr-seq-to-list instrs)
+            fname
+            n)
+            true
+            (opt-tailrec-blocks-have-convertible? (box-get rest) fname n))])]))
+
+(define (opt-tailrec-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
+    [(IrFunction name params ret vars blocks)
+      (let
+        [n : i64 (opt-tailrec-param-count params)]
+        (if (opt-tailrec-blocks-have-convertible? blocks name n)
+          (IrFunction
+            name
+            params
+            ret
+            (+ vars n)
+            (opt-tailrec-rewrite-blocks
+              blocks
+              name
+              params
+              n
+              vars
+              (opt-cfg-entry-label blocks)))
+          func))]))
+
+(define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-tailrec-function func)
     [(IrFunction name params ret-ty frame blocks)
       ;; Fold first so SCCP can reuse local facts, then simplify the reachable
       ;; CFG and eliminate dead pure assignments.
@@ -11378,6 +11589,81 @@
               (compiler-ir-instr-seq-to-list instrs)
               target)
             (opt-count-jump-to-blocks (box-get rest) target))])]))
+
+(define (opt-count-tail-call-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrTailCall _ _ _) 1]
+          [_ 0])
+        (opt-count-tail-call-instrs (box-get rest)))]))
+
+(define (opt-count-tail-call-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-tail-call-instrs (compiler-ir-instr-seq-to-list instrs))
+            (opt-count-tail-call-blocks (box-get rest)))])]))
+
+(define (opt-tailrec-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "a" (AstTyI64) 0)
+    (compiler-ir-param-cons (IrParam "b" (AstTyI64) 1) (IrParamNil))))
+
+(define (opt-tailrec-test-function) : CompilerIrFunction
+  (IrFunction
+    "tail_swap"
+    (opt-tailrec-test-params)
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrTailCall
+            "tail_swap"
+            (IrCallArgsTwo (IrValueVar 1) (IrValueVar 0))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (opt-tailrec-expected-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrMov 2 (IrValueVar 1) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrMov 3 (IrValueVar 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrMov 0 (IrValueVar 2) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueVar 3) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "entry") (IrInstrNil)))))))
+
+(define (compiler-optimize-tailrec-self-test) : i64
+  (let
+    [rewritten : CompilerIrFunction
+      (opt-tailrec-function (opt-tailrec-test-function))]
+    [once : CompilerIrFunction
+      (optimize-function-once (opt-tailrec-test-function))]
+    [rewritten-blocks : CompilerIrBlockList (opt-function-blocks rewritten)]
+    [once-blocks : CompilerIrBlockList (opt-function-blocks once)]
+    [rewritten-instrs : CompilerIrInstrList
+      (opt-function-first-instrs rewritten)]
+    (cond
+      [(not (= (opt-function-frame rewritten) 4)) 1]
+      [(not (opt-instr-list-eq rewritten-instrs (opt-tailrec-expected-instrs)))
+        2]
+      [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0)) 3]
+      [(not (= (opt-count-jump-to-blocks rewritten-blocks "entry") 1)) 4]
+      [(not (= (opt-count-tail-call-blocks once-blocks) 0)) 5]
+      [(not (= (opt-count-jump-to-blocks once-blocks "entry") 1)) 6]
+      [else 42])))
 
 (define (opt-count-phi-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs

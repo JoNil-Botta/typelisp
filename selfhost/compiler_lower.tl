@@ -2922,6 +2922,98 @@
     names
     (string-i64-map-with-capacity 1024)))
 
+(define (lower-reach-add-dispatch-variant-list
+  [all-functions : StringI64Map]
+  [module : String]
+  [names : LowerNameCache]
+  [variants : AstDispatchVariantList]
+  [state : LowerReachState]) : LowerReachState
+  (match variants
+    [(AstDispatchVariantNil) state]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant _ variant-name)
+            (lower-reach-add-dispatch-variant-list
+              all-functions
+              module
+              names
+              rest
+              (lower-reach-add-logical
+                all-functions
+                state
+                (lower-dispatch-variant-logical-name module names variant-name)))]))]))
+
+(define (lower-reach-add-dispatch-variant-decl
+  [all-functions : StringI64Map]
+  [module : String]
+  [names : LowerNameCache]
+  [decl : AstDecl]
+  [state : LowerReachState]) : LowerReachState
+  (match decl
+    [(AstDeclDefDispatch _ variants)
+      (lower-reach-add-dispatch-variant-list
+        all-functions
+        module
+        names
+        variants
+        state)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-add-dispatch-variant-decl
+          all-functions
+          module
+          names
+          inner
+          state))]
+    [_ state]))
+
+(define (lower-reach-add-dispatch-variant-roots-in-module
+  [all-functions : StringI64Map]
+  [decls : AstDeclList]
+  [module : String]
+  [names : LowerNameCache]
+  [state : LowerReachState]) : LowerReachState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-reach-add-dispatch-variant-roots-in-module
+              all-functions
+              rest
+              next-module
+              names
+              state)]
+          [_
+            (lower-reach-add-dispatch-variant-roots-in-module
+              all-functions
+              rest
+              module
+              names
+              (lower-reach-add-dispatch-variant-decl
+                all-functions
+                module
+                names
+                decl
+                state))]))]))
+
+(define (lower-reach-add-dispatch-variant-roots
+  [all-functions : StringI64Map]
+  [decls : AstDeclList]
+  [names : LowerNameCache]
+  [state : LowerReachState]) : LowerReachState
+  (lower-reach-add-dispatch-variant-roots-in-module
+    all-functions
+    decls
+    ""
+    names
+    state))
+
 (define (lower-function-kept-by-reach-or-dispatch?
   [reachable : StringI64Map]
   [dispatch-variants : StringI64Map]
@@ -3116,16 +3208,20 @@
             (lower-reach-global-decls
               all-functions
               name-cache
-              (lower-reach-add-clone-root-helpers
+              (lower-reach-add-dispatch-variant-roots
                 all-functions
+                decls
                 name-cache
-                clone-roots
-                (lower-reach-add-logical
+                (lower-reach-add-clone-root-helpers
                   all-functions
-                  (LowerReachState
-                    (string-i64-map-with-capacity 8192)
-                    LowerStringNil)
-                  "main"))
+                  name-cache
+                  clone-roots
+                  (lower-reach-add-logical
+                    all-functions
+                    (LowerReachState
+                      (string-i64-map-with-capacity 8192)
+                      LowerStringNil)
+                    "main")))
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram
@@ -17250,6 +17346,14 @@
 (defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
 (define (main [x : i64]) : i64 (dot x))")
 
+(define (compiler-lower-defdispatch-shared-helper-source) : String
+  "(define (dispatch-helper [x : i64]) : i64 (+ x 1))
+(define (dot-scalar [x : i64]) : i64 (dispatch-helper x))
+(define (dot-avx2 [x : i64]) : i64 (+ (dispatch-helper x) 2))
+(define (dot-avx512 [x : i64]) : i64 (+ (dispatch-helper x) 5))
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
+(define (main [x : i64]) : i64 (dot x))")
+
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
     [(ErrCompilerLower diag)
@@ -19556,6 +19660,59 @@
                   functions
                   "dot"
                   avx512-name)
+                1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-defdispatch-shared-helper-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-defdispatch-shared-helper-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [scalar-name : String
+              "__tl_dispatch_variant_scalar_dot__dot-scalar"]
+            [avx2-name : String "__tl_dispatch_variant_avx2_dot__dot-avx2"]
+            [avx512-name : String
+              "__tl_dispatch_variant_avx512_dot__dot-avx512"]
+            [ok : bool true]
+            (begin
+              (if (lower-test-function-defined? functions "dispatch-helper")
+                unit
+                (set! ok false))
+              (when
+                (lower-test-function-defined? functions "dot-scalar")
+                (set! ok false))
+              (when
+                (lower-test-function-defined? functions "dot-avx2")
+                (set! ok false))
+              (when
+                (lower-test-function-defined? functions "dot-avx512")
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  scalar-name
+                  "dispatch-helper")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  avx2-name
+                  "dispatch-helper")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  avx512-name
+                  "dispatch-helper")
                 1)
                 unit
                 (set! ok false))
@@ -21962,6 +22119,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-defdispatch-thunk-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-defdispatch-shared-helper-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-result-try-source))

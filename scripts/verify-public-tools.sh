@@ -1808,7 +1808,6 @@ EOF
     assert_contains "$err" "typelisp test: test executable exited"
     [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
 
-run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"

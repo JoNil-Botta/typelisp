@@ -85,8 +85,6 @@
 
 (include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 
-(include-str compiler-embedded-stdlib-tests-msvc-api "stdlib/tests/msvc_api.tl")
-
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-borrowed-check "stdlib/tests/process_borrowed_check.tl")
@@ -113,23 +111,11 @@
 
 (include-str compiler-embedded-stdlib-tests-vector-api "stdlib/tests/vector_api.tl")
 
-(include-str compiler-embedded-stdlib-tests-visual-studio-api "stdlib/tests/visual_studio_api.tl")
-
-(include-str compiler-embedded-stdlib-tests-windows-registry-api "stdlib/tests/windows_registry_api.tl")
-
-(include-str compiler-embedded-stdlib-tests-windows-sdk-api "stdlib/tests/windows_sdk_api.tl")
-
 (include-str compiler-embedded-stdlib-text-buf "stdlib/text_buf.tl")
 
 (include-str compiler-embedded-stdlib-text-buf-borrowed "stdlib/text_buf_borrowed.tl")
 
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
-
-(include-str compiler-embedded-stdlib-windows-registry "stdlib/windows_registry.tl")
-
-(include-str compiler-embedded-stdlib-windows-sdk "stdlib/windows_sdk.tl")
-
-(include-str compiler-embedded-stdlib-windows-setup "stdlib/windows_setup.tl")
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
   (cond
@@ -231,8 +217,6 @@
         compiler-embedded-stdlib-tests-json-parse-stringify)]
     [(string-eq suffix "tests/list_api.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-list-api)]
-    [(string-eq suffix "tests/msvc_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-msvc-api)]
     [(string-eq suffix "tests/process_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-process-api)]
@@ -272,15 +256,6 @@
     [(string-eq suffix "tests/vector_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-vector-api)]
-    [(string-eq suffix "tests/visual_studio_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-visual-studio-api)]
-    [(string-eq suffix "tests/windows_registry_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-windows-registry-api)]
-    [(string-eq suffix "tests/windows_sdk_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-windows-sdk-api)]
     [(string-eq suffix "text_buf.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)]
     [(string-eq suffix "text_buf_borrowed.tl")
@@ -288,11 +263,4 @@
         compiler-embedded-stdlib-text-buf-borrowed)]
     [(string-eq suffix "vector.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
-    [(string-eq suffix "windows_registry.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-windows-registry)]
-    [(string-eq suffix "windows_sdk.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-windows-sdk)]
-    [(string-eq suffix "windows_setup.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-windows-setup)]
     [else (CompilerEmbeddedStdlibNoSource)]))

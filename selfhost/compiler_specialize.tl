@@ -2512,29 +2512,31 @@
       (string-append
         key-prefix
         (string-append "-" (string-append value-prefix "-map")))]
-    (if (not (string-eq map-name expected-map))
-      (ErrGenHashmapSource
-        (gen-hashmap-diag
-          (string-append
-            "hashmap-family: marker item "
+    (cond
+      [(not (string-eq map-name expected-map))
+        (ErrGenHashmapSource
+          (gen-hashmap-diag
             (string-append
-              map-name
-              (string-append " does not match generated map " expected-map)))))
-      (if (string-eq descriptor "stdlib/hashmap/string-key-v1")
+              "hashmap-family: marker item "
+              (string-append
+                map-name
+                (string-append " does not match generated map " expected-map)))))]
+      [(string-eq descriptor "stdlib/hashmap/string-key-v1")
         (if (string-eq key-type-key "String")
           (OkGenHashmapSource
             (gen-hashmap-source-string-key map-name prefix value-type))
-          (gen-hashmap-descriptor-mismatch descriptor key-type-key))
-        (if (string-eq descriptor "stdlib/hashmap/i64-key-v1")
-          (if (string-eq key-type-key "i64")
-            (OkGenHashmapSource
-              (gen-hashmap-source-i64-key map-name prefix value-type))
-            (gen-hashmap-descriptor-mismatch descriptor key-type-key))
-          (ErrGenHashmapSource
-            (gen-hashmap-diag
-              (string-append
-                "hashmap-family: unsupported key descriptor "
-                descriptor))))))))
+          (gen-hashmap-descriptor-mismatch descriptor key-type-key))]
+      [(string-eq descriptor "stdlib/hashmap/i64-key-v1")
+        (if (string-eq key-type-key "i64")
+          (OkGenHashmapSource
+            (gen-hashmap-source-i64-key map-name prefix value-type))
+          (gen-hashmap-descriptor-mismatch descriptor key-type-key))]
+      [else
+        (ErrGenHashmapSource
+          (gen-hashmap-diag
+            (string-append
+              "hashmap-family: unsupported key descriptor "
+              descriptor)))])))
 
 (define (gen-hashmap-source-for
   [map-name : String]

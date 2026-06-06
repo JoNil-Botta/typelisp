@@ -11802,31 +11802,6 @@ tl_profile_alloc_peak_bytes:
 "
     ""))
 
-(define (compiler-backend-runtime-windows-setup-instances-data
-  [windows-setup-instances : bool]) : String
-  (if windows-setup-instances
-    "    .section .rodata
-.L_tl_windows_setup_unsupported_msg:
-    .ascii \"windows setup: SetupConfiguration is only supported on windows-x86_64 targets\"
-    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg
-.L_tl_windows_setup_unavailable_msg:
-    .ascii \"windows setup: SetupConfiguration COM server is unavailable\"
-    .set .L_tl_windows_setup_unavailable_msg_len, . - .L_tl_windows_setup_unavailable_msg
-
-"
-    ""))
-
-(define (compiler-backend-runtime-windows-sdk-registry-install-data
-  [windows-sdk-registry-install : bool]) : String
-  (if windows-sdk-registry-install
-    "    .section .rodata
-.L_tl_windows_registry_unsupported_msg:
-    .ascii \"windows registry: unsupported on non-Windows targets\"
-    .set .L_tl_windows_registry_unsupported_msg_len, . - .L_tl_windows_registry_unsupported_msg
-
-"
-    ""))
-
 (define (compiler-backend-runtime-print-f64-data [print-f64 : bool]) : String
   (if print-f64
     "    .section .rodata
@@ -11932,14 +11907,8 @@ tl_profile_alloc_peak_bytes:
                                 (compiler-backend-runtime-flush-stdout-data
                                   target
                                   flush-stdout)
-                                (string-append
-                                  (compiler-backend-runtime-random-system-seed-data
-                                    random-system-seed)
-                                  (string-append
-                                    (compiler-backend-runtime-windows-setup-instances-data
-                                      windows-setup-instances)
-                                    (compiler-backend-runtime-windows-sdk-registry-install-data
-                                      windows-sdk-registry-install))))))))))))))))]))
+                                (compiler-backend-runtime-random-system-seed-data
+                                  random-system-seed))))))))))))))]))
 
 (define (compiler-backend-runtime-profile-alloc-account
   [size-reg : String]
@@ -19627,124 +19596,6 @@ tl_random_system_seed:
 
 ")
 
-(define (compiler-backend-runtime-windows-setup-instances-functions
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "    .globl tl_windows_setup_instances
-tl_windows_setup_instances:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    leaq .L_tl_windows_setup_unavailable_msg(%rip), %r12
-    movq $.L_tl_windows_setup_unavailable_msg_len, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"
-    "    .globl tl_windows_setup_instances
-tl_windows_setup_instances:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    leaq .L_tl_windows_setup_unsupported_msg(%rip), %r12
-    movq $.L_tl_windows_setup_unsupported_msg_len, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $0, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"))
-
-(define (compiler-backend-runtime-windows-sdk-registry-install-functions
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "    .globl tl_windows_sdk_registry_install
-tl_windows_sdk_registry_install:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    push %r14
-    sub $8, %rsp
-    movq $0, %r12
-    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
-    movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r14, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r13, 8(%rax)
-    add $8, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"
-    "    .globl tl_windows_sdk_registry_install
-tl_windows_sdk_registry_install:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    push %r13
-    push %r14
-    sub $8, %rsp
-    movq $0, %r12
-    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
-    movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r14, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r13, 8(%rax)
-    movq %rax, %r13
-    call .L_tl_alloc16
-    movq $1, 0(%rax)
-    movq %r13, 8(%rax)
-    add $8, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbp
-    ret
-
-"))
-
 (define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-functions-for-target (BackendTargetLinux) plan))
 
@@ -20003,15 +19854,8 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-windows-random-system-seed-functions)
               (compiler-backend-runtime-random-system-seed-functions))
             "")]
-        [windows-setup-instances-asm : String
-          (if windows-setup-instances
-            (compiler-backend-runtime-windows-setup-instances-functions target)
-            "")]
-        [windows-sdk-registry-install-asm : String
-          (if windows-sdk-registry-install
-            (compiler-backend-runtime-windows-sdk-registry-install-functions
-              target)
-            "")]
+        [windows-setup-instances-asm : String ""]
+        [windows-sdk-registry-install-asm : String ""]
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-arena-functions profile)

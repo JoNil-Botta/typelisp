@@ -3,7 +3,7 @@
 ;; The buffer is intentionally monomorphic and list-backed: append is cheap
 ;; enough for current selfhost compiler slices, and render preserves append
 ;; order exactly by walking the reversed chunk list once.
-(import "../stdlib/string.tl")
+(import "stdlib/string.tl")
 
 (defenum TextChunkList
   (TextChunkNil)

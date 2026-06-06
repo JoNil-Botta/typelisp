@@ -40,7 +40,7 @@
   0)
 
 (define doc-site-stdlib-manifest-size : i64
-  22)
+  19)
 
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")

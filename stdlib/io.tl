@@ -38,23 +38,193 @@
 ;: Linux errno-location binding used to recover host error codes.
 (extern io-linux-errno-location (:symbol "__errno_location") : (-> (MutPtr i32)))
 
-;: Windows CRT `_open` binding used by file and path helpers.
-(extern io-windows-open (:symbol "_open") : (-> (Ptr u8) i32 i32 i32))
+;: Windows kernel32 bindings backing the file-IO primitives (#2142 slice 1).
+;: These replace the former backend-emitted `_open`/`_read`/`_write`/`_close`/
+;: `_lseeki64`/`_access` CRT-ABI shims: the TypeLisp bodies below call kernel32
+;: directly, mirroring how the Linux side issues raw syscalls.
+(cfg
+  windows
+  (extern io-win-get-std-handle (:symbol "GetStdHandle") : (-> i32 i64)))
 
-;: Windows CRT `_read` binding used by file, stdin, and path helpers.
-(extern io-windows-read (:symbol "_read") : (-> i32 (MutPtr u8) i32 i32))
+(cfg
+  windows
+  (extern io-win-write-file (:symbol "WriteFile") : (->
+    i64
+    (Ptr u8)
+    i32
+    (MutPtr i32)
+    i64
+    i32)))
 
-;: Windows CRT `_write` binding used by print, stdout, stderr, and file helpers.
-(extern io-windows-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32))
+(cfg
+  windows
+  (extern io-win-read-file (:symbol "ReadFile") : (->
+    i64
+    (MutPtr u8)
+    i32
+    (MutPtr i32)
+    i64
+    i32)))
 
-;: Windows CRT `_close` binding used by file and path helpers.
-(extern io-windows-close (:symbol "_close") : (-> i32 i32))
+(cfg
+  windows
+  (extern io-win-create-file (:symbol "CreateFileA") : (->
+    (Ptr u8)
+    i64
+    i64
+    i64
+    i64
+    i64
+    i64
+    i64)))
 
-;: Windows CRT `_lseeki64` binding used by whole-file reads.
-(extern io-windows-lseek (:symbol "_lseeki64") : (-> i32 i64 i32 i64))
+(cfg
+  windows
+  (extern io-win-close-handle (:symbol "CloseHandle") : (-> i64 i32)))
 
-;: Windows CRT `_access` binding used by file existence probes.
-(extern io-windows-access (:symbol "_access") : (-> (Ptr u8) i32 i32))
+(cfg
+  windows
+  (extern io-win-set-file-pointer-ex (:symbol "SetFilePointerEx") : (->
+    i64
+    i64
+    (MutPtr i64)
+    i32
+    i32)))
+
+(cfg
+  windows
+  (extern io-win-get-file-attributes (:symbol "GetFileAttributesA") : (->
+    (Ptr u8)
+    i32)))
+
+(cfg windows (extern io-win-get-last-error (:symbol "GetLastError") : (-> i32)))
+
+;: Map a stdio fd (0/1/2) to its Windows standard handle; other fd values are
+;: already kernel32 handles and pass through. Matches the former `_write` shim.
+(cfg
+  windows
+  (define (io-windows-fd-handle [fd : i32]) : i64
+    (cond
+      [(= fd (cast 0 : i32)) (io-win-get-std-handle (cast -10 : i32))]
+      [(= fd (cast 1 : i32)) (io-win-get-std-handle (cast -11 : i32))]
+      [(= fd (cast 2 : i32)) (io-win-get-std-handle (cast -12 : i32))]
+      [else (cast fd : i64)])))
+
+;: Windows `_write` replacement via WriteFile; returns bytes written or -1.
+(cfg
+  windows
+  (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
+    (let
+      [handle : i64 (io-windows-fd-handle fd)]
+      [written : (Array i32) (make-array i32 1)]
+      [ok : i32
+        (io-win-write-file
+          handle
+          buf
+          count
+          (unsafe
+            (ptr-cast (array-data written) : (MutPtr i32)))
+          0)]
+      (if (= ok (cast 0 : i32))
+        (cast -1 : i32)
+        (array-ref written 0)))))
+
+;: Windows `_read` replacement via ReadFile; a broken pipe (error 109) is EOF.
+(cfg
+  windows
+  (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
+    (let
+      [handle : i64 (io-windows-fd-handle fd)]
+      [nread : (Array i32) (make-array i32 1)]
+      [ok : i32
+        (io-win-read-file
+          handle
+          buf
+          count
+          (unsafe
+            (ptr-cast (array-data nread) : (MutPtr i32)))
+          0)]
+      (if (= ok (cast 0 : i32))
+        (if (= (io-win-get-last-error) (cast 109 : i32))
+          (cast 0 : i32)
+          (cast -1 : i32))
+        (array-ref nread 0)))))
+
+;: Windows `_close` replacement: std handles (fd 0/1/2) are a no-op, else
+;: CloseHandle. Always reports success, matching the former shim.
+(cfg
+  windows
+  (define (io-windows-close [fd : i32]) : i32
+    (if (<= fd (cast 2 : i32))
+      (cast 0 : i32)
+      (begin
+        (io-win-close-handle (cast fd : i64))
+        (cast 0 : i32)))))
+
+;: Windows `_lseeki64` replacement via SetFilePointerEx; returns offset or -1.
+(cfg
+  windows
+  (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
+    (let
+      [handle : i64 (io-windows-fd-handle fd)]
+      [newpos : (Array i64) (make-array i64 1)]
+      [ok : i32
+        (io-win-set-file-pointer-ex
+          handle
+          offset
+          (unsafe
+            (ptr-cast (array-data newpos) : (MutPtr i64)))
+          whence)]
+      (if (= ok (cast 0 : i32))
+        -1
+        (array-ref newpos 0)))))
+
+;: Windows `_open` replacement via CreateFileA, translating the POSIX-style
+;: open flags (O_APPEND/O_RDWR/O_WRONLY, O_CREAT/O_TRUNC) into the kernel32
+;: desired-access and creation-disposition the former shim used. `mode` is
+;: unused (files are created with FILE_ATTRIBUTE_NORMAL), matching the shim.
+(cfg
+  windows
+  (define (io-windows-open [path : (Ptr u8)] [flags : i32] [mode : i32]) : i32
+    (let
+      [ignore-mode : i32 mode]
+      [f : i64 (cast flags : i64)]
+      [access : i64
+        (if (= (bit-and f 8) 0)
+          (if (= (bit-and f 2) 0)
+            (if (= (bit-and f 1) 0)
+              2147483648
+              1073741824)
+            3221225472)
+          4)]
+      [disp : i64
+        (if (= (bit-and f 256) 0)
+          (if (= (bit-and f 512) 0)
+            3
+            5)
+          (if (= (bit-and f 512) 0)
+            4
+            2))]
+      [handle : i64 (io-win-create-file path access 3 0 disp 128 0)]
+      (if (= handle -1)
+        (begin
+          (unsafe
+            (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+          (cast -1 : i32))
+        (cast handle : i32)))))
+
+;: Windows `_access` replacement via GetFileAttributesA existence probe.
+(cfg
+  windows
+  (define (io-windows-access [path : (Ptr u8)] [mode : i32]) : i32
+    (let
+      [ignore-mode : i32 mode]
+      (if (= (io-win-get-file-attributes path) (cast -1 : i32))
+        (begin
+          (unsafe
+            (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Windows CRT errno-location binding used to recover host error codes.
 (extern io-windows-errno-location (:symbol "_errno") : (-> (MutPtr i32)))
@@ -62,8 +232,16 @@
 ;: C library `fflush` binding retained for stdio compatibility.
 (extern io-ffi-fflush (:symbol "fflush") : (-> (Ptr u8) i32))
 
-;: Windows CRT `exit` binding used for panic and print failures.
-(extern io-windows-exit (:symbol "exit") : (-> i32 never))
+;: Windows process exit via kernel32 ExitProcess; never returns. Replaces the
+;: former backend `exit` CRT-ABI shim (#2142 slice 1).
+(cfg
+  windows
+  (extern io-win-exit-process (:symbol "ExitProcess") : (-> i32 never)))
+
+(cfg
+  windows
+  (define (io-windows-exit [code : i32]) : never
+    (io-win-exit-process code)))
 
 ;: Runtime allocator binding used to allocate raw handle tables.
 (extern io-runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8)))

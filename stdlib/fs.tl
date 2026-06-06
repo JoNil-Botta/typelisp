@@ -100,14 +100,65 @@
       (unsafe
         (int->ptr (cast ptr : u64) : (Ptr u8))))))
 
-;: Windows CRT `_mkdir` binding for directory creation.
-(extern fs-windows-mkdir (:symbol "_mkdir") : (-> (Ptr u8) i32))
+;: Windows kernel32 bindings backing the directory/file primitives (#2142
+;: slice 1), replacing the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
+(cfg
+  windows
+  (extern fs-win-create-directory (:symbol "CreateDirectoryA") : (->
+    (Ptr u8)
+    i64
+    i32)))
 
-;: Windows CRT `_unlink` binding for file removal.
-(extern fs-windows-unlink (:symbol "_unlink") : (-> (Ptr u8) i32))
+(cfg
+  windows
+  (extern fs-win-remove-directory (:symbol "RemoveDirectoryA") : (->
+    (Ptr u8)
+    i32)))
 
-;: Windows CRT `_rmdir` binding for empty directory removal.
-(extern fs-windows-rmdir (:symbol "_rmdir") : (-> (Ptr u8) i32))
+(cfg
+  windows
+  (extern fs-win-delete-file (:symbol "DeleteFileA") : (-> (Ptr u8) i32)))
+
+(cfg windows (extern fs-win-get-last-error (:symbol "GetLastError") : (-> i32)))
+
+;: Windows `_mkdir` replacement via CreateDirectoryA; ERROR_ALREADY_EXISTS
+;: (183) maps to EEXIST (17) so building over an existing directory keeps the
+;: prior behavior (see the freestanding errno-mapping fix).
+(cfg
+  windows
+  (define (fs-windows-mkdir [path : (Ptr u8)]) : i32
+    (if (= (fs-win-create-directory path 0) (cast 0 : i32))
+      (begin
+        (unsafe
+          (ptr-write!
+            (io-windows-errno-location)
+            (if (= (fs-win-get-last-error) (cast 183 : i32))
+              (cast 17 : i32)
+              (cast 2 : i32))))
+        (cast -1 : i32))
+      (cast 0 : i32))))
+
+;: Windows `_unlink` replacement via DeleteFileA.
+(cfg
+  windows
+  (define (fs-windows-unlink [path : (Ptr u8)]) : i32
+    (if (= (fs-win-delete-file path) (cast 0 : i32))
+      (begin
+        (unsafe
+          (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+        (cast -1 : i32))
+      (cast 0 : i32))))
+
+;: Windows `_rmdir` replacement via RemoveDirectoryA.
+(cfg
+  windows
+  (define (fs-windows-rmdir [path : (Ptr u8)]) : i32
+    (if (= (fs-win-remove-directory path) (cast 0 : i32))
+      (begin
+        (unsafe
+          (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+        (cast -1 : i32))
+      (cast 0 : i32))))
 
 ;: Windows `GetCurrentProcessId` binding for process ids.
 (extern fs-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (->
@@ -119,8 +170,28 @@
   (MutPtr u8)
   u32))
 
-;: Windows CRT `rename` binding for moving paths.
-(extern fs-windows-rename (:symbol "rename") : (-> (Ptr u8) (Ptr u8) i32))
+;: Windows kernel32 binding for path moves (#2142 slice 1), replacing the
+;: former `rename` CRT-ABI shim.
+(cfg
+  windows
+  (extern fs-win-move-file-ex (:symbol "MoveFileExA") : (->
+    (Ptr u8)
+    (Ptr u8)
+    i32
+    i32)))
+
+;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING.
+(cfg
+  windows
+  (define (fs-windows-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i32
+    (if (=
+      (fs-win-move-file-ex source destination (cast 1 : i32))
+      (cast 0 : i32))
+      (begin
+        (unsafe
+          (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+        (cast -1 : i32))
+      (cast 0 : i32))))
 
 ;: Convert a zero-success C result into the current host error code.
 (define (fs-status-from-result [result : i64]) : i64

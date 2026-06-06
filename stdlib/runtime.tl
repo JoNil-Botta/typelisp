@@ -125,3 +125,26 @@
   (begin
     (runtime-abort-write "tl: shift count out of range\n")
     (runtime-os-exit 129)))
+
+;: General panic abort: write the supplied message to stderr and exit 134.
+;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
+;: the runtime's own error paths reach it unchanged (replaces the former
+;: hand-written Linux/Windows `tl_abort_string` asm).
+(define (tl-runtime-abort-string [message : String])
+  (:export-symbol "tl_abort_string")
+  :
+  never
+  (begin
+    (runtime-abort-write message)
+    (runtime-os-exit 134)))
+
+;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
+;: Reached from the allocator's region-reset validation (not the out-of-memory
+;: path), so the allocating write is safe here.
+(define (tl-runtime-region-abort)
+  (:export-symbol "tl_region_abort")
+  :
+  never
+  (begin
+    (runtime-abort-write "tl: invalid region mark\n")
+    (runtime-os-exit 134)))

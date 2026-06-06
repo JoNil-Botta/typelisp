@@ -49,6 +49,12 @@
     [(VecApiTagA value) value]
     [(VecApiTagB value) (+ value 100)]))
 
+(define (vec-api-fold-decimal [acc : i64] [value : i64]) : i64
+  (+ (* acc 10) value))
+
+(define (vec-api-double [value : i64]) : i64
+  (* value 2))
+
 (comptime-decl
   (:generated vector-family VecApiTagVec "VecApiTag")
   (defstruct VecApiTagVec
@@ -312,6 +318,72 @@
                 (assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
                 (assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
                 (assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
+    ;; --- I64Vec higher-order fold/map helpers (#2067) ---
+    (let
+      [src : (Array i64) (make-array i64 5)]
+      (begin
+        (array-set! src 0 1)
+        (array-set! src 1 2)
+        (array-set! src 2 3)
+        (array-set! src 3 4)
+        (array-set! src 4 5)
+        (let
+          [hv : I64Vec (i64-vec-from-array src 5)]
+          (begin
+            (assert-i64-eq
+              (i64-vec-fold hv 0 vec-api-fold-decimal)
+              12345
+              "fold named function preserves order")
+            (assert-i64-eq
+              (i64-vec-fold-from hv 2 10 vec-api-fold-decimal)
+              10345
+              "fold-from starts at index")
+            (assert-i64-eq
+              (i64-vec-fold (i64-vec-new) 77 vec-api-fold-decimal)
+              77
+              "fold empty returns initial")
+            (let
+              [empty-mapped : I64Vec (i64-vec-map (i64-vec-new) vec-api-double)]
+              (begin
+                (assert-i64-eq (i64-vec-len empty-mapped) 0 "map empty len 0")
+                (assert-true
+                  (>= (i64-vec-capacity empty-mapped) 1)
+                  "map empty remains growable")))
+            (let
+              [doubled : I64Vec (i64-vec-map hv vec-api-double)]
+              (begin
+                (assert-i64-eq (i64-vec-len doubled) 5 "map len 5")
+                (assert-i64-eq
+                  (i64-vec-capacity doubled)
+                  8
+                  "map output grows through push")
+                (assert-i64-eq (i64-vec-get doubled 0 -1) 2 "map order 0")
+                (assert-i64-eq (i64-vec-get doubled 4 -1) 10 "map order 4")))
+            (let
+              [suffix : I64Vec (i64-vec-map-from hv 2 vec-api-double)]
+              (begin
+                (assert-i64-eq (i64-vec-len suffix) 3 "map-from len 3")
+                (assert-i64-eq
+                  (i64-vec-get suffix 0 -1)
+                  6
+                  "map-from first suffix")
+                (assert-i64-eq
+                  (i64-vec-get suffix 2 -1)
+                  10
+                  "map-from last suffix")))
+            (let
+              [bias : i64 7]
+              [biased : I64Vec
+                (i64-vec-map hv (lambda ([x : i64]) : i64 (+ x bias)))]
+              (begin
+                (assert-i64-eq
+                  (i64-vec-get biased 0 -1)
+                  8
+                  "map scalar-capturing lambda first")
+                (assert-i64-eq
+                  (i64-vec-get biased 4 -1)
+                  12
+                  "map scalar-capturing lambda last")))))))
     ;; --- generated StringVec: growth, mutation, pop, snapshot, reverse ---
     (let
       [sv2 : StringVec

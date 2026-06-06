@@ -460,7 +460,7 @@
                 (source-tool-run-source-in-temp
                   source-path
                   (source-tool-default-target)
-                  CompilerLoadRootNil
+                  (string-vec-new)
                   (process-args-empty)
                   (compiler-optimize-default-level)
                   (BackendModeScalar)

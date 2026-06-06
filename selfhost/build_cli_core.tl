@@ -33,7 +33,7 @@
     BuildProfile
     bool
     i64
-    CompilerLoadRootList))
+    StringVec))
 
 (defenum ResultBuildConfig
   (OkBuildConfig BuildConfig)
@@ -47,7 +47,7 @@
     bool
     CompilerBackendTarget
     CompilerBackendMode
-    CompilerLoadRootList
+    StringVec
     i64
     SourceToolLinkInputs))
 
@@ -160,7 +160,7 @@
   (mode CompilerBackendMode)
   (profile BuildProfile)
   (opt-level i64)
-  (stdlib-roots CompilerLoadRootList))
+  (stdlib-roots StringVec))
 
 (defenum ResultBuildPackageWorkerConfig
   (OkBuildPackageWorkerConfig BuildPackageWorkerConfig)
@@ -256,15 +256,6 @@
 (define (build-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
 
-(define (build-root-list-append [roots : CompilerLoadRootList] [root : String]) : CompilerLoadRootList
-  (match roots
-    [(CompilerLoadRootNil)
-      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
-    [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons
-        head
-        (box (build-root-list-append (box-get rest) root)))]))
-
 (define (build-parse-target [value : String]) : ResultBuildTarget
   (if (or (string-eq value "linux-x86_64") (string-eq value "linux_x86_64"))
     (OkBuildTarget (BackendTargetLinux))
@@ -299,7 +290,7 @@
   [opt-level : i64]
   [has-opt-level : bool]
   [stdlib-lines : String]
-  [stdlib-roots : CompilerLoadRootList]) : ResultBuildConfig
+  [stdlib-roots : StringVec]) : ResultBuildConfig
   (if (>= idx count)
     (begin
       (if has-source
@@ -409,7 +400,7 @@
               opt-level
               has-opt-level
               (build-append-stdlib stdlib-lines (arg (+ idx 1)))
-              (build-root-list-append stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
         [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrBuildConfig "build: --target requires a value")
@@ -579,7 +570,7 @@
     build-default-opt-level
     false
     ""
-    CompilerLoadRootNil))
+    (string-vec-new)))
 
 (define (build-package-worker-parse-options
   [idx : i64]
@@ -590,7 +581,7 @@
   [mode : CompilerBackendMode]
   [profile : BuildProfile]
   [opt-level : i64]
-  [stdlib-roots : CompilerLoadRootList]) : ResultBuildPackageWorkerConfig
+  [stdlib-roots : StringVec]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
       (OkBuildPackageWorkerConfig
@@ -717,7 +708,7 @@
               mode
               profile
               opt-level
-              (build-root-list-append stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
         [(host-plan-flag? current)
           (ErrBuildPackageWorkerConfig
             (string-append "build: unknown package worker flag " current))]
@@ -735,7 +726,7 @@
     (BackendModeScalar)
     (build-default-profile)
     build-default-opt-level
-    CompilerLoadRootNil))
+    (string-vec-new)))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
   (match config
@@ -2110,7 +2101,7 @@
       0
       (BuildProfileRelease)
       (BackendModeScalar)
-      CompilerLoadRootNil
+      (string-vec-new)
       (build-package-graph-worker-vec-new))
       [(ErrBuildPackageSchedulePass _) false]
       [(OkBuildPackageSchedulePass pass)
@@ -2136,7 +2127,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [dep-libs : ProcessStringList]) : i64
   (let
     [manifest-dir : String (compiler-load-dirname manifest-path)]
@@ -2224,13 +2215,22 @@
 
 (define (build-package-worker-append-stdlib-roots
   [args : ProcessStringList]
-  [roots : CompilerLoadRootList]) : ProcessStringList
-  (match roots
-    [(CompilerLoadRootNil) args]
-    [(CompilerLoadRootCons root rest)
-      (build-package-worker-append-stdlib-roots
-        (build-package-worker-append-option args "--stdlib-root" root)
-        (box-get rest))]))
+  [roots : StringVec]) : ProcessStringList
+  (let
+    [i : i64 0]
+    [n : i64 (string-vec-len roots)]
+    [out : ProcessStringList args]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            out
+            (build-package-worker-append-option
+              out
+              "--stdlib-root"
+              (string-vec-get roots i "")))
+          (set! i (+ i 1))))
+      out)))
 
 (define (build-package-worker-args
   [manifest-path : String]
@@ -2238,7 +2238,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : ProcessStringList
+  [stdlib-roots : StringVec]) : ProcessStringList
   (let
     [args0 : ProcessStringList
       (build-package-worker-command-prefix (process-args-empty))]
@@ -2274,7 +2274,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : ProcessCommand
+  [stdlib-roots : StringVec]) : ProcessCommand
   (process-command
     (arg 0)
     (build-package-worker-args
@@ -2438,7 +2438,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : ResultBuildPackageGraphWorker
+  [stdlib-roots : StringVec]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String (struct-get node manifest-path)]
     [manifest : CompilerPkgManifest (struct-get node manifest)]
@@ -2470,7 +2470,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
   (let
     [index : i64 0]
@@ -2614,7 +2614,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [scheduled : StringI64Map]
   [built : StringI64Map]) : i64
   (if (build-package-all-built? nodes built)
@@ -2661,7 +2661,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (build-package-emit-graph-nodes-parallel-loop
     nodes
     target
@@ -2678,7 +2678,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -2720,7 +2720,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (if (build-package-async-process-supported?)
     (build-package-emit-graph-nodes-parallel
       nodes
@@ -2745,7 +2745,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (match (build-parse-target target-text)
     [(ErrBuildTarget message)
       (begin
@@ -2798,7 +2798,7 @@
   [mode : String]
   [opt-level : i64]
   [profile : BuildProfile]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (match (source-tool-backend-mode "build" mode)
     [(ErrSourceToolBackendMode message)
       (begin
@@ -2970,7 +2970,7 @@
   [has-output : bool]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
   (if (>= idx count)
@@ -3021,7 +3021,7 @@
               has-output
               target
               mode
-              (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
               opt-level
               link-inputs))]
         [(BuildCliOptionTarget)
@@ -3173,7 +3173,7 @@
     false
     (source-tool-default-target)
     (BackendModeScalar)
-    CompilerLoadRootNil
+    (string-vec-new)
     (compiler-optimize-default-level)
     (source-tool-link-inputs-empty)))
 

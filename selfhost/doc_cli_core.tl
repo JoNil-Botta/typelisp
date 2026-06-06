@@ -30,18 +30,15 @@
   (DocTestPathCons String (Box DocTestPathList)))
 
 (defenum DocTestCliConfig
-  (DocTestCliFileConfig DocTestPathList CompilerLoadRootList)
-  (DocTestCliPackageConfig String bool CompilerLoadRootList))
+  (DocTestCliFileConfig DocTestPathList StringVec)
+  (DocTestCliPackageConfig String bool StringVec))
 
 (defenum ResultDocTestCliConfig
   (OkDocTestCliConfig DocTestCliConfig)
   (ErrDocTestCliConfig String))
 
 (defenum DocDefaultCliConfig
-  (DocDefaultCliExplicitConfig
-    DocTestPathList
-    DocMaybeString
-    CompilerLoadRootList)
+  (DocDefaultCliExplicitConfig DocTestPathList DocMaybeString StringVec)
   (DocDefaultCliPackageConfig String bool String))
 
 (defenum ResultDocDefaultCliConfig
@@ -110,7 +107,7 @@
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (match (compiler-load-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
@@ -160,9 +157,7 @@
       (doc-print-generated output-path)
       0)))
 
-(define (doc-test-file
-  [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+(define (doc-test-file [input-path : String] [stdlib-roots : StringVec]) : i64
   (let
     [report : DocTestRunReport
       (doc-test-run-file-with-roots input-path stdlib-roots)]
@@ -175,25 +170,21 @@
 (define (doc-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (doc-root-list-append [roots : CompilerLoadRootList] [root : String]) : CompilerLoadRootList
-  (match roots
-    [(CompilerLoadRootNil)
-      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
-    [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons
-        head
-        (box (doc-root-list-append (box-get rest) root)))]))
-
-(define (doc-stdlib-roots [idx : i64]) : CompilerLoadRootList
-  (if (>= idx (arg-count))
-    CompilerLoadRootNil
-    (if (string-eq (arg idx) "--stdlib-root")
-      (if (< (+ idx 1) (arg-count))
-        (CompilerLoadRootCons
-          (arg (+ idx 1))
-          (box (doc-stdlib-roots (+ idx 2))))
-        CompilerLoadRootNil)
-      (doc-stdlib-roots (+ idx 1)))))
+(define (doc-stdlib-roots [idx : i64]) : StringVec
+  (let
+    [i : i64 idx]
+    [n : i64 (arg-count)]
+    [roots : StringVec (string-vec-new)]
+    (begin
+      (while (< i n)
+        (if (string-eq (arg i) "--stdlib-root")
+          (if (< (+ i 1) n)
+            (begin
+              (set! roots (string-vec-push roots (arg (+ i 1))))
+              (set! i (+ i 2)))
+            (set! i n))
+          (set! i (+ i 1))))
+      roots)))
 
 (define (doc-test-path-list-empty? [paths : DocTestPathList]) : bool
   (match paths
@@ -255,7 +246,7 @@
   [input-paths : DocTestPathList]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultDocTestCliConfig
+  [stdlib-roots : StringVec]) : ResultDocTestCliConfig
   (if (doc-test-path-list-empty? input-paths)
     (OkDocTestCliConfig
       (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
@@ -270,7 +261,7 @@
   [input-paths : DocTestPathList]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultDocTestCliConfig
+  [stdlib-roots : StringVec]) : ResultDocTestCliConfig
   (if (>= idx count)
     (doc-test-config-finish input-paths manifest-path has-manifest stdlib-roots)
     (let
@@ -285,7 +276,7 @@
               input-paths
               manifest-path
               has-manifest
-              (doc-root-list-append stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
         [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrDocTestCliConfig "doc: --manifest-path requires a value")
@@ -316,11 +307,11 @@
     DocTestPathNil
     ""
     false
-    CompilerLoadRootNil))
+    (string-vec-new)))
 
 (define (doc-test-files
   [input-paths : DocTestPathList]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [print-headers : bool]
   [status : i64]) : i64
   (match input-paths
@@ -344,7 +335,7 @@
 
 (define (doc-test-package-files
   [input-paths : StringList]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [status : i64]) : i64
   (match input-paths
     [(StringNil) status]
@@ -365,7 +356,7 @@
 (define (doc-test-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (match (package-source-discover-for "doc" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
@@ -379,7 +370,7 @@
   [output-path : DocMaybeString]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultDocDefaultCliConfig
+  [stdlib-roots : StringVec]) : ResultDocDefaultCliConfig
   (if (doc-test-path-list-empty? input-paths)
     (match output-path
       [(DocSomeString out)
@@ -404,7 +395,7 @@
   [has-output : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultDocDefaultCliConfig
+  [stdlib-roots : StringVec]) : ResultDocDefaultCliConfig
   (if (>= idx count)
     (doc-default-config-finish
       input-paths
@@ -440,7 +431,7 @@
               has-output
               manifest-path
               has-manifest
-              (doc-root-list-append stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
         [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
@@ -477,7 +468,7 @@
     false
     ""
     false
-    CompilerLoadRootNil))
+    (string-vec-new)))
 
 (define (doc-invalid-args) : i64
   (begin
@@ -497,7 +488,7 @@
 (define (doc-run-explicit-default
   [input-paths : DocTestPathList]
   [output-path : DocMaybeString]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (match output-path
     [(DocSomeString out)
       (if (doc-test-path-list-empty? input-paths)

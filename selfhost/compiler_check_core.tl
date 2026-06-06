@@ -77,7 +77,7 @@
 
 (define (compiler-check-file-with-roots
   [path : String]
-  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerCheck
+  [stdlib-roots : StringVec]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-file-with-paths-and-roots
@@ -95,7 +95,7 @@
 
 (define (compiler-check-package-file-with-roots
   [path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -131,7 +131,7 @@
 (define (compiler-check-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerCheck
+  [stdlib-roots : StringVec]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-source-with-paths-and-roots

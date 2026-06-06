@@ -1293,9 +1293,9 @@
   (SymI64Bind String i64 i64 i64 (Box SymI64Env)))")
 
 (define (compiler-typecheck-inline-boxed-loader-helper-source) : String
-  "(defenum CompilerLoadRootList
-  (CompilerLoadRootNil)
-  (CompilerLoadRootCons String (Box CompilerLoadRootList)))
+  "(defenum InlineHelperRootList
+  (InlineHelperRootNil)
+  (InlineHelperRootCons String (Box InlineHelperRootList)))
 (defstruct CompilerPkgDep
   (alias String)
   (path String))
@@ -1307,7 +1307,7 @@
   (let
     [src : String (compiler-typecheck-inline-boxed-loader-helper-source)]
     (and
-      (compiler-typecheck-inline-layout-ok? src "CompilerLoadRootList")
+      (compiler-typecheck-inline-layout-ok? src "InlineHelperRootList")
       (compiler-typecheck-inline-layout-ok? src "CompilerPkgDepList"))))
 
 (define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String

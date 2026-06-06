@@ -1322,7 +1322,7 @@
 (define (doc-test-emit-runnable-assembly
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [target : CompilerBackendTarget]) : ResultSourceToolString
   (let
     [index : i64 (doc-test-example-index example)]
@@ -1462,7 +1462,7 @@
 (define (doc-test-run-runnable-output
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [target : CompilerBackendTarget]
   [temp-dir : String]) : DocTestMaybeFailure
   (let
@@ -1498,7 +1498,7 @@
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : CompilerLoadRootList]) : DocTestMaybeFailure
+  [stdlib-roots : StringVec]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1536,12 +1536,12 @@
   (string-append path (string-append ".doctest." (int->string index))))
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-check-example-with-roots path example CompilerLoadRootNil))
+  (doc-test-check-example-with-roots path example (string-vec-new)))
 
 (define (doc-test-check-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : CompilerLoadRootList]) : DocTestMaybeFailure
+  [stdlib-roots : StringVec]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1577,13 +1577,13 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
-  (doc-test-run-examples-with-roots path examples failures CompilerLoadRootNil))
+  (doc-test-run-examples-with-roots path examples failures (string-vec-new)))
 
 (define (doc-test-run-examples-with-roots
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : CompilerLoadRootList]) : DocTestRunFailureList
+  [stdlib-roots : StringVec]) : DocTestRunFailureList
   (match examples
     [(DocTestExampleNil) failures]
     [(DocTestExampleCons example rest)
@@ -1625,12 +1625,12 @@
 ;; errors are folded in as failures first, then each example is checked. A source
 ;; with no examples and no errors reports success with a zero count.
 (define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-run-source-with-roots path source CompilerLoadRootNil))
+  (doc-test-run-source-with-roots path source (string-vec-new)))
 
 (define (doc-test-run-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : CompilerLoadRootList]) : DocTestRunReport
+  [stdlib-roots : StringVec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction examples errors)
       (DocTestRunReport
@@ -1646,7 +1646,7 @@
 
 (define (doc-test-run-file-with-roots
   [path : String]
-  [stdlib-roots : CompilerLoadRootList]) : DocTestRunReport
+  [stdlib-roots : StringVec]) : DocTestRunReport
   (doc-test-run-source-with-roots path (read-file path) stdlib-roots))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
@@ -2051,8 +2051,8 @@
 (define answer : i64 1)
 ")
 
-(define (doc-test-run-smoke-stdlib-roots) : CompilerLoadRootList
-  (CompilerLoadRootCons "stdlib" (box CompilerLoadRootNil)))
+(define (doc-test-run-smoke-stdlib-roots) : StringVec
+  (string-vec-push (string-vec-new) "stdlib"))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
   ";# ```typelisp run

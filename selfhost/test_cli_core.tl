@@ -23,15 +23,8 @@
   (TestModeCheck))
 
 (defenum TestConfig
-  (TestFileConfig String String String CompilerLoadRootList i64 TestMode)
-  (TestPackageConfig
-    String
-    bool
-    String
-    String
-    CompilerLoadRootList
-    i64
-    TestMode))
+  (TestFileConfig String String String StringVec i64 TestMode)
+  (TestPackageConfig String bool String String StringVec i64 TestMode))
 
 (defenum ResultTestConfig
   (OkTestConfig TestConfig)
@@ -57,9 +50,6 @@
   (OkTestPackageTotals i64 i64)
   (ErrTestPackageTotals i64))
 
-(define (tltest-root-cons [root : String] [roots : CompilerLoadRootList]) : CompilerLoadRootList
-  (CompilerLoadRootCons root (box roots)))
-
 (define (tltest-unknown-target [value : String]) : String
   (source-tool-cat3 "test: unknown target " value ""))
 
@@ -82,7 +72,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]) : ResultTestConfig
   (if has-source
@@ -119,7 +109,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
   [test-mode : TestMode]) : ResultTestConfig
@@ -205,7 +195,7 @@
               has-manifest
               target
               mode
-              (tltest-root-cons (arg (+ idx 1)) roots)
+              (string-vec-push roots (arg (+ idx 1)))
               has-opt-level
               opt-level
               test-mode))]
@@ -281,7 +271,7 @@
     false
     "linux-x86_64"
     "scalar"
-    CompilerLoadRootNil
+    (string-vec-new)
     false
     (compiler-optimize-default-level)
     TestModeRun))
@@ -1448,7 +1438,7 @@
 (define (tltest-package-run-integration-source
   [source : String]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -1476,7 +1466,7 @@
 (define (tltest-package-run-source
   [source : String]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -1510,7 +1500,7 @@
   [sources : StringList]
   [tests-prefix : String]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -1561,7 +1551,7 @@
 (define (tltest-package-run-integration-sources
   [sources : StringList]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -1599,7 +1589,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]) : i64
   (match (source-tool-target target)

@@ -20,7 +20,7 @@
     String
     CompilerBackendTarget
     CompilerBackendMode
-    CompilerLoadRootList
+    StringVec
     ProcessStringList
     i64
     SourceToolLinkInputs))
@@ -213,7 +213,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultRunCliConfig
@@ -303,7 +303,7 @@
               source
               target
               mode
-              (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
               runtime-args
               opt-level
               link-inputs))]
@@ -375,7 +375,7 @@
           source
           (source-tool-default-target)
           (BackendModeScalar)
-          CompilerLoadRootNil
+          (string-vec-new)
           (process-args-empty)
           (compiler-optimize-default-level)
           (source-tool-link-inputs-empty))))))

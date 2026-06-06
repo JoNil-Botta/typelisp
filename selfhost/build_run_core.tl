@@ -87,17 +87,6 @@
 (define (source-tool-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (source-tool-root-list-append
-  [roots : CompilerLoadRootList]
-  [root : String]) : CompilerLoadRootList
-  (match roots
-    [(CompilerLoadRootNil)
-      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
-    [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons
-        head
-        (box (source-tool-root-list-append (box-get rest) root)))]))
-
 (define (source-tool-args-append [args : ProcessStringList] [value : String]) : ProcessStringList
   (process-args-append args (process-args-single value)))
 
@@ -353,7 +342,7 @@
 
 (define (source-tool-link-inputs-for-source
   [source : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
   (match (compiler-load-file-with-paths-and-roots
     source
@@ -567,7 +556,7 @@
 (define (source-tool-emit-assembly
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
@@ -593,7 +582,7 @@
 (define (source-tool-emit-package-assembly
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
@@ -1084,7 +1073,7 @@ _tl_print_string:
   [output : String]
   [has-output : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
@@ -1166,7 +1155,7 @@ _tl_print_string:
   [output : String]
   [has-output : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
@@ -1200,7 +1189,7 @@ _tl_print_string:
 (define (source-tool-run-source-in-temp
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
@@ -1303,7 +1292,7 @@ _tl_print_string:
 (define (source-tool-run-source
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]

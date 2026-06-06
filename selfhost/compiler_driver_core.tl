@@ -357,7 +357,7 @@
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-load-file-with-paths-and-roots-cfg
@@ -399,13 +399,13 @@
     input-path
     target
     has-target
-    CompilerLoadRootNil))
+    (string-vec-new)))
 
 (define (compiler-driver-emit-file-with-target-and-roots
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  [stdlib-roots : StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
     target
@@ -417,7 +417,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-and-mode
     input-path
@@ -431,7 +431,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
@@ -448,7 +448,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
@@ -466,7 +466,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [crt-entry : bool]) : ResultCompilerDriver
@@ -484,7 +484,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]
@@ -517,7 +517,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
@@ -545,7 +545,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -565,7 +565,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
@@ -587,7 +587,7 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
@@ -725,7 +725,7 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
     input-path
@@ -735,7 +735,7 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [cfgs : SymI64Env]) : ResultCompilerDriver
   (match (compiler-load-file-with-paths-and-roots-cfg
@@ -761,7 +761,7 @@
 
 (define (compiler-driver-emit-file-with-roots
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  [stdlib-roots : StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     (BackendTargetLinux)
@@ -770,7 +770,7 @@
 
 (define (compiler-driver-emit-file-with-roots-and-level
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -787,7 +787,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  [stdlib-roots : StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
     target
@@ -797,7 +797,7 @@
 (define (compiler-driver-emit-file-for-target-with-roots-and-level
   [input-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
@@ -858,7 +858,7 @@
   [output-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
@@ -881,7 +881,7 @@
     output-path
     (BackendTargetLinux)
     false
-    CompilerLoadRootNil
+    (string-vec-new)
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty)))
@@ -889,7 +889,7 @@
 (define (compiler-driver-compile-file-with-roots
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -903,7 +903,7 @@
 (define (compiler-driver-compile-file-with-roots-and-level
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -918,7 +918,7 @@
 (define (compiler-driver-compile-file-with-roots-level-and-mode
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -934,7 +934,7 @@
 (define (compiler-driver-compile-file-with-roots-level-mode-and-cfg
   [input-path : String]
   [output-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
@@ -957,7 +957,7 @@
     output-path
     target
     true
-    CompilerLoadRootNil
+    (string-vec-new)
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty)))
@@ -966,7 +966,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
@@ -981,7 +981,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
@@ -997,7 +997,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
@@ -1014,7 +1014,7 @@
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64

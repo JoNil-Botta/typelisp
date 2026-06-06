@@ -10885,58 +10885,35 @@
                   (backend-or8
                     (compiler-backend-provides-runtime-name?
                       name
-                      ".L_tl_fs_mkdir_status"
-                      provides-fs)
-                    (compiler-backend-provides-runtime-name?
-                      name
-                      ".L_tl_fs_remove_file_status"
-                      provides-fs)
-                    (compiler-backend-provides-runtime-name?
-                      name
-                      ".L_tl_fs_remove_dir_status"
-                      provides-fs)
-                    (compiler-backend-provides-runtime-name?
-                      name
-                      ".L_tl_fs_rename_status"
-                      provides-fs)
-                    (compiler-backend-provides-runtime-name?
-                      name
-                      ".L_tl_fs_process_id"
-                      provides-fs)
-                    (compiler-backend-provides-runtime-name?
-                      name
                       ".L_tl_fs_read_dir_status"
                       provides-fs)
                     (compiler-backend-provides-runtime-name?
                       name
                       ".L_tl_fs_read_dir"
                       provides-fs)
-                    (or
-                      (compiler-backend-provides-runtime-name?
-                        name
-                        ".L_tl_fs_file_kind_status"
-                        provides-fs)
-                      (or
-                        (compiler-backend-provides-runtime-name?
-                          name
-                          ".L_tl_fs_file_size_status"
-                          provides-fs)
-                        (or
-                          (compiler-backend-provides-runtime-name?
-                            name
-                            ".L_tl_fs_file_size"
-                            provides-fs)
-                          (or
-                            (compiler-backend-provides-runtime-name?
-                              name
-                              "tl_fs_current_dir_status"
-                              (compiler-backend-runtime-tail-fs-current-dir?
-                                provides-tail))
-                            (compiler-backend-provides-runtime-name?
-                              name
-                              "tl_fs_current_dir"
-                              (compiler-backend-runtime-tail-fs-current-dir?
-                                provides-tail)))))))
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_fs_file_kind_status"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_fs_file_size_status"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_fs_file_size"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_fs_current_dir_status"
+                      (compiler-backend-runtime-tail-fs-current-dir?
+                        provides-tail))
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_fs_current_dir"
+                      (compiler-backend-runtime-tail-fs-current-dir?
+                        provides-tail))
+                    false)
                   (or
                     (compiler-backend-provides-runtime-name?
                       name
@@ -11380,80 +11357,49 @@
         (not defines-int-to-string)
         (or extern-int-to-string calls-int-to-string))]
     [direct-abort : bool false]
-    [needs-print-err : bool
-      (and (not defines-print-err) (or extern-print-err calls-print-err))]
-    [needs-print-str : bool
-      (and
-        (not (or defines-print-str defines-print-string))
-        (or extern-print-str (or calls-print-str calls-print-string)))]
-    [needs-print-char : bool
-      (and (not defines-print-char) (or extern-print-char calls-print-char))]
-    [needs-print-f64 : bool
-      (and (not defines-print-f64) (or extern-print-f64 calls-print-f64))]
-    [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
-    [needs-arg : bool (or extern-arg calls-arg)]
-    [needs-read-file : bool
-      (or
-        (or extern-read-file calls-read-file)
-        (or extern-read-file-status calls-read-file-status))]
-    [needs-write-file : bool
-      (or
-        (or extern-write-file calls-write-file)
-        (or
-          (or extern-write-file-status calls-write-file-status)
-          (or extern-append-file-status calls-append-file-status)))]
-    [needs-file-exists : bool
-      (or
-        (or extern-file-exists calls-file-exists)
-        (or extern-file-exists-status calls-file-exists-status))]
-    [needs-file-handle : bool
-      (or
-        (or
-          (or extern-file-open-status calls-file-open-status)
-          (or extern-file-close-status calls-file-close-status))
-        (or
-          (or extern-file-write-status calls-file-write-status)
-          (or extern-file-flush-status calls-file-flush-status)))]
-    [needs-file-read-chunk : bool
-      (or
-        (or extern-file-read-chunk-status calls-file-read-chunk-status)
-        (or
-          extern-file-read-chunk-bytes
-          (or
-            calls-file-read-chunk-bytes
-            (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
+    [needs-print-err : bool false]
+    [needs-print-str : bool false]
+    [needs-print-char : bool false]
+    [needs-print-f64 : bool false]
+    [needs-arg-count : bool false]
+    [needs-arg : bool false]
+    [needs-read-file : bool false]
+    [needs-write-file : bool false]
+    [needs-file-exists : bool false]
+    [needs-file-handle : bool false]
+    [needs-file-read-chunk : bool false]
     [needs-fs-runtime : bool
       (or
         (or
           (backend-or8
-            extern-fs-mkdir-status
-            extern-fs-remove-file-status
-            extern-fs-remove-dir-status
-            extern-fs-rename-status
-            extern-fs-process-id
             extern-fs-read-dir-status
             extern-fs-read-dir
-            extern-fs-file-kind-status)
+            extern-fs-file-kind-status
+            false
+            false
+            false
+            false
+            false)
           (or extern-fs-file-size-status extern-fs-file-size))
         (or
           (backend-or8
-            calls-fs-mkdir-status
-            calls-fs-remove-file-status
-            calls-fs-remove-dir-status
-            calls-fs-rename-status
-            calls-fs-process-id
             calls-fs-read-dir-status
             calls-fs-read-dir
-            calls-fs-file-kind-status)
+            calls-fs-file-kind-status
+            false
+            false
+            false
+            false
+            false)
           (or calls-fs-file-size-status calls-fs-file-size)))]
     [needs-fs-current-dir : bool
       (or
         (or extern-fs-current-dir-status extern-fs-current-dir)
         (or calls-fs-current-dir-status calls-fs-current-dir))]
-    [needs-read-line : bool (or extern-read-line calls-read-line)]
-    [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
-    [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
-    [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
+    [needs-read-line : bool false]
+    [needs-read-bytes : bool false]
+    [needs-stdin-eof : bool false]
+    [needs-flush-stdout : bool false]
     [needs-process-output : bool
       (or
         (and
@@ -14337,216 +14283,7 @@ tl_profile_alloc_reset_peak:
         (compiler-backend-runtime-file-read-chunk-eof-functions)))))
 
 (define (compiler-backend-runtime-fs-functions) : String
-  ".L_tl_fs_mkdir_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_mkdir_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_mkdir_status_invalid
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_mkdir_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_mkdir_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_mkdir_status_path_copy_loop
-.L_tl_fs_mkdir_status_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $83, %rax
-    movq %r13, %rdi
-    movq $448, %rsi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_mkdir_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_mkdir_status_return
-.L_tl_fs_mkdir_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_mkdir_status_return
-.L_tl_fs_mkdir_status_invalid:
-    movq $22, %rax
-.L_tl_fs_mkdir_status_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_remove_file_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_remove_file_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_remove_file_status_invalid
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_remove_file_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_remove_file_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_remove_file_status_path_copy_loop
-.L_tl_fs_remove_file_status_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $87, %rax
-    movq %r13, %rdi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_remove_file_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_remove_file_status_return
-.L_tl_fs_remove_file_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_remove_file_status_return
-.L_tl_fs_remove_file_status_invalid:
-    movq $22, %rax
-.L_tl_fs_remove_file_status_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_remove_dir_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_remove_dir_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_remove_dir_status_invalid
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_remove_dir_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_remove_dir_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_remove_dir_status_path_copy_loop
-.L_tl_fs_remove_dir_status_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $84, %rax
-    movq %r13, %rdi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_remove_dir_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_remove_dir_status_return
-.L_tl_fs_remove_dir_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_remove_dir_status_return
-.L_tl_fs_remove_dir_status_invalid:
-    movq $22, %rax
-.L_tl_fs_remove_dir_status_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_rename_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    movq %rdx, %r13
-    movq %rcx, %r14
-    cmpq $0, %r12
-    jl .L_tl_fs_rename_status_invalid
-    cmpq $0, %r14
-    jl .L_tl_fs_rename_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_rename_status_invalid
-    call tl_alloc
-    movq %rax, %r15
-    xorq %rcx, %rcx
-.L_tl_fs_rename_status_source_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_rename_status_source_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_rename_status_source_copy_loop
-.L_tl_fs_rename_status_source_copy_done:
-    movb $0, (%r15,%r12)
-    movq %r14, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_rename_status_invalid
-    call tl_alloc
-    movq %rax, %r10
-    xorq %rcx, %rcx
-.L_tl_fs_rename_status_destination_copy_loop:
-    cmpq %r14, %rcx
-    jge .L_tl_fs_rename_status_destination_copy_done
-    movzbl (%r13,%rcx), %edx
-    movb %dl, (%r10,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_rename_status_destination_copy_loop
-.L_tl_fs_rename_status_destination_copy_done:
-    movb $0, (%r10,%r14)
-    movq $82, %rax
-    movq %r15, %rdi
-    movq %r10, %rsi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_rename_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_rename_status_return
-.L_tl_fs_rename_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_rename_status_return
-.L_tl_fs_rename_status_invalid:
-    movq $22, %rax
-.L_tl_fs_rename_status_return:
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_read_dir_status:
+  ".L_tl_fs_read_dir_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -14954,10 +14691,6 @@ tl_profile_alloc_reset_peak:
     pop %rbp
     ret
 
-.L_tl_fs_process_id:
-    movq $39, %rax
-    syscall
-    ret
 
 ")
 
@@ -15195,17 +14928,7 @@ tl_fs_current_dir:
 ")
 
 (define (compiler-backend-runtime-windows-fs-functions) : String
-  (string-append
-    (string-append
-      (compiler-backend-runtime-windows-fs-mkdir-status-functions)
-      (string-append
-        (compiler-backend-runtime-windows-fs-remove-file-status-functions)
-        (compiler-backend-runtime-windows-fs-remove-dir-status-functions)))
-    ".L_tl_fs_rename_status:
-    movq $38, %rax
-    ret
-
-.L_tl_fs_read_dir_status:
+  ".L_tl_fs_read_dir_status:
     movq $38, %rax
     ret
 
@@ -15235,17 +14958,8 @@ tl_fs_current_dir:
     xorq %rax, %rax
     ret
 
-.L_tl_fs_process_id:
-    push %rbp
-    mov %rsp, %rbp
-    sub $32, %rsp
-    call GetCurrentProcessId
-    add $32, %rsp
-    movl %eax, %eax
-    pop %rbp
-    ret
 
-"))
+")
 
 (define (compiler-backend-runtime-windows-fs-current-dir-functions) : String
   "tl_fs_current_dir_status:
@@ -20704,16 +20418,32 @@ tl_windows_sdk_registry_install:
           (compiler-backend-string-contains? asm ".L_tl_file_read_chunk_eof:\n"))
         (not (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
         (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")))
-      (backend-and8
-        (not (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n"))
-        (not
-          (compiler-backend-string-contains? asm ".L_tl_read_stdin_bytes:\n"))
-        (not (compiler-backend-string-contains? asm ".L_tl_stdin_eof:\n"))
-        (not (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))
-        (not (compiler-backend-string-contains? asm "tl_env_var_exists:\n"))
-        (not (compiler-backend-string-contains? asm "tl_env_var_value:\n"))
-        (not (compiler-backend-string-contains? asm "tl_cpuid_eax:\n"))
-        (not (compiler-backend-string-contains? asm "tl_xgetbv:\n"))))))
+      (and
+        (backend-and8
+          (not
+            (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n"))
+          (not
+            (compiler-backend-string-contains? asm ".L_tl_read_stdin_bytes:\n"))
+          (not (compiler-backend-string-contains? asm ".L_tl_stdin_eof:\n"))
+          (not (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))
+          (not (compiler-backend-string-contains? asm "tl_env_var_exists:\n"))
+          (not (compiler-backend-string-contains? asm "tl_env_var_value:\n"))
+          (not (compiler-backend-string-contains? asm "tl_cpuid_eax:\n"))
+          (not (compiler-backend-string-contains? asm "tl_xgetbv:\n")))
+        (and
+          (backend-and4
+            (not (compiler-backend-string-contains? asm "tl_print_char:\n"))
+            (not (compiler-backend-string-contains? asm "tl_print_f64:\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_remove_file_status:\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_remove_dir_status:\n")))
+          (not
+            (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")))))))
 
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
@@ -20854,12 +20584,12 @@ tl_windows_sdk_registry_install:
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_arg_count:\n")
-          (compiler-backend-string-contains? asm ".L_tl_arg:\n")
+          (compiler-backend-string-contains? asm ".extern tl_arg_count\n")
+          (compiler-backend-string-contains? asm ".extern tl_arg\n")
           (compiler-backend-string-contains? asm ".extern tl_read_file\n")
           (compiler-backend-string-contains? asm ".extern tl_write_file\n")
           (compiler-backend-string-contains? asm ".extern tl_file_exists\n")
-          (compiler-backend-string-contains? asm "tl_print_err:\n")
+          (compiler-backend-string-contains? asm ".extern tl_print_err\n")
           (compiler-backend-string-contains? asm "tl_string_eq:\n")
           (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
         (and
@@ -20869,7 +20599,13 @@ tl_windows_sdk_registry_install:
               asm
               "    movq %rcx, .L_tl_argc(%rip)\n")
             (and
-              (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
+              (backend-and4
+                (not
+                  (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
+                (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
+                (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
+                (not
+                  (compiler-backend-string-contains? asm ".L_tl_read_file:\n")))
               (and
                 (not
                   (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))

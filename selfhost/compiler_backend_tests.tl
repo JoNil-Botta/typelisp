@@ -617,35 +617,26 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm ".globl tl_print_string\n")
-        (compiler-backend-string-contains? asm "tl_print_string:\n")
+        (compiler-backend-string-contains? asm ".extern tl_print_string\n")
         (compiler-backend-string-contains? asm "    call tl_print_string\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_print_string\n"))
+        (not (compiler-backend-string-contains? asm "\ntl_print_string:\n"))
         (not
           (compiler-backend-string-contains? asm "    call _tl_tl_print_str\n"))
         (not (compiler-backend-string-contains? asm ".extern tl_print_str\n"))
         (compiler-backend-string-contains? asm ".extern _write\n")
         (not
-          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
-        true)]
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-print-runtime-source) : String
-  "(define (main) : i64
+  "(extern runtime-print-char (:symbol \"tl_print_char\") : (-> char unit))
+(extern runtime-print-f64 (:symbol \"tl_print_f64\") : (-> f64 unit))
+(define (main) : i64
   (begin
-    (print-char #A')
-    (print-float 1.5)
+    (runtime-print-char #A')
+    (runtime-print-f64 1.5)
     0))")
-
-(define (compiler-backend-print-runtime-target-extra-ok?
-  [target : CompilerBackendTarget]
-  [asm : String]) : bool
-  (match target
-    [(BackendTargetLinux)
-      (compiler-backend-string-contains? asm "    call snprintf\n")]
-    [(BackendTargetWindows)
-      (and
-        (compiler-backend-string-contains? asm ".extern _snprintf\n")
-        (compiler-backend-string-contains? asm "    call _snprintf\n"))]))
 
 (define (compiler-backend-print-runtime-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -655,19 +646,21 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_print_char\n")
-          (compiler-backend-string-contains? asm "tl_print_char:\n")
+          (compiler-backend-string-contains? asm ".extern tl_print_char\n")
           (compiler-backend-string-contains? asm "    call tl_print_char\n")
-          (compiler-backend-string-contains? asm ".globl tl_print_f64\n")
-          (compiler-backend-string-contains? asm "tl_print_f64:\n")
+          (compiler-backend-string-contains? asm ".extern tl_print_f64\n")
           (compiler-backend-string-contains? asm "    call tl_print_f64\n")
-          (compiler-backend-string-contains? asm ".L_tl_print_f64_fmt:\n")
-          (compiler-backend-print-runtime-target-extra-ok? target asm))
+          (not (compiler-backend-string-contains? asm ".globl tl_print_char\n"))
+          (not (compiler-backend-string-contains? asm "tl_print_char:\n"))
+          (not (compiler-backend-string-contains? asm ".globl tl_print_f64\n"))
+          (not (compiler-backend-string-contains? asm "tl_print_f64:\n")))
         (and
-          (not (compiler-backend-string-contains? asm "call _tl_print_char"))
+          (not (compiler-backend-string-contains? asm ".L_tl_print_f64_fmt:\n"))
           (and
-            (not (compiler-backend-string-contains? asm "_tl_print_float"))
-            (not (compiler-backend-string-contains? asm "call _tl_print_f64")))))]
+            (not (compiler-backend-string-contains? asm "call _tl_print_char"))
+            (and
+              (not (compiler-backend-string-contains? asm "_tl_print_float"))
+              (not (compiler-backend-string-contains? asm "call _tl_print_f64"))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-print-runtime-ok?) : bool
@@ -844,28 +837,32 @@
       [(OkCompilerBackend asm)
         (and
           (backend-and8
-            (compiler-backend-string-contains? asm ".L_tl_arg:\n")
-            (compiler-backend-string-contains? asm ".L_tl_abort:\n")
-            (compiler-backend-string-contains? asm ".L_tl_arg_oob_msg:\n")
-            (compiler-backend-string-contains? asm ".set .L_tl_arg_oob_msg_len")
-            (compiler-backend-string-contains? asm "    call .L_tl_abort\n")
-            (compiler-backend-string-contains? asm "tl_alloc:\n")
-            (compiler-backend-string-contains? asm ".L_tl_argc:\n")
-            (compiler-backend-string-contains? asm ".L_tl_argv:\n"))
-          (not (compiler-backend-string-contains? asm ".extern .L_tl_abort\n")))]
+            (compiler-backend-string-contains? asm ".extern _u2eL_tl_arg\n")
+            (compiler-backend-string-contains? asm "    call _u2eL_tl_arg\n")
+            (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
+            (not (compiler-backend-string-contains? asm ".L_tl_abort:\n"))
+            (not (compiler-backend-string-contains? asm ".L_tl_arg_oob_msg:\n"))
+            (not
+              (compiler-backend-string-contains? asm "    call .L_tl_abort\n"))
+            (not (compiler-backend-string-contains? asm "tl_alloc:\n"))
+            (compiler-backend-string-contains? asm ".L_tl_argc:\n"))
+          (and
+            (compiler-backend-string-contains? asm ".L_tl_argv:\n")
+            (not
+              (compiler-backend-string-contains? asm ".extern .L_tl_abort\n"))))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-source-for-target
       (compiler-backend-arg-runtime-source)
       (BackendTargetWindows))
       [(OkCompilerBackend asm)
         (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_arg:\n")
-          (compiler-backend-string-contains? asm ".L_tl_abort:\n")
-          (compiler-backend-string-contains? asm ".L_tl_arg_oob_msg:\n")
-          (compiler-backend-string-contains? asm ".set .L_tl_arg_oob_msg_len")
-          (compiler-backend-string-contains? asm "    call .L_tl_abort\n")
-          (compiler-backend-string-contains? asm "    .extern _write\n")
-          (compiler-backend-string-contains? asm "    .extern exit\n")
+          (compiler-backend-string-contains? asm ".extern _u2eL_tl_arg\n")
+          (compiler-backend-string-contains? asm "    call _u2eL_tl_arg\n")
+          (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
+          (not (compiler-backend-string-contains? asm ".L_tl_abort:\n"))
+          (not (compiler-backend-string-contains? asm ".L_tl_arg_oob_msg:\n"))
+          (not (compiler-backend-string-contains? asm "    call .L_tl_abort\n"))
+          (not (compiler-backend-string-contains? asm "    .extern _write\n"))
           (not (compiler-backend-string-contains? asm ".extern .L_tl_abort\n")))]
       [(ErrCompilerBackend _) false])))
 
@@ -3223,15 +3220,46 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
-          (compiler-backend-string-contains? asm ".L_tl_write_file:\n")
-          (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
-          (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
-          (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n")
-          (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))
-        (compiler-backend-no-public-io-fs-runtime-symbols? asm))]
+          (compiler-backend-string-contains? asm ".extern _u2eL_tl_read_file\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_write_file\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_file_exists\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_file_open_status\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_fs_mkdir_status\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_fs_process_id\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_read_stdin_line\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern _u2eL_tl_flush_stdout\n"))
+        (and
+          (backend-and8
+            (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
+            (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
+            (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_open_status:\n"))
+            (not
+              (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
+            (not
+              (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
+            (not
+              (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n"))
+            (not
+              (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n")))
+          (compiler-backend-no-public-io-fs-runtime-symbols? asm)))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-private-io-fs-runtime-labels-ok?) : bool

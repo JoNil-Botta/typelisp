@@ -5,7 +5,88 @@
 ;; command without duplicating a `main`.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/list.tl")
+
 (import "format_rules.tl")
+
+(import "package_source_core.tl")
+
+(defenum FmtConfig
+  (FmtFileConfig bool StringList)
+  (FmtPackageConfig bool String bool))
+
+(defenum ResultFmtConfig
+  (OkFmtConfig FmtConfig)
+  (ErrFmtConfig String))
+
+(define (fmt-flag? [value : String]) : bool
+  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+
+(define (fmt-path-list-empty? [paths : StringList]) : bool
+  (match paths
+    [(StringNil) true]
+    [(StringCons _ _) false]))
+
+(define (fmt-path-list-append [paths : StringList] [path : String]) : StringList
+  (match paths
+    [(StringNil) (StringCons path (box StringNil))]
+    [(StringCons head rest)
+      (StringCons head (box (fmt-path-list-append (box-get rest) path)))]))
+
+(define (fmt-config-finish
+  [check : bool]
+  [paths : StringList]
+  [manifest-path : String]
+  [has-manifest : bool]) : ResultFmtConfig
+  (if (fmt-path-list-empty? paths)
+    (OkFmtConfig (FmtPackageConfig check manifest-path has-manifest))
+    (if has-manifest
+      (ErrFmtConfig "fmt: cannot combine input paths with --manifest-path")
+      (OkFmtConfig (FmtFileConfig check paths)))))
+
+(define (fmt-parse-args
+  [idx : i64]
+  [count : i64]
+  [check : bool]
+  [paths : StringList]
+  [manifest-path : String]
+  [has-manifest : bool]) : ResultFmtConfig
+  (if (>= idx count)
+    (fmt-config-finish check paths manifest-path has-manifest)
+    (let
+      [current : String (arg idx)]
+      (cond
+        [(string-eq current "--check")
+          (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)]
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrFmtConfig "fmt: --manifest-path requires a value")
+            (if has-manifest
+              (ErrFmtConfig "fmt: duplicate --manifest-path")
+              (fmt-parse-args (+ idx 2) count check paths (arg (+ idx 1)) true)))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrFmtConfig "fmt: --stdlib-root requires a value")
+            (fmt-parse-args
+              (+ idx 2)
+              count
+              check
+              paths
+              manifest-path
+              has-manifest))]
+        [(fmt-flag? current)
+          (ErrFmtConfig (string-append "fmt: unknown flag " current))]
+        [else
+          (fmt-parse-args
+            (+ idx 1)
+            count
+            check
+            (fmt-path-list-append paths current)
+            manifest-path
+            has-manifest)]))))
+
+(define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
+  (fmt-parse-args start count false StringNil "" false))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
@@ -24,30 +105,41 @@
           (write-file path formatted)
           0)))))
 
-(define (fmt-files [check : bool] [index : i64] [count : i64] [status : i64]) : i64
-  (if (< index count)
-    (let
-      [file-status : i64 (fmt-format-file check (arg index))]
-      (fmt-files
-        check
-        (+ index 1)
-        count
-        (if (= status 0)
-          file-status
-          status)))
-    status))
+(define (fmt-files [check : bool] [paths : StringList] [status : i64]) : i64
+  (match paths
+    [(StringNil) status]
+    [(StringCons path rest)
+      (let
+        [file-status : i64 (fmt-format-file check path)]
+        (fmt-files
+          check
+          (box-get rest)
+          (if (= status 0)
+            file-status
+            status)))]))
+
+(define (fmt-package
+  [check : bool]
+  [manifest-path : String]
+  [has-manifest : bool]) : i64
+  (match (package-source-discover-for "fmt" manifest-path has-manifest)
+    [(ErrPackageSourceSet message)
+      (begin
+        (print-error (string-append message "\n"))
+        1)]
+    [(OkPackageSourceSet source-set)
+      (fmt-files check (struct-get source-set sources) 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.
 (define (fmt-run-from [start : i64] [count : i64]) : i64
-  (if (< count (+ start 1))
-    (begin
-      (print-error "fmt: expected one or more input paths\n")
-      1)
-    (if (string-eq (arg start) "--check")
-      (if (< count (+ start 2))
-        (begin
-          (print-error "fmt: expected one or more input paths\n")
-          1)
-        (fmt-files true (+ start 1) count 0))
-      (fmt-files false start count 0))))
+  (match (fmt-config-from start count)
+    [(OkFmtConfig config)
+      (match config
+        [(FmtFileConfig check paths) (fmt-files check paths 0)]
+        [(FmtPackageConfig check manifest-path has-manifest)
+          (fmt-package check manifest-path has-manifest)])]
+    [(ErrFmtConfig message)
+      (begin
+        (print-error (string-append message "\n"))
+        1)]))

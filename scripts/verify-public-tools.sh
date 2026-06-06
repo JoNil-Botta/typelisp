@@ -1465,18 +1465,17 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
-    run_cmd lint-missing "$COMPILER" lint
+    LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
+    run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint
     assert_failure
     assert_stdout_empty
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
-        # cli.tl's selfhost lint driver reports a missing input path with its own
-        # wording rather than the Rust CLI's `Error: missing file argument` usage
-        # text. Assert the selfhost diagnostic until the wording is unified (#1327).
-        assert_contains "$err" "selfhost-lint: expected input path"
+        assert_contains "$err" "could not find typelisp.pkg"
     else
         assert_contains "$err" "Error: missing file argument"
-        assert_contains "$err" "typelisp lint <file.tl>"
+        assert_contains "$err" "typelisp lint"
     fi
+    rm -rf "$LINT_NOPKG"
 
     printf '(define (' > "$WORKDIR/lint_parse_error.tl"
     run_cmd lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint_parse_error.tl" --check

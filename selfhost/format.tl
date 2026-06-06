@@ -1,7 +1,7 @@
 ;; format.tl - Self-hosted formatter CLI driver (#522).
 ;;
 ;; Usage through the Rust CLI:
-;;   typelisp fmt [--check] input.tl...
+;;   typelisp fmt [input.tl...] [--check] [--manifest-path typelisp.pkg]
 ;;
 ;; The command logic lives in `format_cli_core.tl` so the unified `cli.tl`
 ;; dispatcher can share it without a duplicate `main`.

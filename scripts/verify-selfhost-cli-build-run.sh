@@ -46,6 +46,7 @@ CLI_SURFACE_SRC="$CLI_SURFACE_DIR/main.tl"
 CLI_SURFACE_RUN_SRC="$CLI_SURFACE_DIR/run-main.tl"
 CLI_SURFACE_DOC_SRC="$CLI_SURFACE_DIR/doc-main.tl"
 CLI_SURFACE_CHECK_PKG="$CLI_SURFACE_DIR/check-package"
+CLI_SURFACE_FMTLINT_PKG="$CLI_SURFACE_DIR/fmt-lint-package"
 
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
@@ -270,7 +271,7 @@ assert_cli_surface_help_matches_manifest() {
 }
 
 prepare_cli_surface_files() {
-    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_CHECK_PKG/src"
+    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_CHECK_PKG/src" "$CLI_SURFACE_FMTLINT_PKG/src"
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
@@ -313,6 +314,29 @@ EOF
     cat > "$CLI_SURFACE_CHECK_PKG/src/extra.tl" <<'EOF'
 (define (surface-extra) : i64 0)
 EOF
+    cat > "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "surface_fmt_lint")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    printf '%s' '(define (main) : i64
+  0)' > "$CLI_SURFACE_FMTLINT_PKG/src/main.tl"
+    cat > "$CLI_SURFACE_FMTLINT_PKG/src/needs_fmt.tl" <<'EOF'
+(define (needs-format) : i64
+(+ 1 2))
+EOF
+    cat > "$CLI_SURFACE_FMTLINT_PKG/src/lint_bad.tl" <<'EOF'
+(define (classify [x : i64]) : i64
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        0))))
+EOF
 }
 
 assert_active_cli_surface_command() {
@@ -351,10 +375,52 @@ assert_active_cli_surface_command() {
             run_cli_capture "$label" "$COMPILER" fmt --check "$CLI_SURFACE_SRC"
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
+            if [ "$HOST_OS" = linux ]; then
+                package_label="${label}-package-check"
+                run_cli_capture "$package_label" "$COMPILER" fmt --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" --check
+                assert_status "$package_label" "$status" 1
+                assert_empty "$package_label" "$WORKDIR/$package_label.out"
+                assert_contains "$package_label" "$WORKDIR/$package_label.err" "needs_fmt.tl"
+                package_label="${label}-package-rewrite"
+                run_cli_capture "$package_label" "$COMPILER" fmt --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg"
+                assert_status "$package_label" "$status" 0
+                assert_empty "$package_label" "$WORKDIR/$package_label.out"
+                assert_empty "$package_label" "$WORKDIR/$package_label.err"
+                package_label="${label}-package-recheck"
+                run_cli_capture "$package_label" "$COMPILER" fmt --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" --check
+                assert_status "$package_label" "$status" 0
+                assert_empty "$package_label" "$WORKDIR/$package_label.out"
+                assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            else
+                package_label="${label}-package-entry-check"
+                run_cli_capture "$package_label" "$COMPILER" fmt --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" --check
+                assert_status "$package_label" "$status" 0
+                assert_empty "$package_label" "$WORKDIR/$package_label.out"
+                assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            fi
             ;;
         lint)
             run_cli_capture "$label" "$COMPILER" lint "$CLI_SURFACE_SRC"
             assert_status "$label" "$status" 0
+            if [ "$HOST_OS" = linux ]; then
+                package_label="${label}-package-check"
+                run_cli_capture "$package_label" "$COMPILER" lint --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" --check
+                assert_status "$package_label" "$status" 1
+                assert_empty "$package_label" "$WORKDIR/$package_label.err"
+                assert_contains "$package_label" "$WORKDIR/$package_label.out" "lint_bad.tl:"
+                assert_contains "$package_label" "$WORKDIR/$package_label.out" "lint: 1 finding(s)"
+                package_label="${label}-package-warn"
+                run_cli_capture "$package_label" "$COMPILER" lint --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg"
+                assert_status "$package_label" "$status" 0
+                assert_empty "$package_label" "$WORKDIR/$package_label.err"
+                assert_contains "$package_label" "$WORKDIR/$package_label.out" "lint_bad.tl:"
+            else
+                package_label="${label}-package-entry-check"
+                run_cli_capture "$package_label" "$COMPILER" lint --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" --check
+                assert_status "$package_label" "$status" 0
+                assert_empty "$package_label" "$WORKDIR/$package_label.err"
+                assert_contains "$package_label" "$WORKDIR/$package_label.out" "lint: 0 finding(s)"
+            fi
             ;;
         test)
             run_cli_capture "$label" "$COMPILER" test --check "$CLI_SURFACE_SRC"

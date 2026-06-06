@@ -224,93 +224,85 @@
     requested
     (* capacity 2)))
 
-;: Probe Linux `getcwd` with a caller-sized buffer and retry on ERANGE.
-(define (fs-linux-current-dir-status-loop [capacity : i64]) : i64
-  (if (> capacity fs-current-dir-max-capacity)
-    io-status-name-too-long
-    (let
-      [buf : (Array u8) (make-array u8 capacity)]
-      [result : (Ptr u8) (fs-linux-getcwd (io-array-ptr buf) capacity)]
-      (if (ptr-null? result)
-        (let
-          [status : i64 (io-last-error-code)]
-          (if (= status fs-status-range)
-            (if (< capacity fs-current-dir-max-capacity)
-              (fs-linux-current-dir-status-loop (* capacity 2))
-              io-status-name-too-long)
-            status))
-        io-status-ok))))
+;: Probe the current directory with a platform-specific bounded grow loop.
+(define (fs-current-dir-status-loop [capacity : i64]) : i64
+  (cfg
+    windows
+    (if (> capacity fs-current-dir-max-capacity)
+      io-status-name-too-long
+      (let
+        [buf : (Array u8) (make-array u8 capacity)]
+        [written : i64
+          (cast
+            (fs-windows-get-current-directory
+              (cast capacity : u32)
+              (io-array-ptr buf))
+            :
+            i64)]
+        (cond
+          [(= written 0) io-status-io-error]
+          [(< written capacity) io-status-ok]
+          [else
+            (fs-current-dir-status-loop
+              (fs-current-dir-next-capacity capacity written))])))
+    (if (> capacity fs-current-dir-max-capacity)
+      io-status-name-too-long
+      (let
+        [buf : (Array u8) (make-array u8 capacity)]
+        [result : (Ptr u8) (fs-linux-getcwd (io-array-ptr buf) capacity)]
+        (if (ptr-null? result)
+          (let
+            [status : i64 (io-last-error-code)]
+            (if (= status fs-status-range)
+              (if (< capacity fs-current-dir-max-capacity)
+                (fs-current-dir-status-loop (* capacity 2))
+                io-status-name-too-long)
+              status))
+          io-status-ok)))))
 
-;: Read Linux `getcwd` into an owned String, retrying on ERANGE.
-(define (fs-linux-current-dir-loop [capacity : i64]) : String
-  (if (> capacity fs-current-dir-max-capacity)
-    ""
-    (let
-      [buf : (Array u8) (make-array u8 capacity)]
-      [result : (Ptr u8) (fs-linux-getcwd (io-array-ptr buf) capacity)]
-      (if (ptr-null? result)
-        (let
-          [status : i64 (io-last-error-code)]
-          (if (and
-            (= status fs-status-range)
-            (< capacity fs-current-dir-max-capacity))
-            (fs-linux-current-dir-loop (* capacity 2))
-            ""))
-        (io-copy-c-string result)))))
-
-;: Probe Windows `GetCurrentDirectoryA` with a bounded grow loop.
-(define (fs-windows-current-dir-status-loop [capacity : i64]) : i64
-  (if (> capacity fs-current-dir-max-capacity)
-    io-status-name-too-long
-    (let
-      [buf : (Array u8) (make-array u8 capacity)]
-      [written : i64
-        (cast
-          (fs-windows-get-current-directory
-            (cast capacity : u32)
-            (io-array-ptr buf))
-          :
-          i64)]
-      (cond
-        [(= written 0) io-status-io-error]
-        [(< written capacity) io-status-ok]
-        [else
-          (fs-windows-current-dir-status-loop
-            (fs-current-dir-next-capacity capacity written))]))))
-
-;: Read Windows `GetCurrentDirectoryA` into an owned String.
-(define (fs-windows-current-dir-loop [capacity : i64]) : String
-  (if (> capacity fs-current-dir-max-capacity)
-    ""
-    (let
-      [buf : (Array u8) (make-array u8 capacity)]
-      [written : i64
-        (cast
-          (fs-windows-get-current-directory
-            (cast capacity : u32)
-            (io-array-ptr buf))
-          :
-          i64)]
-      (cond
-        [(= written 0) ""]
-        [(< written capacity) (io-copy-c-string (io-array-const-ptr buf))]
-        [else
-          (fs-windows-current-dir-loop
-            (fs-current-dir-next-capacity capacity written))]))))
+;: Read the current directory into an owned String.
+(define (fs-current-dir-loop [capacity : i64]) : String
+  (cfg
+    windows
+    (if (> capacity fs-current-dir-max-capacity)
+      ""
+      (let
+        [buf : (Array u8) (make-array u8 capacity)]
+        [written : i64
+          (cast
+            (fs-windows-get-current-directory
+              (cast capacity : u32)
+              (io-array-ptr buf))
+            :
+            i64)]
+        (cond
+          [(= written 0) ""]
+          [(< written capacity) (io-copy-c-string (io-array-const-ptr buf))]
+          [else
+            (fs-current-dir-loop
+              (fs-current-dir-next-capacity capacity written))])))
+    (if (> capacity fs-current-dir-max-capacity)
+      ""
+      (let
+        [buf : (Array u8) (make-array u8 capacity)]
+        [result : (Ptr u8) (fs-linux-getcwd (io-array-ptr buf) capacity)]
+        (if (ptr-null? result)
+          (let
+            [status : i64 (io-last-error-code)]
+            (if (and
+              (= status fs-status-range)
+              (< capacity fs-current-dir-max-capacity))
+              (fs-current-dir-loop (* capacity 2))
+              ""))
+          (io-copy-c-string result))))))
 
 ;: Return the host status code for retrieving the current working directory.
 (define (fs-current-dir-status) : i64
-  (cfg
-    windows
-    (fs-windows-current-dir-status-loop fs-current-dir-initial-capacity)
-    (fs-linux-current-dir-status-loop fs-current-dir-initial-capacity)))
+  (fs-current-dir-status-loop fs-current-dir-initial-capacity))
 
 ;: Return the process current directory as an owned String.
 (define (fs-current-dir) : String
-  (cfg
-    windows
-    (fs-windows-current-dir-loop fs-current-dir-initial-capacity)
-    (fs-linux-current-dir-loop fs-current-dir-initial-capacity)))
+  (fs-current-dir-loop fs-current-dir-initial-capacity))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64

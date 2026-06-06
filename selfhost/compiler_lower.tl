@@ -341,18 +341,24 @@
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
 
-(define (lower-instr-list-reverse-onto
+(define (lower-instr-list-fill-array-reversed
   [instrs : CompilerIrInstrList]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]) : unit
   (match instrs
-    [(IrInstrNil) acc]
+    [(IrInstrNil) unit]
     [(IrInstrCons head rest)
-      (lower-instr-list-reverse-onto
-        (box-get rest)
-        (compiler-ir-instr-cons head acc))]))
+      (begin
+        (array-set! slots index head)
+        (lower-instr-list-fill-array-reversed (box-get rest) slots (- index 1)))]))
 
-(define (lower-instr-list-reverse [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (lower-instr-list-reverse-onto instrs IrInstrNil))
+(define (lower-instr-seq-from-reversed-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-list-count instrs)]
+    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr count)]
+    (begin
+      (lower-instr-list-fill-array-reversed instrs slots (- count 1))
+      (CompilerIrInstrSeq slots count))))
 
 (define (lower-block-list-reverse-onto
   [blocks : CompilerIrBlockList]
@@ -3507,33 +3513,28 @@
         names
         type-cache
         mode)
-      (let
-        [block-instrs : CompilerIrInstrList
-          (lower-instr-list-reverse current-instrs)]
-        (LowerState
-          next-var
-          next-label-id
-          next-lambda
-          next-label
-          IrInstrNil
-          (compiler-ir-block-cons
-            (compiler-ir-block current-label block-instrs)
-            blocks)
-          functions
-          function
-          spans
-          names
-          type-cache
-          mode))]))
+      (LowerState
+        next-var
+        next-label-id
+        next-lambda
+        next-label
+        IrInstrNil
+        (compiler-ir-block-cons
+          (IrBlock current-label (lower-instr-seq-from-reversed-list current-instrs))
+          blocks)
+        functions
+        function
+        spans
+        names
+        type-cache
+        mode)]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
     [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
       (lower-block-list-reverse
         (compiler-ir-block-cons
-          (compiler-ir-block
-            current-label
-            (lower-instr-list-reverse current-instrs))
+          (IrBlock current-label (lower-instr-seq-from-reversed-list current-instrs))
           blocks))]))
 
 (define (lower-state-add-functions

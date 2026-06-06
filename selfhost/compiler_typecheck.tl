@@ -5407,7 +5407,7 @@
     (inspect-counter (struct-get p counter))
     (struct-get p tag)))")
 
-(define (compiler-typecheck-move-owner-projection-call-reuse-source) : String
+(define (compiler-typecheck-move-owner-projection-other-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
@@ -5417,7 +5417,7 @@
   (handle FileHandle (:owned))
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-projection-call [p : Holder]) : i64
+(define (owner-projection-other-field [p : Holder]) : i64
   (begin
     (take-handle (struct-get p handle))
     (struct-get p size)))")
@@ -5432,10 +5432,10 @@
   (handle FileHandle (:owned))
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-projection-one-shot [p : Holder]) : unit
+(define (owner-projection-one-shot [p : Holder]) : unit
   (take-handle (struct-get p handle)))")
 
-(define (compiler-typecheck-move-owner-projection-bind-reuse-source) : String
+(define (compiler-typecheck-move-owner-projection-bind-other-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
@@ -5444,9 +5444,40 @@
   (:cleanup cleanup-holder)
   (handle FileHandle (:owned))
   (size i64))
-(define (bad-owner-projection-bind [p : Holder]) : i64
+(define (owner-projection-bind-other-field [p : Holder]) : i64
   (let [h : FileHandle (struct-get p handle)]
     (struct-get p size)))")
+
+(define (compiler-typecheck-move-owner-projection-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-projection-repeat [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get p handle))
+    (take-handle (struct-get p handle))))")
+
+(define (compiler-typecheck-move-owner-projection-root-reuse-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (take-holder [h : Holder]) : unit unit)
+(define (bad-owner-projection-root-reuse [p : Holder]) : unit
+  (begin
+    (take-handle (struct-get p handle))
+    (take-holder p)))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -5573,19 +5604,26 @@
         (compiler-typecheck-move-ordinary-projection-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-projection-call-reuse-source)
-        "typecheck: cannot move owner-consuming value out of aggregate path")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-other-field-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-one-shot-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-projection-bind-other-field-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-projection-one-shot-source)
-        "typecheck: cannot move owner-consuming value out of aggregate path")
+        (compiler-typecheck-move-owner-projection-repeat-source)
+        "typecheck: use of moved value `p.handle`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-projection-bind-reuse-source)
-        "typecheck: cannot move owner-consuming value out of aggregate path")
+        (compiler-typecheck-move-owner-projection-root-reuse-source)
+        "typecheck: use of moved value `p`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

@@ -12098,10 +12098,11 @@
 ;; merge by union (a place moved on any arm is moved afterward); loops and
 ;; lambdas discard their body's moves for the post-state because they may run
 ;; zero times or be deferred. Reassigning a slot with `set!` clears its moved
-;; mark. Owner-consuming aggregate projections are rejected until precise
-;; per-path state and reinitialization land; dynamic arrays have a separate
-;; diagnostic because element ownership cannot be made sound without an index
-;; policy.
+;; mark. Owner-consuming struct fields are tracked as root.field paths so other
+;; fields remain usable. Tuple, array, box, and other aggregate projections stay
+;; rejected until their path/reinitialization policy lands; dynamic arrays have
+;; a separate diagnostic because element ownership cannot be made sound without
+;; an index policy.
 (defstruct TcMovedSet
   (map StringI64Map))
 
@@ -12140,6 +12141,73 @@
   (match (string-i64-map-remove (tc-moved-map set) name)
     [(StringI64MapRemoveOk map) (TcMovedSet map)]
     [(StringI64MapRemoveMissing map) (TcMovedSet map)]))
+
+(define (tc-move-use-message [name : String]) : String
+  (string-append (string-append "typecheck: use of moved value `" name) "`"))
+
+(define (tc-moved-partial-key [name : String]) : String
+  (string-append name ".__tl_partial"))
+
+(define (tc-moved-partial? [set : TcMovedSet] [name : String]) : bool
+  (tc-moved-contains? set (tc-moved-partial-key name)))
+
+(define (tc-move-string-prefix-at-loop
+  [text : String]
+  [prefix : String]
+  [start : i64]
+  [index : i64]
+  [prefix-len : i64]) : bool
+  (if (>= index prefix-len)
+    true
+    (if (= (string-ref text (+ start index)) (string-ref prefix index))
+      (tc-move-string-prefix-at-loop text prefix start (+ index 1) prefix-len)
+      false)))
+
+(define (tc-move-string-prefix-at?
+  [text : String]
+  [prefix : String]
+  [start : i64]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (or (< start 0) (> (+ start prefix-len) text-len))
+      false
+      (tc-move-string-prefix-at-loop text prefix start 0 prefix-len))))
+
+(define (tc-moved-remove-prefix-loop
+  [map : StringI64Map]
+  [prefix : String]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (string-i64-map-capacity map))
+    out
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key _)
+        (let
+          [next : i64 (string-i64-map-next-occupied map (+ index 1))]
+          [out2 : TcMovedSet
+            (if (tc-move-string-prefix-at? key prefix 0)
+              (tc-moved-remove out key)
+              out)]
+          (tc-moved-remove-prefix-loop map prefix next out2))]
+      [(StringI64MapEntryNone)
+        (tc-moved-remove-prefix-loop
+          map
+          prefix
+          (string-i64-map-next-occupied map (+ index 1))
+          out)])))
+
+(define (tc-moved-remove-prefix [set : TcMovedSet] [prefix : String]) : TcMovedSet
+  (tc-moved-remove-prefix-loop
+    (tc-moved-map set)
+    prefix
+    (string-i64-map-next-occupied (tc-moved-map set) 0)
+    set))
+
+(define (tc-moved-remove-root-state [set : TcMovedSet] [name : String]) : TcMovedSet
+  (tc-moved-remove-prefix
+    (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
+    (string-append name ".")))
 
 (define (tc-moved-union-loop
   [a : StringI64Map]
@@ -12260,6 +12328,55 @@
     [(AstExprBoxGet _) true]
     [_ false]))
 
+(define (tc-move-path-append [base : String] [field : String]) : String
+  (string-append (string-append base ".") field))
+
+(define (tc-move-struct-field-base-path [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-struct-field-base-path inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-struct-field-base-path inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-struct-field-base-path inner))]
+    [(AstExprStructGet inner-box field)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-move-struct-field-base-path inner)
+          [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
+          [(TcNoString) (TcNoString)]))]
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
+(define (tc-move-struct-field-path [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-struct-field-path inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-struct-field-path inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-struct-field-path inner))]
+    [(AstExprStructGet _ _) (tc-move-struct-field-base-path expr)]
+    [_ (TcNoString)]))
+
+(define (tc-moved-add-struct-field
+  [moved : TcMovedSet]
+  [root : String]
+  [path : String]) : TcMovedSet
+  (tc-moved-add (tc-moved-add moved path) (tc-moved-partial-key root)))
+
 (define (tc-move-dynamic-array-element-projection?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12337,7 +12454,9 @@
   (match (tc-move-bare-var init)
     [(TcSomeString v)
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
-        (OkTcMove (tc-moved-add moved v))
+        (if (tc-moved-partial? moved v)
+          (ErrTcMove (tc-move-use-message v))
+          (OkTcMove (tc-moved-add moved v)))
         (OkTcMove moved))]
     [(TcNoString)
       (match (tc-expr ctx env init)
@@ -12345,14 +12464,27 @@
           (if (tc-type-consuming-by-value-now? ctx init-ty)
             (if (tc-move-dynamic-array-element-projection? ctx env init)
               (ErrTcMove (tc-move-dynamic-array-element-message))
-              (if (tc-move-aggregate-path-projection? init)
-                (ErrTcMove (tc-move-aggregate-path-message))
-                (match (tc-move-root-projection-var init)
-                  [(TcSomeString root)
-                    (if (tc-moved-contains? locals root)
-                      (OkTcMove (tc-moved-add moved root))
-                      (OkTcMove moved))]
-                  [(TcNoString) (OkTcMove moved)])))
+              (match (tc-move-struct-field-path init)
+                [(TcSomeString path)
+                  (match (tc-move-root-projection-var init)
+                    [(TcSomeString root)
+                      (if (tc-moved-contains? locals root)
+                        (if (tc-moved-contains? moved path)
+                          (ErrTcMove (tc-move-use-message path))
+                          (OkTcMove (tc-moved-add-struct-field moved root path)))
+                        (OkTcMove moved))]
+                    [(TcNoString) (OkTcMove moved)])]
+                [(TcNoString)
+                  (if (tc-move-aggregate-path-projection? init)
+                    (ErrTcMove (tc-move-aggregate-path-message))
+                    (match (tc-move-root-projection-var init)
+                      [(TcSomeString root)
+                        (if (tc-moved-contains? locals root)
+                          (if (tc-moved-partial? moved root)
+                            (ErrTcMove (tc-move-use-message root))
+                            (OkTcMove (tc-moved-add moved root)))
+                          (OkTcMove moved))]
+                      [(TcNoString) (OkTcMove moved)]))]))
             (OkTcMove moved))]
         [(ErrTcType _) (OkTcMove moved)])]))
 
@@ -12366,14 +12498,27 @@
   (if (tc-type-consuming-by-value-now? ctx target-ty)
     (if (tc-move-dynamic-array-element-projection? ctx env expr)
       (ErrTcMove (tc-move-dynamic-array-element-message))
-      (if (tc-move-aggregate-path-projection? expr)
-        (ErrTcMove (tc-move-aggregate-path-message))
-        (match (tc-move-root-projection-var expr)
-          [(TcSomeString root)
-            (if (tc-moved-contains? locals root)
-              (OkTcMove (tc-moved-add moved root))
-              (OkTcMove moved))]
-          [(TcNoString) (OkTcMove moved)])))
+      (match (tc-move-struct-field-path expr)
+        [(TcSomeString path)
+          (match (tc-move-root-projection-var expr)
+            [(TcSomeString root)
+              (if (tc-moved-contains? locals root)
+                (if (tc-moved-contains? moved path)
+                  (ErrTcMove (tc-move-use-message path))
+                  (OkTcMove (tc-moved-add-struct-field moved root path)))
+                (OkTcMove moved))]
+            [(TcNoString) (OkTcMove moved)])]
+        [(TcNoString)
+          (if (tc-move-aggregate-path-projection? expr)
+            (ErrTcMove (tc-move-aggregate-path-message))
+            (match (tc-move-root-projection-var expr)
+              [(TcSomeString root)
+                (if (tc-moved-contains? locals root)
+                  (if (tc-moved-partial? moved root)
+                    (ErrTcMove (tc-move-use-message root))
+                    (OkTcMove (tc-moved-add moved root)))
+                  (OkTcMove moved))]
+              [(TcNoString) (OkTcMove moved)]))]))
     (OkTcMove moved)))
 
 (define (tc-move-after-match-scrutinee
@@ -12488,7 +12633,7 @@
                           name
                           (tc-move-binding-type ctx env maybe-ty init))
                         (tc-moved-add locals name)
-                        (tc-moved-remove moved2 name)
+                        (tc-moved-remove-root-state moved2 name)
                         rest)]
                     [(ErrTcMove message) (ErrTcMoveBindings message)])]
                 [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
@@ -12542,10 +12687,7 @@
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
       (if (tc-moved-contains? moved name)
-        (ErrTcMove
-          (string-append
-            (string-append "typecheck: use of moved value `" name)
-            "`"))
+        (ErrTcMove (tc-move-use-message name))
         (OkTcMove moved))]
     [(AstExprBinary _ left-box right-box)
       (let
@@ -12696,7 +12838,8 @@
         (match (tc-move-check-expr ctx env locals moved rhs)
           [(OkTcMove moved1)
             (match (tc-move-after-bind ctx env locals moved1 rhs)
-              [(OkTcMove moved2) (OkTcMove (tc-moved-remove moved2 name))]
+              [(OkTcMove moved2)
+                (OkTcMove (tc-moved-remove-root-state moved2 name))]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprAnn inner-box _)
@@ -12768,7 +12911,15 @@
     [(AstExprStructGet inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (match (tc-move-check-expr ctx env locals moved inner)
+          [(OkTcMove moved1)
+            (match (tc-move-struct-field-path expr)
+              [(TcSomeString path)
+                (if (tc-moved-contains? moved1 path)
+                  (ErrTcMove (tc-move-use-message path))
+                  (OkTcMove moved1))]
+              [(TcNoString) (OkTcMove moved1)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprWithRegion _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
     [(AstExprWithEscape scratch-box exprs)

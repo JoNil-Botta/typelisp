@@ -3757,6 +3757,43 @@
 (comptime-decl (:generated option-family Option_String \"Bytes\")
   (defstruct Option_String (value String)))")
 
+(define (compiler-generated-option-result-family-source) : String
+  "(defstruct Payload (value i64))
+(defenum Status (StatusOk) (StatusBad i64))
+(comptime-decl (:generated stdlib/option-family Option_String (type-key (type String)))
+  (defenum Option_String
+    (None_String)
+    (Some_String String)))
+(comptime-decl (:generated stdlib/option-family Option_String (type-key (type String)))
+  (defenum Option_String
+    (None_String)
+    (Some_String String)))
+(comptime-decl (:generated stdlib/option-family option-string-some? (type-key (type String)))
+  (define (option-string-some? [value : Option_String]) : bool
+    (match value
+      [(Some_String _) true]
+      [(None_String) false])))
+(comptime-decl (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key (type String)))
+  (defenum Result_I64_String
+    (Ok_I64_String i64)
+    (Err_I64_String String)))
+(comptime-decl (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key (type String)))
+  (defenum Result_I64_String
+    (Ok_I64_String i64)
+    (Err_I64_String String)))
+(comptime-decl (:generated stdlib/result-family result-i64-string-value-or (type-key (type i64)) (type-key (type String)))
+  (define (result-i64-string-value-or [value : Result_I64_String] [fallback : i64]) : i64
+    (match value
+      [(Ok_I64_String n) n]
+      [(Err_I64_String _) fallback])))
+(comptime-decl (:generated stdlib/result-family Result_Payload_Status (type-key (type Payload)) (type-key (type Status)))
+  (defenum Result_Payload_Status
+    (Ok_Payload_Status Payload)
+    (Err_Payload_Status Status)))
+(define (main) : i64
+  (+ (if (option-string-some? (Some_String \"x\")) 1 0)
+     (result-i64-string-value-or (Ok_I64_String 41) 0)))")
+
 (define (compiler-generated-decl-expected-string-key) : String
   (gen-full-key
     ""
@@ -3889,6 +3926,45 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-generated-option-result-family-ok?) : bool
+  (match (parse-ast-source (compiler-generated-option-result-family-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram normalized)
+          (match normalized
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                [option-count : i64
+                  (compiler-specialize-decl-list-count-visible
+                    decls
+                    "Option_String")]
+                [option-helper-count : i64
+                  (compiler-specialize-decl-list-count-defs
+                    decls
+                    "option-string-some?")]
+                [result-count : i64
+                  (compiler-specialize-decl-list-count-visible
+                    decls
+                    "Result_I64_String")]
+                [result-helper-count : i64
+                  (compiler-specialize-decl-list-count-defs
+                    decls
+                    "result-i64-string-value-or")]
+                [nominal-result-count : i64
+                  (compiler-specialize-decl-list-count-visible
+                    decls
+                    "Result_Payload_Status")]
+                (and
+                  (= option-count 1)
+                  (and
+                    (= option-helper-count 1)
+                    (and
+                      (= result-count 1)
+                      (and (= result-helper-count 1) (= nominal-result-count 1))))))])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-generated-decl-cross-module-reuse-ok?) : bool
   (=
     (compiler-generated-decl-visible-count
@@ -3956,6 +4032,7 @@
     (unless
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)
       (return 0))
+    (unless (compiler-generated-option-result-family-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))

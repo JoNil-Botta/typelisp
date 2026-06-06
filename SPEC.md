@@ -4096,10 +4096,11 @@ result-returning branch:
     (panic "not recoverable")))
 ```
 
-Current implementation status: selfhost has the `(try expr)` Result-like v1 for
-the convention of a concrete enum with one `Ok*` payload variant and one `Err*`
-payload variant. Generated concrete Option/Result families and reusable helper
-bundles are tracked by #902 on top of #893/#913.
+Current implementation status: selfhost has explicit `comptime-decl` generated
+concrete Option/Result family declarations and helper `define`s through the
+generated-declaration registry. `(try expr)` supports the Result-like convention
+of a concrete enum with one `Ok*` payload variant and one `Err*` payload variant;
+Option-like `(try expr)` propagation is tracked separately by #1979.
 
 ---
 

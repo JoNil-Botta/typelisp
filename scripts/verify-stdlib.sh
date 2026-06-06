@@ -208,6 +208,7 @@ json.tl
 list.tl
 msvc.tl
 process.tl
+process_borrowed.tl
 profile.tl
 queue.tl
 random.tl
@@ -290,6 +291,8 @@ stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/borrowed_str_gate.tl|pass|-|requires-borrowed-str-capable
 stdlib/tests/io_caller_result_check.tl|pass|-|requires-borrowed-str-capable
 stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
+stdlib/tests/process_borrowed_check.tl|pass|-|requires-borrowed-str-capable
+stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
 stdlib/tests/string_caller_result_check.tl|pass|-|requires-borrowed-str-capable
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope|requires-borrowed-str-capable
 stdlib/tests/text_buf_borrowed_check.tl|pass|-|requires-borrowed-str-capable

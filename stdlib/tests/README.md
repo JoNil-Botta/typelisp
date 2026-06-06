@@ -65,6 +65,12 @@ Coverage notes:
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and async start/wait API validation.
+- `process_borrowed_check.tl` typechecks the check-only
+  `process_borrowed.tl` storage surface for borrowed executable, argv, cwd,
+  env, and stdin fields, validation diagnostics, and explicit conversion to
+  owned `ProcessCommand` before the runtime boundary. The escape fixture
+  verifies the checker rejects returning a borrowed command whose text owner is
+  shorter-lived than the declared command lifetime.
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, failed spawn, and async start/wait on Linux, plus the
   structured unsupported async result on Windows.

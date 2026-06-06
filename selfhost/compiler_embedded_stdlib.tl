@@ -29,6 +29,8 @@
 
 (include-str compiler-embedded-stdlib-process "stdlib/process.tl")
 
+(include-str compiler-embedded-stdlib-process-borrowed "stdlib/process_borrowed.tl")
+
 (include-str compiler-embedded-stdlib-profile "stdlib/profile.tl")
 
 (include-str compiler-embedded-stdlib-queue "stdlib/queue.tl")
@@ -86,6 +88,10 @@
 (include-str compiler-embedded-stdlib-tests-msvc-api "stdlib/tests/msvc_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
+
+(include-str compiler-embedded-stdlib-tests-process-borrowed-check "stdlib/tests/process_borrowed_check.tl")
+
+(include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
 
@@ -153,6 +159,9 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)]
     [(string-eq suffix "process.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process)]
+    [(string-eq suffix "process_borrowed.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-process-borrowed)]
     [(string-eq suffix "profile.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-profile)]
     [(string-eq suffix "queue.tl")
@@ -227,6 +236,12 @@
     [(string-eq suffix "tests/process_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-process-api)]
+    [(string-eq suffix "tests/process_borrowed_check.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-process-borrowed-check)]
+    [(string-eq suffix "tests/process_borrowed_escape.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-process-borrowed-escape)]
     [(string-eq suffix "tests/process_runtime.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-process-runtime)]

@@ -876,6 +876,7 @@
     [(IrInstrEntryEnvp dst) (opt-invalidate-def env dst instr)]
     [(IrInstrCpuId dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrXgetbv dst _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSyscall dst _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
@@ -941,6 +942,7 @@
     [(IrInstrEntryEnvp dst) (opt-invalidate-def env dst instr)]
     [(IrInstrCpuId dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrXgetbv dst _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSyscall dst _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
@@ -1080,6 +1082,7 @@
     [(IrInstrCpuId _ leaf subleaf _)
       (opt-collect-value-uses (opt-collect-value-uses set leaf) subleaf)]
     [(IrInstrXgetbv _ index) (opt-collect-value-uses set index)]
+    [(IrInstrSyscall _ args) (opt-collect-call-args-uses set args)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
     [(IrInstrReturn maybe)
       (match maybe
@@ -1335,6 +1338,7 @@
         (opt-collect-value-uses-array items leaf)
         (opt-collect-value-uses-array items subleaf))]
     [(IrInstrXgetbv _ index) (opt-collect-value-uses-array items index)]
+    [(IrInstrSyscall _ args) (opt-collect-call-args-uses-array items args)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses-array items cond)]
     [(IrInstrReturn maybe)
       (match maybe
@@ -1653,6 +1657,8 @@
         (opt-aggregate-value-has-pointer? base ptrs leaf)
         (opt-aggregate-value-has-pointer? base ptrs subleaf))]
     [(IrInstrXgetbv _ index) (opt-aggregate-value-has-pointer? base ptrs index)]
+    [(IrInstrSyscall _ args)
+      (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrCall _ _ args _)
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrTailCall _ args _)
@@ -2250,6 +2256,8 @@
     [(IrInstrCpuId dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrXgetbv dst _) (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrSyscall dst _)
+      (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrCall dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrCallIndirect dst _ _ _)
@@ -3010,6 +3018,11 @@
       (match b
         [(IrInstrXgetbv bd bindex) (and (= ad bd) (opt-value-eq aindex bindex))]
         [_ false])]
+    [(IrInstrSyscall ad aargs)
+      (match b
+        [(IrInstrSyscall bd bargs)
+          (and (= ad bd) (opt-call-args-eq aargs bargs))]
+        [_ false])]
     [(IrInstrCall ad aname aargs aty)
       (match b
         [(IrInstrCall bd bname bargs bty)
@@ -3343,6 +3356,7 @@
     [(IrInstrXgetbv dst _)
       (OptCseResult (opt-expr-invalidate-var (OptExprNil) dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
+    [(IrInstrSyscall _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCallIndirect _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -3517,6 +3531,8 @@
         (opt-copy-resolve env subleaf)
         reg-index)]
     [(IrInstrXgetbv dst index) (IrInstrXgetbv dst (opt-copy-resolve env index))]
+    [(IrInstrSyscall dst args)
+      (IrInstrSyscall dst (opt-copy-subst-call-args env args))]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrCallIndirect dst func args ty)
@@ -3586,6 +3602,7 @@
     [(IrInstrEntryEnvp dst) (opt-copy-invalidate-var env dst)]
     [(IrInstrCpuId dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrXgetbv dst _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSyscall dst _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
@@ -3698,6 +3715,7 @@
     [(IrInstrEntryEnvp dst) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCpuId _ _ _ _) (OptBoundsNil)]
     [(IrInstrXgetbv _ _) (OptBoundsNil)]
+    [(IrInstrSyscall _ _) (OptBoundsNil)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
     [(IrInstrCallIndirect _ _ _ _) (OptBoundsNil)]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
@@ -4275,6 +4293,7 @@
     [(IrInstrEntryEnvp dst) (OptSomeI64 dst)]
     [(IrInstrCpuId dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrXgetbv dst _) (OptSomeI64 dst)]
+    [(IrInstrSyscall dst _) (OptSomeI64 dst)]
     [(IrInstrCall dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrPhi dst _ _) (OptSomeI64 dst)]
     [_ (OptNoI64)]))
@@ -4638,6 +4657,8 @@
         (opt-verify-value-use defs doms subleaf block-label pos))]
     [(IrInstrXgetbv _ index)
       (opt-verify-value-use defs doms index block-label pos)]
+    [(IrInstrSyscall _ args)
+      (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrCall _ _ args _)
       (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrCallIndirect _ func args _)
@@ -5170,6 +5191,10 @@
       (IrInstrXgetbv
         dst
         (opt-global-copy-resolve facts doms block-label pos index))]
+    [(IrInstrSyscall dst args)
+      (IrInstrSyscall
+        dst
+        (opt-global-copy-subst-call-args facts doms block-label pos args))]
     [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
     [(IrInstrVectorReduce _ _ _ _ _) instr]
     [(IrInstrVectorCompare _ _ _ _ _ _) instr]
@@ -6265,6 +6290,7 @@
     [(IrInstrPredicatedStore _ _ _ _ _ _) true]
     [(IrInstrCpuId _ _ _ _) true]
     [(IrInstrXgetbv _ _) true]
+    [(IrInstrSyscall _ _) true]
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
@@ -7030,6 +7056,8 @@
     [(IrInstrCpuId dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrXgetbv dst _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrSyscall dst _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrLaneId dst _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrSplat dst _ _ _)
@@ -7286,6 +7314,8 @@
         reg-index)]
     [(IrInstrXgetbv dst index)
       (IrInstrXgetbv dst (opt-sccp-rewrite-value env index))]
+    [(IrInstrSyscall dst args)
+      (IrInstrSyscall dst (opt-sccp-rewrite-call-args env args))]
     [(IrInstrBranch cond true-label false-label)
       (let
         [rewritten-cond : CompilerIrValue (opt-sccp-rewrite-value env cond)]
@@ -7513,6 +7543,7 @@
     [(IrInstrEntryEnvp dst) dst]
     [(IrInstrCpuId dst _ _ _) dst]
     [(IrInstrXgetbv dst _) dst]
+    [(IrInstrSyscall dst _) dst]
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
     [(IrInstrPhi dst _ _) dst]
@@ -8622,6 +8653,7 @@
     [(IrInstrCpuId _ leaf subleaf _)
       (opt-reach-value index (opt-reach-value index state leaf) subleaf)]
     [(IrInstrXgetbv _ idx) (opt-reach-value index state idx)]
+    [(IrInstrSyscall _ args) (opt-reach-call-args index state args)]
     [(IrInstrCall _ name args _)
       (opt-reach-add-function index (opt-reach-call-args index state args) name)]
     [(IrInstrCallIndirect _ func args _)
@@ -8928,6 +8960,11 @@
         (compiler-source-spans-value-key function dst)
         span)]
     [(IrInstrXgetbv dst _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrSyscall dst _)
       (opt-remap-spans-prepend-entry
         spans
         (compiler-source-spans-value-key function dst)

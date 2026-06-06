@@ -2886,9 +2886,25 @@
       (compiler-backend-instr-contains?
         (IrInstrXgetbv 0 (IrValueI64 0))
         "    xgetbv\n"))
-    (compiler-backend-instr-contains?
-      (IrInstrXgetbv 0 (IrValueI64 0))
-      "    orq %rdx, %rax\n")))
+    (and
+      (compiler-backend-instr-contains?
+        (IrInstrXgetbv 0 (IrValueI64 0))
+        "    orq %rdx, %rax\n")
+      (backend-and4
+        ;; A one-operand syscall loads the number into %rax and issues `syscall`.
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
+          "    syscall\n")
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
+          "    popq %rax\n")
+        ;; A two-operand syscall additionally loads argument 0 into %rdi.
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 42)))
+          "    popq %rdi\n")
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 42)))
+          "    popq %rax\n")))))
 
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
   (backend-and8

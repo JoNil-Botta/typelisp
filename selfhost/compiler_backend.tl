@@ -6440,6 +6440,90 @@
               (AstTyI64)))))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
+;; Linux syscall argument register for operand position: 0=number, 1..6=args.
+(define (compiler-backend-syscall-reg [pos : i64]) : String
+  (cond
+    [(= pos 0) "%rax"]
+    [(= pos 1) "%rdi"]
+    [(= pos 2) "%rsi"]
+    [(= pos 3) "%rdx"]
+    [(= pos 4) "%r10"]
+    [(= pos 5) "%r8"]
+    [(= pos 6) "%r9"]
+    [else "%rax"]))
+
+;; Load each operand into %rax and push it, so the operand registers are filled
+;; only in the pop phase below — this avoids any hazard where loading one operand
+;; clobbers a register still holding an unloaded operand.
+(define (compiler-backend-emit-syscall-pushes
+  [assignments : CompilerRegAssignmentList]
+  [args : CompilerIrCallArgs]
+  [index : i64]
+  [count : i64]) : ResultCompilerBackend
+  (if (>= index count)
+    (OkCompilerBackend "")
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      (compiler-backend-call-arg-at args index)
+      "%rax")
+      [(OkCompilerBackend load-asm)
+        (match (compiler-backend-emit-syscall-pushes
+          assignments
+          args
+          (+ index 1)
+          count)
+          [(OkCompilerBackend rest-asm)
+            (OkCompilerBackend
+              (string-append
+                load-asm
+                (string-append "    pushq %rax\n" rest-asm)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+;; Pop operands off the stack (top is the last-pushed, highest index) into their
+;; syscall registers, highest position first down to %rax (the syscall number).
+(define (compiler-backend-emit-syscall-pops [index : i64]) : String
+  (if (< index 0)
+    ""
+    (string-append
+      (string-append
+        "    popq "
+        (string-append (compiler-backend-syscall-reg index) "\n"))
+      (compiler-backend-emit-syscall-pops (- index 1)))))
+
+;; `syscall` clobbers %rcx and %r11, but the register allocator only homes values
+;; in callee-saved registers (%rbx, %r12-%r15) or rbp-relative stack slots, so no
+;; live value can be lost; the raw kernel result lands in %rax -> dst. The raw
+;; `syscall` instruction and its register ABI are Linux x86_64 only; emitting it
+;; for any other target would silently miscompile, so reject it instead.
+(define (compiler-backend-emit-syscall
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [args : CompilerIrCallArgs]) : ResultCompilerBackend
+  (if (compiler-backend-target-windows? target)
+    (ErrCompilerBackend
+      (compiler-diagnostic-at-start
+        ""
+        "backend: syscall is only supported on the linux-x86_64 target"))
+    (let
+      [count : i64 (compiler-backend-call-args-count args)]
+      (match (compiler-backend-emit-syscall-pushes assignments args 0 count)
+        [(OkCompilerBackend push-asm)
+          (OkCompilerBackend
+            (string-append
+              push-asm
+              (string-append
+                (compiler-backend-emit-syscall-pops (- count 1))
+                (string-append
+                  "    syscall\n"
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    (AstTyI64))))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
   [function : String]
@@ -6675,6 +6759,8 @@
         (compiler-backend-emit-cpuid assignments dst leaf subleaf reg-index)]
       [(IrInstrXgetbv dst index)
         (compiler-backend-emit-xgetbv assignments dst index)]
+      [(IrInstrSyscall dst args)
+        (compiler-backend-emit-syscall target assignments dst args)]
       [(IrInstrCall dst name args ty)
         (let
           [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
@@ -7019,6 +7105,8 @@
         (compiler-backend-count-value-use counts leaf)
         (compiler-backend-count-value-use counts subleaf))]
     [(IrInstrXgetbv _ index) (compiler-backend-count-value-use counts index)]
+    [(IrInstrSyscall _ args)
+      (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrCall _ _ args _)
       (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
@@ -10175,6 +10263,8 @@
         subleaf)]
     [(IrInstrXgetbv _ index)
       (compiler-backend-collect-value-collections collections index)]
+    [(IrInstrSyscall _ args)
+      (compiler-backend-collect-call-args-collections collections args)]
     [_ collections]))
 
 (define (compiler-backend-collect-instr-seq-collections

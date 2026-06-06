@@ -549,7 +549,8 @@
     [(AstExprCpuIdEbx _ _) "cpuid-ebx"]
     [(AstExprCpuIdEcx _ _) "cpuid-ecx"]
     [(AstExprCpuIdEdx _ _) "cpuid-edx"]
-    [(AstExprXgetbv _) "xgetbv"]))
+    [(AstExprXgetbv _) "xgetbv"]
+    [(AstExprSyscall _) "syscall"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value
@@ -3581,6 +3582,11 @@
               (AstTyExpr)
               index-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (ctfe-quote-expr-list args env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted-args args-fuel)
+          (OkCtfeQuoteExpr (ast-expr-syscall quoted-args) (AstTyExpr) args-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprUnquote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -4469,6 +4475,10 @@
               [b-index : AstExpr (box-get b-index-box)]
               (ctfe-expr-eq a-index b-index))]
           [_ false]))]
+    [(AstExprSyscall a-args)
+      (match b
+        [(AstExprSyscall b-args) (ctfe-expr-list-eq a-args b-args)]
+        [_ false])]
     [(AstExprSpanned a-inner-box _)
       (let
         [a-inner : AstExpr (box-get a-inner-box)]

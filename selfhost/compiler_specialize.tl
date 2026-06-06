@@ -1996,6 +1996,11 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-xgetbv rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (spec-rewrite-expr-list args templates state)
+        [(OkSpecExprList rewritten-args args-state)
+          (OkSpecExpr (ast-expr-syscall rewritten-args) args-state)]
+        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -2500,6 +2505,11 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (spec-substitute-values-expr-list args subs)
+        [(OkSpecSubExprList rewritten-args)
+          (OkSpecSubExpr (ast-expr-syscall rewritten-args))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -3091,6 +3101,11 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSyscall args)
+      (match (spec-substitute-types-expr-list args subs)
+        [(OkSpecSubExprList rewritten-args)
+          (OkSpecSubExpr (ast-expr-syscall rewritten-args))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]

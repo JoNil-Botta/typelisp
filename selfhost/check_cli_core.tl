@@ -12,8 +12,8 @@
 (import "package_source_core.tl")
 
 (defenum SelfhostCheckConfig
-  (SelfhostCheckFileConfig String CompilerLoadRootList)
-  (SelfhostCheckPackageConfig String bool CompilerLoadRootList))
+  (SelfhostCheckFileConfig String StringVec)
+  (SelfhostCheckPackageConfig String bool StringVec))
 
 (defenum ResultSelfhostCheckConfig
   (OkSelfhostCheckConfig SelfhostCheckConfig)
@@ -22,23 +22,12 @@
 (define (selfhost-check-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (selfhost-check-root-list-append
-  [roots : CompilerLoadRootList]
-  [root : String]) : CompilerLoadRootList
-  (match roots
-    [(CompilerLoadRootNil)
-      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
-    [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons
-        head
-        (box (selfhost-check-root-list-append (box-get rest) root)))]))
-
 (define (selfhost-check-config-finish
   [input-path : String]
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultSelfhostCheckConfig
+  [stdlib-roots : StringVec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
       (ErrSelfhostCheckConfig
@@ -54,7 +43,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : ResultSelfhostCheckConfig
+  [stdlib-roots : StringVec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
@@ -76,7 +65,7 @@
               has-input
               manifest-path
               has-manifest
-              (selfhost-check-root-list-append stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
         [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrSelfhostCheckConfig
@@ -111,11 +100,9 @@
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args start count "" false "" false CompilerLoadRootNil))
+  (selfhost-check-parse-args start count "" false "" false (string-vec-new)))
 
-(define (selfhost-check-file
-  [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+(define (selfhost-check-file [input-path : String] [stdlib-roots : StringVec]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
     [(OkCompilerCheck _)
       (begin
@@ -128,7 +115,7 @@
 
 (define (selfhost-check-package-source
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (match (compiler-check-package-file-with-roots
@@ -146,7 +133,7 @@
 
 (define (selfhost-check-package-sources
   [sources : StringList]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (match sources
@@ -166,7 +153,7 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : StringVec]) : i64
   (match (package-source-discover manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin

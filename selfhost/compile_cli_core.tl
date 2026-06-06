@@ -29,7 +29,7 @@
     bool
     bool
     CompilerBackendTarget
-    CompilerLoadRootList
+    StringVec
     SymI64Env
     CompilerBackendMode
     i64))
@@ -40,12 +40,12 @@
 
 (defenum CompileCliAction
   (CompileCliRun CompileCliConfig)
-  (CompileCliCheck String CompilerLoadRootList)
+  (CompileCliCheck String StringVec)
   (CompileCliHelp)
   (CompileCliError String))
 
 (defenum ResultCompileCliCheckConfig
-  (OkCompileCliCheckConfig String CompilerLoadRootList)
+  (OkCompileCliCheckConfig String StringVec)
   (ErrCompileCliCheckConfig String))
 
 (defenum ResultCompileCliTarget
@@ -135,17 +135,6 @@
           value
           "'. Expected scalar, avx2, or avx512"))]))
 
-(define (compile-cli-root-list-append
-  [roots : CompilerLoadRootList]
-  [root : String]) : CompilerLoadRootList
-  (match roots
-    [(CompilerLoadRootNil)
-      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
-    [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons
-        head
-        (box (compile-cli-root-list-append (box-get rest) root)))]))
-
 (define (compile-cli-parse-options
   [idx : i64]
   [count : i64]
@@ -154,7 +143,7 @@
   [has-output : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [cfgs : SymI64Env]
   [emit-ir : bool]
   [has-opt-level : bool]
@@ -207,7 +196,7 @@
               has-output
               has-target
               target
-              (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
               cfgs
               emit-ir
               has-opt-level
@@ -335,7 +324,7 @@
           false
           false
           (BackendTargetLinux)
-          CompilerLoadRootNil
+          (string-vec-new)
           (compiler-cfg-empty)
           false
           false
@@ -349,7 +338,7 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : ResultCompileCliCheckConfig
+  [stdlib-roots : StringVec]) : ResultCompileCliCheckConfig
   (if (>= idx count)
     (OkCompileCliCheckConfig input-path stdlib-roots)
     (let
@@ -361,7 +350,7 @@
             (+ idx 2)
             count
             input-path
-            (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))))
+            (string-vec-push stdlib-roots (arg (+ idx 1)))))
         (begin
           (print-error (string-append "Warning: unknown flag: " current))
           (compile-cli-check-parse-options
@@ -380,7 +369,7 @@
       (+ input-idx 1)
       count
       (arg input-idx)
-      CompilerLoadRootNil)))
+      (string-vec-new))))
 
 (define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
   (compile-cli-check-config-from

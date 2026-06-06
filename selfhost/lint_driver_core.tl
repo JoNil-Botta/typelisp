@@ -21,8 +21,8 @@
   (SelfhostLintPathCons String (Box SelfhostLintPathList)))
 
 (defenum SelfhostLintConfig
-  (SelfhostLintFileConfig SelfhostLintPathList CompilerLoadRootList bool)
-  (SelfhostLintPackageConfig String bool CompilerLoadRootList bool))
+  (SelfhostLintFileConfig SelfhostLintPathList StringVec bool)
+  (SelfhostLintPackageConfig String bool StringVec bool))
 
 (defenum ResultSelfhostLintConfig
   (OkSelfhostLintConfig SelfhostLintConfig)
@@ -30,17 +30,6 @@
 
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
-
-(define (selfhost-lint-root-list-append
-  [roots : CompilerLoadRootList]
-  [root : String]) : CompilerLoadRootList
-  (match roots
-    [(CompilerLoadRootNil)
-      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
-    [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons
-        head
-        (box (selfhost-lint-root-list-append (box-get rest) root)))]))
 
 (define (selfhost-lint-path-list-empty? [paths : SelfhostLintPathList]) : bool
   (match paths
@@ -68,7 +57,7 @@
   [input-paths : SelfhostLintPathList]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [enforcing : bool]) : ResultSelfhostLintConfig
   (if (selfhost-lint-path-list-empty? input-paths)
     (OkSelfhostLintConfig
@@ -89,7 +78,7 @@
   [input-paths : SelfhostLintPathList]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [enforcing : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
     (selfhost-lint-config-finish
@@ -120,7 +109,7 @@
               input-paths
               manifest-path
               has-manifest
-              (selfhost-lint-root-list-append stdlib-roots (arg (+ idx 1)))
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
               enforcing))]
         [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
@@ -157,7 +146,7 @@
     SelfhostLintPathNil
     ""
     false
-    CompilerLoadRootNil
+    (string-vec-new)
     false))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
@@ -334,7 +323,7 @@
 (define (selfhost-lint-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : CompilerLoadRootList]) : LintFindingList
+  [stdlib-roots : StringVec]) : LintFindingList
   (match (parse-ast-source-diagnostic path source)
     [(OkAstProgramDiagnostic program)
       (selfhost-lint-program-findings source program)]
@@ -352,7 +341,7 @@
 
 (define (selfhost-lint-file
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [enforcing : bool]) : i64
   (let
     [source : String (read-file input-path)]
@@ -379,7 +368,7 @@
 
 (define (selfhost-lint-files
   [input-paths : SelfhostLintPathList]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [enforcing : bool]
   [print-headers : bool]
   [status : i64]) : i64
@@ -405,7 +394,7 @@
 
 (define (selfhost-lint-package-files
   [input-paths : StringList]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [enforcing : bool]
   [print-headers : bool]
   [status : i64]) : i64
@@ -432,7 +421,7 @@
 (define (selfhost-lint-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : CompilerLoadRootList]
+  [stdlib-roots : StringVec]
   [enforcing : bool]) : i64
   (match (package-source-discover-for "lint" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
@@ -615,7 +604,7 @@
     (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
-      CompilerLoadRootNil)))
+      (string-vec-new))))
 
 ;; The reported ladder finding has depth 5, a stable rule id, and a real source
 ;; line.
@@ -677,22 +666,22 @@
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
-        CompilerLoadRootNil)]
+        (string-vec-new))]
     [return-reported : LintFindingList
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
-        CompilerLoadRootNil)]
+        (string-vec-new))]
     [unit-reported : LintFindingList
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
-        CompilerLoadRootNil)]
+        (string-vec-new))]
     [unit-set-reported : LintFindingList
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
-        CompilerLoadRootNil)]
+        (string-vec-new))]
     (cond
       ;; one reported finding, carrying the rule id / depth / span
       [(not (= (lint-finding-list-count reported) 1)) 1]
@@ -747,7 +736,7 @@
             (selfhost-lint-source-with-roots
               "lint_driver_self_test.tl"
               (selfhost-lint-nested-let-source)
-              CompilerLoadRootNil)))
+              (string-vec-new))))
         9]
       ;; inner let shadowing an outer binding is not semantics-preserving to
       ;; suggest, so it remains clean.

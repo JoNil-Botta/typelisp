@@ -8103,7 +8103,9 @@
     [(IrInstrUnOp dst _ _ _) (>= dst np)]
     [(IrInstrCall dst _ _ _) (>= dst np)]
     [(IrInstrCallIndirect dst _ _ _) (>= dst np)]
-    [(IrInstrBoundsCheck _ _ _) true]
+    ;; IrInstrBoundsCheck carries a backend label in its String field; copying it
+    ;; into a call site duplicates that label (assembler "symbol already defined"),
+    ;; so callees containing one are not inlinable.
     [(IrInstrStorePtr _ _ _) true]
     [_ false]))
 

@@ -3581,8 +3581,7 @@
               (compiler-backend-no-public-runtime-symbol?
                 asm
                 "tl_fs_current_dir")
-              (not
-                (compiler-backend-string-contains? asm "    movq $79, %rax\n"))
+              (compiler-backend-string-contains? asm "getcwd:\n")
               (not
                 (compiler-backend-string-contains?
                   asm

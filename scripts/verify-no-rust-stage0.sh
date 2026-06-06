@@ -90,9 +90,27 @@ export PATH
 run_gate() {
     label=$1
     shift
+    start=$(date +%s)
+    case $- in
+        *e*) had_errexit=1 ;;
+        *) had_errexit=0 ;;
+    esac
     echo
-    echo "[no-rust-stage0] $label"
+    echo "[no-rust-stage0] START $label"
+    set +e
     "$@"
+    status=$?
+    if [ "$had_errexit" -eq 1 ]; then
+        set -e
+    fi
+    end=$(date +%s)
+    elapsed=$((end - start))
+    if [ "$status" -eq 0 ]; then
+        echo "[no-rust-stage0] PASS $label (${elapsed}s)"
+    else
+        echo "[no-rust-stage0] FAIL $label (${elapsed}s, exit $status)" >&2
+    fi
+    return "$status"
 }
 
 stage1_driver_staged_symbols() {

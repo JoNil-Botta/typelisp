@@ -2,17 +2,11 @@
 
 (import "stdlib/hashmap.tl")
 
-(comptime-decls
-  (:generated stdlib/hashmap-family (type-key (type i64)) (type-key
+(comptime-decl
+  (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key
     (type String)) "stdlib/hashmap/i64-key-v1")
-  (defenum I64StringFixtureMapSlot
-    (I64StringFixtureMapEmpty)
-    (I64StringFixtureMapOccupied i64 String i64))
-  (defstruct I64StringFixtureMap
-    (slots (Array I64StringFixtureMapSlot))
-    (len i64))
-  (define (i64-string-fixture-map-len [map : I64StringFixtureMap]) : i64
-    (struct-get map len)))
+  (defstruct I64StringMap
+    (__hashmap_family_request i64)))
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -231,25 +225,24 @@
       (hashmap-i64-key-descriptor-key)
       "stdlib/hashmap/i64-key-v1"
       "i64 key descriptor identity")
-    ;; --- hashmap-family bundle request fixture beyond shipped families ---
+    ;; --- hashmap-family marker request fixture beyond shipped families ---
     (let
-      [fixture-slots : (Array I64StringFixtureMapSlot)
-        (make-array I64StringFixtureMapSlot 1)]
+      [fixture0 : I64StringMap (i64-string-map-with-capacity 2)]
+      [fixture1 : I64StringMap (i64-string-map-put fixture0 7 "seven")]
       (begin
-        (array-set! fixture-slots 0 (I64StringFixtureMapOccupied 7 "seven" 7))
-        (let
-          [fixture : I64StringFixtureMap (I64StringFixtureMap fixture-slots 1)]
-          (begin
-            (assert-i64-eq
-              (i64-string-fixture-map-len fixture)
-              1
-              "i64->String fixture generated len helper")
-            (assert-i64-eq
-              (match (array-ref fixture-slots 0)
-                [(I64StringFixtureMapOccupied _ value _) (string-length value)]
-                [(I64StringFixtureMapEmpty) 0])
-              5
-              "i64->String fixture stores String value")))))
+        (assert-i64-eq
+          (i64-string-map-len fixture1)
+          1
+          "i64->String fixture generated len helper")
+        (assert-owned-string-eq
+          (match (i64-string-map-get fixture1 7)
+            [(I64StringMapFound value) value]
+            [(I64StringMapMissing) "missing"])
+          "seven"
+          "i64->String fixture generated get helper")
+        (assert-false
+          (i64-string-map-contains? fixture1 9)
+          "i64->String fixture generated contains helper")))
     ;; --- bucket-index math + wraparound ---
     (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 % 4")
     (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 % 4")

@@ -1063,11 +1063,9 @@
     [e5 : TcTypeEnv
       (tc-bind e4 "string->int" (tc-fn1 (AstTyString) (AstTyI64)))]
     [e6 : TcTypeEnv
-      (tc-bind e5 "int->string" (tc-fn1 (AstTyI64) (AstTyString)))]
-    [e7 : TcTypeEnv
       (tc-bind
         (tc-bind
-          e6
+          e5
           "cpuid"
           (tc-fn2
             (AstTyI64)
@@ -1082,27 +1080,7 @@
                     (ast-type-cons (AstTyI32) (AstTypeNil))))))))
         "xgetbv"
         (tc-fn1 (AstTyI64) (AstTyI64)))]
-    [e8 : TcTypeEnv
-      (tc-bind
-        e7
-        "substring"
-        (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))]
-    [e9 : TcTypeEnv
-      (tc-bind
-        e8
-        "string-slice"
-        (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))]
-    [e10 : TcTypeEnv
-      (tc-bind
-        e9
-        "string-append"
-        (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))]
-    [e11 : TcTypeEnv
-      (tc-bind
-        e10
-        "string-concat"
-        (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))]
-    (tc-bind e11 (tc-default-boundary-name) (AstTyUnit))))
+    (tc-bind e6 (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -5271,10 +5249,6 @@
     [(string-eq name "string-eq") true]
     [(string-eq name "string=?") true]
     [(string-eq name "string->int") true]
-    [(string-eq name "substring") true]
-    [(string-eq name "string-slice") true]
-    [(string-eq name "string-append") true]
-    [(string-eq name "string-concat") true]
     [else false]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
@@ -6197,10 +6171,6 @@
     [(string-eq name "string-eq") true]
     [(string-eq name "string=?") true]
     [(string-eq name "string->int") true]
-    [(string-eq name "substring") true]
-    [(string-eq name "string-slice") true]
-    [(string-eq name "string-append") true]
-    [(string-eq name "string-concat") true]
     [else false]))
 
 (define (tc-borrowed-string-builtin-call
@@ -6213,10 +6183,6 @@
       (tc-two-string-handle-builtin-call ctx env args (AstTyBool))]
     [(string-eq name "string->int")
       (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
-    [(or (string-eq name "substring") (string-eq name "string-slice"))
-      (tc-string-i64-i64-builtin-call ctx env args (AstTyString))]
-    [(or (string-eq name "string-append") (string-eq name "string-concat"))
-      (tc-two-string-handle-builtin-call ctx env args (AstTyString))]
     [else (ErrTcType "typecheck: unknown borrowed string builtin")]))
 
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a

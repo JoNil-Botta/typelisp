@@ -11,6 +11,8 @@
 ; as output/exit mismatches here.
 (import "stdlib/arena.tl")
 
+(import "stdlib/string.tl")
+
 (extern tl_alloc : (-> u64 u64))
 
 (defenum StressList

@@ -1,3 +1,5 @@
+(import "stdlib/string.tl")
+
 (define (main) : i64
   (with-arena
     r

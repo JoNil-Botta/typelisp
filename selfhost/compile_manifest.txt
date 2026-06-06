@@ -72,8 +72,9 @@ contains|_tl_maybe_score:
 contains|_tl_result_score:
 contains|tl_string_eq:
 contains|call tl_string_eq
-contains|tl_string_concat:
-contains|call tl_string_concat
+contains|string_append_borrowed
+not-contains|tl_string_concat:
+not-contains|call tl_string_concat
 contains|call tl_alloc
 end
 

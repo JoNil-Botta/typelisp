@@ -1,11 +1,16 @@
+(import "stdlib/string.tl")
+
 (extern tl_region_mark : (-> u64))
 
 (define (scoped-once [n : i64]) : i64
   (with-arena
     scratch
     (let
-      [left : String (string-append "arena:" (int->string n))]
-      [right : String (string-append left ":tail")]
+      [prefix : String "arena:"]
+      [suffix : String (int->string n)]
+      [left : String (string-append-borrowed (& prefix) (& suffix))]
+      [tail : String ":tail"]
+      [right : String (string-append-borrowed (& left) (& tail))]
       (string-length right))))
 
 (define (scoped-loop [n : i64] [acc : i64]) : i64

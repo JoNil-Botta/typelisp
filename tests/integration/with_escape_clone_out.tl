@@ -1,5 +1,7 @@
 (import "stdlib/arena.tl")
 
+(import "stdlib/string.tl")
+
 (defstruct EscapeBundle
   (name String)
   (items (Array String))

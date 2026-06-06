@@ -1,5 +1,7 @@
 ;: SPEC safe-code contract: in-bounds collection access, checked aggregate
 ;: construction, race-free SPMD, and valid comptime values have defined results.
+(import "stdlib/string.tl")
+
 (defstruct Point
   (x i64)
   (y i64))

@@ -626,10 +626,12 @@ assert_contains "$err" "type value i64 is compile-time only"
 assert_not_contains "$err" "backend:"
 
 cat > "$CLI_MATRIX/region-builtin-escape.tl" <<'EOF'
+(import "stdlib/string.tl")
+
 (define (main) : String
   (with-arena r (int->string 41)))
 EOF
-run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl"
+run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
@@ -1045,17 +1047,19 @@ EOF
 
     CTOR_SOURCE="$SELFHOST_PLANNER_DIR/with space/ctor file.tl"
     cat > "$CTOR_SOURCE" <<'EOF'
+(import "stdlib/string.tl")
+
 (extern ffi_ctor_value : (-> i64))
 (define (main) : i64
   (if (string-eq (int->string (ffi_ctor_value)) "42")
     (ffi_ctor_value)
     1))
 EOF
-    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
+    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
-    run_cmd public-run-link-ctor "$COMPILER" run "$CTOR_SOURCE" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
+    run_cmd public-run-link-ctor "$COMPILER" run "$CTOR_SOURCE" --target linux-x86_64 --stdlib-root "$ROOT/stdlib" --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty

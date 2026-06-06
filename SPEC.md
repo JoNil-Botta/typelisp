@@ -3121,6 +3121,8 @@ sequence; the last expression is the result. Subregions are expressed by
 nesting `with-arena` forms.
 
 ```lisp test=check name=with-arena-basic
+(import "stdlib/string.tl")
+
 (define (main) : i64
   (with-arena r
     (let
@@ -3936,6 +3938,7 @@ is:
 
 ```lisp test=check name=with-escape-example
 (import "stdlib/arena.tl")
+(import "stdlib/string.tl")
 
 (define (build-message) : String
   (let
@@ -4258,6 +4261,8 @@ names for APIs that distinguish success from an error value. Matches must be
 exhaustive; omitted variants are rejected by the type checker.
 
 ```lisp test=compile name=monomorphic-option-result
+(import "stdlib/string.tl")
+
 (defenum MaybeI64
   (NoneI64)
   (SomeI64 i64))

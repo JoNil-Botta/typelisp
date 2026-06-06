@@ -1,9 +1,11 @@
-;; string_append.tl - concatenate two Strings via the emit-on-demand,
-;; libc-free `tl_string_concat` runtime. `(string-append a b)` /
+;; string_append.tl - concatenate two Strings via stdlib/string.tl.
+;; `(string-append a b)` /
 ;; `(string-concat a b)` : (-> String String String) allocates a fresh heap
 ;; String holding `a`'s bytes followed by `b`'s bytes. This covers empty,
 ;; left-empty, right-empty, short, and long concatenations and exits 0.
 (import "stdlib/io.tl")
+
+(import "stdlib/string.tl")
 
 (define (main) : i64
   (begin

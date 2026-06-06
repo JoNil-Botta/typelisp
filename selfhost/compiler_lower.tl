@@ -6950,11 +6950,9 @@
     (not (lower-top-level-value-defined? ctx name))))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
-  (cond
-    [(string-eq name "substring") true]
-    [(string-eq name "string-slice") true]
-    [(string-eq name "string-append") true]
-    [else (string-eq name "string-concat")]))
+  (let
+    [_ : String name]
+    false))
 
 ;; First-class arena primitives (#1633). arena-mark/arena-rewind reuse the
 ;; existing region runtime (they snapshot/rewind the current arena's bump).
@@ -7587,7 +7585,6 @@
     [(string-eq name "string-eq") true]
     [(string-eq name "string=?") true]
     [(string-eq name "string->int") true]
-    [(string-eq name "int->string") true]
     [(string-eq name "env-var-exists?") true]
     [(string-eq name "env-var-value") true]
     [else (string-eq name "env-path-separator")]))
@@ -11011,8 +11008,6 @@
       (lower-string-eq-call ctx state env type-env args result-ty origin)]
     [(string-eq name "string->int")
       (lower-string-to-int-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "int->string")
-      (lower-int-to-string-call ctx state env type-env args result-ty origin)]
     [(or
         (string-eq name "env-var-exists?")
         (or
@@ -18522,6 +18517,14 @@
   unit)
 (define (print-str [text : String]) : unit
   (print-string text))
+(define (string-append [left : (& left str)] [right : (& right str)]) : String
+  \"joined\")
+(define (substring [text : (& text str)] [start : i64] [len : i64]) : String
+  (let
+    [probe : char (string-ref text start)]
+    \"slice\"))
+(define (string-concat [left : (& left str)] [right : (& right str)]) : String
+  (string-append left right))
 (define (main) : i64
   (let
     [left : String \"foo\"]
@@ -18542,7 +18545,9 @@
               (cast (char-at (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-string-concat-fusion-source) : String
-  "(define (main) : i64
+  "(define (string-append [left : String] [right : String]) : String
+  left)
+(define (main) : i64
   (let
     [three : String (string-append \"a\" (string-append \"b\" \"c\"))]
     [four : String
@@ -21731,30 +21736,30 @@
           (let
             [ok : bool true]
             (begin
-              (if (>
+              (if (=
                 (lower-test-functions-call-count functions "tl_substring")
                 0)
                 unit
                 (set! ok false))
-              (if (>
+              (if (=
                 (lower-test-functions-call-count functions "tl_string_concat")
-                1)
+                0)
                 unit
                 (set! ok false))
-              (if (>
+              (if (=
                 (lower-test-functions-call-count functions "tl_oob_abort")
                 0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "substring") 0)
+              (if (> (lower-test-functions-call-count functions "substring") 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count functions "string-append")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count functions "string-concat")
                 0)
                 unit
@@ -21787,23 +21792,35 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (= (lower-test-functions-call-count functions "tl_string_concat") 0)
-            (and
-              (=
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count functions "tl_string_concat")
+                0)
+                unit
+                (set! ok false))
+              (if (=
                 (lower-test-functions-call-count functions "tl_string_concat3")
-                1)
-              (and
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    "tl_string_concat4")
-                  1)
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    "tl_string_concat5")
-                  1))))])]
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "tl_string_concat4")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "tl_string_concat5")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-functions-call-count functions "string-append")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-print-string-stdlib-shape-ok?) : bool
@@ -22520,7 +22537,9 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-region-source) : String
-  "(define (main) : i64
+  "(define (int->string [value : i64]) : String
+  \"41\")
+(define (main) : i64
   (with-arena r
     (let
       [s : String (int->string 41)]
@@ -22548,6 +22567,7 @@
 (define (arena-mark) : i64 (tl_region_mark))
 (unsafe (define (arena-set! [arena : i64]) : unit (unsafe (tl_arena_set arena))))
 (unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
+(define (int->string [value : i64]) : String \"42\")
 "
     src))
 
@@ -23350,6 +23370,11 @@
         (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "stdin-eof?") (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "flush-stdout") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "int->string") (set! ok false))
+      (when (lower-string-runtime-builtin? "substring") (set! ok false))
+      (when (lower-string-runtime-builtin? "string-slice") (set! ok false))
+      (when (lower-string-runtime-builtin? "string-append") (set! ok false))
+      (when (lower-string-runtime-builtin? "string-concat") (set! ok false))
       ok)))
 
 (define (compiler-lower-cpu-builtin-shape-ok?) : bool

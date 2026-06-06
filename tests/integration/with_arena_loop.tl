@@ -4,6 +4,8 @@
 ; region-free scalar (a length), so the reset is safe.
 ; Tail-recursive loop: each iteration allocates a fresh String inside the region
 ; and resets it, accumulating only the (region-free) length.
+(import "stdlib/string.tl")
+
 (define (sum-lengths [n : i64] [acc : i64]) : i64
   (if (= n 0)
     acc

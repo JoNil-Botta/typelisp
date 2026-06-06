@@ -3629,6 +3629,20 @@
       (ErrCompilerBackend
         (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op"))]))
 
+;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
+;; result can be computed directly in the destination register (dst = lhs <op>
+;; rhs via "<op>q %rbx, dst"). Comparisons, div/mod and shifts are excluded (they
+;; need %rax/%rdx/%rcx) and return "".
+(define (compiler-backend-binop-direct-mnemonic [op : CompilerIrBinOp]) : String
+  (match op
+    [(IrBinAdd) "addq"]
+    [(IrBinSub) "subq"]
+    [(IrBinMul) "imulq"]
+    [(IrBinBitAnd) "andq"]
+    [(IrBinBitOr) "orq"]
+    [(IrBinBitXor) "xorq"]
+    [_ ""]))
+
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -3679,6 +3693,32 @@
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
+      [dst-home : String (compiler-backend-var-register-home assignments dst)]
+      [mnem : String (compiler-backend-binop-direct-mnemonic op)]
+      (if (if (string-eq dst-home "")
+        false
+        (if (= (compiler-backend-type-size operand-ty) 8)
+          (if (string-eq mnem "")
+            false
+            (match (compiler-backend-immediate-operand rhs)
+              [(CompilerBackendSomeImmediate _) false]
+              [(CompilerBackendNoImmediate) true]))
+          false))
+        ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
+        ;; Load rhs into %rbx FIRST: lhs goes into dst's home register, which may
+        ;; itself be rhs's home — loading lhs first would clobber rhs.
+        (match (compiler-backend-emit-load-value-with-plan assignments rhs "%rbx")
+          [(OkCompilerBackend rhs-asm)
+            (match (compiler-backend-emit-load-value-with-plan assignments lhs dst-home)
+              [(OkCompilerBackend lhs-asm)
+                (OkCompilerBackend
+                  (string-append
+                    rhs-asm
+                    (string-append
+                      lhs-asm
+                      (backend-cat5 "    " mnem " %rbx, " dst-home "\n"))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
       (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
         [(OkCompilerBackend lhs-asm)
           (match (compiler-backend-immediate-operand rhs)
@@ -3733,7 +3773,7 @@
                             "%rax"
                             ty)))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop-return
   [source-function : String]

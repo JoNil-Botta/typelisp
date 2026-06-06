@@ -5115,7 +5115,8 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-backend-instrs-need-outgoing-space? instrs)
+          (if (compiler-backend-instrs-need-outgoing-space?
+            (compiler-ir-instr-seq-to-list instrs))
             true
             (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]))
 
@@ -5148,7 +5149,9 @@
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
             (box-get rest)
-            (compiler-backend-instrs-outgoing-stack-space instrs max-space))])]))
+            (compiler-backend-instrs-outgoing-stack-space
+              (compiler-ir-instr-seq-to-list instrs)
+              max-space))])]))
 
 (define (compiler-backend-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -5569,7 +5572,7 @@
           (if (string-eq block-label target-label)
             (compiler-backend-emit-leading-phi-copies
               assignments
-              instrs
+              (compiler-ir-instr-seq-to-list instrs)
               from-label)
             (compiler-backend-emit-phi-edge-copies
               assignments
@@ -5604,7 +5607,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (compiler-backend-instr-list-return-count instrs)
+            (compiler-backend-instr-list-return-count
+              (compiler-ir-instr-seq-to-list instrs))
             (compiler-backend-block-list-return-count (box-get rest)))])]))
 
 (define (compiler-backend-use-shared-return?
@@ -5789,7 +5793,7 @@
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
               blocks
-              instrs
+              (compiler-ir-instr-seq-to-list instrs)
               from-label
               assignments
               vars
@@ -5871,7 +5875,7 @@
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
               blocks
-              instrs
+              (compiler-ir-instr-seq-to-list instrs)
               from-label
               assignments
               vars
@@ -6584,7 +6588,9 @@
       (match block
         [(IrBlock _ instrs)
           (begin
-            (compiler-backend-count-instr-list-uses counts instrs)
+            (compiler-backend-count-instr-list-uses
+              counts
+              (compiler-ir-instr-seq-to-list instrs))
             (compiler-backend-count-block-uses counts (box-get rest)))])]))
 
 (define (compiler-backend-function-use-counts
@@ -8490,7 +8496,7 @@
         blocks
         label
         fallthrough
-        instrs
+        (compiler-ir-instr-seq-to-list instrs)
         assignments
         vars
         types
@@ -9076,7 +9082,7 @@
     (AstTyI64)
     1
     (compiler-ir-block-cons
-      (IrBlock
+      (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
           (IrInstrReturn (IrSomeValue (IrValueI64 0)))
@@ -9632,7 +9638,9 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-collections
-            (compiler-backend-collect-instr-list-collections collections instrs)
+            (compiler-backend-collect-instr-list-collections
+              collections
+              (compiler-ir-instr-seq-to-list instrs))
             (box-get rest))])]))
 
 (define (compiler-backend-collect-function-collections
@@ -9993,7 +10001,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-calls? instrs name)
+          (if (compiler-backend-instr-list-calls?
+            (compiler-ir-instr-seq-to-list instrs)
+            name)
             true
             (compiler-backend-block-list-calls? (box-get rest) name))])]))
 
@@ -10065,7 +10075,8 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-needs-div-abort? instrs)
+          (if (compiler-backend-instr-list-needs-div-abort?
+            (compiler-ir-instr-seq-to-list instrs))
             true
             (compiler-backend-block-list-needs-div-abort? (box-get rest)))])]))
 
@@ -10076,7 +10087,8 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-needs-shift-abort? instrs)
+          (if (compiler-backend-instr-list-needs-shift-abort?
+            (compiler-ir-instr-seq-to-list instrs))
             true
             (compiler-backend-block-list-needs-shift-abort? (box-get rest)))])]))
 
@@ -10229,7 +10241,9 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-runtime-index-blocks
-            (compiler-backend-runtime-index-instrs index instrs)
+            (compiler-backend-runtime-index-instrs
+              index
+              (compiler-ir-instr-seq-to-list instrs))
             (box-get rest))])]))
 
 (define (compiler-backend-runtime-index-functions
@@ -19870,7 +19884,7 @@ tl_windows_sdk_registry_install:
         (AstTyI64)
         4
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
               (IrInstrCall
@@ -20174,7 +20188,7 @@ tl_windows_sdk_registry_install:
         (AstTyI64)
         0
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
@@ -20187,7 +20201,7 @@ tl_windows_sdk_registry_install:
           (AstTyI64)
           1
           (compiler-ir-block-cons
-            (IrBlock
+            (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
                 (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
@@ -20223,7 +20237,7 @@ tl_windows_sdk_registry_install:
         (AstTyI64)
         0
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
@@ -20236,7 +20250,7 @@ tl_windows_sdk_registry_install:
           (AstTyI64)
           2
           (compiler-ir-block-cons
-            (IrBlock
+            (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
                 (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
@@ -20296,7 +20310,7 @@ tl_windows_sdk_registry_install:
         (AstTyI64)
         0
         (compiler-ir-block-cons
-          (IrBlock
+          (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
@@ -20309,7 +20323,7 @@ tl_windows_sdk_registry_install:
           (AstTyI64)
           1
           (compiler-ir-block-cons
-            (IrBlock
+            (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
                 (IrInstrCall 0 "lib.tl::helper" (IrCallArgsNil) (AstTyI64))

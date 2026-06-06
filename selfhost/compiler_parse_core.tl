@@ -4065,7 +4065,7 @@
                   (spanned-sexpr-form (box-get ty)))
                   [(OkAstType parsed-ty)
                     (OkAstExternParts
-                      (AstExternMetadata abi symbol link-inputs)
+                      (AstExternMetadata abi symbol link-inputs seen-abi)
                       parsed-ty)]
                   [(ErrAstType message) (ErrAstExternParts message)])]
               [_ (ErrAstExternParts "parse: malformed extern")])]

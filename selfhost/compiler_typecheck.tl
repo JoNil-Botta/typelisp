@@ -2548,9 +2548,8 @@
     (compiler-typecheck-raw-pointer-render-ok?)))
 
 (define (compiler-typecheck-extern-abi-source) : String
-  "(defenum ResultI64 (OkI64 i64))
-(defstruct Box (value i64))
-(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
+  "(defstruct Box (value i64))
+(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\") : (-> (Ptr i64) (-> i64 i64) i64))
 (extern foreign-box (:abi c) (:symbol \"foreign_box\") : (-> Box unit))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String
@@ -2561,6 +2560,22 @@
 
 (define (compiler-typecheck-extern-abi-f32-source) : String
   "(extern bad (:abi c) (:symbol \"bad_f32\") : (-> f32 i64))")
+
+(define (compiler-typecheck-extern-abi-enum-param-source) : String
+  "(defenum ResultI64 (OkI64 i64))
+(extern bad (:abi c) (:symbol \"bad_enum_param\") : (-> ResultI64 i64))")
+
+(define (compiler-typecheck-extern-abi-enum-return-source) : String
+  "(defenum ResultI64 (OkI64 i64))
+(extern bad (:abi c) (:symbol \"bad_enum_return\") : (-> i64 ResultI64))")
+
+(define (compiler-typecheck-extern-abi-enum-args-param-source) : String
+  "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
+(extern bad (:abi c) (:symbol \"bad_enum_args_param\") : (-> (RefOption n) i64))")
+
+(define (compiler-typecheck-extern-abi-enum-args-return-source) : String
+  "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
+(extern bad (:abi c) (:symbol \"bad_enum_args_return\") : (-> i64 (RefOption n)))")
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and
@@ -2573,9 +2588,25 @@
         (compiler-typecheck-error-ok?
           (compiler-typecheck-extern-abi-array-source)
           "typecheck: extern ABI c does not support parameter type (Array i64 2)")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-extern-abi-f32-source)
-          "typecheck: extern ABI c does not support parameter type f32")))))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-extern-abi-f32-source)
+            "typecheck: extern ABI c does not support parameter type f32")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-extern-abi-enum-param-source)
+              "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-extern-abi-enum-return-source)
+                "typecheck: extern ABI c does not support enum aggregate return type ResultI64")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-extern-abi-enum-args-param-source)
+                  "typecheck: extern ABI c does not support enum aggregate parameter type (RefOption n)")
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-extern-abi-enum-args-return-source)
+                  "typecheck: extern ABI c does not support enum aggregate return type (RefOption n)")))))))))
 
 (define (compiler-typecheck-reference-local-source) : String
   "(define (take [r : (& n i64)]) : unit unit)

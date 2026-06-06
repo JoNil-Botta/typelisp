@@ -12034,6 +12034,12 @@
     [(AstExprSyscall args) (tc-syscall-expr ctx env args)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
+(define (tc-extern-abi-enum-aggregate-type? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ false]))
+
 (define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
     [(AstTyI64) true]
@@ -12054,16 +12060,20 @@
     [(AstTyMutPtr _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
-    [(AstTyEnum _) true]
-    [(AstTyEnumArgs _ _) true]
+    [(AstTyEnum _) false]
+    [(AstTyEnumArgs _ _) false]
     [(AstTyStruct _) true]
     [(AstTyStructArgs _ _) true]
     [_ false]))
 
 (define (tc-extern-abi-unsupported-message [position : String] [ty : AstType]) : String
-  (string-append
-    "typecheck: extern ABI c does not support "
-    (string-append position (string-append " type " (tc-type-render ty)))))
+  (if (tc-extern-abi-enum-aggregate-type? ty)
+    (string-append
+      "typecheck: extern ABI c does not support enum aggregate "
+      (string-append position (string-append " type " (tc-type-render ty))))
+    (string-append
+      "typecheck: extern ABI c does not support "
+      (string-append position (string-append " type " (tc-type-render ty))))))
 
 (define (tc-check-extern-arg-abi [args : AstTypeList]) : ResultTcUnit
   (match args
@@ -12102,8 +12112,8 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata abi _ _)
-      (if (ast-extern-abi-c? abi)
+    [(AstExternMetadata abi _ _ explicit-abi)
+      (if (and explicit-abi (ast-extern-abi-c? abi))
         (let
           [resolved : AstType (tc-resolve-type ctx ty)]
           (match (tc-check-extern-c-abi resolved)
@@ -12114,7 +12124,7 @@
                   resolved)
                 OkTcUnit)]
             [(ErrTcUnit message) (ErrTcUnit message)]))
-        (ErrTcUnit "typecheck: unsupported extern ABI"))]))
+        OkTcUnit)]))
 
 (define (tc-summary-add-decl
   [summary : CompilerTypecheckSummary]

@@ -157,7 +157,7 @@
   (AstFnExport String))
 
 (defenum AstExternMetadata
-  (AstExternMetadata AstExternAbi String AstExternLinkInputList))
+  (AstExternMetadata AstExternAbi String AstExternLinkInputList bool))
 
 (defenum AstStructCleanup
   (AstStructNoCleanup)
@@ -915,19 +915,23 @@
           (ast-extern-link-input-list-append rest item)))]))
 
 (define (ast-extern-default-metadata [name : String]) : AstExternMetadata
-  (AstExternMetadata (AstExternAbiC) name AstExternLinkInputNil))
+  (AstExternMetadata (AstExternAbiC) name AstExternLinkInputNil false))
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
   (match metadata
-    [(AstExternMetadata _ symbol _) symbol]))
+    [(AstExternMetadata _ symbol _ _) symbol]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
   (match metadata
-    [(AstExternMetadata abi _ _) abi]))
+    [(AstExternMetadata abi _ _ _) abi]))
 
 (define (ast-extern-metadata-link-inputs [metadata : AstExternMetadata]) : AstExternLinkInputList
   (match metadata
-    [(AstExternMetadata _ _ link-inputs) link-inputs]))
+    [(AstExternMetadata _ _ link-inputs _) link-inputs]))
+
+(define (ast-extern-metadata-explicit-abi? [metadata : AstExternMetadata]) : bool
+  (match metadata
+    [(AstExternMetadata _ _ _ explicit-abi) explicit-abi]))
 
 (define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
   (match cleanup

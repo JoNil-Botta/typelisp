@@ -1322,7 +1322,9 @@
   (match items
     [(TcStringNil) AstLifetimeNil]
     [(TcStringCons item rest)
-      (ast-lifetime-cons item (tc-string-list-to-lifetime-list (box-get rest)))]))
+      (ast-lifetime-cons
+        item
+        (tc-string-list-to-lifetime-list (box-get rest)))]))
 
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : String]) : TcMaybeString
   (match subst

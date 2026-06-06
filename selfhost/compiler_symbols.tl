@@ -835,6 +835,23 @@
   [index : i64]) : ResultCompilerSymbols
   (compiler-symbols-add-decl-in-module symbols "" decl index))
 
+(define (compiler-symbols-generated-meta-suffix [meta : AstGeneratedDeclMeta]) : String
+  (match meta
+    [(AstSomeGeneratedDeclMeta generator item _ key)
+      (if (> (string-length key) 0)
+        (string-append " (generated identity: " (string-append key ")"))
+        (string-append
+          " (generated declaration: "
+          (string-append
+            item
+            (string-append " from " (string-append generator ")")))))]
+    [(AstNoGeneratedDeclMeta) ""]))
+
+(define (compiler-symbols-with-generated-context
+  [message : String]
+  [meta : AstGeneratedDeclMeta]) : String
+  (string-append message (compiler-symbols-generated-meta-suffix meta)))
+
 (define (compiler-symbols-add-decl-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -936,10 +953,18 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (compiler-symbols-add-decl-in-module symbols module inner index))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (compiler-symbols-add-decl-in-module symbols module template index))]))
+        (match (compiler-symbols-add-decl-in-module
+          symbols
+          module
+          template
+          index)
+          [(OkCompilerSymbols next) (OkCompilerSymbols next)]
+          [(ErrCompilerSymbols message)
+            (ErrCompilerSymbols
+              (compiler-symbols-with-generated-context message meta))]))]))
 
 (define (compiler-symbols-add-local-value-in-module
   [symbols : CompilerSymbols]
@@ -1114,14 +1139,18 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (compiler-symbols-add-local-decl-in-module symbols module inner index))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (compiler-symbols-add-local-decl-in-module
+        (match (compiler-symbols-add-local-decl-in-module
           symbols
           module
           template
-          index))]))
+          index)
+          [(OkCompilerSymbols next) (OkCompilerSymbols next)]
+          [(ErrCompilerSymbols message)
+            (ErrCompilerSymbols
+              (compiler-symbols-with-generated-context message meta))]))]))
 
 (define (compiler-symbols-add-variant-value-aliases
   [symbols : CompilerSymbols]

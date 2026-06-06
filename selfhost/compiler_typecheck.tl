@@ -600,6 +600,41 @@
   (defstruct Point (x i64)))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-generated-decl-bad-source) : String
+  "(comptime-decl (:generated bad-family bad-generated \"i64\")
+  (define (bad-generated) : i64 true))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-generated-key
+  [generator : String]
+  [item : String]
+  [arg : String]) : String
+  (gen-full-key "" generator item (string-append (spec-string-key arg) "_none")))
+
+(define (compiler-typecheck-generated-note-ok?) : bool
+  (match (typecheck-compiler-source
+    (compiler-typecheck-generated-decl-bad-source))
+    [(OkCompilerTypecheck _) false]
+    [(ErrCompilerTypecheck diag)
+      (match (compiler-diagnostic-notes diag)
+        [(CompilerDiagnosticNoteCons identity-note rest)
+          (and
+            (string-eq
+              identity-note
+              (string-append
+                "generated identity: "
+                (compiler-typecheck-generated-key
+                  "bad-family"
+                  "bad-generated"
+                  "i64")))
+            (match (box-get rest)
+              [(CompilerDiagnosticNoteCons context-note _)
+                (string-eq
+                  context-note
+                  "generated declaration: bad-generated from bad-family")]
+              [(CompilerDiagnosticNoteNil) false]))]
+        [(CompilerDiagnosticNoteNil) false])]))
+
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (main [m : Maybe]) : i64
@@ -1545,7 +1580,14 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-generated-decl-duplicate-visible-source)
-        "symbols: duplicate type declaration Point")
+        (string-append
+          "symbols: duplicate type declaration Point (generated identity: "
+          (string-append
+            (compiler-typecheck-generated-key "point-family" "Point" "right")
+            ")")))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-note-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

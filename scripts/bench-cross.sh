@@ -2,9 +2,9 @@
 set -eu
 
 # bench-cross.sh - cross-level self-compile benchmark for the register-allocation
-# design. Today's opt levels: opt2 = cheap stack-only (the fast self-compile
-# path); opt3 = full optimizer + scalar register allocation (the high-quality
-# "ship" build). (Owner plan: rename opt2->opt1, opt3->opt2.)
+# design. Opt levels: opt1 = cheap stack-only (the fast self-compile path); opt2
+# = full optimizer + scalar register allocation + inlining (the high-quality
+# "ship" build).
 #
 # Three checks, matching the owner's design:
 #   1. CHEAP FIXPOINT  - cheap-built stage2 compiling at the cheap level is
@@ -26,8 +26,8 @@ native_link_detect_host
 configure_toolchain
 
 REPS=${BENCH_REPS:-5}
-CHEAP=${CHEAP:-2}
-QUALITY=${QUALITY:-3}
+CHEAP=${CHEAP:-1}
+QUALITY=${QUALITY:-2}
 W="$ROOT/target/bench-cross"
 SEED="$ROOT/target/stage0/typelisp$NL_BIN_EXT"
 rm -rf "$W"; mkdir -p "$W"

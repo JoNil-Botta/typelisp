@@ -279,7 +279,7 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase "optimize"))
-          (compiler-backend-set-scalar-registers! (>= opt-level 3))
+          (compiler-backend-set-scalar-registers! (>= opt-level 2))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (match (if has-target
             (compiler-backend-emit-program-target-with-mode-and-crt
@@ -327,7 +327,7 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase "optimize"))
-          (compiler-backend-set-scalar-registers! (>= opt-level 3))
+          (compiler-backend-set-scalar-registers! (>= opt-level 2))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (match (if has-target
             (compiler-backend-emit-program-target-with-mode-buffer

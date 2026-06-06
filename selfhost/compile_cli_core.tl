@@ -2,7 +2,7 @@
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--target <target>]
-;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]
+;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...]`,
 ;; plus `check <file.tl> [--stdlib-root <dir>...]`.
 ;; Bootstrap scripts call the retained `compile.tl` driver with the same
@@ -62,7 +62,7 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...] [--cfg <name>...]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))

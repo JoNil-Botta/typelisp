@@ -199,13 +199,13 @@
   compiler-optimize-level-default)
 
 (define (compiler-optimize-level-valid? [level : i64]) : bool
-  (and (>= level 0) (<= level 3)))
+  (and (>= level 0) (<= level 2)))
 
 (define (compiler-optimize-parse-level [value : String]) : ResultCompilerOptimizeLevel
   (if (= (string-length value) 1)
     (let
       [c : char (string-ref value 0)]
-      (if (or (= c #0') (or (= c #1') (or (= c #2') (= c #3'))))
+      (if (or (= c #0') (or (= c #1') (= c #2')))
         (OkCompilerOptimizeLevel (string->int value))
         (ErrCompilerOptimizeLevel)))
     (ErrCompilerOptimizeLevel)))
@@ -7903,11 +7903,15 @@
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
   (optimize-function-fixed func (optimize-function-max-iterations)))
 
+;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
+;; path), 2 = the full optimizer + scalar register allocation + inlining (the
+;; quality "ship" build). The old four-level scheme (with a redundant -fast level
+;; between 0 and the cheap level) was collapsed: old level 2 became level 1 and
+;; old level 3 became level 2.
 (define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
   (cond
     [(= level 0) func]
-    [(= level 1) (optimize-function-once-fast func)]
-    [(= level 2) (optimize-function-once-level2 func)]
+    [(= level 1) (optimize-function-once-level2 func)]
     [else (optimize-function func)]))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
@@ -8415,11 +8419,11 @@
         (opt-inline-function-list (box-get rest) index))]))
 
 ;; Inline small single-block leaf callees across the whole program. Only at opt
-;; level 3 (the register-allocated quality build).
+;; level 2 (the register-allocated quality build).
 (define (opt-inline-program-functions
   [functions : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
-  (if (< level 3)
+  (if (< level 2)
     functions
     (opt-inline-function-list functions (opt-function-index-build functions))))
 
@@ -8726,16 +8730,9 @@
     [(IrProgram globals functions externs)
       (if (= level 0)
         program
-        (if (= level 1)
-          (begin
-            (cfg compile-profile (compiler-opt-profile-start))
-            (let
-              [optimized-functions : CompilerIrFunctionList
-                (optimize-function-list-with-level functions level)]
-              (begin
-                (cfg compile-profile (compiler-opt-profile-finish "functions"))
-                (IrProgram globals optimized-functions externs))))
-          (begin
+        ;; Levels 1 (cheap) and 2 (quality) both prune unreachable functions;
+        ;; inlining self-gates to level 2 inside opt-inline-program-functions.
+        (begin
             (cfg compile-profile (compiler-opt-profile-start))
             (let
               [reachable-functions : CompilerIrFunctionList
@@ -8762,7 +8759,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-finish "post_prune"))
-                        (IrProgram globals final-functions externs))))))))))]))
+                        (IrProgram globals final-functions externs)))))))))]))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -10910,7 +10907,7 @@
         (and
           (compiler-optimize-level-valid? 2)
           (and
-            (compiler-optimize-level-valid? 3)
+            (not (compiler-optimize-level-valid? 3))
             (and
               (not (compiler-optimize-level-valid? (- 0 1)))
               (and
@@ -10922,7 +10919,7 @@
                     (and
                       (opt-level-parse-ok? "2" 2)
                       (and
-                        (opt-level-parse-ok? "3" 3)
+                        (opt-level-parse-err? "3")
                         (and
                           (opt-level-parse-err? "")
                           (and
@@ -10935,34 +10932,31 @@
     [level0 : CompilerIrProgram (optimize-program-with-level program 0)]
     [level1 : CompilerIrProgram (optimize-program-with-level program 1)]
     [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
-    [level3 : CompilerIrProgram (optimize-program-with-level program 3)]
     [defaulted : CompilerIrProgram (optimize-program program)]
     [fixed-program : CompilerIrProgram
       (opt-test-program (opt-fixed-point-instrs))]
+    [level1-fixed : CompilerIrProgram
+      (optimize-program-with-level fixed-program 1)]
     [level2-fixed : CompilerIrProgram
       (optimize-program-with-level fixed-program 2)]
-    [level3-fixed : CompilerIrProgram
-      (optimize-program-with-level fixed-program 3)]
     [level0-instrs : CompilerIrInstrList (opt-program-first-instrs level0)]
     [level1-instrs : CompilerIrInstrList (opt-program-first-instrs level1)]
     [level2-instrs : CompilerIrInstrList (opt-program-first-instrs level2)]
-    [level3-instrs : CompilerIrInstrList (opt-program-first-instrs level3)]
+    [level1-fixed-instrs : CompilerIrInstrList
+      (opt-program-first-instrs level1-fixed)]
     [level2-fixed-instrs : CompilerIrInstrList
       (opt-program-first-instrs level2-fixed)]
-    [level3-fixed-instrs : CompilerIrInstrList
-      (opt-program-first-instrs level3-fixed)]
     (cond
       [(not (opt-program-eq program level0)) false]
       [(not (= (opt-count-arith-instrs level0-instrs) 1)) false]
-      [(not (= (opt-count-arith-instrs level1-instrs) 0)) false]
+      [(not (= (compiler-ir-instr-list-count level1-instrs) 0)) false]
       [(not (= (compiler-ir-instr-list-count level2-instrs) 0)) false]
-      [(not (= (compiler-ir-instr-list-count level3-instrs) 0)) false]
       [(not (opt-program-eq level1 defaulted)) false]
-      ;; Level 2 keeps a cheaper optimized pass; level 3 keeps fixed-point cleanup.
-      [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 4)) false]
-      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 3)) false]
-      [(not (= (compiler-ir-instr-list-count level3-fixed-instrs) 3)) false]
-      [(not (= (opt-count-arith-instrs level3-fixed-instrs) 2)) false]
+      ;; Level 1 keeps a cheaper optimized pass; level 2 adds fixed-point cleanup.
+      [(not (= (compiler-ir-instr-list-count level1-fixed-instrs) 4)) false]
+      [(not (= (opt-count-arith-instrs level1-fixed-instrs) 3)) false]
+      [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 3)) false]
+      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 2)) false]
       [else true])))
 
 (define (compiler-optimize-level-self-test) : i64
@@ -11015,25 +11009,27 @@
 (define (compiler-optimize-global-dce-ok?) : bool
   (let
     [program : CompilerIrProgram (opt-global-dce-program)]
+    ;; Level 0 keeps every function; level 1 (the cheap optimized build) prunes
+    ;; functions unreachable from the roots without inlining the survivors.
+    [level0 : CompilerIrProgram (optimize-program-with-level program 0)]
     [level1 : CompilerIrProgram (optimize-program-with-level program 1)]
-    [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
     [no-main : CompilerIrProgram
-      (optimize-program-with-level (opt-global-dce-no-main-program) 2)]
+      (optimize-program-with-level (opt-global-dce-no-main-program) 1)]
+    [level0-functions : CompilerIrFunctionList (opt-program-functions level0)]
     [level1-functions : CompilerIrFunctionList (opt-program-functions level1)]
-    [level2-functions : CompilerIrFunctionList (opt-program-functions level2)]
     [no-main-functions : CompilerIrFunctionList (opt-program-functions no-main)]
     (and
-      (= (compiler-ir-function-list-count level1-functions) 4)
+      (= (compiler-ir-function-list-count level0-functions) 4)
       (and
-        (= (compiler-ir-function-list-count level2-functions) 3)
+        (= (compiler-ir-function-list-count level1-functions) 3)
         (and
-          (opt-function-list-defines? level2-functions "main")
+          (opt-function-list-defines? level1-functions "main")
           (and
-            (opt-function-list-defines? level2-functions "helper")
+            (opt-function-list-defines? level1-functions "helper")
             (and
-              (opt-function-list-defines? level2-functions "callback-target")
+              (opt-function-list-defines? level1-functions "callback-target")
               (and
-                (not (opt-function-list-defines? level2-functions "dead"))
+                (not (opt-function-list-defines? level1-functions "dead"))
                 (= (compiler-ir-function-list-count no-main-functions) 2)))))))))
 
 (define (compiler-optimize-global-dce-self-test) : i64

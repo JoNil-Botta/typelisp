@@ -265,7 +265,7 @@
 ;; Whether scalar functions get full register allocation (#perf). Register
 ;; allocation makes the EMITTED binary faster but its planning + register-aware
 ;; emission cost more compile time than it saves on a single self-compile, so it
-;; is reserved for opt level 3 — the high-quality path whose extra cost the
+;; is reserved for opt level 2 — the high-quality path whose extra cost the
 ;; benchmark's 2x budget accommodates. opt levels 0-2 stay on the cheap
 ;; stack-only homing. The driver sets this from the opt level before emitting;
 ;; it is set deterministically per compile so a given opt level always produces

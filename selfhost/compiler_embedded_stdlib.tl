@@ -37,6 +37,8 @@
 
 (include-str compiler-embedded-stdlib-random "stdlib/random.tl")
 
+(include-str compiler-embedded-stdlib-runtime "stdlib/runtime.tl")
+
 (include-str compiler-embedded-stdlib-string "stdlib/string.tl")
 
 (include-str compiler-embedded-stdlib-test "stdlib/test.tl")
@@ -154,6 +156,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)]
     [(string-eq suffix "random.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
+    [(string-eq suffix "runtime.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
     [(string-eq suffix "string.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)]
     [(string-eq suffix "test.tl")

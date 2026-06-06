@@ -9173,9 +9173,30 @@
               (opt-filter-reachable-functions (box-get rest) reachable))
             (opt-filter-reachable-functions (box-get rest) reachable))])]))
 
+;; Functions exported via #2143 are lowered to a `provided` IrExtern whose name
+;; is the function's logical name. Such functions may be called only from outside
+;; TypeLisp IR (e.g. the backend-emitted bounds/division/shift checks call the
+;; runtime-prelude handlers), so seed them as roots for the function-level DCE.
+(define (opt-reach-add-provided-externs
+  [index : OptFunctionIndex]
+  [externs : CompilerIrExternList]
+  [state : OptReachState]) : OptReachState
+  (match externs
+    [(IrExternNil) state]
+    [(IrExternCons ext rest)
+      (match ext
+        [(IrExtern name _ _ _ _ provided)
+          (opt-reach-add-provided-externs
+            index
+            (box-get rest)
+            (if provided
+              (opt-reach-add-function index state name)
+              state))])]))
+
 (define (opt-prune-unreachable-functions
   [globals : CompilerIrGlobalList]
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : CompilerIrFunctionList
   (if (opt-function-list-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
@@ -9186,10 +9207,13 @@
         index
         (opt-reach-globals
           index
-          (opt-reach-add-function
+          (opt-reach-add-provided-externs
             index
-            (OptReachState reachable (OptStringNil))
-            "main")
+            externs
+            (opt-reach-add-function
+              index
+              (OptReachState reachable (OptStringNil))
+              "main"))
           globals))
         [(OptReachState reachable-out _)
           (opt-filter-reachable-functions functions reachable-out)]))
@@ -9227,7 +9251,8 @@
                     [final-functions : CompilerIrFunctionList
                       (opt-prune-unreachable-functions
                         globals
-                        optimized-functions)]
+                        optimized-functions
+                        externs)]
                     (begin
                       (cfg
                         compile-profile

@@ -2194,6 +2194,12 @@ move-only values and as copies for copyable values:
   3.10.2 and remain implementation work under #808; mutable reference captures
   remain deferred to #806.
 
+Repeated loop bodies are conservative move contexts. Moving a move-only owner
+binding that is visible before a `while` or `foreach` body is rejected because a
+later iteration could reuse the moved owner. Moving an owner created inside the
+loop body is allowed for that iteration. Body move state is not propagated after
+the loop because the loop may execute zero times.
+
 **Non-consuming use sites.** A non-consuming use may inspect a move-only value
 without moving it. In v1 these are limited to:
 

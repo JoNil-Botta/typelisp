@@ -2013,15 +2013,12 @@
   (let
     [i : i64 0]
     [n : i64 (string-length name)]
-    [found : bool false]
     (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (= (string-ref name i) #/')
-            (set! found true)
-            (set! found false))
+      (while (< i n)
+        (if (= (string-ref name i) #/')
+          (return true)
           (set! i (+ i 1))))
-      found)))
+      false)))
 
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
@@ -10501,17 +10498,13 @@
 
 (define (tc-qualified-name-last-slash [name : String]) : i64
   (let
-    [i : i64 0]
-    [n : i64 (string-length name)]
-    [last : i64 -1]
+    [i : i64 (- (string-length name) 1)]
     (begin
-      (while (< i n)
-        (begin
-          (if (= (string-ref name i) #/')
-            (set! last i)
-            (set! last last))
-          (set! i (+ i 1))))
-      last)))
+      (while (>= i 0)
+        (if (= (string-ref name i) #/')
+          (return i)
+          (set! i (- i 1))))
+      -1)))
 
 (define (tc-qualified-name-module [name : String]) : String
   (let

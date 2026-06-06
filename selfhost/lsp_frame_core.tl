@@ -608,7 +608,7 @@
   [uri : String]
   [path : String]
   [text : String]
-  [stdlib-roots : CompilerLoadRootList]) : String
+  [stdlib-roots : StringVec]) : String
   (match (compiler-check-source-with-roots path text stdlib-roots)
     [(OkCompilerCheck _)
       (begin
@@ -642,7 +642,7 @@
 (define (lsp-did-open
   [params : Json]
   [docs : LspDocumentList]
-  [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
+  [stdlib-roots : StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
     (match (json-object-get params (& key))
@@ -671,7 +671,7 @@
 (define (lsp-did-change
   [params : Json]
   [docs : LspDocumentList]
-  [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
+  [stdlib-roots : StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
     (match (json-object-get params (& key))
@@ -727,7 +727,7 @@
 (define (lsp-handle-message
   [message : Json]
   [docs : LspDocumentList]
-  [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
+  [stdlib-roots : StringVec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(OkLspJsonText method)
       (cond
@@ -773,18 +773,22 @@
             (LspContinue docs))])]
     [(MissingLspJsonText) (LspContinue docs)]))
 
-(define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : CompilerLoadRootList
-  (if (>= idx count)
-    CompilerLoadRootNil
-    (if (string-eq (arg idx) "--stdlib-root")
-      (if (< (+ idx 1) count)
-        (CompilerLoadRootCons
-          (arg (+ idx 1))
-          (box (lsp-stdlib-roots-from (+ idx 2) count)))
-        CompilerLoadRootNil)
-      (lsp-stdlib-roots-from (+ idx 1) count))))
+(define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : StringVec
+  (let
+    [i : i64 idx]
+    [roots : StringVec (string-vec-new)]
+    (begin
+      (while (< i count)
+        (if (string-eq (arg i) "--stdlib-root")
+          (if (< (+ i 1) count)
+            (begin
+              (set! roots (string-vec-push roots (arg (+ i 1))))
+              (set! i (+ i 2)))
+            (set! i count))
+          (set! i (+ i 1))))
+      roots)))
 
-(define (lsp-stdlib-roots [idx : i64]) : CompilerLoadRootList
+(define (lsp-stdlib-roots [idx : i64]) : StringVec
   (lsp-stdlib-roots-from idx (arg-count)))
 
 (define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
@@ -792,7 +796,7 @@
     [done : bool false]
     [status : i64 0]
     [docs : LspDocumentList LspDocumentNil]
-    [stdlib-roots : CompilerLoadRootList (lsp-stdlib-roots-from idx count)]
+    [stdlib-roots : StringVec (lsp-stdlib-roots-from idx count)]
     (begin
       (while (not done)
         (match (lsp-frame-read-message)

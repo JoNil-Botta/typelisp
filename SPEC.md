@@ -620,14 +620,19 @@ before ordinary runtime typechecking and lowering. A macro is not a runtime
 value and cannot be stored in variables, passed to functions, placed in fields,
 or called indirectly.
 
-Macro signatures use ordinary produced types. The operands received by the
-macro body are unevaluated code fragments of the single compiler-provided
-`Expr` type, but each operand slot in the signature states the ordinary type
-that the operand expression must produce at the call site. For example, a macro
-with type `(macro (bool bool) bool)` takes two operand expressions that must
-each typecheck as `bool` and produces an expression that must typecheck as
-`bool`. A final slot may be variadic, written `T ...`; the macro body receives
-those remaining operands as an `ExprList`.
+Macro signatures use ordinary produced types, with `Expr` as an explicit
+wildcard capture. The operands received by the macro body are unevaluated code
+fragments of the single compiler-provided `Expr` type. An operand slot with an
+ordinary type states the type that the operand expression must produce at the
+call site. For example, a macro with type `(macro (bool bool) bool)` takes two
+operand expressions that must each typecheck as `bool` and produces an
+expression that must typecheck as `bool`. A fixed slot declared `Expr` accepts
+any operand expression without checking its produced type before expansion; the
+macro receives the syntax as an `Expr`, and ordinary typechecking validates the
+expanded expression afterward. A final slot may be variadic, written `T ...`;
+the macro body receives those remaining operands as an `ExprList`. For
+`Expr ...`, the remaining operands are captured without per-operand produced
+type checks.
 
 `Expr` and `ExprList` are compile-time-only types. They are valid in macro
 bodies and explicit `(comptime ...)` helper code, but they have no runtime
@@ -672,7 +677,8 @@ post-expand typecheck as the declared result type.
 Typed expansion has three checks:
 
 1. The macro call site is checked from the macro signature before expansion.
-   Operand type errors are reported at the operand source span.
+   Ordinary operand type errors are reported at the operand source span; `Expr`
+   operands are wildcard syntax captures and skip the produced-type check.
 2. The macro body is checked as compile-time TypeLisp over `Expr`/`ExprList`.
 3. The expanded expression is checked again by the ordinary typechecker as a
    safety net; failures are compiler or macro diagnostics with expansion spans.

@@ -23,15 +23,8 @@
   (TestModeCheck))
 
 (defenum TestConfig
-  (TestFileConfig String String String CompilerLoadRootList i64 TestMode)
-  (TestPackageConfig
-    String
-    bool
-    String
-    String
-    CompilerLoadRootList
-    i64
-    TestMode))
+  (TestFileConfig String String String StringVec i64 TestMode)
+  (TestPackageConfig String bool String String StringVec i64 TestMode))
 
 (defenum ResultTestConfig
   (OkTestConfig TestConfig)
@@ -57,9 +50,6 @@
   (OkTestPackageTotals i64 i64)
   (ErrTestPackageTotals i64))
 
-(define (tltest-root-cons [root : String] [roots : CompilerLoadRootList]) : CompilerLoadRootList
-  (CompilerLoadRootCons root (box roots)))
-
 (define (tltest-unknown-target [value : String]) : String
   (source-tool-cat3 "test: unknown target " value ""))
 
@@ -82,7 +72,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]) : ResultTestConfig
   (if has-source
@@ -119,7 +109,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
   [test-mode : TestMode]) : ResultTestConfig
@@ -205,7 +195,7 @@
               has-manifest
               target
               mode
-              (tltest-root-cons (arg (+ idx 1)) roots)
+              (string-vec-push roots (arg (+ idx 1)))
               has-opt-level
               opt-level
               test-mode))]
@@ -281,7 +271,7 @@
     false
     "linux-x86_64"
     "scalar"
-    CompilerLoadRootNil
+    (string-vec-new)
     false
     (compiler-optimize-default-level)
     TestModeRun))
@@ -591,12 +581,14 @@
     (AstTyI64)
     (AstExprBegin (tltest-main-exprs tests count))))
 
-(define (tltest-reach-mark-name [names : SymI64Env] [name : String]) : SymI64Env
-  (if (sym-i64-contains names name)
+(define (tltest-reach-mark-name [names : StringI64Map] [name : String]) : StringI64Map
+  (if (string-i64-map-contains? names name)
     names
-    (sym-i64-bind names name 1)))
+    (string-i64-map-put names name 1)))
 
-(define (tltest-reach-mark-expr-list [exprs : AstExprList] [names : SymI64Env]) : SymI64Env
+(define (tltest-reach-mark-expr-list
+  [exprs : AstExprList]
+  [names : StringI64Map]) : StringI64Map
   (match exprs
     [(AstExprNil) names]
     [(AstExprCons head rest)
@@ -607,7 +599,7 @@
 
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
-  [names : SymI64Env]) : SymI64Env
+  [names : StringI64Map]) : StringI64Map
   (match bindings
     [(AstLetBindingNil) names]
     [(AstLetBindingCons binding rest)
@@ -623,7 +615,7 @@
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
-  [names : SymI64Env]) : SymI64Env
+  [names : StringI64Map]) : StringI64Map
   (match bindings
     [(AstResourceBindingNil) names]
     [(AstResourceBindingCons binding rest)
@@ -642,7 +634,7 @@
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
-  [names : SymI64Env]) : SymI64Env
+  [names : StringI64Map]) : StringI64Map
   (match arms
     [(AstMatchArmNil) names]
     [(AstMatchArmCons arm rest)
@@ -656,7 +648,7 @@
                 rest
                 (tltest-reach-mark-expr body names)))]))]))
 
-(define (tltest-reach-mark-expr [expr : AstExpr] [names : SymI64Env]) : SymI64Env
+(define (tltest-reach-mark-expr [expr : AstExpr] [names : StringI64Map]) : StringI64Map
   (match expr
     [(AstExprSpanned inner-box _)
       (let
@@ -900,7 +892,9 @@
         [index : AstExpr (box-get index-box)]
         (tltest-reach-mark-expr index names))]))
 
-(define (tltest-reach-mark-tests [tests : InlineTestList] [names : SymI64Env]) : SymI64Env
+(define (tltest-reach-mark-tests
+  [tests : InlineTestList]
+  [names : StringI64Map]) : StringI64Map
   (match tests
     [(InlineTestNil) names]
     [(InlineTestCons test rest)
@@ -910,18 +904,18 @@
             (box-get rest)
             (tltest-reach-mark-expr body names))])]))
 
-(define (tltest-reach-mark-decl [decl : AstDecl] [names : SymI64Env]) : SymI64Env
+(define (tltest-reach-mark-decl [decl : AstDecl] [names : StringI64Map]) : StringI64Map
   (match decl
     [(AstDeclDef name _ expr-box)
       (let
         [expr : AstExpr (box-get expr-box)]
-        (if (sym-i64-contains names name)
+        (if (string-i64-map-contains? names name)
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDeclDefFn name _ _ body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (if (sym-i64-contains names name)
+        (if (string-i64-map-contains? names name)
           (tltest-reach-mark-expr body names)
           names))]
     [(AstDeclDefMacro _ _ _ _) names]
@@ -931,7 +925,7 @@
         (tltest-reach-mark-decl inner names))]
     [_ names]))
 
-(define (tltest-reach-mark-decls [decls : AstDeclList] [names : SymI64Env]) : SymI64Env
+(define (tltest-reach-mark-decls [decls : AstDeclList] [names : StringI64Map]) : StringI64Map
   (match decls
     [(AstDeclNil) names]
     [(AstDeclCons decl rest)
@@ -939,25 +933,35 @@
         [rest : AstDeclList (box-get rest)]
         (tltest-reach-mark-decls rest (tltest-reach-mark-decl decl names)))]))
 
+;; Iterate the reachability marker to a fixpoint. The reachable-name set only
+;; ever grows (marking is monotonic and dedup'd), so a pass that adds no new
+;; names means we have converged and can stop. `fuel` (the decl count) stays as
+;; a safety bound, but convergence normally takes only a handful of passes -
+;; avoiding the previous unconditional O(decls^2) full-program walks.
 (define (tltest-reach-fixed
   [decls : AstDeclList]
   [fuel : i64]
-  [names : SymI64Env]) : SymI64Env
+  [names : StringI64Map]) : StringI64Map
   (if (<= fuel 0)
     names
-    (tltest-reach-fixed decls (- fuel 1) (tltest-reach-mark-decls decls names))))
+    (let
+      [before : i64 (string-i64-map-len names)]
+      [next : StringI64Map (tltest-reach-mark-decls decls names)]
+      (if (= (string-i64-map-len next) before)
+        next
+        (tltest-reach-fixed decls (- fuel 1) next)))))
 
-(define (tltest-reachable-names [decls : AstDeclList] [tests : InlineTestList]) : SymI64Env
+(define (tltest-reachable-names [decls : AstDeclList] [tests : InlineTestList]) : StringI64Map
   (tltest-reach-fixed
     decls
     (tltest-decl-list-count decls)
-    (tltest-reach-mark-tests tests (sym-i64-empty))))
+    (tltest-reach-mark-tests tests (string-i64-map-with-capacity 64))))
 
-(define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : SymI64Env]) : bool
+(define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
   (match decl
-    [(AstDeclDef name _ _) (sym-i64-contains names name)]
-    [(AstDeclDefFn name _ _ _) (sym-i64-contains names name)]
-    [(AstDeclExtern name _ _) (sym-i64-contains names name)]
+    [(AstDeclDef name _ _) (string-i64-map-contains? names name)]
+    [(AstDeclDefFn name _ _ _) (string-i64-map-contains? names name)]
+    [(AstDeclExtern name _ _) (string-i64-map-contains? names name)]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
       (let
@@ -968,7 +972,7 @@
 (define (tltest-prune-runtime-decls-in
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [names : SymI64Env]
+  [names : StringI64Map]
   [decls-rev : AstDeclList]
   [paths-rev : AstDeclPathList]) : InlineRuntimeDecls
   (match decls
@@ -1434,12 +1438,12 @@
 (define (tltest-package-run-integration-source
   [source : String]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultTestPackageTotals
+  [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (match (compiler-load-package-file-with-paths-and-roots-cfg
     source
     (sym-i64-empty)
@@ -1462,12 +1466,12 @@
 (define (tltest-package-run-source
   [source : String]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultTestPackageTotals
+  [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
     (match (compiler-load-package-file-with-paths-and-roots-cfg
       source
@@ -1496,12 +1500,12 @@
   [sources : StringList]
   [tests-prefix : String]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
   (match sources
@@ -1547,12 +1551,12 @@
 (define (tltest-package-run-integration-sources
   [sources : StringList]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
   (match sources
@@ -1585,7 +1589,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [roots : CompilerLoadRootList]
+  [roots : StringVec]
   [opt-level : i64]
   [test-mode : TestMode]) : i64
   (match (source-tool-target target)

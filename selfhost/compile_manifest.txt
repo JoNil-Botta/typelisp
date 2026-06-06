@@ -222,7 +222,8 @@ contains|_tl_compile_cli_config_from:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
-contains|_tl_compile_cli_root_list_append:
+contains|call _tl_string_vec_push
+not-contains|root_list_append
 contains|_tl_compiler_cfg_enable:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:

@@ -5,8 +5,8 @@
 ;# prefix on every step; `text-buf-render` is the single operation that
 ;# materializes an owned `String` in the active arena.
 ;#
-;# The check-only borrowed-chunk surface lives in `stdlib/text_buf_borrowed.tl`
-;# until reference-typed lowering can compile it through ordinary import paths.
+;# The borrowed-chunk companion surface lives in
+;# `stdlib/text_buf_borrowed.tl` while `TextBuf` keeps the owned chunk API.
 ;#
 ;# Usage: `(import "stdlib/text_buf.tl")`
 ;#

@@ -1544,8 +1544,44 @@
 (define (compiler-backend-frame-size [vars : i64]) : i64
   (compiler-backend-round-up-16 (* vars 8)))
 
-(define (compiler-backend-slot [var-id : i64]) : String
+;; The stack-slot operand "-N(%rbp)" for a var depends only on its id, so its
+;; text is process-global. At the cheap opt level every variable access is a
+;; stack slot, so this string is rebuilt millions of times across a self-compile;
+;; memoize the low ids (which cover essentially every function) in one table.
+(define compiler-backend-slot-cache-cap : i64
+  4096)
+
+(define compiler-backend-slot-cache : (Array String)
+  (make-array String 4096))
+
+(define compiler-backend-slot-cache-ready : bool
+  false)
+
+(define (compiler-backend-slot-build [var-id : i64]) : String
   (string-append (int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))
+
+(define (compiler-backend-slot-cache-fill! [i : i64]) : unit
+  (if (>= i compiler-backend-slot-cache-cap)
+    unit
+    (begin
+      (array-set! compiler-backend-slot-cache i (compiler-backend-slot-build i))
+      (compiler-backend-slot-cache-fill! (+ i 1)))))
+
+(define (compiler-backend-slot-cache-init!) : unit
+  (if compiler-backend-slot-cache-ready
+    unit
+    (begin
+      (compiler-backend-slot-cache-fill! 0)
+      (set! compiler-backend-slot-cache-ready true))))
+
+(define (compiler-backend-slot [var-id : i64]) : String
+  (begin
+    (compiler-backend-slot-cache-init!)
+    (if (if (>= var-id 0)
+      (< var-id compiler-backend-slot-cache-cap)
+      false)
+      (array-ref compiler-backend-slot-cache var-id)
+      (compiler-backend-slot-build var-id))))
 
 (define (compiler-backend-frame-offset [offset : i64]) : String
   (string-append (int->string offset) "(%rbp)"))

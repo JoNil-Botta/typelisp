@@ -967,33 +967,23 @@
 ;; the *whole reachable function* after CFG simplification, so a var used in
 ;; another remaining block is never dropped. DCE itself does not decide
 ;; reachability.
-(defenum OptUsedSet
-  (OptUsedNil)
-  (OptUsedCons i64 (Box OptUsedSet)))
+;; Used-var set: var ids referenced somewhere in the function. Backed by
+;; I64I64Map (stored value 1 = present) for O(1) membership; previously a linked
+;; list with O(n) contains and O(n^2) dedup'd inserts.
+(define (opt-used-contains [set : I64I64Map] [var : i64]) : bool
+  (i64-i64-map-contains? set var))
 
-(define (opt-used-contains [set : OptUsedSet] [var : i64]) : bool
-  (match set
-    [(OptUsedNil) false]
-    [(OptUsedCons id rest)
-      (let
-        [rest : OptUsedSet (box-get rest)]
-        (if (= id var)
-          true
-          (opt-used-contains rest var)))]))
+(define (opt-used-add [set : I64I64Map] [var : i64]) : I64I64Map
+  (i64-i64-map-put set var 1))
 
-(define (opt-used-add [set : OptUsedSet] [var : i64]) : OptUsedSet
-  (if (opt-used-contains set var)
-    set
-    (OptUsedCons var (box set))))
-
-(define (opt-collect-value-uses [set : OptUsedSet] [value : CompilerIrValue]) : OptUsedSet
+(define (opt-collect-value-uses [set : I64I64Map] [value : CompilerIrValue]) : I64I64Map
   (match value
     [(IrValueVar id) (opt-used-add set id)]
     [_ set]))
 
 (define (opt-collect-value-list-uses
-  [set : OptUsedSet]
-  [values : CompilerIrValueList]) : OptUsedSet
+  [set : I64I64Map]
+  [values : CompilerIrValueList]) : I64I64Map
   (match values
     [(IrValueNil) set]
     [(IrValueCons value rest)
@@ -1002,9 +992,9 @@
         (box-get rest))]))
 
 (define (opt-collect-call-args-array-uses
-  [set : OptUsedSet]
+  [set : I64I64Map]
   [values : (Array CompilerIrValue)]
-  [index : i64]) : OptUsedSet
+  [index : i64]) : I64I64Map
   (if (>= index (array-length values))
     set
     (opt-collect-call-args-array-uses
@@ -1013,8 +1003,8 @@
       (+ index 1))))
 
 (define (opt-collect-call-args-uses
-  [set : OptUsedSet]
-  [args : CompilerIrCallArgs]) : OptUsedSet
+  [set : I64I64Map]
+  [args : CompilerIrCallArgs]) : I64I64Map
   (match args
     [(IrCallArgsNil) set]
     [(IrCallArgsOne value) (opt-collect-value-uses set value)]
@@ -1023,14 +1013,14 @@
     [(IrCallArgsArray values) (opt-collect-call-args-array-uses set values 0)]))
 
 (define (opt-collect-phi-uses
-  [set : OptUsedSet]
-  [inputs : CompilerIrPhiInputList]) : OptUsedSet
+  [set : I64I64Map]
+  [inputs : CompilerIrPhiInputList]) : I64I64Map
   (match inputs
     [(IrPhiInputNil) set]
     [(IrPhiInputCons value _ rest)
       (opt-collect-phi-uses (opt-collect-value-uses set value) (box-get rest))]))
 
-(define (opt-collect-instr-uses [set : OptUsedSet] [instr : CompilerIrInstr]) : OptUsedSet
+(define (opt-collect-instr-uses [set : I64I64Map] [instr : CompilerIrInstr]) : I64I64Map
   (match instr
     [(IrInstrMov _ src _) (opt-collect-value-uses set src)]
     [(IrInstrBinOp _ _ l r _)
@@ -1100,8 +1090,8 @@
     [_ set]))
 
 (define (opt-collect-instrs-uses
-  [set : OptUsedSet]
-  [instrs : CompilerIrInstrList]) : OptUsedSet
+  [set : I64I64Map]
+  [instrs : CompilerIrInstrList]) : I64I64Map
   (match instrs
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
@@ -1110,8 +1100,8 @@
         (box-get rest))]))
 
 (define (opt-collect-blocks-uses
-  [set : OptUsedSet]
-  [blocks : CompilerIrBlockList]) : OptUsedSet
+  [set : I64I64Map]
+  [blocks : CompilerIrBlockList]) : I64I64Map
   (match blocks
     [(IrBlockNil) set]
     [(IrBlockCons block rest)
@@ -1135,7 +1125,7 @@
 
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
-(define (opt-instr-dead? [set : OptUsedSet] [instr : CompilerIrInstr]) : bool
+(define (opt-instr-dead? [set : I64I64Map] [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrBinOp dst op _ _ _)
@@ -1154,7 +1144,7 @@
     [(IrInstrTailMask dst _ _ _) (not (opt-used-contains set dst))]
     [_ false]))
 
-(define (opt-dce-instrs [set : OptUsedSet] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+(define (opt-dce-instrs [set : I64I64Map] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
@@ -1162,14 +1152,14 @@
         (opt-dce-instrs set (box-get rest))
         (compiler-ir-instr-cons instr (opt-dce-instrs set (box-get rest))))]))
 
-(define (opt-dce-block [set : OptUsedSet] [block : CompilerIrBlock]) : CompilerIrBlock
+(define (opt-dce-block [set : I64I64Map] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
       (compiler-ir-block
         label
         (opt-dce-instrs set (compiler-ir-instr-seq-to-list instrs)))]))
 
-(define (opt-dce-block-list [set : OptUsedSet] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (opt-dce-block-list [set : I64I64Map] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
@@ -4250,10 +4240,10 @@
   (OptSomeVarDef OptVarDef))
 
 (defenum OptVarSetResult
-  (OptVarSetOk OptUsedSet)
+  (OptVarSetOk I64I64Map)
   (OptVarSetErr))
 
-(define (opt-var-set-add-unique [set : OptUsedSet] [var : i64]) : OptVarSetResult
+(define (opt-var-set-add-unique [set : I64I64Map] [var : i64]) : OptVarSetResult
   (if (opt-used-contains set var)
     (OptVarSetErr)
     (OptVarSetOk (opt-used-add set var))))
@@ -4296,7 +4286,7 @@
 
 (define (opt-verify-param-def-set
   [params : CompilerIrParamList]
-  [set : OptUsedSet]) : OptVarSetResult
+  [set : I64I64Map]) : OptVarSetResult
   (match params
     [(IrParamNil) (OptVarSetOk set)]
     [(IrParamCons param rest)
@@ -4308,7 +4298,7 @@
 
 (define (opt-verify-instr-def-set
   [instrs : CompilerIrInstrList]
-  [set : OptUsedSet]) : OptVarSetResult
+  [set : I64I64Map]) : OptVarSetResult
   (match instrs
     [(IrInstrNil) (OptVarSetOk set)]
     [(IrInstrCons instr rest)
@@ -4321,7 +4311,7 @@
 
 (define (opt-verify-block-def-set
   [blocks : CompilerIrBlockList]
-  [set : OptUsedSet]) : OptVarSetResult
+  [set : I64I64Map]) : OptVarSetResult
   (match blocks
     [(IrBlockNil) (OptVarSetOk set)]
     [(IrBlockCons block rest)
@@ -4336,7 +4326,7 @@
 (define (opt-verify-single-defs?
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : bool
-  (match (opt-verify-param-def-set params (OptUsedNil))
+  (match (opt-verify-param-def-set params (i64-i64-map-with-capacity 64))
     [(OptVarSetErr) false]
     [(OptVarSetOk param-set)
       (match (opt-verify-block-def-set blocks param-set)
@@ -5798,14 +5788,14 @@
 ;; stores, calls, allocations, bounds checks, GEPs, phis, vector memory ops, and
 ;; trapping arithmetic are left in place.
 (defenum OptLicmInstrsResult
-  (OptLicmInstrsResult CompilerIrInstrList CompilerIrInstrList OptUsedSet bool))
+  (OptLicmInstrsResult CompilerIrInstrList CompilerIrInstrList I64I64Map bool))
 
 (defenum OptLicmBlocksResult
-  (OptLicmBlocksResult CompilerIrBlockList CompilerIrInstrList OptUsedSet bool))
+  (OptLicmBlocksResult CompilerIrBlockList CompilerIrInstrList I64I64Map bool))
 
 (define (opt-licm-collect-defs-instrs
   [instrs : CompilerIrInstrList]
-  [set : OptUsedSet]) : OptUsedSet
+  [set : I64I64Map]) : I64I64Map
   (match instrs
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
@@ -5817,7 +5807,7 @@
 (define (opt-licm-collect-defs-blocks
   [body : OptLabelSet]
   [blocks : CompilerIrBlockList]
-  [set : OptUsedSet]) : OptUsedSet
+  [set : I64I64Map]) : I64I64Map
   (match blocks
     [(IrBlockNil) set]
     [(IrBlockCons block rest)
@@ -5833,8 +5823,8 @@
               set))])]))
 
 (define (opt-licm-value-invariant?
-  [loop-defs : OptUsedSet]
-  [hoisted : OptUsedSet]
+  [loop-defs : I64I64Map]
+  [hoisted : I64I64Map]
   [value : CompilerIrValue]) : bool
   (match value
     [(IrValueVar var)
@@ -5844,8 +5834,8 @@
     [_ true]))
 
 (define (opt-licm-candidate?
-  [loop-defs : OptUsedSet]
-  [hoisted : OptUsedSet]
+  [loop-defs : I64I64Map]
+  [hoisted : I64I64Map]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrBinOp _ op lhs rhs _)
@@ -5858,16 +5848,16 @@
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
-  [hoisted : OptUsedSet]
-  [instr : CompilerIrInstr]) : OptUsedSet
+  [hoisted : I64I64Map]
+  [instr : CompilerIrInstr]) : I64I64Map
   (match (opt-instr-def-var instr)
     [(OptSomeI64 var) (opt-used-add hoisted var)]
     [(OptNoI64) hoisted]))
 
 (define (opt-licm-filter-instrs
-  [loop-defs : OptUsedSet]
+  [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrList]
-  [hoisted : OptUsedSet]) : OptLicmInstrsResult
+  [hoisted : I64I64Map]) : OptLicmInstrsResult
   (match instrs
     [(IrInstrNil) (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)]
     [(IrInstrCons instr rest)
@@ -5892,9 +5882,9 @@
 
 (define (opt-licm-filter-blocks
   [body : OptLabelSet]
-  [loop-defs : OptUsedSet]
+  [loop-defs : I64I64Map]
   [blocks : CompilerIrBlockList]
-  [hoisted : OptUsedSet]) : OptLicmBlocksResult
+  [hoisted : I64I64Map]) : OptLicmBlocksResult
   (match blocks
     [(IrBlockNil) (OptLicmBlocksResult (IrBlockNil) (IrInstrNil) hoisted false)]
     [(IrBlockCons block rest)
@@ -5976,9 +5966,16 @@
     [(OptSomeLoopPreheader preheader)
       (let
         [body : OptLabelSet (opt-natural-loop-body loop)]
-        [loop-defs : OptUsedSet
-          (opt-licm-collect-defs-blocks body blocks (OptUsedNil))]
-        (match (opt-licm-filter-blocks body loop-defs blocks (OptUsedNil))
+        [loop-defs : I64I64Map
+          (opt-licm-collect-defs-blocks
+            body
+            blocks
+            (i64-i64-map-with-capacity 64))]
+        (match (opt-licm-filter-blocks
+          body
+          loop-defs
+          blocks
+          (i64-i64-map-with-capacity 64))
           [(OptLicmBlocksResult filtered hoisted _ changed)
             (if changed
               (opt-licm-insert-preheader-blocks preheader hoisted filtered)
@@ -6333,7 +6330,7 @@
 
 (define (opt-induction-find-derived-instr
   [fact : OptInductionFact]
-  [loop-defs : OptUsedSet]
+  [loop-defs : I64I64Map]
   [instr : CompilerIrInstr]) : OptInductionLoopCandidate
   (match fact
     [(OptInductionFact phi-var _ _ step _)
@@ -6355,7 +6352,10 @@
             [(IrValueVar offset-var)
               (if (and
                 (= offset-var phi-var)
-                (opt-licm-value-invariant? loop-defs (OptUsedNil) base))
+                (opt-licm-value-invariant?
+                  loop-defs
+                  (i64-i64-map-with-capacity 64)
+                  base))
                 (OptSomeInductionLoopCandidate
                   fact
                   (OptInductionDerivedGep base ty))
@@ -6365,7 +6365,7 @@
 
 (define (opt-induction-find-derived-instrs
   [fact : OptInductionFact]
-  [loop-defs : OptUsedSet]
+  [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrList]) : OptInductionLoopCandidate
   (match instrs
     [(IrInstrNil) (OptNoInductionLoopCandidate)]
@@ -6379,7 +6379,7 @@
 (define (opt-induction-find-derived-blocks
   [fact : OptInductionFact]
   [body : OptLabelSet]
-  [loop-defs : OptUsedSet]
+  [loop-defs : I64I64Map]
   [blocks : CompilerIrBlockList]) : OptInductionLoopCandidate
   (match blocks
     [(IrBlockNil) (OptNoInductionLoopCandidate)]
@@ -6602,8 +6602,11 @@
           (match (opt-induction-find-fact blocks loop preheader)
             [(OptSomeInductionFact fact)
               (let
-                [loop-defs : OptUsedSet
-                  (opt-licm-collect-defs-blocks body blocks (OptUsedNil))]
+                [loop-defs : I64I64Map
+                  (opt-licm-collect-defs-blocks
+                    body
+                    blocks
+                    (i64-i64-map-with-capacity 64))]
                 (match (opt-induction-find-derived-blocks
                   fact
                   body
@@ -7438,10 +7441,11 @@
 ;; Phi inputs belong to predecessor edges and are never rewritten. Sibling
 ;; expressions never global-CSE because a join block is not strictly dominated by
 ;; either arm.
-(defenum OptGvnDefs
-  (OptGvnDefsNil)
-  (OptGvnDefsCons i64 (Box OptGvnDefs)))
-
+;; GVN value-source multiset: maps each def-site var id to how many times it is
+;; defined (parameter seed + instruction destinations). A var is reusable across
+;; dominance only when its count is exactly 1. Backed by I64I64Map for O(1)
+;; membership; previously a linked list scanned O(n) per query inside the
+;; per-instruction build and rewrite loops (O(n^2) per GVN pass).
 (defenum OptGvnEntry
   (OptGvnEntry OptExprKey i64 String))
 
@@ -7451,24 +7455,23 @@
 
 ;; Number of times `var` appears as a definition site (instruction destination
 ;; or seeded parameter) in the collected value-source list.
-(define (opt-gvn-count [sources : OptGvnDefs] [var : i64]) : i64
-  (match sources
-    [(OptGvnDefsNil) 0]
-    [(OptGvnDefsCons id rest)
-      (let
-        [rest : OptGvnDefs (box-get rest)]
-        (if (= id var)
-          (+ 1 (opt-gvn-count rest var))
-          (opt-gvn-count rest var)))]))
+(define (opt-gvn-count [sources : I64I64Map] [var : i64]) : i64
+  (match (i64-i64-map-get sources var)
+    [(I64I64MapFound n) n]
+    [(I64I64MapMissing) 0]))
+
+;; Record one more definition of `var` in the value-source multiset.
+(define (opt-gvn-defs-add [sources : I64I64Map] [var : i64]) : I64I64Map
+  (i64-i64-map-put sources var (+ 1 (opt-gvn-count sources var))))
 
 ;; A var is reusable across dominance only when it has exactly one value source.
-(define (opt-gvn-stable-var? [sources : OptGvnDefs] [var : i64]) : bool
+(define (opt-gvn-stable-var? [sources : I64I64Map] [var : i64]) : bool
   (= (opt-gvn-count sources var) 1))
 
 ;; Operand values that hold a single unchanging value: literals and single-source
 ;; vars. Globals, global addresses, function references, and float/string
 ;; literals are excluded to match the existing copy-propagation conservatism.
-(define (opt-gvn-value-stable? [sources : OptGvnDefs] [value : CompilerIrValue]) : bool
+(define (opt-gvn-value-stable? [sources : I64I64Map] [value : CompilerIrValue]) : bool
   (match value
     [(IrValueVar id) (opt-gvn-stable-var? sources id)]
     [(IrValueI64 _) true]
@@ -7525,17 +7528,17 @@
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
-  [acc : OptGvnDefs]) : OptGvnDefs
+  [acc : I64I64Map]) : I64I64Map
   (match params
     [(IrParamNil) acc]
     [(IrParamCons param rest)
       (match param
         [(IrParam _ _ id)
-          (opt-gvn-sources-params (box-get rest) (OptGvnDefsCons id (box acc)))])]))
+          (opt-gvn-sources-params (box-get rest) (opt-gvn-defs-add acc id))])]))
 
 (define (opt-gvn-sources-instrs
   [instrs : CompilerIrInstrList]
-  [acc : OptGvnDefs]) : OptGvnDefs
+  [acc : I64I64Map]) : I64I64Map
   (match instrs
     [(IrInstrNil) acc]
     [(IrInstrCons instr rest)
@@ -7545,11 +7548,11 @@
           (box-get rest)
           (if (= dst (- 0 1))
             acc
-            (OptGvnDefsCons dst (box acc)))))]))
+            (opt-gvn-defs-add acc dst))))]))
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
-  [acc : OptGvnDefs]) : OptGvnDefs
+  [acc : I64I64Map]) : I64I64Map
   (match blocks
     [(IrBlockNil) acc]
     [(IrBlockCons block rest)
@@ -7564,7 +7567,7 @@
 (define (opt-gvn-record
   [instr : CompilerIrInstr]
   [label : String]
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [acc : OptGvnMap]) : OptGvnMap
   (match instr
     [(IrInstrBinOp dst op l r _)
@@ -7584,7 +7587,7 @@
     [_ acc]))
 
 (define (opt-gvn-build-map-instrs
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [label : String]
   [instrs : CompilerIrInstrList]
   [acc : OptGvnMap]) : OptGvnMap
@@ -7598,7 +7601,7 @@
         (opt-gvn-record instr label sources acc))]))
 
 (define (opt-gvn-build-map-blocks
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [blocks : CompilerIrBlockList]
   [acc : OptGvnMap]) : OptGvnMap
   (match blocks
@@ -7636,7 +7639,7 @@
 (define (opt-gvn-rewrite-instr
   [table : OptGvnMap]
   [doms : OptDomTable]
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [use-label : String]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
@@ -7664,7 +7667,7 @@
 (define (opt-gvn-rewrite-instrs
   [table : OptGvnMap]
   [doms : OptDomTable]
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [use-label : String]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
@@ -7677,7 +7680,7 @@
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
   [doms : OptDomTable]
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
@@ -7693,7 +7696,7 @@
 (define (opt-gvn-rewrite-blocks
   [table : OptGvnMap]
   [doms : OptDomTable]
-  [sources : OptGvnDefs]
+  [sources : I64I64Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
@@ -7709,10 +7712,10 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [doms : OptDomTable (opt-cfg-dominators blocks)]
-    [sources : OptGvnDefs
+    [sources : I64I64Map
       (opt-gvn-sources-blocks
         blocks
-        (opt-gvn-sources-params params (OptGvnDefsNil)))]
+        (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
     [table : OptGvnMap (opt-gvn-build-map-blocks sources blocks (OptGvnMapNil))]
     (opt-gvn-rewrite-blocks table doms sources blocks)))
 
@@ -10002,7 +10005,9 @@
     [instrs : CompilerIrInstrList (opt-vector-mask-test-instrs)]
     [folded : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)]
     [dce : CompilerIrInstrList
-      (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) instrs) instrs)]
+      (opt-dce-instrs
+        (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) instrs)
+        instrs)]
     [bounds : CompilerIrInstrList (opt-bounds-instrs (OptBoundsNil) instrs)]
     [vector-cse : CompilerIrInstrList
       (opt-cse-instrs (OptExprNil) (opt-vector-cse-instrs))]
@@ -10320,10 +10325,13 @@
 (define (compiler-optimize-dce-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-dce-self-test-instrs)]
-    [used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)]
+    [used : I64I64Map
+      (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) instrs)]
     [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
     [again : CompilerIrInstrList
-      (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cleaned) cleaned)]
+      (opt-dce-instrs
+        (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) cleaned)
+        cleaned)]
     (cond
       [(not (opt-used-contains used 1)) 0]
       [(opt-used-contains used 0) 1]
@@ -10349,7 +10357,8 @@
 (define (compiler-optimize-dce-mem-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-dce-mem-self-test-instrs)]
-    [used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)]
+    [used : I64I64Map
+      (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) instrs)]
     [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
     (if (opt-used-contains used 0)
       (if (= (compiler-ir-instr-list-count cleaned) 3)
@@ -10715,7 +10724,9 @@
         (OptCopyNil)
         (opt-cse-instrs (OptExprNil) (opt-copy-cse-instrs)))]
     [cse-dce : CompilerIrInstrList
-      (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cse) cse)]
+      (opt-dce-instrs
+        (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) cse)
+        cse)]
     [f64 : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
     [phi : CompilerIrInstrList
@@ -10843,7 +10854,9 @@
         (opt-copy-instrs (OptCopyNil) (opt-bounds-copy-instrs)))]
     [dce : CompilerIrInstrList
       (opt-dce-instrs
-        (opt-collect-instrs-uses (OptUsedNil) (opt-bounds-dce-instrs))
+        (opt-collect-instrs-uses
+          (i64-i64-map-with-capacity 64)
+          (opt-bounds-dce-instrs))
         (opt-bounds-dce-instrs))]
     [cross : CompilerIrBlockList
       (optimize-block-list (opt-bounds-cross-blocks))]

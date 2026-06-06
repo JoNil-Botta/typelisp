@@ -42,6 +42,11 @@
   (TcTryResult)
   (TcTryOption))
 
+(defenum TcTypeNameLookupCache
+  (TcTypeNameLookupCacheMiss)
+  (TcTypeNameLookupCacheFound i64)
+  (TcTypeNameLookupCacheMissing))
+
 (defenum TcResultInfo
   (TcResultInfo TcTryKind String String AstType String AstType))
 
@@ -2210,6 +2215,18 @@
 (define tc-nominal-owner-cache-name7 : String
   "")
 
+(define tc-resolve-type-name-cache-valid : bool
+  false)
+
+(define tc-resolve-type-name-cache-found : bool
+  false)
+
+(define tc-resolve-type-name-cache-key : String
+  "")
+
+(define tc-resolve-type-name-cache-handle : i64
+  0)
+
 (define (tc-nominal-owner-cache-reset!) : unit
   (begin
     (set! tc-nominal-owner-cache-handle 0)
@@ -2219,7 +2236,45 @@
     (set! tc-nominal-owner-cache-handle4 0)
     (set! tc-nominal-owner-cache-handle5 0)
     (set! tc-nominal-owner-cache-handle6 0)
-    (set! tc-nominal-owner-cache-handle7 0)))
+    (set! tc-nominal-owner-cache-handle7 0)
+    (set! tc-resolve-type-name-cache-valid false)))
+
+(define (tc-resolve-type-name-cache-lookup
+  [lookup-name : String]) : TcTypeNameLookupCache
+  (if (and
+    tc-resolve-type-name-cache-valid
+    (string-eq tc-resolve-type-name-cache-key lookup-name))
+    (if tc-resolve-type-name-cache-found
+      (TcTypeNameLookupCacheFound tc-resolve-type-name-cache-handle)
+      (TcTypeNameLookupCacheMissing))
+    (TcTypeNameLookupCacheMiss)))
+
+(define (tc-resolve-type-name-cache-store!
+  [lookup-name : String]
+  [found : bool]
+  [handle : i64]) : unit
+  (begin
+    (set! tc-resolve-type-name-cache-key lookup-name)
+    (set! tc-resolve-type-name-cache-found found)
+    (set! tc-resolve-type-name-cache-handle handle)
+    (set! tc-resolve-type-name-cache-valid true)))
+
+(define (tc-resolve-type-name-symbol-lookup
+  [symbols : CompilerSymbols]
+  [lookup-name : String]) : MaybeI64
+  (match (tc-resolve-type-name-cache-lookup lookup-name)
+    [(TcTypeNameLookupCacheFound handle) (SomeI64 handle)]
+    [(TcTypeNameLookupCacheMissing) NoneI64]
+    [(TcTypeNameLookupCacheMiss)
+      (match (compiler-symbols-lookup-type symbols lookup-name)
+        [(SomeI64 handle)
+          (begin
+            (tc-resolve-type-name-cache-store! lookup-name true handle)
+            (SomeI64 handle))]
+        [(NoneI64)
+          (begin
+            (tc-resolve-type-name-cache-store! lookup-name false 0)
+            NoneI64)])]))
 
 (define (tc-nominal-owner-cache-slot [handle : i64]) : i64
   (% (compiler-symbol-handle-index handle) 8))
@@ -2230,7 +2285,9 @@
   [cached-handle : i64]
   [cached-name : String]) : ResultTcString
   (if (= cached-handle handle)
-    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) cached-name)
+    (match (tc-resolve-type-name-symbol-lookup
+      (tc-context-symbols ctx)
+      cached-name)
       [(SomeI64 cached-handle)
         (if (= cached-handle handle)
           (OkTcString cached-name)
@@ -2429,10 +2486,10 @@
     [(TcContext _ symbols _ module)
       (let
         [lookup-name : String
-          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
-            (compiler-symbol-module-key module name)
-            name)]
-        (match (compiler-symbols-lookup-type symbols lookup-name)
+            (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+              (compiler-symbol-module-key module name)
+              name)]
+        (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
               [(OkTcString canonical-name)
@@ -2480,10 +2537,10 @@
     [(TcContext _ symbols _ module)
       (let
         [lookup-name : String
-          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
-            (compiler-symbol-module-key module name)
-            name)]
-        (match (compiler-symbols-lookup-type symbols lookup-name)
+            (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+              (compiler-symbol-module-key module name)
+              name)]
+        (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
               [(OkTcString canonical-name)

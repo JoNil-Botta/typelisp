@@ -917,6 +917,13 @@ GITHUB_CACHE_ENTRY=${GITHUB_CACHE_ENTRY_MANIFEST%/typelisp.pkg}
 assert_file_exists package-graph-github-cache-first "$GITHUB_CACHE_ENTRY/.typelisp-cache-complete"
 assert_contains package-graph-github-cache-first "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "url=$GITHUB_CACHE_URL"
 assert_contains package-graph-github-cache-first "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "commit=$GITHUB_CACHE_REV"
+GITHUB_CACHE_LOCK="$GITHUB_CACHE_ROOT/typelisp.lock"
+assert_file_exists package-graph-github-cache-first "$GITHUB_CACHE_LOCK"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_LOCK" "(typelisp-lock"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_LOCK" "(alias \"remote\")"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_LOCK" "(url \"$GITHUB_CACHE_URL\")"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_LOCK" "(pin (rev \"$GITHUB_CACHE_REV\"))"
+assert_contains package-graph-github-cache-first "$GITHUB_CACHE_LOCK" "(commit \"$GITHUB_CACHE_REV\")"
 
 mv "$GITHUB_CACHE_REMOTE" "$GITHUB_CACHE_REMOTE_OFFLINE"
 set +e
@@ -946,6 +953,117 @@ set -e
 assert_status package-graph-github-cache-program "$status" 47
 assert_empty package-graph-github-cache-program "$WORKDIR/package-graph-github-cache-program.out"
 assert_empty package-graph-github-cache-program "$WORKDIR/package-graph-github-cache-program.err"
+
+GITHUB_LOCK_DIR="$WORKDIR/gl"
+GITHUB_LOCK_ROOT="$GITHUB_LOCK_DIR/root"
+GITHUB_LOCK_REMOTE="$GITHUB_LOCK_DIR/remote"
+GITHUB_LOCK_CONFIG="$GITHUB_LOCK_DIR/gitconfig"
+GITHUB_LOCK_URL="https://github.com/l/b.git"
+mkdir -p "$GITHUB_LOCK_ROOT/src" "$GITHUB_LOCK_REMOTE/src"
+cat > "$GITHUB_LOCK_REMOTE/typelisp.pkg" <<'EOF'
+(package
+  (name "gl_remote")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$GITHUB_LOCK_REMOTE/src/lib.tl" <<'EOF'
+(define (remote-answer) : i64 51)
+EOF
+git -C "$GITHUB_LOCK_REMOTE" init -q
+git -C "$GITHUB_LOCK_REMOTE" add typelisp.pkg src/lib.tl
+git -C "$GITHUB_LOCK_REMOTE" \
+    -c user.email=typelisp@example.invalid \
+    -c user.name=typelisp \
+    commit -q -m "seed lock smoke remote"
+git -C "$GITHUB_LOCK_REMOTE" branch -M main
+GITHUB_LOCK_REV1=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
+cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "l/b" (branch "main")))))
+EOF
+cat > "$GITHUB_LOCK_ROOT/src/main.tl" <<'EOF'
+(import "pkg:remote/src/lib.tl")
+(define (main) : i64 (remote-answer))
+EOF
+cat > "$GITHUB_LOCK_CONFIG" <<EOF
+[url "$GITHUB_LOCK_REMOTE"]
+    insteadOf = $GITHUB_LOCK_URL
+EOF
+GITHUB_LOCK_EXE="$GITHUB_LOCK_ROOT/target/typelisp/release/gl_root/gl_root"
+if [ "$HOST_OS" = windows ]; then
+    GITHUB_LOCK_EXE="$GITHUB_LOCK_EXE.exe"
+fi
+
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-first.out" 2> "$WORKDIR/package-graph-github-lock-first.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-first "$status" 0
+assert_empty package-graph-github-lock-first "$WORKDIR/package-graph-github-lock-first.err"
+assert_contains package-graph-github-lock-first "$GITHUB_LOCK_ROOT/typelisp.lock" "(pin (branch \"main\"))"
+assert_contains package-graph-github-lock-first "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV1\")"
+set +e
+"$GITHUB_LOCK_EXE" > "$WORKDIR/package-graph-github-lock-first-program.out" 2> "$WORKDIR/package-graph-github-lock-first-program.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-first-program "$status" 51
+assert_empty package-graph-github-lock-first-program "$WORKDIR/package-graph-github-lock-first-program.out"
+assert_empty package-graph-github-lock-first-program "$WORKDIR/package-graph-github-lock-first-program.err"
+
+cat > "$GITHUB_LOCK_REMOTE/src/lib.tl" <<'EOF'
+(define (remote-answer) : i64 52)
+EOF
+git -C "$GITHUB_LOCK_REMOTE" add src/lib.tl
+git -C "$GITHUB_LOCK_REMOTE" \
+    -c user.email=typelisp@example.invalid \
+    -c user.name=typelisp \
+    commit -q -m "move branch after lock"
+GITHUB_LOCK_REV2=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
+rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-replay.out" 2> "$WORKDIR/package-graph-github-lock-replay.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-replay "$status" 0
+assert_empty package-graph-github-lock-replay "$WORKDIR/package-graph-github-lock-replay.err"
+assert_contains package-graph-github-lock-replay "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV1\")"
+set +e
+"$GITHUB_LOCK_EXE" > "$WORKDIR/package-graph-github-lock-replay-program.out" 2> "$WORKDIR/package-graph-github-lock-replay-program.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-replay-program "$status" 51
+assert_empty package-graph-github-lock-replay-program "$WORKDIR/package-graph-github-lock-replay-program.out"
+assert_empty package-graph-github-lock-replay-program "$WORKDIR/package-graph-github-lock-replay-program.err"
+
+git -C "$GITHUB_LOCK_REMOTE" branch next "$GITHUB_LOCK_REV2"
+cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "l/b" (branch "next")))))
+EOF
+rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-update "$status" 0
+assert_empty package-graph-github-lock-update "$WORKDIR/package-graph-github-lock-update.err"
+assert_contains package-graph-github-lock-update "$GITHUB_LOCK_ROOT/typelisp.lock" "(pin (branch \"next\"))"
+assert_contains package-graph-github-lock-update "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV2\")"
+set +e
+"$GITHUB_LOCK_EXE" > "$WORKDIR/package-graph-github-lock-update-program.out" 2> "$WORKDIR/package-graph-github-lock-update-program.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-update-program "$status" 52
+assert_empty package-graph-github-lock-update-program "$WORKDIR/package-graph-github-lock-update-program.out"
+assert_empty package-graph-github-lock-update-program "$WORKDIR/package-graph-github-lock-update-program.err"
 
 DIAMOND_DIR="$WORKDIR/package-graph-diamond"
 DIAMOND_ROOT="$DIAMOND_DIR/root"

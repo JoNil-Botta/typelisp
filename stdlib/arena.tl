@@ -11,11 +11,14 @@
 ;#
 ;# ```typelisp
 ;# (import "stdlib/arena.tl")
+;# (import "stdlib/string.tl")
 ;#
 ;# (define (scratch-score [n : i64]) : i64
 ;#   (with-arena scratch
 ;#     (let
-;#       [text : String (string-append "phase:" (int->string n))]
+;#       [prefix : String "phase:"]
+;#       [suffix : String (int->string n)]
+;#       [text : String (string-append-borrowed (& prefix) (& suffix))]
 ;#       (string-length (& text)))))
 ;# ```
 ;#
@@ -25,10 +28,15 @@
 ;#
 ;# ```typelisp
 ;# (import "stdlib/arena.tl")
+;# (import "stdlib/string.tl")
 ;#
 ;# (define (build-message [scratch : i64] [n : i64]) : String
-;#   (with-escape scratch
-;#     (string-append "kept:" (int->string n))))
+;#   (with-escape
+;#     scratch
+;#     (let
+;#       [prefix : String "kept:"]
+;#       [suffix : String (int->string n)]
+;#       (string-append-borrowed (& prefix) (& suffix)))))
 ;# ```
 ;#
 ;# Manual arena switching, rewinding, and destruction remain explicit unsafe

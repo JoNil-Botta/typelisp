@@ -7,11 +7,17 @@
     scratch
     (let
       [prefix : String "scratch:"]
-      [text : String (string-append prefix (int->string seed))]
+      [seed-text : String (int->string seed)]
+      [text : String (string-append-borrowed (& prefix) (& seed-text))]
       (string-length (& text)))))
 
 (define (scratch-clone-message [scratch : i64] [seed : i64]) : String
-  (with-escape scratch (string-append "kept:" (int->string seed))))
+  (with-escape
+    scratch
+    (let
+      [prefix : String "kept:"]
+      [seed-text : String (int->string seed)]
+      (string-append-borrowed (& prefix) (& seed-text)))))
 
 (define (main) : i64
   (let

@@ -4,8 +4,6 @@
 ;; This file exercises the remaining Rust test assertions that are not yet
 ;; mirrored by selfhost/lex.tl self-tests, using the (test ...) inline harness
 ;; from #947 so the no-Rust verification script picks them up automatically.
-(import "stdlib/string.tl")
-
 (import "../../selfhost/lex.tl")
 
 (define (lexer-assert-true [condition : bool] [message : String]) : unit

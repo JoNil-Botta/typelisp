@@ -33,6 +33,8 @@
 ;#     (let [text : String "hello from io\n"] (stdout-write (& text)))
 ;#     0))
 ;# ```
+(import "string.tl")
+
 ;: Linux `open` binding used by file and path helpers.
 (extern io-linux-open (:symbol "open") : (-> (Ptr u8) i32 i32 i32))
 
@@ -949,9 +951,7 @@
 
 ;: Copy a borrowed path into an owned String for public diagnostics.
 (define (io-copy-path [path : (& path str)]) : String
-  (let
-    [empty : String ""]
-    (string-append path (& empty))))
+  (string-copy-borrowed path))
 
 ;: Return true when `path` is syntactically empty.
 (define (io-empty-path? [path : (& path str)]) : bool
@@ -1067,8 +1067,7 @@
 ;: structured `IoError` values.
 (define (file-open [path : (& path str)] [mode : OpenMode]) : ResultIoFile
   (let
-    [empty : String ""]
-    [path-text : String (string-append path (& empty))]
+    [path-text : String (string-copy-borrowed path)]
     (if (io-empty-path? path)
       (ErrIoFile (io-invalid-path-error path))
       (let
@@ -1123,8 +1122,7 @@
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [empty : String ""]
-    [contents-text : String (string-append contents (& empty))]
+    [contents-text : String (string-copy-borrowed contents)]
     [status : i64 (file-write-status (struct-get handle id) contents-text)]
     (if (= status io-status-ok)
       OkIoUnit
@@ -1150,8 +1148,7 @@
 ;: Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
 (define (try-read-file [path : (& path str)]) : ResultIoString
   (let
-    [empty : String ""]
-    [path-text : String (string-append path (& empty))]
+    [path-text : String (string-copy-borrowed path)]
     (if (io-empty-path? path)
       (ErrIoString (io-invalid-path-error path))
       (let
@@ -1165,9 +1162,8 @@
 ;: Empty paths return `IoInvalidPath`.
 (define (try-write-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [empty : String ""]
-    [path-text : String (string-append path (& empty))]
-    [contents-text : String (string-append contents (& empty))]
+    [path-text : String (string-copy-borrowed path)]
+    [contents-text : String (string-copy-borrowed contents)]
     (if (io-empty-path? path)
       (ErrIoUnit (io-invalid-path-error path))
       (let
@@ -1182,8 +1178,7 @@
 ;: expected result of an existence probe. Empty paths return `IoInvalidPath`.
 (define (try-file-exists? [path : (& path str)]) : ResultIoBool
   (let
-    [empty : String ""]
-    [path-text : String (string-append path (& empty))]
+    [path-text : String (string-copy-borrowed path)]
     (if (io-empty-path? path)
       (ErrIoBool (io-invalid-path-error path))
       (let
@@ -1201,9 +1196,8 @@
 ;: `IoInvalidPath`.
 (define (try-append-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [empty : String ""]
-    [path-text : String (string-append path (& empty))]
-    [contents-text : String (string-append contents (& empty))]
+    [path-text : String (string-copy-borrowed path)]
+    [contents-text : String (string-copy-borrowed contents)]
     (if (io-empty-path? path)
       (ErrIoUnit (io-invalid-path-error path))
       (let
@@ -1274,9 +1268,7 @@
 
 ;: Write `text` to stdout without adding a newline.
 (define (stdout-write [text : (& text str)]) : unit
-  (let
-    [empty : String ""]
-    (print-string (string-append text (& empty)))))
+  (print-string (string-copy-borrowed text)))
 
 ;: Write `text` and a trailing newline to stdout.
 ;:
@@ -1284,7 +1276,7 @@
 (define (stdout-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-string (string-append text (& newline)))))
+    (print-string (string-append-borrowed text (& newline)))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
@@ -1292,9 +1284,7 @@
 
 ;: Write `text` to stderr without adding a newline.
 (define (stderr-write [text : (& text str)]) : unit
-  (let
-    [empty : String ""]
-    (print-error (string-append text (& empty)))))
+  (print-error (string-copy-borrowed text)))
 
 ;: Write `text` and a trailing newline to stderr.
 ;:
@@ -1302,4 +1292,4 @@
 (define (stderr-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-error (string-append text (& newline)))))
+    (print-error (string-append-borrowed text (& newline)))))

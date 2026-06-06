@@ -49,9 +49,7 @@
 
 ;: Copy a borrowed setup string into an owned active-arena `String`.
 (define (windows-setup-copy-string [value : (& value str)]) : String
-  (let
-    [empty : String ""]
-    (string-append value (& empty))))
+  (string-copy-borrowed value))
 
 ;: Return an empty package/component identifier list.
 (define (windows-setup-string-list-empty) : WindowsSetupStringList

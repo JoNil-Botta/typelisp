@@ -90,9 +90,11 @@
   (let
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
-    (string-append
-      (string-append (substring-borrowed s 0 index) new)
-      (substring-borrowed s (+ index olen) (- (- hlen index) olen)))))
+    [prefix : String (substring-borrowed s 0 index)]
+    [prefix-new : String (string-append-borrowed (& prefix) new)]
+    [suffix : String
+      (substring-borrowed s (+ index olen) (- (- hlen index) olen))]
+    (string-append prefix-new suffix)))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
 ;: tied to `text` or fresh active-arena owned text when a replacement is made.

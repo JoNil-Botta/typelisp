@@ -189,9 +189,8 @@
 ;: Return true when `left` is a newer dotted numeric version than `right`.
 (define (msvc-version-greater? [left : (& left str)] [right : (& right str)]) : bool
   (let
-    [empty : String ""]
-    [left-text : String (string-append left (& empty))]
-    [right-text : String (string-append right (& empty))]
+    [left-text : String (string-copy-borrowed left)]
+    [right-text : String (string-copy-borrowed right)]
     (msvc-version-greater-owned? left-text right-text)))
 
 ;: Return true when `path` exists, mapping probe errors to false.
@@ -222,8 +221,7 @@
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs [dirs : EnvStringList] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [empty : String ""]
-    [tool-text : String (string-append tool (& empty))]
+    [tool-text : String (string-copy-borrowed tool)]
     (msvc-search-dirs-owned dirs tool-text)))
 
 ;: Locate `tool` on the PATH environment variable.
@@ -253,9 +251,8 @@
 ;: Join `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend [head : (& head str)] [tail : (& tail str)]) : String
   (let
-    [empty : String ""]
-    [head-text : String (string-append head (& empty))]
-    [tail-text : String (string-append tail (& empty))]
+    [head-text : String (string-copy-borrowed head)]
+    [tail-text : String (string-copy-borrowed tail)]
     (msvc-path-list-prepend-owned head-text tail-text)))
 
 ;: Join two owned required PATH-style entries.
@@ -265,9 +262,8 @@
 ;: Join two required PATH-style entries.
 (define (msvc-path-list-join2 [a : (& a str)] [b : (& b str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
     (msvc-path-list-join2-owned a-text b-text)))
 
 ;: Join three owned required PATH-style entries.
@@ -277,10 +273,9 @@
 ;: Join three required PATH-style entries.
 (define (msvc-path-list-join3 [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
     (msvc-path-list-join3-owned a-text b-text c-text)))
 
 ;: Join four owned required PATH-style entries.
@@ -298,11 +293,10 @@
   [c : (& c str)]
   [d : (& d str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
-    [d-text : String (string-append d (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
+    [d-text : String (string-copy-borrowed d)]
     (msvc-path-list-join4-owned a-text b-text c-text d-text)))
 
 ;: Join an optional inherited path list after required entries.
@@ -320,11 +314,10 @@
   [c : (& c str)]
   [tail : (& tail str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
-    [tail-text : String (string-append tail (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
+    [tail-text : String (string-copy-borrowed tail)]
     (msvc-path-list-join3-with-tail-owned a-text b-text c-text tail-text)))
 
 ;: Join an optional inherited path list after two required entries.
@@ -340,10 +333,9 @@
   [b : (& b str)]
   [tail : (& tail str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [tail-text : String (string-append tail (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [tail-text : String (string-copy-borrowed tail)]
     (msvc-path-list-join2-with-tail-owned a-text b-text tail-text)))
 
 ;: Join an optional inherited path list after four required entries.
@@ -363,12 +355,11 @@
   [d : (& d str)]
   [tail : (& tail str)]) : String
   (let
-    [empty : String ""]
-    [a-text : String (string-append a (& empty))]
-    [b-text : String (string-append b (& empty))]
-    [c-text : String (string-append c (& empty))]
-    [d-text : String (string-append d (& empty))]
-    [tail-text : String (string-append tail (& empty))]
+    [a-text : String (string-copy-borrowed a)]
+    [b-text : String (string-copy-borrowed b)]
+    [c-text : String (string-copy-borrowed c)]
+    [d-text : String (string-copy-borrowed d)]
+    [tail-text : String (string-copy-borrowed tail)]
     (msvc-path-list-join4-with-tail-owned a-text b-text c-text d-text tail-text)))
 
 ;: Build a configured tool result once the executable path is known.
@@ -401,11 +392,13 @@
   (match (msvc-find-on-path tool)
     [(MsvcSomeString executable) (msvc-configured-result executable)]
     [(MsvcNoString)
-      (ErrMsvcTool
-        (MsvcToolNotFound
-          (string-append
-            (string-append "msvc: could not find " tool)
-            " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools (newest-toolset selection is tracked by #855)")))]))
+      (let
+        [tool-text : String (string-copy-borrowed tool)]
+        (ErrMsvcTool
+          (MsvcToolNotFound
+            (string-append
+              (string-append "msvc: could not find " tool-text)
+              " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools (newest-toolset selection is tracked by #855)"))))]))
 
 ;: Return a user-provided `VCToolsVersion` if one is set.
 (define (msvc-vc-tools-version-from-env) : MsvcMaybeString
@@ -455,8 +448,7 @@
   [instance : WindowsSetupInstance]
   [version : (& version str)]) : String
   (let
-    [empty : String ""]
-    [version-text : String (string-append version (& empty))]
+    [version-text : String (string-copy-borrowed version)]
     (windows-sdk-path-join5-owned
       (windows-setup-instance-installation-path instance)
       "VC"
@@ -467,8 +459,7 @@
 ;: Path to the selected host-x64/target-x64 MSVC binary directory.
 (define (msvc-toolset-bin-x64 [toolset-root : (& toolset-root str)]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
     (windows-sdk-path-join4-owned toolset-root-text "bin" "Hostx64" "x64")))
 
 ;: Path to the selected host-x64/target-x64 MSVC binary directory.
@@ -478,8 +469,7 @@
 ;: Path to the selected x64 MSVC library directory.
 (define (msvc-toolset-lib-x64 [toolset-root : (& toolset-root str)]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
     (windows-sdk-path-join3-owned toolset-root-text "lib" "x64")))
 
 ;: Path to the selected x64 MSVC library directory.
@@ -489,8 +479,7 @@
 ;: Path to the selected MSVC include directory.
 (define (msvc-toolset-include [toolset-root : (& toolset-root str)]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
     (windows-sdk-path-join2-owned toolset-root-text "include")))
 
 ;: Path to the selected MSVC include directory.
@@ -502,9 +491,8 @@
   [toolset-root : (& toolset-root str)]
   [tool : (& tool str)]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
-    [tool-text : String (string-append tool (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
+    [tool-text : String (string-copy-borrowed tool)]
     (windows-sdk-path-join2-owned
       (msvc-toolset-bin-x64-owned toolset-root-text)
       tool-text)))
@@ -518,8 +506,7 @@
   [toolset-root : (& toolset-root str)]
   [sdk : WindowsSdkLayout]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
     [tail : String (msvc-env-or-empty-owned "PATH")]
     (msvc-path-list-join2-with-tail-owned
       (msvc-toolset-bin-x64-owned toolset-root-text)
@@ -535,8 +522,7 @@
   [toolset-root : (& toolset-root str)]
   [sdk : WindowsSdkLayout]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
     [tail : String (msvc-env-or-empty-owned "LIB")]
     (msvc-path-list-join3-with-tail-owned
       (msvc-toolset-lib-x64-owned toolset-root-text)
@@ -553,8 +539,7 @@
   [toolset-root : (& toolset-root str)]
   [sdk : WindowsSdkLayout]) : String
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
     [tail : String (msvc-env-or-empty-owned "INCLUDE")]
     (msvc-path-list-join4-with-tail-owned
       (msvc-toolset-include-owned toolset-root-text)
@@ -574,9 +559,8 @@
   [toolset-root : (& toolset-root str)]
   [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [empty : String ""]
-    [toolset-root-text : String (string-append toolset-root (& empty))]
-    [tool-text : String (string-append tool (& empty))]
+    [toolset-root-text : String (string-copy-borrowed toolset-root)]
+    [tool-text : String (string-copy-borrowed tool)]
     (cond
       [(not (msvc-path-exists-owned? toolset-root-text))
         (MsvcSomeString toolset-root-text)]
@@ -613,8 +597,7 @@
             (msvc-default-vc-tools-version-path instance))))]
     [(MsvcSomeString version)
       (let
-        [empty : String ""]
-        [tool-text : String (string-append tool (& empty))]
+        [tool-text : String (string-copy-borrowed tool)]
         [toolset-root : String (msvc-toolset-root instance (& version))]
         (match (msvc-first-missing-toolset-path (& toolset-root) tool)
           [(MsvcSomeString missing)
@@ -635,9 +618,8 @@
   [tool : MsvcTool]
   [installation-version : (& installation-version str)]) : MsvcMaybeToolCandidate
   (let
-    [empty : String ""]
     [installation-version-text : String
-      (string-append installation-version (& empty))]
+      (string-copy-borrowed installation-version)]
     (match best
       [(MsvcNoToolCandidate)
         (MsvcSomeToolCandidate tool installation-version-text)]
@@ -696,7 +678,10 @@
         "msvc: tool discovery is unsupported on non-Windows hosts"))
     (if (not (msvc-supported-target? target))
       (ErrMsvcTool
-        (MsvcUnsupported (string-append "msvc: unsupported target " target)))
+        (let
+          [target-text : String (string-copy-borrowed target)]
+          (MsvcUnsupported
+            (string-append "msvc: unsupported target " target-text))))
       (match (windows-sdk-discover)
         [(ErrWindowsSdkLayout error)
           (ErrMsvcTool
@@ -731,7 +716,10 @@
         "msvc: tool discovery is unsupported on non-Windows hosts"))
     (if (not (msvc-supported-target? target))
       (ErrMsvcTool
-        (MsvcUnsupported (string-append "msvc: unsupported target " target)))
+        (let
+          [target-text : String (string-copy-borrowed target)]
+          (MsvcUnsupported
+            (string-append "msvc: unsupported target " target-text))))
       (match (msvc-find-tool-configured tool)
         [(OkMsvcTool resolved) (OkMsvcTool resolved)]
         [(ErrMsvcTool _) (msvc-find-tool-from-setup target tool)]))))

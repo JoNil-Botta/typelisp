@@ -15,7 +15,11 @@
         [s : String "  outer  "]
         [outer-trimmed : String (string-trim (& s))]
         [outer-slice : String (substring-borrowed (& s) 2 5)]
+        [outer-suffix : String "-append"]
+        [outer-appended : String
+          (string-append-borrowed (& outer-trimmed) (& outer-suffix))]
         [outer-expected : String "outer"]
+        [outer-appended-expected : String "outer-append"]
         (begin
           (assert-string-eq
             (& outer-trimmed)
@@ -25,14 +29,25 @@
             (& outer-slice)
             (& outer-expected)
             "outer stdlib substring allocation")
+          (assert-string-eq
+            (& outer-appended)
+            (& outer-appended-expected)
+            "outer stdlib string append allocation")
           (with-arena
             inner
             (let
               [inner-replaced : String (string-replace "alpha" "ph" "ren")]
               [inner-slice : String (string-slice "alphabet" 2 3)]
+              [inner-appended : String (string-append "inner" "-append")]
+              [inner-concat : String (string-concat "inner" "-concat")]
+              [inner-borrowed : String
+                (string-append-borrowed (& inner-slice) (& inner-replaced))]
               [inner-rendered : String (text-buf-render program-buf)]
               [inner-replaced-expected : String "alrena"]
               [inner-slice-expected : String "pha"]
+              [inner-appended-expected : String "inner-append"]
+              [inner-concat-expected : String "inner-concat"]
+              [inner-borrowed-expected : String "phaalrena"]
               [inner-rendered-expected : String "scoped"]
               (begin
                 (assert-string-eq
@@ -44,6 +59,18 @@
                   (& inner-slice-expected)
                   "inner stdlib substring allocation")
                 (assert-string-eq
+                  (& inner-appended)
+                  (& inner-appended-expected)
+                  "inner stdlib string append allocation")
+                (assert-string-eq
+                  (& inner-concat)
+                  (& inner-concat-expected)
+                  "inner stdlib string concat allocation")
+                (assert-string-eq
+                  (& inner-borrowed)
+                  (& inner-borrowed-expected)
+                  "inner borrowed string append allocation")
+                (assert-string-eq
                   (& inner-rendered)
                   (& inner-rendered-expected)
                   "inner stdlib text buffer render")
@@ -51,4 +78,8 @@
                   (string-length outer-trimmed)
                   5
                   "outer arena value remains readable in inner arena")
+                (assert-i64-eq
+                  (string-length outer-appended)
+                  12
+                  "outer append value remains readable in inner arena")
                 42))))))))

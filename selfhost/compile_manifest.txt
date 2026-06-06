@@ -41,7 +41,8 @@ case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
 contains|_tl_lex:
 contains|_tl_ident_token:
 contains|call tl_alloc
-contains|tl_substring
+contains|substring_copy_checked
+not-contains|call tl_substring
 contains|lexer: unexpected character
 end
 
@@ -81,7 +82,7 @@ contains|_tl_eval_sexpr:
 contains|_tl_sexpr_head:
 contains|_tl_sexpr_tail:
 contains|match_nested
-contains|tl_string_eq:
+contains|_colon_colonstring_eq
 contains|call _tl_eval_sexpr
 contains|call _tl_panic
 end
@@ -99,9 +100,9 @@ copy|selfhost/sym_i64_env.tl|sym_i64_env_core.tl
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:
 contains|_tl_sym_i64_lookup:
-contains|tl_string_eq:
-contains|tl_substring:
-contains|tl_string_concat:
+contains|_colon_colonstring_eq
+contains|substring_copy_checked
+contains|string_append_borrowed
 count-at-least|call _tl_sym_i64_lookup|2
 end
 
@@ -109,7 +110,7 @@ case|integration_text_buf_driver|tests/integration/text_buf.tl|assembly|present|
 copy|selfhost/text_buf.tl|text_buf_core.tl
 contains|call _tl_text_buf_render
 contains|call _tl_text_buf_append_buffer
-contains|tl_string_concat:
+contains|string_append_borrowed
 end
 
 case|selfhost_ast|selfhost/ast.tl|assembly|exactly-one|direct
@@ -737,7 +738,7 @@ end
 
 case|selfhost_emit|selfhost/emit.tl|assembly|exactly-one|direct
 contains|_tl_emit_program:
-contains|tl_string_concat:
+contains|string_append_borrowed
 contains|emit: too many call args
 end
 
@@ -764,11 +765,11 @@ contains|_tl_print_value:
 contains|_tl_print_list_tail:
 contains|_tl_eval_list_result:
 contains|_tl_eval_seq_result:
-contains|tl_string_eq:
-contains|tl_string_concat:
-contains|tl_substring:
+contains|_colon_colonstring_eq
+contains|string_append_borrowed
+contains|substring_copy_checked
 contains|tl_int_to_string:
-contains|tl_string_to_int:
+contains|string__gtint
 contains|print_string:
 contains|.string "lambda"
 contains|.string "if"
@@ -867,8 +868,10 @@ contains|_tl_lex:
 contains|_tl_lex_result:
 contains|_tl_token_tag:
 contains|1.5
-contains|call tl_substring
-contains|call tl_string_to_int
+contains|substring_copy_checked
+not-contains|call tl_substring
+contains|string__gtint
+not-contains|call tl_string_to_int
 contains|call tl_oob_abort
 contains|lexer: unterminated string literal
 contains|lexer: unterminated character literal

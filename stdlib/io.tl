@@ -62,8 +62,8 @@
 ;: C library `fflush` binding retained for stdio compatibility.
 (extern io-ffi-fflush (:symbol "fflush") : (-> (Ptr u8) i32))
 
-;: C library `exit` binding used for panic and print failures.
-(extern io-ffi-exit (:symbol "exit") : (-> i32 never))
+;: Windows CRT `exit` binding used for panic and print failures.
+(extern io-windows-exit (:symbol "exit") : (-> i32 never))
 
 ;: Runtime allocator binding used to allocate raw handle tables.
 (extern io-runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8)))
@@ -359,6 +359,18 @@
 (define (io-linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
   (io-linux-syscall-status (syscall 21 (io-linux-ptr-arg path) mode)))
 
+;: Linux process exit via the `exit_group` syscall (number 231); never returns.
+;: The tail call is unreachable at runtime (the syscall terminates the process)
+;: and only gives the body its `never` type.
+(define (io-linux-exit [code : i64]) : never
+  (begin
+    (syscall 231 code)
+    (io-linux-exit code)))
+
+;: Dispatch a platform process exit; never returns.
+(define (io-platform-exit [code : i64]) : never
+  (cfg windows (io-windows-exit (cast code : i32)) (io-linux-exit code)))
+
 ;: Dispatch a platform `open` call and return its file descriptor or negative status.
 (define (io-platform-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
   (cfg
@@ -459,7 +471,7 @@
     [status : i64 (io-write-string-fd-status 1 text)]
     (if (= status 0)
       unit
-      (io-ffi-exit (cast 134 : i32)))))
+      (io-platform-exit 134))))
 
 ;: Compatibility alias for `print-string`.
 (define (print-str [text : String]) : unit
@@ -489,7 +501,7 @@
       (array-set! buf 0 (cast ch : u8))
       (if (= (io-write-all-fd-status 1 (io-array-const-ptr buf) 1) 0)
         unit
-        (io-ffi-exit (cast 134 : i32))))))
+        (io-platform-exit 134)))))
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
 (defstruct BigNum
@@ -879,13 +891,13 @@
     [status : i64 (io-write-string-fd-status 2 text)]
     (if (= status 0)
       unit
-      (io-ffi-exit (cast 134 : i32)))))
+      (io-platform-exit 134))))
 
 ;: Abort the process after writing `message` to stderr.
 (define (panic [message : String]) : never
   (begin
     (print-error message)
-    (io-ffi-exit (cast 134 : i32))))
+    (io-platform-exit 134)))
 
 ;: Alias for `panic`.
 (define (error [message : String]) : never

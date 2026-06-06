@@ -30,6 +30,10 @@ Coverage notes:
 - `list_api.tl` covers the monomorphic `StringList` and `StringListBuilder`
   helpers: empty/single lists, count, reverse, append, build-onto order, and
   array conversion with count clamping.
+- `vector_api.tl` covers the generated concrete vector family: `I64Vec`
+  compatibility, `StringVec` growth/mutation/pop/snapshot/reverse paths, and a
+  fixture-local generated enum-payload vector witness for nominal element
+  metadata.
 - `core_macros_api.tl` covers explicit import of the stdlib core macro module
   and the qualified `core/when` and `core/unless` guard macros.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,

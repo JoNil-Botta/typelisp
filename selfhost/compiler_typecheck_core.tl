@@ -12101,7 +12101,8 @@
 ;; discard their body's moves because they may be deferred. Reassigning a slot
 ;; with `set!` clears its moved mark. Owner-consuming struct fields, tuple
 ;; elements, and fixed-array literal elements are tracked as root paths so
-;; unrelated top-level entries remain usable. Box, nested, and non-literal
+;; unrelated entries remain usable. Nested direct-root struct/tuple/fixed-array
+;; literal chains are represented by stable path strings. Box and non-literal
 ;; aggregate projections stay rejected until their path/reinitialization policy
 ;; lands; dynamic arrays have a separate diagnostic because element ownership
 ;; cannot be made sound without an index policy.
@@ -12164,6 +12165,48 @@
 
 (define (tc-moved-partial? [set : TcMovedSet] [name : String]) : bool
   (tc-moved-contains? set (tc-moved-partial-key name)))
+
+(define (tc-moved-path-key? [key : String]) : bool
+  (tc-move-string-prefix-at? key (tc-moved-path-key "") 0))
+
+(define (tc-moved-path-key-conflicts? [key : String] [path : String]) : bool
+  (let
+    [new-key : String (tc-moved-path-key path)]
+    [descendant-prefix : String (tc-moved-path-key (string-append path "."))]
+    [ancestor-prefix : String (string-append key ".")]
+    (if (tc-moved-path-key? key)
+      (or
+        (string-eq key new-key)
+        (or
+          (tc-move-string-prefix-at? key descendant-prefix 0)
+          (tc-move-string-prefix-at? new-key ancestor-prefix 0)))
+      false)))
+
+(define (tc-moved-path-conflict-loop
+  [map : StringI64Map]
+  [path : String]
+  [index : i64]) : bool
+  (if (>= index (string-i64-map-capacity map))
+    false
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key _)
+        (if (tc-moved-path-key-conflicts? key path)
+          true
+          (tc-moved-path-conflict-loop
+            map
+            path
+            (string-i64-map-next-occupied map (+ index 1))))]
+      [(StringI64MapEntryNone)
+        (tc-moved-path-conflict-loop
+          map
+          path
+          (string-i64-map-next-occupied map (+ index 1)))])))
+
+(define (tc-moved-path-conflict? [set : TcMovedSet] [path : String]) : bool
+  (tc-moved-path-conflict-loop
+    (tc-moved-map set)
+    path
+    (string-i64-map-next-occupied (tc-moved-map set) 0)))
 
 (define (tc-move-string-prefix-at-loop
   [text : String]
@@ -12388,6 +12431,30 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-direct-root-base-path inner))]
+    [(AstExprStructGet inner-box field)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-move-direct-root-base-path inner)
+          [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
+          [(TcNoString) (TcNoString)]))]
+    [(AstExprTupleRef inner-box index)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-move-direct-root-base-path inner)
+          [(TcSomeString base)
+            (TcSomeString (tc-move-tuple-index-path base index))]
+          [(TcNoString) (TcNoString)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index-expr : AstExpr (box-get index-box)]
+        (match (tc-move-direct-root-base-path array)
+          [(TcSomeString base)
+            (match (tc-move-literal-index index-expr)
+              [(TcMoveSomeIndex index)
+                (TcSomeString (tc-move-array-index-path base index))]
+              [(TcMoveNoIndex) (TcNoString)])]
+          [(TcNoString) (TcNoString)]))]
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
@@ -12605,9 +12672,7 @@
                     (match (tc-move-root-projection-var init)
                       [(TcSomeString root)
                         (if (tc-moved-contains? locals root)
-                          (if (tc-moved-contains?
-                            moved
-                            (tc-moved-path-key path))
+                          (if (tc-moved-path-conflict? moved path)
                             (ErrTcMove (tc-move-use-message path))
                             (OkTcMove
                               (tc-moved-add-projection-path moved root path)))
@@ -12647,7 +12712,7 @@
             (match (tc-move-root-projection-var expr)
               [(TcSomeString root)
                 (if (tc-moved-contains? locals root)
-                  (if (tc-moved-contains? moved (tc-moved-path-key path))
+                  (if (tc-moved-path-conflict? moved path)
                     (ErrTcMove (tc-move-use-message path))
                     (OkTcMove (tc-moved-add-projection-path moved root path)))
                   (OkTcMove moved))]

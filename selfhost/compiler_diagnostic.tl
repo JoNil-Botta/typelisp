@@ -1,4 +1,6 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
+(import "../stdlib/string.tl")
+
 (import "token.tl")
 
 (import "compiler_ast_types.tl")

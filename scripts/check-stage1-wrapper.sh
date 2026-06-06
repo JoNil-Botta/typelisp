@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-# Smoke-test a TYPELISP_BIN-compatible stage1 wrapper surface: compile, check,
-# source/package build, run, repl, lsp, doc, test, fmt, and lint.
+# Smoke-test a TYPELISP_BIN-compatible host-action CLI surface: compile, check,
+# source/package build, run, repl, lsp, doc, test, fmt, and lint. The script
+# name is retained for external callers that still invoke the legacy path.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -10,14 +11,14 @@ cd "$ROOT"
 case "$(uname -s)" in
     Linux*) ;;
     *)
-        echo "stage1 wrapper smoke is Linux-only (requires as + ld)" >&2
+        echo "host-action CLI smoke is Linux-only (requires as + ld)" >&2
         exit 0
         ;;
 esac
 
 COMPILER=${TYPELISP_BIN:-}
 if [ -z "$COMPILER" ]; then
-    echo "stage1 wrapper smoke requires TYPELISP_BIN" >&2
+    echo "host-action CLI smoke requires TYPELISP_BIN" >&2
     exit 1
 fi
 if [ ! -x "$COMPILER" ]; then
@@ -25,7 +26,7 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-WORKDIR="$ROOT/target/stage1-wrapper-smoke"
+WORKDIR="$ROOT/target/host-action-cli-smoke"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -135,7 +136,7 @@ run_capture() {
     stdout="$WORKDIR/$label.stdout"
     stderr="$WORKDIR/$label.stderr"
     if ! TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 > "$stdout" 2> "$stderr"; then
-        echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "host-action CLI smoke command failed: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -151,7 +152,7 @@ run_stdin_capture() {
     stdout="$WORKDIR/$label.stdout"
     stderr="$WORKDIR/$label.stderr"
     if ! TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input" > "$stdout" 2> "$stderr"; then
-        echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "host-action CLI smoke command failed: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -171,7 +172,7 @@ run_stdin_expect_failure() {
     status=$?
     set -e
     if [ "$status" -eq 0 ]; then
-        echo "stage1 wrapper smoke command unexpectedly succeeded: $label" >&2
+        echo "host-action CLI smoke command unexpectedly succeeded: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -187,7 +188,7 @@ run_capture_cwd() {
     stdout="$WORKDIR/$label.stdout"
     stderr="$WORKDIR/$label.stderr"
     if ! (cd "$cwd" && TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@") 3>&2 > "$stdout" 2> "$stderr"; then
-        echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "host-action CLI smoke command failed: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -207,7 +208,7 @@ run_expect_failure_cwd() {
     status=$?
     set -e
     if [ "$status" -eq 0 ]; then
-        echo "stage1 wrapper smoke command unexpectedly succeeded: $label" >&2
+        echo "host-action CLI smoke command unexpectedly succeeded: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -226,7 +227,7 @@ run_expect_failure() {
     status=$?
     set -e
     if [ "$status" -eq 0 ]; then
-        echo "stage1 wrapper smoke command unexpectedly succeeded: $label" >&2
+        echo "host-action CLI smoke command unexpectedly succeeded: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -235,7 +236,7 @@ run_expect_failure() {
     fi
 }
 
-echo "[stage1-wrapper] compile"
+echo "[host-action-cli] compile"
 run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
 [ -f "$ASM" ] || {
     echo "compile did not write $ASM" >&2
@@ -243,7 +244,7 @@ run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
 }
 assert_contains "$WORKDIR/compile.stdout" "Generated: $ASM"
 
-echo "[stage1-wrapper] compile --emit-ir"
+echo "[host-action-cli] compile --emit-ir"
 run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
 [ -f "$IR" ] || {
     echo "compile --emit-ir did not write $IR" >&2
@@ -277,7 +278,7 @@ assert_empty "$WORKDIR/check-stdlib-root.stderr"
 assert_contains "$WORKDIR/check-stdlib-root.stdout" "Type checking passed!"
 cp "$WORKDIR/check-stdlib-root.stdout" "$WORKDIR/check-stdlib-root.expected"
 
-echo "[stage1-wrapper] build"
+echo "[host-action-cli] build"
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 [ -x "$BIN" ] || {
     echo "build did not write executable $BIN" >&2
@@ -285,7 +286,7 @@ run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 }
 assert_contains "$WORKDIR/build.stdout" "Generated: $BIN"
 
-echo "[stage1-wrapper] package build"
+echo "[host-action-cli] package build"
     PKG="$WORKDIR/pkg"
     mkdir -p "$PKG/src/nested/deeper" "$PKG/vendor/math/src"
     cat > "$PKG/typelisp.pkg" <<'EOF'
@@ -426,7 +427,7 @@ run_expect_failure check-package-missing "$COMPILER" check --manifest-path "$WOR
 assert_empty "$WORKDIR/check-package-missing.stdout"
 assert_contains "$WORKDIR/check-package-missing.stderr" "cannot read package manifest"
 
-echo "[stage1-wrapper] run"
+echo "[host-action-cli] run"
 set +e
 "$COMPILER" run "$SRC" > "$WORKDIR/run.stdout" 2> "$WORKDIR/run.stderr"
 run_status=$?
@@ -450,7 +451,7 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     exit 1
 fi
 
-echo "[stage1-wrapper] repl"
+echo "[host-action-cli] repl"
 : > "$WORKDIR/repl-empty.in"
 run_stdin_capture repl-empty "$WORKDIR/repl-empty.in" "$COMPILER" repl
 assert_contains "$WORKDIR/repl-empty.stdout" "TypeLisp REPL. Type .help for commands."
@@ -474,7 +475,7 @@ run_expect_failure repl-args "$COMPILER" repl unexpected
 assert_empty "$WORKDIR/repl-args.stdout"
 assert_contains "$WORKDIR/repl-args.stderr" "Error: repl does not accept arguments"
 
-echo "[stage1-wrapper] lsp"
+echo "[host-action-cli] lsp"
 LSP_INIT="$WORKDIR/lsp-init-shutdown.in"
 : > "$LSP_INIT"
 lsp_frame_append "$LSP_INIT" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
@@ -505,7 +506,7 @@ assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"code":"E0200"'
 assert_contains "$WORKDIR/lsp-diagnostics.stdout" "typecheck: return type mismatch"
 assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"diagnostics":[]'
 
-echo "[stage1-wrapper] doc"
+echo "[host-action-cli] doc"
 DOC_DIR="$WORKDIR/doc"
     DOC_STDLIB="$DOC_DIR/stdlib"
     DOC_ENTRY="$DOC_DIR/entry.tl"
@@ -545,12 +546,12 @@ EOF
     assert_contains "$DOC_MD" "Local module docs."
     assert_contains "$DOC_MD" "Stdlib module docs."
 
-    echo "[stage1-wrapper] doc --test"
+    echo "[host-action-cli] doc --test"
     run_capture doc-test "$COMPILER" doc --test "$DOC_ENTRY" --stdlib-root "$DOC_STDLIB"
     assert_empty "$WORKDIR/doc-test.stderr"
 assert_contains "$WORKDIR/doc-test.stdout" "Doc tests passed: 1 example(s)"
 
-echo "[stage1-wrapper] test --check"
+echo "[host-action-cli] test --check"
     TEST_SRC="$WORKDIR/inline-test.tl"
     cat > "$TEST_SRC" <<'EOF'
 (import "stdlib/test.tl")
@@ -564,7 +565,7 @@ EOF
     assert_empty "$WORKDIR/test-check.stderr"
     assert_contains "$WORKDIR/test-check.stdout" "TypeLisp test typecheck passed: 1 test(s)"
 
-    echo "[stage1-wrapper] test"
+    echo "[host-action-cli] test"
     run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 2 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-run.stdout"
     assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
@@ -575,7 +576,7 @@ EOF
         exit 1
     }
 
-    echo "[stage1-wrapper] test no-tests"
+    echo "[host-action-cli] test no-tests"
     NO_TEST_SRC="$WORKDIR/no-tests.tl"
     cat > "$NO_TEST_SRC" <<'EOF'
 (define (main) : i64 0)
@@ -591,7 +592,7 @@ EOF
         exit 1
     }
 
-    echo "[stage1-wrapper] test package discovery"
+    echo "[host-action-cli] test package discovery"
     TEST_PKG="$WORKDIR/inline-test-pkg"
     mkdir -p "$TEST_PKG/src/nested" "$TEST_PKG/target/ignored" "$TEST_PKG/vendor/child/src"
     cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
@@ -656,7 +657,7 @@ EOF
     assert_empty "$WORKDIR/test-package-no-tests.stderr"
     assert_contains "$WORKDIR/test-package-no-tests.stdout" "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)"
 
-    echo "[stage1-wrapper] test failures"
+    echo "[host-action-cli] test failures"
     FAIL_SRC="$WORKDIR/inline-test-fail.tl"
     cat > "$FAIL_SRC" <<'EOF'
 (import "stdlib/test.tl")
@@ -669,7 +670,7 @@ EOF
     fail_status=$?
     set -e
     if [ "$fail_status" -eq 0 ]; then
-        echo "stage1 wrapper test failure case unexpectedly succeeded" >&2
+        echo "host-action CLI test failure case unexpectedly succeeded" >&2
         exit 1
     fi
     assert_empty "$WORKDIR/test-fail.stdout"
@@ -691,7 +692,7 @@ EOF
     bad_status=$?
     set -e
     if [ "$bad_status" -eq 0 ]; then
-        echo "stage1 wrapper test compile-error case unexpectedly succeeded" >&2
+        echo "host-action CLI test compile-error case unexpectedly succeeded" >&2
         exit 1
     fi
     assert_empty "$WORKDIR/test-bad.stdout"
@@ -702,7 +703,7 @@ EOF
     missing_opt_status=$?
     set -e
     if [ "$missing_opt_status" -eq 0 ]; then
-        echo "stage1 wrapper test missing-opt-level case unexpectedly succeeded" >&2
+        echo "host-action CLI test missing-opt-level case unexpectedly succeeded" >&2
         exit 1
     fi
     assert_empty "$WORKDIR/test-missing-opt.stdout"
@@ -713,13 +714,13 @@ EOF
     bad_target_status=$?
     set -e
     if [ "$bad_target_status" -eq 0 ]; then
-        echo "stage1 wrapper test bad-target case unexpectedly succeeded" >&2
+        echo "host-action CLI test bad-target case unexpectedly succeeded" >&2
         exit 1
     fi
 assert_empty "$WORKDIR/test-bad-target.stdout"
 assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
 
-echo "[stage1-wrapper] fmt"
+echo "[host-action-cli] fmt"
 format_manifest | sort > "$WORKDIR/format-expected.txt"
 find tests/format_golden -maxdepth 1 -type f -name '*.tl' |
     sed 's#^tests/format_golden/##; s#\.tl$##' | sort > "$WORKDIR/format-actual.txt"
@@ -822,7 +823,7 @@ assert_empty "$WORKDIR/fmt-no-manifest.stdout"
 assert_contains "$WORKDIR/fmt-no-manifest.stderr" "could not find typelisp.pkg"
 rm -rf "$FMT_NOPKG"
 
-echo "[stage1-wrapper] lint"
+echo "[host-action-cli] lint"
 assert_contains "$WORKDIR/help.stderr" "typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")
@@ -888,4 +889,4 @@ run_expect_failure lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint-parse-
 assert_empty "$WORKDIR/lint-parse-error-check.stdout"
 assert_nonempty "$WORKDIR/lint-parse-error-check.stderr"
 
-echo "stage1 wrapper smoke passed"
+echo "host-action CLI smoke passed"

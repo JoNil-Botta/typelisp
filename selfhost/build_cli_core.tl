@@ -10,11 +10,15 @@
 
 (import "../stdlib/io.tl")
 
+(import "../stdlib/string.tl")
+
 (import "host_plan.tl")
 
 (import "build_run_core.tl")
 
 (import "package_cache_core.tl")
+
+(import "package_lock_core.tl")
 
 (import "compiler_driver_core.tl")
 
@@ -101,13 +105,51 @@
   (pin-kind String)
   (pin-value String))
 
+(defstruct BuildResolvedGitDependency
+  (dep-root String)
+  (lock-entry PackageLockEntry))
+
 (defenum ResultBuildGitDependency
   (OkBuildGitDependency BuildGitDependency)
   (ErrBuildGitDependency String))
 
+(defenum ResultBuildResolvedGitDependency
+  (OkBuildResolvedGitDependency BuildResolvedGitDependency)
+  (ErrBuildResolvedGitDependency String))
+
 (defenum ResultBuildString
   (OkBuildString String)
   (ErrBuildString String))
+
+(defenum BuildMaybeLockEntry
+  (BuildNoLockEntry)
+  (BuildSomeLockEntry PackageLockEntry))
+
+(defstruct BuildPackageLockState
+  (path String)
+  (entries PackageLockEntryList)
+  (has-lock bool))
+
+(defenum ResultBuildPackageLockState
+  (OkBuildPackageLockState BuildPackageLockState)
+  (ErrBuildPackageLockState String))
+
+(defstruct BuildResolvedPkgDep
+  (dep CompilerPkgDep)
+  (lock-entry BuildMaybeLockEntry))
+
+(defenum ResultBuildResolvedPkgDep
+  (OkBuildResolvedPkgDep BuildResolvedPkgDep)
+  (ErrBuildResolvedPkgDep String))
+
+(defstruct BuildResolvedPkgDeps
+  (deps CompilerPkgDepList)
+  (lock-entries PackageLockEntryList)
+  (has-remote bool))
+
+(defenum ResultBuildResolvedPkgDeps
+  (OkBuildResolvedPkgDeps BuildResolvedPkgDeps)
+  (ErrBuildResolvedPkgDeps String))
 
 (defenum BuildPackagePathList
   (BuildPackagePathNil)
@@ -946,6 +988,108 @@
                 (ErrBuildGitDependency
                   (build-git-dep-error alias "has invalid pin kind"))))))))))
 
+(define (build-git-dep-pin-kind [alias : String] [dep : BuildGitDependency]) : ResultPackageCachePinKind
+  (let
+    [kind : String (struct-get dep pin-kind)]
+    (cond
+      [(string-eq kind "rev") (OkPackageCachePinKind (PackageCachePinRev))]
+      [(string-eq kind "tag") (OkPackageCachePinKind (PackageCachePinTag))]
+      [(string-eq kind "branch")
+        (OkPackageCachePinKind (PackageCachePinBranch))]
+      [else
+        (ErrPackageCachePinKind
+          (build-git-dep-error alias "has invalid pin kind"))])))
+
+(define (build-package-lock-path [manifest-dir : String]) : String
+  (compiler-load-join-root-path manifest-dir "typelisp.lock"))
+
+(define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
+  (let
+    [path : String (build-package-lock-path manifest-dir)]
+    (if (file-exists? path)
+      (match (try-read-file (& path))
+        [(ErrIoString error)
+          (ErrBuildPackageLockState
+            (build-cat3
+              "build: cannot read package lock '"
+              path
+              (string-append "': " (io-error-message error))))]
+        [(OkIoString source)
+          (match (package-lock-parse source)
+            [(ErrPackageLockFile message)
+              (ErrBuildPackageLockState
+                (build-cat3
+                  "build: invalid package lock '"
+                  path
+                  (string-append "': " message)))]
+            [(OkPackageLockFile lock)
+              (OkBuildPackageLockState
+                (BuildPackageLockState path (struct-get lock entries) true))])])
+      (OkBuildPackageLockState
+        (BuildPackageLockState path PackageLockEntryNil false)))))
+
+(define (build-write-package-lock
+  [state : BuildPackageLockState]
+  [entries : PackageLockEntryList]) : ResultBuildString
+  (let
+    [lock : PackageLockFile (PackageLockFile package-lock-version entries)]
+    [text : String (package-lock-emit lock)]
+    [path : String (struct-get state path)]
+    (match (try-write-file (& path) (& text))
+      [(OkIoUnit) (OkBuildString path)]
+      [(ErrIoUnit error)
+        (ErrBuildString
+          (build-cat3
+            "build: cannot write package lock '"
+            path
+            (string-append "': " (io-error-message error))))])))
+
+(define (build-package-lock-entry-matches?
+  [entry : PackageLockEntry]
+  [alias : String]
+  [dep : BuildGitDependency]) : bool
+  (match (build-git-dep-pin-kind alias dep)
+    [(ErrPackageCachePinKind _) false]
+    [(OkPackageCachePinKind kind)
+      (and
+        (string-eq (struct-get entry alias) alias)
+        (and
+          (string-eq (struct-get entry url) (struct-get dep remote))
+          (and
+            (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
+            (string-eq (struct-get entry pin-value) (struct-get dep pin-value)))))]))
+
+(define (build-package-lock-matching-entry
+  [entries : PackageLockEntryList]
+  [alias : String]
+  [dep : BuildGitDependency]) : BuildMaybeLockEntry
+  (match (package-lock-entry-list-lookup entries alias)
+    [(PackageLockNoEntry) (BuildNoLockEntry)]
+    [(PackageLockSomeEntry entry)
+      (if (build-package-lock-entry-matches? entry alias dep)
+        (BuildSomeLockEntry entry)
+        (BuildNoLockEntry))]))
+
+(define (build-package-lock-entry
+  [alias : String]
+  [dep : BuildGitDependency]
+  [commit : String]) : ResultPackageLockEntry
+  (match (build-git-dep-pin-kind alias dep)
+    [(ErrPackageCachePinKind message) (ErrPackageLockEntry message)]
+    [(OkPackageCachePinKind kind)
+      (OkPackageLockEntry
+        (PackageLockEntry
+          alias
+          (struct-get dep remote)
+          kind
+          (struct-get dep pin-value)
+          commit))]))
+
+(define (build-git-dependency-at-commit
+  [dep : BuildGitDependency]
+  [commit : String]) : BuildGitDependency
+  (BuildGitDependency (struct-get dep remote) "rev" commit))
+
 (define (build-git-checkout-ref [dep : BuildGitDependency]) : String
   (if (string-eq (struct-get dep pin-kind) "branch")
     (string-append "origin/" (struct-get dep pin-value))
@@ -1027,6 +1171,26 @@
           root)
         "rev-parse")
       "HEAD")))
+
+(define (build-trim-command-output [output : String]) : String
+  (string-trim (& output)))
+
+(define (build-resolve-git-head [alias : String] [root : String]) : ResultBuildString
+  (match (build-run-captured
+    (build-git-dep-error alias "git rev-parse")
+    (build-git-rev-parse-command root))
+    [(ErrBuildString message) (ErrBuildString message)]
+    [(OkBuildString output)
+      (let
+        [commit : String (build-trim-command-output output)]
+        (if (= (string-length commit) 0)
+          (ErrBuildString
+            (build-git-dep-error alias "resolved commit is empty"))
+          (OkBuildString commit)))]))
+
+(define (build-absolute-dep-root [manifest-dir : String] [dep-root : String]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path manifest-dir dep-root)))
 
 (define (build-ensure-github-cache-parent
   [manifest-dir : String]
@@ -1396,52 +1560,177 @@
       (build-fetch-github-dependency-cached manifest-dir alias dep)
       (build-fetch-github-dependency-legacy manifest-dir alias dep))))
 
-(define (build-package-resolve-dep
+(define (build-resolve-github-dependency-from-lock
   [manifest-dir : String]
-  [dep : CompilerPkgDep]) : ResultBuildPkgDep
+  [alias : String]
+  [dep : BuildGitDependency]
+  [entry : PackageLockEntry]) : ResultBuildResolvedGitDependency
+  (let
+    [locked-commit : String (struct-get entry commit)]
+    [locked-dep : BuildGitDependency
+      (build-git-dependency-at-commit dep locked-commit)]
+    (match (build-fetch-github-dependency-cached manifest-dir alias locked-dep)
+      [(ErrBuildString message) (ErrBuildResolvedGitDependency message)]
+      [(OkBuildString dep-root)
+        (OkBuildResolvedGitDependency
+          (BuildResolvedGitDependency dep-root entry))])))
+
+(define (build-resolve-github-dependency-without-lock
+  [manifest-dir : String]
+  [alias : String]
+  [dep : BuildGitDependency]) : ResultBuildResolvedGitDependency
+  (match (build-fetch-github-dependency manifest-dir alias dep)
+    [(ErrBuildString message) (ErrBuildResolvedGitDependency message)]
+    [(OkBuildString dep-root)
+      (let
+        [commit-result : ResultBuildString
+          (if (build-git-dep-rev? dep)
+            (OkBuildString (struct-get dep pin-value))
+            (build-resolve-git-head
+              alias
+              (build-absolute-dep-root manifest-dir dep-root)))]
+        (match commit-result
+          [(ErrBuildString message) (ErrBuildResolvedGitDependency message)]
+          [(OkBuildString commit)
+            (match (build-package-lock-entry alias dep commit)
+              [(ErrPackageLockEntry message)
+                (ErrBuildResolvedGitDependency message)]
+              [(OkPackageLockEntry entry)
+                (OkBuildResolvedGitDependency
+                  (BuildResolvedGitDependency dep-root entry))])]))]))
+
+(define (build-resolve-github-dependency
+  [manifest-dir : String]
+  [alias : String]
+  [dep : BuildGitDependency]
+  [lock-entries : PackageLockEntryList]) : ResultBuildResolvedGitDependency
+  (match (build-package-lock-matching-entry lock-entries alias dep)
+    [(BuildSomeLockEntry entry)
+      (build-resolve-github-dependency-from-lock manifest-dir alias dep entry)]
+    [(BuildNoLockEntry)
+      (build-resolve-github-dependency-without-lock manifest-dir alias dep)]))
+
+(define (build-package-resolve-dep-with-lock
+  [manifest-dir : String]
+  [lock-entries : PackageLockEntryList]
+  [dep : CompilerPkgDep]) : ResultBuildResolvedPkgDep
   (let
     [path : String (struct-get dep path)]
     [alias : String (struct-get dep alias)]
     (if (compiler-load-github-dependency-path? path)
       (match (build-parse-git-dependency alias path)
-        [(ErrBuildGitDependency message) (ErrBuildPkgDep message)]
+        [(ErrBuildGitDependency message) (ErrBuildResolvedPkgDep message)]
         [(OkBuildGitDependency git-dep)
-          (match (build-fetch-github-dependency manifest-dir alias git-dep)
-            [(ErrBuildString message) (ErrBuildPkgDep message)]
-            [(OkBuildString dep-root)
-              (OkBuildPkgDep (CompilerPkgDep alias dep-root))])])
-      (OkBuildPkgDep dep))))
+          (match (build-resolve-github-dependency
+            manifest-dir
+            alias
+            git-dep
+            lock-entries)
+            [(ErrBuildResolvedGitDependency message)
+              (ErrBuildResolvedPkgDep message)]
+            [(OkBuildResolvedGitDependency resolved)
+              (OkBuildResolvedPkgDep
+                (BuildResolvedPkgDep
+                  (CompilerPkgDep alias (struct-get resolved dep-root))
+                  (BuildSomeLockEntry (struct-get resolved lock-entry))))])])
+      (OkBuildResolvedPkgDep (BuildResolvedPkgDep dep (BuildNoLockEntry))))))
+
+(define (build-package-resolve-dep
+  [manifest-dir : String]
+  [dep : CompilerPkgDep]) : ResultBuildPkgDep
+  (match (build-package-resolve-dep-with-lock
+    manifest-dir
+    PackageLockEntryNil
+    dep)
+    [(ErrBuildResolvedPkgDep message) (ErrBuildPkgDep message)]
+    [(OkBuildResolvedPkgDep resolved) (OkBuildPkgDep (struct-get resolved dep))]))
+
+(define (build-package-lock-entry-list-add
+  [entries : PackageLockEntryList]
+  [maybe-entry : BuildMaybeLockEntry]) : ResultPackageLockEntryList
+  (match maybe-entry
+    [(BuildNoLockEntry) (OkPackageLockEntryList entries)]
+    [(BuildSomeLockEntry entry) (package-lock-entry-list-insert entries entry)]))
+
+(define (build-package-resolve-deps-with-lock
+  [manifest-dir : String]
+  [lock-entries : PackageLockEntryList]
+  [deps : CompilerPkgDepList]) : ResultBuildResolvedPkgDeps
+  (match deps
+    [(CompilerPkgDepNil)
+      (OkBuildResolvedPkgDeps
+        (BuildResolvedPkgDeps CompilerPkgDepNil PackageLockEntryNil false))]
+    [(CompilerPkgDepCons dep rest)
+      (match (build-package-resolve-dep-with-lock manifest-dir lock-entries dep)
+        [(ErrBuildResolvedPkgDep message) (ErrBuildResolvedPkgDeps message)]
+        [(OkBuildResolvedPkgDep resolved-dep)
+          (match (build-package-resolve-deps-with-lock
+            manifest-dir
+            lock-entries
+            (box-get rest))
+            [(ErrBuildResolvedPkgDeps message)
+              (ErrBuildResolvedPkgDeps message)]
+            [(OkBuildResolvedPkgDeps resolved-rest)
+              (match (build-package-lock-entry-list-add
+                (struct-get resolved-rest lock-entries)
+                (struct-get resolved-dep lock-entry))
+                [(ErrPackageLockEntryList message)
+                  (ErrBuildResolvedPkgDeps message)]
+                [(OkPackageLockEntryList next-lock-entries)
+                  (OkBuildResolvedPkgDeps
+                    (BuildResolvedPkgDeps
+                      (CompilerPkgDepCons
+                        (struct-get resolved-dep dep)
+                        (box (struct-get resolved-rest deps)))
+                      next-lock-entries
+                      (or
+                        (struct-get resolved-rest has-remote)
+                        (match (struct-get resolved-dep lock-entry)
+                          [(BuildNoLockEntry) false]
+                          [(BuildSomeLockEntry _) true]))))])])])]))
 
 (define (build-package-resolve-deps
   [manifest-dir : String]
   [deps : CompilerPkgDepList]) : ResultBuildPkgDepList
-  (match deps
-    [(CompilerPkgDepNil) (OkBuildPkgDepList CompilerPkgDepNil)]
-    [(CompilerPkgDepCons dep rest)
-      (match (build-package-resolve-dep manifest-dir dep)
-        [(ErrBuildPkgDep message) (ErrBuildPkgDepList message)]
-        [(OkBuildPkgDep resolved-dep)
-          (match (build-package-resolve-deps manifest-dir (box-get rest))
-            [(ErrBuildPkgDepList message) (ErrBuildPkgDepList message)]
-            [(OkBuildPkgDepList resolved-rest)
-              (OkBuildPkgDepList
-                (CompilerPkgDepCons resolved-dep (box resolved-rest)))])])]))
+  (match (build-package-resolve-deps-with-lock
+    manifest-dir
+    PackageLockEntryNil
+    deps)
+    [(ErrBuildResolvedPkgDeps message) (ErrBuildPkgDepList message)]
+    [(OkBuildResolvedPkgDeps resolved)
+      (OkBuildPkgDepList (struct-get resolved deps))]))
 
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
   [manifest : CompilerPkgManifest]) : ResultBuildManifest
-  (match (build-package-resolve-deps
-    (compiler-load-dirname manifest-path)
-    (struct-get manifest deps))
-    [(ErrBuildPkgDepList message) (ErrBuildManifest message)]
-    [(OkBuildPkgDepList deps)
-      (OkBuildManifest
-        (CompilerPkgManifest
-          (struct-get manifest name)
-          (struct-get manifest version)
-          (struct-get manifest kind)
-          (struct-get manifest entry)
-          deps))]))
+  (let
+    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    (match (build-load-package-lock manifest-dir)
+      [(ErrBuildPackageLockState message) (ErrBuildManifest message)]
+      [(OkBuildPackageLockState lock-state)
+        (match (build-package-resolve-deps-with-lock
+          manifest-dir
+          (struct-get lock-state entries)
+          (struct-get manifest deps))
+          [(ErrBuildResolvedPkgDeps message) (ErrBuildManifest message)]
+          [(OkBuildResolvedPkgDeps resolved)
+            (begin
+              (if (or
+                (struct-get resolved has-remote)
+                (struct-get lock-state has-lock))
+                (match (build-write-package-lock
+                  lock-state
+                  (struct-get resolved lock-entries))
+                  [(ErrBuildString message) (return (ErrBuildManifest message))]
+                  [(OkBuildString _) unit])
+                unit)
+              (OkBuildManifest
+                (CompilerPkgManifest
+                  (struct-get manifest name)
+                  (struct-get manifest version)
+                  (struct-get manifest kind)
+                  (struct-get manifest entry)
+                  (struct-get resolved deps))))])])))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))

@@ -1283,17 +1283,15 @@
     false
     (let
       [c : char (string-ref source idx)]
-      (if line-open
-        (if (tltest-source-line-break? c)
-          (tltest-source-has-inline-tests-from source (+ idx 1) n true)
-          (if (tltest-source-prefix-space? c)
-            (tltest-source-has-inline-tests-from source (+ idx 1) n true)
-            (if (tltest-inline-marker-at? source idx n)
-              true
-              (tltest-source-has-inline-tests-from source (+ idx 1) n false))))
-        (if (tltest-source-line-break? c)
-          (tltest-source-has-inline-tests-from source (+ idx 1) n true)
-          (tltest-source-has-inline-tests-from source (+ idx 1) n false))))))
+      (cond
+        [(and line-open (tltest-source-line-break? c))
+          (tltest-source-has-inline-tests-from source (+ idx 1) n true)]
+        [(and line-open (tltest-source-prefix-space? c))
+          (tltest-source-has-inline-tests-from source (+ idx 1) n true)]
+        [(and line-open (tltest-inline-marker-at? source idx n)) true]
+        [(tltest-source-line-break? c)
+          (tltest-source-has-inline-tests-from source (+ idx 1) n true)]
+        [else (tltest-source-has-inline-tests-from source (+ idx 1) n false)]))))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
   (let

@@ -139,9 +139,36 @@ The checkout root also has a `typelisp.pkg` whose binary entry is
 `selfhost/cli.tl`, so `typelisp build` from the repository root builds the
 selfhost CLI package into `target/typelisp/typelisp/`. The no-Rust smoke keeps a
 root package-build check in `scripts/verify-selfhost-cli-build-run.sh`; the
-published stage0 workflow intentionally keeps using the direct `compile
-selfhost/cli.tl` path until the standalone-driver cleanup tracked by #1574 is
-finished.
+published stage0 workflow intentionally keeps using the direct
+`compile selfhost/cli.tl` path plus native linking so a seed compiler can build
+its successor without depending on its own `build` command.
+
+### Retained command-driver wrappers
+
+The published toolchain surface is the single `selfhost/cli.tl` binary. The
+remaining top-level command drivers are compatibility/coverage wrappers, not a
+second published surface. They stay only when they anchor a bootstrap path or a
+focused gate that would otherwise lose coverage; any future removal must first
+move the named gate to `selfhost/cli.tl` or to an equivalent focused smoke.
+
+| Driver | Classification | Reason retained |
+|--------|----------------|-----------------|
+| `selfhost/compile.tl` | Required bootstrap entry | `scripts/check-bootstrap-fixpoint.sh` compiles it to produce each compiler stage, keeping bootstrap compile-only and independent of `build`. |
+| `selfhost/build.tl` | Required focused compatibility/coverage entry | `scripts/verify-public-tools.sh`, `scripts/verify-windows-selfhost-msvc-link.sh`, and `scripts/analyze-selfhost-build-asm-size.sh` compile or run the build command as a smaller focused tool. |
+| `selfhost/run.tl` | Required focused compatibility/coverage entry | Public-tool and Windows link gates compile or run the run command as a focused host-action tool. |
+| `selfhost/check.tl` | Required focused compatibility/coverage entry | Stdlib selfhost and safety-corpus gates build a smaller frontend checker binary rather than the full CLI. |
+| `selfhost/doc.tl` | Required focused compatibility/coverage entry | Public-tool and documentation gates compile the doc command as a focused generator while `typelisp doc` remains the public command. |
+| `selfhost/format.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps the formatter command independently typechecked and symbol-smoked. |
+| `selfhost/lint.tl` | Required focused compatibility/coverage entry | Compile-manifest and lint-driver smoke coverage keep the lint command independently typechecked. |
+| `selfhost/test.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps inline-test command lowering visible outside the unified CLI case. |
+| `selfhost/repl.tl` | Required focused compatibility/coverage entry | Manifest and public-tool REPL scratch coverage keep the REPL command independently exercised. |
+| `selfhost/lsp_frame.tl` | Required focused compatibility/coverage entry | Manifest coverage keeps the LSP frame server independently typechecked without running an editor client. |
+| `selfhost/clean.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps package/source cleanup command lowering visible outside the unified CLI case. |
+| `selfhost/scaffold.tl` | Required focused compatibility/coverage entry | Compile-manifest coverage keeps `new`/`init` scaffold lowering visible outside the unified CLI case. |
+
+No current command wrapper is classified as redundant. The comments in those
+files deliberately call them retained wrappers so new docs and scripts prefer
+`selfhost/cli.tl` for the public path.
 
 Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
 script downloads the host platform asset, verifies the file is non-empty,
@@ -323,9 +350,9 @@ runner commands.
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
 module and item documentation comments, generates Markdown through
 `typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. It is a
-command-tier gate, so the Linux no-Rust lane runs it through the bootstrapped
-stage1 only when the doc command driver is available; otherwise the explicit
-fallback/skip path is tied to #1662 and #1437.
+command-tier gate, so the Linux no-Rust lane runs it through the selected
+host-action CLI compiler when the doc command is available; otherwise the
+explicit fallback/skip path is tied to #1662 and #1437.
 
 ### Repository doctest gate
 

@@ -13,6 +13,8 @@
 ;# (define empty-count : i64
 ;#   (windows-setup-instance-list-count (WindowsSetupInstanceNil)))
 ;# ```
+(import "string.tl")
+
 ;: Immutable list of SetupConfiguration package/component identifiers.
 (defenum WindowsSetupStringList
   (WindowsSetupStringNil)
@@ -75,7 +77,7 @@
   (match items
     [(WindowsSetupStringNil) false]
     [(WindowsSetupStringCons head rest)
-      (if (string-eq head package-id)
+      (if (string-eq-borrowed (& head) package-id)
         true
         (windows-setup-string-list-contains? (box-get rest) package-id))]))
 

@@ -1,7 +1,8 @@
 ;; check_cli_core.tl - Self-hosted `check` (typecheck) command logic.
 ;;
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
-;; standalone `check.tl` driver share the command without a duplicate `main`.
+;; retained check compatibility/coverage driver share the command without a
+;; duplicate `main`.
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")

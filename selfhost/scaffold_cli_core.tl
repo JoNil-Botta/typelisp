@@ -1,7 +1,8 @@
 ;; scaffold_cli_core.tl - selfhost `typelisp new` / `typelisp init` command logic (#1160).
 ;;
-;; Shared by the standalone `scaffold.tl` driver and the unified `cli.tl`
-;; dispatcher. `new [--lib] <name>` creates a package skeleton in `<name>/`;
+;; Shared by the retained `scaffold.tl` compatibility/coverage driver and the
+;; unified `cli.tl` dispatcher. `new [--lib] <name>` creates a package skeleton
+;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
 (import "../stdlib/io.tl")

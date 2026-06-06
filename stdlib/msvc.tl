@@ -105,7 +105,9 @@
 
 ;: Return true when `target` is a v1-supported MSVC target triple.
 (define (msvc-supported-target? [target : (& target str)]) : bool
-  (string-eq target "x86_64-pc-windows-msvc"))
+  (let
+    [supported : String "x86_64-pc-windows-msvc"]
+    (string-eq-borrowed target (& supported))))
 
 ;: Return true when `c` is an ASCII decimal digit.
 (define (msvc-digit? [c : char]) : bool

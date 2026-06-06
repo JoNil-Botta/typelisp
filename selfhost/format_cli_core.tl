@@ -1,8 +1,8 @@
 ;; format_cli_core.tl - Self-hosted `fmt` command logic (#522).
 ;;
-;; The formatter CLI logic, factored out of `format.tl` so both the standalone
-;; `format.tl` driver and the unified `cli.tl` dispatcher can run the `fmt`
-;; command without duplicating a `main`.
+;; The formatter CLI logic, factored out of `format.tl` so both the retained
+;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
+;; can run the `fmt` command without duplicating a `main`.
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")

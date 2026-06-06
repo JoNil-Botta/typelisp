@@ -13,7 +13,7 @@
 
 (import "../stdlib/text_buf.tl")
 
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
 (cfg
   compile-profile

@@ -455,6 +455,88 @@
                 (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-shadowed-string-helpers-source) : String
+  "(define (char-eq [a : char] [b : char]) : bool
+  (= (cast a : i64) (cast b : i64)))
+(define (string-eq [left : String] [right : String]) : bool
+  (let
+    [left-len : i64 (string-length left)]
+    [right-len : i64 (string-length right)]
+    (if (not (= left-len right-len))
+      false
+      (let
+        [i : i64 0]
+        [same : bool true]
+        (begin
+          (while (and same (< i left-len))
+            (if (char-eq (string-ref left i) (string-ref right i))
+              (set! i (+ i 1))
+              (set! same false)))
+          same)))))
+(define (string=? [left : String] [right : String]) : bool
+  (string-eq left right))
+(define (string->int [text : String]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [negative : bool false]
+    [value : i64 0]
+    (begin
+      (if (and (> n 0) (char-eq (string-ref text 0) #-'))
+        (begin
+          (set! negative true)
+          (set! i 1))
+        unit)
+      (while (< i n)
+        (begin
+          (set! value (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
+          (set! i (+ i 1))))
+      (if negative
+        (- 0 value)
+        value))))
+(define (main) : i64
+  (if (and
+    (string-eq \"same\" (string-append \"sa\" \"me\"))
+    (and
+      (not (string=? \"same\" \"different\"))
+      (= (string->int \"-42\") -42)))
+    42
+    0))")
+
+(define (compiler-backend-shadowed-string-helpers-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-shadowed-string-helpers-source))
+    [(OkCompilerBackend asm)
+      (and
+        (and
+          (backend-and4
+            (not
+              (compiler-backend-string-contains? asm ".globl tl_string_eq\n"))
+            (not
+              (compiler-backend-string-contains? asm "    call tl_string_eq\n"))
+            (not
+              (compiler-backend-string-contains? asm ".extern tl_string_eq\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_to_int\n")))
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_string_to_int\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_to_int\n"))))
+        (and
+          (compiler-backend-string-contains? asm "    call tl_string_concat\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-windows-print-runtime-source) : String
   "(extern runtime-print-string (:symbol \"tl_print_string\") : (-> String unit))
 (define (print-string [text : String]) : unit
@@ -4368,7 +4450,9 @@
                         (compiler-backend-user-helper-name-ok?)
                         (compiler-backend-file-handle-open-close-runtime-ok?)
                         (and
-                          (compiler-backend-string-runtime-ok?)
+                          (and
+                            (compiler-backend-string-runtime-ok?)
+                            (compiler-backend-shadowed-string-helpers-ok?))
                           (compiler-backend-windows-print-runtime-ok?))
                         (compiler-backend-env-runtime-ok?)
                         (compiler-backend-expanded-scalar-regs-ok?)

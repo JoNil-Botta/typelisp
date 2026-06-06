@@ -1,10 +1,12 @@
-;; format.tl - Self-hosted formatter CLI driver (#522).
+;; format.tl - Retained selfhost formatter compatibility/coverage driver (#522).
 ;;
-;; Usage through the Rust CLI:
+;; Public usage:
 ;;   typelisp fmt [input.tl...] [--check] [--manifest-path typelisp.pkg]
 ;;
-;; The command logic lives in `format_cli_core.tl` so the unified `cli.tl`
-;; dispatcher can share it without a duplicate `main`.
+;; The published selfhost entry point is `selfhost/cli.tl fmt`. This wrapper
+;; stays as a focused formatter compile target for manifest coverage. The
+;; command logic lives in `format_cli_core.tl`, shared with the unified
+;; dispatcher.
 (import "../stdlib/io.tl")
 
 (import "format_cli_core.tl")

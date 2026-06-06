@@ -1,7 +1,9 @@
-;; scaffold.tl - standalone selfhost `typelisp new` / `typelisp init` driver.
+;; scaffold.tl - Retained selfhost `new`/`init` compatibility/coverage driver.
 ;;
-;; The command logic lives in `scaffold_cli_core.tl` so the unified `cli.tl`
-;; dispatcher can share it without a duplicate `main`.
+;; The published entry points are `selfhost/cli.tl new` and `selfhost/cli.tl
+;; init`. This thin wrapper stays as a focused scaffold compile target for
+;; manifest coverage. The command logic lives in `scaffold_cli_core.tl`, shared
+;; with the unified dispatcher.
 (import "../stdlib/io.tl")
 
 (import "scaffold_cli_core.tl")

@@ -20,9 +20,10 @@ Coverage notes:
 - `arena_patterns.tl` covers the standard safe scratch workflows: temporary
   scalar-only work inside `with-arena` and clone-out from a reusable
   first-class scratch arena through `with-escape`.
-- `string_edges.tl` covers the public string predicates, trimming helpers,
-  replacement paths, and prefix checks, including empty strings, empty needles,
-  misses, prefix positions, and replacement edge cases.
+- `string_edges.tl` covers the public string equality/parsing predicates,
+  trimming helpers, replacement paths, and prefix checks, including empty
+  strings, empty needles, misses, prefix positions, legacy `string->int` edge
+  cases, and replacement edge cases.
 - `json_helpers.tl` exercises the JSON data model, list/member helpers, escape
   helpers, parser subroutines, and serializer helpers directly.
 - `json_parse_stringify.tl` covers end-to-end parsing and stringifying for
@@ -70,12 +71,13 @@ Coverage notes:
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and async start/wait API validation.
-- `process_borrowed_check.tl` typechecks the check-only
-  `process_borrowed.tl` storage surface for borrowed executable, argv, cwd,
-  env, and stdin fields, validation diagnostics, and explicit conversion to
-  owned `ProcessCommand` before the runtime boundary. The escape fixture
-  verifies the checker rejects returning a borrowed command whose text owner is
-  shorter-lived than the declared command lifetime.
+- `process_borrowed_check.tl` typechecks the `process_borrowed.tl` storage
+  surface for borrowed executable, argv, cwd, env, and stdin fields, validation
+  diagnostics, and explicit conversion to owned `ProcessCommand` before the
+  runtime boundary. `process_runtime.tl` covers borrowed output/start execution
+  through that runtime boundary. The escape fixture verifies the checker rejects
+  returning a borrowed command whose text owner is shorter-lived than the
+  declared command lifetime.
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, failed spawn, and async start/wait on Linux, plus the
   structured unsupported async result on Windows.

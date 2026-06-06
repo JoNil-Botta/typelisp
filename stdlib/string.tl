@@ -1,8 +1,7 @@
 ;# String utility library for TypeLisp.
 ;#
-;# Provides higher-level string operations built on compiler primitives:
-;# `string-length`, `string-ref`, `substring`, `string-append`, and
-;# `string-eq`.
+;# Provides string operations built on compiler primitives:
+;# `string-length`, `string-ref`, `substring`, and `string-append`.
 ;#
 ;# Usage: `(import "stdlib/string.tl")`
 ;#
@@ -24,6 +23,56 @@
 ;: Compare two chars for equality.
 (define (char-eq [a : char] [b : char]) : bool
   (= (cast a : i64) (cast b : i64)))
+
+;: Compare two borrowed strings byte-for-byte without allocating.
+(define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool
+  (let
+    [left-len : i64 (string-length left)]
+    [right-len : i64 (string-length right)]
+    (if (not (= left-len right-len))
+      false
+      (let
+        [i : i64 0]
+        [same : bool true]
+        (begin
+          (while (and same (< i left-len))
+            (if (char-eq (string-ref left i) (string-ref right i))
+              (set! i (+ i 1))
+              (set! same false)))
+          same)))))
+
+;: Compare two owned strings byte-for-byte without allocating.
+(define (string-eq [left : String] [right : String]) : bool
+  (string-eq-borrowed (& left) (& right)))
+
+;: Alias for `string-eq`.
+(define (string=? [left : String] [right : String]) : bool
+  (string-eq left right))
+
+;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
+(define (string->int-borrowed [text : (& text str)]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [negative : bool false]
+    [value : i64 0]
+    (begin
+      (if (and (> n 0) (char-eq (string-ref text 0) #-'))
+        (begin
+          (set! negative true)
+          (set! i 1))
+        unit)
+      (while (< i n)
+        (begin
+          (set! value (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
+          (set! i (+ i 1))))
+      (if negative
+        (- 0 value)
+        value))))
+
+;: Parse a decimal integer using the legacy `string->int` compatibility rules.
+(define (string->int [text : String]) : i64
+  (string->int-borrowed (& text)))
 
 ;: Trim leading whitespace from borrowed text.
 (define (string-trim-left [s : (& s str)]) : String

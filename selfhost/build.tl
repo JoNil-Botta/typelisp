@@ -1,9 +1,10 @@
-;; build.tl - Selfhost build CLI driver (#622, #1339).
+;; build.tl - Retained selfhost build compatibility/coverage driver (#622, #1339).
 ;;
-;; The command logic lives in `build_cli_core.tl` so the unified `cli.tl`
-;; dispatcher can share it without a duplicate `main`. The driver builds
-;; in-process via stdlib fs/process helpers; `--direct` remains accepted for
-;; compatibility with older scripts.
+;; The published entry point is `selfhost/cli.tl build`. This thin wrapper stays
+;; as a focused build-tool compile/run target for public-tool, Windows link, and
+;; assembly-size gates. The command logic lives in `build_cli_core.tl`, shared
+;; with the unified dispatcher; `--direct` remains accepted for compatibility
+;; with older scripts.
 (import "../stdlib/io.tl")
 
 (import "build_cli_core.tl")

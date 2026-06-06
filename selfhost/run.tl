@@ -1,7 +1,9 @@
-;; run.tl - Selfhost run CLI driver.
+;; run.tl - Retained selfhost run compatibility/coverage driver.
 ;;
-;; The command logic lives in `run_cli_core.tl` so the unified `cli.tl`
-;; dispatcher can share it without a duplicate `main`.
+;; The published entry point is `selfhost/cli.tl run`. This thin wrapper stays
+;; as a focused run-tool compile/run target for public-tool and Windows link
+;; gates. The command logic lives in `run_cli_core.tl`, shared with the unified
+;; dispatcher.
 (import "../stdlib/io.tl")
 
 (import "run_cli_core.tl")

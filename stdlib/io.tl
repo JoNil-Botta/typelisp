@@ -461,19 +461,24 @@
         unit
         (io-ffi-exit (cast 134 : i32))))))
 
+;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
 (defstruct BigNum
   (limbs (Array u64))
   (len i64))
 
+;: Limb capacity of formatter bignum scratch buffers.
 (define ftoa-cap : i64
   96)
 
+;: Low 32-bit mask isolating a base-2^32 limb.
 (define ftoa-mask32 : u64
   (cast 4294967295 : u64))
 
+;: A zero-valued BigNum.
 (define (bn-zero) : BigNum
   (BigNum (make-array u64 ftoa-cap) 0))
 
+;: BigNum holding the u64 value x.
 (define (bn-from-u64 [x : u64]) : BigNum
   (let
     [r : BigNum (bn-zero)]
@@ -487,6 +492,7 @@
         [(> lo (cast 0 : u64)) (BigNum (struct-get r limbs) 1)]
         [else (BigNum (struct-get r limbs) 0)]))))
 
+;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
 (define (bn-cmp [a : BigNum] [b : BigNum]) : i64
   (let
     [la : i64 (struct-get a len)]
@@ -518,6 +524,7 @@
                   (set! i (- i 1)))))
             res))))))
 
+;: Limb count of arr with high zero limbs trimmed, starting from hint.
 (define (bn-norm-len [arr : (Array u64)] [hint : i64]) : i64
   (let
     [i : i64 hint]
@@ -526,6 +533,7 @@
         (set! i (- i 1)))
       i)))
 
+;: Sum of BigNums a and b.
 (define (bn-add [a : BigNum] [b : BigNum]) : BigNum
   (let
     [r : (Array u64) (make-array u64 ftoa-cap)]
@@ -560,6 +568,7 @@
           (set! n (+ n 1))))
       (BigNum r (bn-norm-len r n)))))
 
+;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
   (let
     [r : (Array u64) (make-array u64 ftoa-cap)]
@@ -581,6 +590,7 @@
           (set! i (+ i 1))))
       (BigNum r (bn-norm-len r i)))))
 
+;: BigNum a shifted left by n bits.
 (define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
   (if (= (struct-get a len) 0)
     a
@@ -611,6 +621,7 @@
           (array-set! r (+ la limb-shift) carry))
         (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
 
+;: Product of BigNum a and the 64-bit value m.
 (define (bn-mul-u64 [a : BigNum] [m : u64]) : BigNum
   (let
     [lo : u64 (bit-and m ftoa-mask32)]
@@ -620,6 +631,7 @@
       low
       (bn-add low (bn-shl-bits (bn-mul-u32 a hi) 32)))))
 
+;: BigNum a multiplied by ten raised to p.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
   (let
     [r : BigNum a]
@@ -631,7 +643,7 @@
           (set! i (+ i 1))))
       r)))
 
-;; floor(num/den) as u64, assuming the quotient fits in 60 bits.
+;: floor(num/den) as u64, assuming the quotient fits in 60 bits.
 (define (bn-div-floor-u64 [num : BigNum] [den : BigNum]) : u64
   (let
     [q : u64 (cast 0 : u64)]
@@ -646,12 +658,13 @@
             (set! bit (- bit 1)))))
       q)))
 
-;; floor(a / b) for b > 0 (TL `/` truncates toward zero).
+;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
 (define (ftoa-floor-div [a : i64] [b : i64]) : i64
   (if (>= a 0)
     (/ a b)
     (- 0 (/ (+ (- 0 a) (- b 1)) b))))
 
+;: Index of the highest set bit of m.
 (define (ftoa-msb-index [m : u64]) : i64
   (let
     [i : i64 0]
@@ -663,7 +676,7 @@
           (set! i (+ i 1))))
       i)))
 
-;; Significant-digit string of `d` with trailing zeros removed (>= 1 digit).
+;: Significant-digit string of `d` with trailing zeros removed (>= 1 digit).
 (define (ftoa-strip-zeros [d : i64]) : String
   (let
     [dd : i64 d]
@@ -672,6 +685,7 @@
         (set! dd (/ dd 10)))
       (int->string dd))))
 
+;: Exponent k formatted with sign and at least two digits.
 (define (ftoa-pad-exp [k : i64]) : String
   (let
     [mag : i64
@@ -689,6 +703,7 @@
         (string-append "0" digits)
         digits))))
 
+;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
   (let
     [s : String ""]
@@ -700,8 +715,8 @@
           (set! i (+ i 1))))
       s)))
 
-;; Format significant-digit string `s` whose leading digit has decimal
-;; exponent `k`, following printf %g (precision 17) style.
+;: Format significant-digit string `s` whose leading digit has decimal
+;: exponent `k`, following printf %g (precision 17) style.
 (define (ftoa-render [neg : bool] [s : String] [k : i64]) : String
   (let
     [body : String ""]
@@ -734,6 +749,7 @@
         (string-append "-" body)
         body))))
 
+;: Render value as a shortest round-tripping decimal string (printf %.17g style).
 (define (io-format-float-core [value : f64]) : String
   (let
     [buf : (Array f64) (make-array f64 1)]

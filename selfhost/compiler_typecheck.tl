@@ -5947,7 +5947,6 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (cleanup-file-handle [h : FileHandle]) : unit unit)
 (define (with-cleanup-owner-read [fd : i64]) : i64
   (with ([h (FileHandle fd) cleanup-file-handle])
     (struct-get h fd)))")
@@ -5957,7 +5956,6 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (cleanup-file-handle [h : FileHandle]) : unit unit)
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-with-cleanup-owner-whole [fd : i64]) : i64
   (with ([h (FileHandle fd) cleanup-file-handle])
@@ -5970,12 +5968,10 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (cleanup-file-handle [h : FileHandle]) : unit unit)
 (defstruct Holder
   (:cleanup cleanup-holder)
   (handle FileHandle (:owned))
   (size i64))
-(define (cleanup-holder [h : Holder]) : unit unit)
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-with-cleanup-owner-field [fd : i64]) : i64
   (with ([h (Holder (FileHandle fd) 7) cleanup-holder])

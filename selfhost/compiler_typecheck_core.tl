@@ -12334,20 +12334,23 @@
 (define (tc-move-path-append [base : String] [field : String]) : String
   (string-append (string-append base ".") field))
 
-(define (tc-move-struct-field-base-path [expr : AstExpr]) : TcMaybeString
+(define (tc-move-tuple-index-path [base : String] [index : i64]) : String
+  (string-append (string-append base ".#tuple.") (int->string index)))
+
+(define (tc-move-direct-root-base-path [expr : AstExpr]) : TcMaybeString
   (match expr
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-struct-field-base-path inner))]
+        (tc-move-direct-root-base-path inner))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-struct-field-base-path inner))]
+        (tc-move-direct-root-base-path inner))]
     [(AstExprCast inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-struct-field-base-path inner))]
+        (tc-move-direct-root-base-path inner))]
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
@@ -12368,12 +12371,40 @@
     [(AstExprStructGet inner-box field)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (match (tc-move-struct-field-base-path inner)
+        (match (tc-move-direct-root-base-path inner)
           [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
           [(TcNoString) (TcNoString)]))]
     [_ (TcNoString)]))
 
-(define (tc-moved-add-struct-field
+(define (tc-move-tuple-element-path [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-tuple-element-path inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-tuple-element-path inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-tuple-element-path inner))]
+    [(AstExprTupleRef inner-box index)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-move-direct-root-base-path inner)
+          [(TcSomeString base)
+            (TcSomeString (tc-move-tuple-index-path base index))]
+          [(TcNoString) (TcNoString)]))]
+    [_ (TcNoString)]))
+
+(define (tc-move-projection-path [expr : AstExpr]) : TcMaybeString
+  (match (tc-move-struct-field-path expr)
+    [(TcSomeString path) (TcSomeString path)]
+    [(TcNoString) (tc-move-tuple-element-path expr)]))
+
+(define (tc-moved-add-projection-path
   [moved : TcMovedSet]
   [root : String]
   [path : String]) : TcMovedSet
@@ -12468,14 +12499,15 @@
           (if (tc-type-consuming-by-value-now? ctx init-ty)
             (if (tc-move-dynamic-array-element-projection? ctx env init)
               (ErrTcMove (tc-move-dynamic-array-element-message))
-              (match (tc-move-struct-field-path init)
+              (match (tc-move-projection-path init)
                 [(TcSomeString path)
                   (match (tc-move-root-projection-var init)
                     [(TcSomeString root)
                       (if (tc-moved-contains? locals root)
                         (if (tc-moved-contains? moved (tc-moved-path-key path))
                           (ErrTcMove (tc-move-use-message path))
-                          (OkTcMove (tc-moved-add-struct-field moved root path)))
+                          (OkTcMove
+                            (tc-moved-add-projection-path moved root path)))
                         (OkTcMove moved))]
                     [(TcNoString) (OkTcMove moved)])]
                 [(TcNoString)
@@ -12502,14 +12534,14 @@
   (if (tc-type-consuming-by-value-now? ctx target-ty)
     (if (tc-move-dynamic-array-element-projection? ctx env expr)
       (ErrTcMove (tc-move-dynamic-array-element-message))
-      (match (tc-move-struct-field-path expr)
+      (match (tc-move-projection-path expr)
         [(TcSomeString path)
           (match (tc-move-root-projection-var expr)
             [(TcSomeString root)
               (if (tc-moved-contains? locals root)
                 (if (tc-moved-contains? moved (tc-moved-path-key path))
                   (ErrTcMove (tc-move-use-message path))
-                  (OkTcMove (tc-moved-add-struct-field moved root path)))
+                  (OkTcMove (tc-moved-add-projection-path moved root path)))
                 (OkTcMove moved))]
             [(TcNoString) (OkTcMove moved)])]
         [(TcNoString)
@@ -12776,7 +12808,15 @@
     [(AstExprTupleRef inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (match (tc-move-check-expr ctx env locals moved inner)
+          [(OkTcMove moved1)
+            (match (tc-move-tuple-element-path expr)
+              [(TcSomeString path)
+                (if (tc-moved-contains? moved1 (tc-moved-path-key path))
+                  (ErrTcMove (tc-move-use-message path))
+                  (OkTcMove moved1))]
+              [(TcNoString) (OkTcMove moved1)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArray exprs)
       (match (tc-expr-list-types ctx env exprs)
         [(OkTcTypeList types)

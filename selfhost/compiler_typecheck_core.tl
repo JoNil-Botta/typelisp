@@ -12095,15 +12095,16 @@
 ;; evaluation order. The staged owner-only policy keeps ordinary aggregate
 ;; sharing compatible, while consuming only by-value sites whose target is an
 ;; owner today: cleanup-owning structs and Box values. Reads never move; branches
-;; merge by union (a place moved on any arm is moved afterward); loops and
-;; lambdas discard their body's moves for the post-state because they may run
-;; zero times or be deferred. Reassigning a slot with `set!` clears its moved
-;; mark. Owner-consuming struct fields, tuple elements, and fixed-array literal
-;; elements are tracked as root paths so unrelated top-level entries remain
-;; usable. Box, nested, and non-literal aggregate projections stay rejected until
-;; their path/reinitialization policy lands; dynamic arrays have a separate
-;; diagnostic because element ownership cannot be made sound without an index
-;; policy.
+;; merge by union (a place moved on any arm is moved afterward). Loops reject
+;; owner moves from values visible before the repeated body, then discard body
+;; moves for the post-state because they may run zero times; lambdas still
+;; discard their body's moves because they may be deferred. Reassigning a slot
+;; with `set!` clears its moved mark. Owner-consuming struct fields, tuple
+;; elements, and fixed-array literal elements are tracked as root paths so
+;; unrelated top-level entries remain usable. Box, nested, and non-literal
+;; aggregate projections stay rejected until their path/reinitialization policy
+;; lands; dynamic arrays have a separate diagnostic because element ownership
+;; cannot be made sound without an index policy.
 (defstruct TcMovedSet
   (map StringI64Map))
 
@@ -12112,7 +12113,7 @@
   (ErrTcMove String))
 
 (defenum TcMoveBindings
-  (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet)
+  (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
   (ErrTcMoveBindings String))
 
 (defenum TcMoveMaybeIndex
@@ -12149,6 +12150,11 @@
 
 (define (tc-move-use-message [name : String]) : String
   (string-append (string-append "typecheck: use of moved value `" name) "`"))
+
+(define (tc-move-loop-carried-message [name : String]) : String
+  (string-append
+    (string-append "typecheck: cannot move loop-carried owner value `" name)
+    "`"))
 
 (define (tc-moved-path-key [path : String]) : String
   (string-append "\npath:" path))
@@ -12574,6 +12580,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [init : AstExpr]) : TcMoveResult
   (match (tc-move-bare-var init)
@@ -12581,7 +12588,9 @@
       (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
         (if (tc-moved-partial? moved v)
           (ErrTcMove (tc-move-use-message v))
-          (OkTcMove (tc-moved-add moved v)))
+          (if (tc-moved-contains? loop-carried v)
+            (ErrTcMove (tc-move-loop-carried-message v))
+            (OkTcMove (tc-moved-add moved v))))
         (OkTcMove moved))]
     [(TcNoString)
       (match (tc-expr ctx env init)
@@ -12612,7 +12621,9 @@
                           (if (tc-moved-contains? locals root)
                             (if (tc-moved-partial? moved root)
                               (ErrTcMove (tc-move-use-message root))
-                              (OkTcMove (tc-moved-add moved root)))
+                              (if (tc-moved-contains? loop-carried root)
+                                (ErrTcMove (tc-move-loop-carried-message root))
+                                (OkTcMove (tc-moved-add moved root))))
                             (OkTcMove moved))]
                         [(TcNoString) (OkTcMove moved)]))])))
             (OkTcMove moved))]
@@ -12622,6 +12633,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcMoveResult
@@ -12648,7 +12660,9 @@
                   (if (tc-moved-contains? locals root)
                     (if (tc-moved-partial? moved root)
                       (ErrTcMove (tc-move-use-message root))
-                      (OkTcMove (tc-moved-add moved root)))
+                      (if (tc-moved-contains? loop-carried root)
+                        (ErrTcMove (tc-move-loop-carried-message root))
+                        (OkTcMove (tc-moved-add moved root))))
                     (OkTcMove moved))]
                 [(TcNoString) (OkTcMove moved)]))])))
     (OkTcMove moved)))
@@ -12672,6 +12686,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [exprs : AstExprList]
   [types : AstTypeList]) : TcMoveResult
@@ -12689,12 +12704,19 @@
             (let
               [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-move-check-expr ctx env locals moved head-expr)
+              (match (tc-move-check-expr
+                ctx
+                env
+                locals
+                loop-carried
+                moved
+                head-expr)
                 [(OkTcMove moved1)
                   (match (tc-move-after-consuming-value
                     ctx
                     env
                     locals
+                    loop-carried
                     moved1
                     head-expr
                     ty)
@@ -12703,6 +12725,7 @@
                         ctx
                         env
                         locals
+                        loop-carried
                         moved2
                         rest
                         rest-types)]
@@ -12727,6 +12750,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [exprs : AstExprList]) : TcMoveResult
   (match exprs
@@ -12735,18 +12759,20 @@
       (let
         [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-move-check-expr ctx env locals moved head)
-          [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 rest)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved head)
+          [(OkTcMove moved1)
+            (tc-move-check-exprs ctx env locals loop-carried moved1 rest)]
           [(ErrTcMove message) (ErrTcMove message)]))]))
 
 (define (tc-move-check-let-bindings
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [bindings : AstLetBindingList]) : TcMoveBindings
   (match bindings
-    [(AstLetBindingNil) (OkTcMoveBindings env moved locals)]
+    [(AstLetBindingNil) (OkTcMoveBindings env moved locals loop-carried)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -12754,9 +12780,15 @@
           [(AstLetBinding name maybe-ty init-box)
             (let
               [init : AstExpr (box-get init-box)]
-              (match (tc-move-check-expr ctx env locals moved init)
+              (match (tc-move-check-expr ctx env locals loop-carried moved init)
                 [(OkTcMove moved1)
-                  (match (tc-move-after-bind ctx env locals moved1 init)
+                  (match (tc-move-after-bind
+                    ctx
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    init)
                     [(OkTcMove moved2)
                       (tc-move-check-let-bindings
                         ctx
@@ -12765,6 +12797,7 @@
                           name
                           (tc-move-binding-type ctx env maybe-ty init))
                         (tc-moved-add locals name)
+                        (tc-moved-remove-root-state loop-carried name)
                         (tc-moved-remove-root-state moved2 name)
                         rest)]
                     [(ErrTcMove message) (ErrTcMoveBindings message)])]
@@ -12776,6 +12809,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [arms : AstMatchArmList]) : TcMoveResult
   (match arms
@@ -12791,6 +12825,7 @@
                 ctx
                 env
                 (tc-moved-clone locals)
+                (tc-moved-clone loop-carried)
                 (tc-moved-clone moved)
                 body)
                 [(OkTcMove arm-moved)
@@ -12798,6 +12833,7 @@
                     ctx
                     env
                     (tc-moved-clone locals)
+                    (tc-moved-clone loop-carried)
                     (tc-moved-clone moved)
                     rest)
                     [(OkTcMove rest-moved)
@@ -12809,13 +12845,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : AstExpr]) : TcMoveResult
   (match expr
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
       (if (tc-moved-contains? moved name)
@@ -12825,17 +12862,18 @@
       (let
         [left : AstExpr (box-get left-box)]
         [right : AstExpr (box-get right-box)]
-        (match (tc-move-check-expr ctx env locals moved left)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 right)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved left)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 right)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprUnary _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (box-get func-box)]
-        (match (tc-move-check-expr ctx env locals moved func)
+        (match (tc-move-check-expr ctx env locals loop-carried moved func)
           [(OkTcMove moved1)
             (match (tc-move-call-param-types ctx env func)
               [(OkTcTypeList params)
@@ -12843,23 +12881,25 @@
                   ctx
                   env
                   locals
+                  loop-carried
                   moved1
                   args
                   params)]
               [(ErrTcTypeList _)
-                (tc-move-check-exprs ctx env locals moved1 args)])]
+                (tc-move-check-exprs ctx env locals loop-carried moved1 args)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (box-get cond-box)]
         [then-branch : AstExpr (box-get then-branch-box)]
         [else-branch : AstExpr (box-get else-branch-box)]
-        (match (tc-move-check-expr ctx env locals moved cond)
+        (match (tc-move-check-expr ctx env locals loop-carried moved cond)
           [(OkTcMove movedc)
             (match (tc-move-check-expr
               ctx
               env
               (tc-moved-clone locals)
+              (tc-moved-clone loop-carried)
               (tc-moved-clone movedc)
               then-branch)
               [(OkTcMove movedt)
@@ -12867,6 +12907,7 @@
                   ctx
                   env
                   (tc-moved-clone locals)
+                  (tc-moved-clone loop-carried)
                   (tc-moved-clone movedc)
                   else-branch)
                   [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
@@ -12880,10 +12921,11 @@
           ctx
           env
           (tc-moved-clone locals)
+          (tc-moved-clone loop-carried)
           moved
           bindings)
-          [(OkTcMoveBindings env2 moved2 locals2)
-            (tc-move-check-expr ctx env2 locals2 moved2 body)]
+          [(OkTcMoveBindings env2 moved2 locals2 loop-carried2)
+            (tc-move-check-expr ctx env2 locals2 loop-carried2 moved2 body)]
           [(ErrTcMoveBindings message) (ErrTcMove message)]))]
     [(AstExprLambda _ _ body-box)
       (let
@@ -12892,6 +12934,7 @@
           ctx
           env
           (tc-moved-clone locals)
+          (tc-moved-empty)
           (tc-moved-clone moved)
           body)
           [(OkTcMove _) (OkTcMove moved)]
@@ -12899,12 +12942,20 @@
     [(AstExprTuple exprs)
       (match (tc-expr-list-types ctx env exprs)
         [(OkTcTypeList types)
-          (tc-move-check-exprs-with-types ctx env locals moved exprs types)]
-        [(ErrTcTypeList _) (tc-move-check-exprs ctx env locals moved exprs)])]
+          (tc-move-check-exprs-with-types
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            exprs
+            types)]
+        [(ErrTcTypeList _)
+          (tc-move-check-exprs ctx env locals loop-carried moved exprs)])]
     [(AstExprTupleRef inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (match (tc-move-check-expr ctx env locals moved inner)
+        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
           [(OkTcMove moved1)
             (match (tc-move-tuple-element-path expr)
               [(TcSomeString path)
@@ -12916,19 +12967,27 @@
     [(AstExprArray exprs)
       (match (tc-expr-list-types ctx env exprs)
         [(OkTcTypeList types)
-          (tc-move-check-exprs-with-types ctx env locals moved exprs types)]
-        [(ErrTcTypeList _) (tc-move-check-exprs ctx env locals moved exprs)])]
+          (tc-move-check-exprs-with-types
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            exprs
+            types)]
+        [(ErrTcTypeList _)
+          (tc-move-check-exprs ctx env locals loop-carried moved exprs)])]
     [(AstExprMakeArray _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprArrayRef array-box index-box)
       (let
         [array : AstExpr (box-get array-box)]
         [index : AstExpr (box-get index-box)]
-        (match (tc-move-check-expr ctx env locals moved array)
+        (match (tc-move-check-expr ctx env locals loop-carried moved array)
           [(OkTcMove moved1)
-            (match (tc-move-check-expr ctx env locals moved1 index)
+            (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
               [(OkTcMove moved2)
                 (match (tc-move-array-element-path expr)
                   [(TcSomeString path)
@@ -12943,50 +13002,58 @@
         [array : AstExpr (box-get array-box)]
         [index : AstExpr (box-get index-box)]
         [value : AstExpr (box-get value-box)]
-        (match (tc-move-check-expr ctx env locals moved array)
+        (match (tc-move-check-expr ctx env locals loop-carried moved array)
           [(OkTcMove moved1)
-            (match (tc-move-check-expr ctx env locals moved1 index)
+            (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
               [(OkTcMove moved2)
-                (tc-move-check-expr ctx env locals moved2 value)]
+                (tc-move-check-expr ctx env locals loop-carried moved2 value)]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArrayPush array-box value-box)
       (let
         [array : AstExpr (box-get array-box)]
         [value : AstExpr (box-get value-box)]
-        (match (tc-move-check-expr ctx env locals moved array)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved array)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 value)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprStringRef str-box index-box)
       (let
         [str : AstExpr (box-get str-box)]
         [index : AstExpr (box-get index-box)]
-        (match (tc-move-check-expr ctx env locals moved str)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved str)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 index)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprWhile cond-box body-box)
       (let
         [cond : AstExpr (box-get cond-box)]
         [body : AstExpr (box-get body-box)]
-        (match (tc-move-check-expr ctx env locals moved cond)
+        (match (tc-move-check-expr ctx env locals loop-carried moved cond)
           [(OkTcMove movedc)
-            (match (tc-move-check-expr
-              ctx
-              env
-              (tc-moved-clone locals)
-              (tc-moved-clone movedc)
-              body)
-              [(OkTcMove _) (OkTcMove movedc)]
-              [(ErrTcMove message) (ErrTcMove message)])]
+            (let
+              [body-loop-carried : TcMovedSet
+                (tc-moved-union locals (tc-moved-clone loop-carried))]
+              (match (tc-move-check-expr
+                ctx
+                env
+                (tc-moved-clone locals)
+                body-loop-carried
+                (tc-moved-clone movedc)
+                body)
+                [(OkTcMove _) (OkTcMove movedc)]
+                [(ErrTcMove message) (ErrTcMove message)]))]
           [(ErrTcMove message) (ErrTcMove message)]))]
-    [(AstExprBegin exprs) (tc-move-check-exprs ctx env locals moved exprs)]
-    [(AstExprUnsafe exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprBegin exprs)
+      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
+    [(AstExprUnsafe exprs)
+      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExprSet name rhs-box)
       (let
         [rhs : AstExpr (box-get rhs-box)]
-        (match (tc-move-check-expr ctx env locals moved rhs)
+        (match (tc-move-check-expr ctx env locals loop-carried moved rhs)
           [(OkTcMove moved1)
-            (match (tc-move-after-bind ctx env locals moved1 rhs)
+            (match (tc-move-after-bind ctx env locals loop-carried moved1 rhs)
               [(OkTcMove moved2)
                 (OkTcMove (tc-moved-remove-root-state moved2 name))]
               [(ErrTcMove message) (ErrTcMove message)])]
@@ -12994,19 +13061,19 @@
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprCast inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprBorrow _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprMatch scrut-box arms)
       (let
         [scrut : AstExpr (box-get scrut-box)]
-        (match (tc-move-check-expr ctx env locals moved scrut)
+        (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
           [(OkTcMove moveds)
             (match (tc-expr ctx env scrut)
               [(OkTcType scrut-ty)
@@ -13014,6 +13081,7 @@
                   ctx
                   env
                   locals
+                  loop-carried
                   (tc-move-after-match-scrutinee
                     ctx
                     locals
@@ -13021,25 +13089,30 @@
                     scrut
                     scrut-ty)
                   arms)]
-              [(ErrTcType _) (tc-move-check-arms ctx env locals moveds arms)])]
+              [(ErrTcType _)
+                (tc-move-check-arms ctx env locals loop-carried moveds arms)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let
         [start : AstExpr (box-get start-box)]
         [end : AstExpr (box-get end-box)]
         [body : AstExpr (box-get body-box)]
-        (match (tc-move-check-expr ctx env locals moved start)
+        (match (tc-move-check-expr ctx env locals loop-carried moved start)
           [(OkTcMove moved1)
-            (match (tc-move-check-expr ctx env locals moved1 end)
+            (match (tc-move-check-expr ctx env locals loop-carried moved1 end)
               [(OkTcMove moved2)
-                (match (tc-move-check-expr
-                  ctx
-                  (tc-bind env index (tc-resolve-type ctx index-ty))
-                  (tc-moved-add (tc-moved-clone locals) index)
-                  (tc-moved-clone moved2)
-                  body)
-                  [(OkTcMove _) (OkTcMove moved2)]
-                  [(ErrTcMove message) (ErrTcMove message)])]
+                (let
+                  [body-loop-carried : TcMovedSet
+                    (tc-moved-union locals (tc-moved-clone loop-carried))]
+                  (match (tc-move-check-expr
+                    ctx
+                    (tc-bind env index (tc-resolve-type ctx index-ty))
+                    (tc-moved-add (tc-moved-clone locals) index)
+                    (tc-moved-remove-root-state body-loop-carried index)
+                    (tc-moved-clone moved2)
+                    body)
+                    [(OkTcMove _) (OkTcMove moved2)]
+                    [(ErrTcMove message) (ErrTcMove message)]))]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprSpmdReduce _ _ _ a-box b-box c-box d-box)
@@ -13048,19 +13121,20 @@
         [b : AstExpr (box-get b-box)]
         [c : AstExpr (box-get c-box)]
         [d : AstExpr (box-get d-box)]
-        (match (tc-move-check-expr ctx env locals moved a)
+        (match (tc-move-check-expr ctx env locals loop-carried moved a)
           [(OkTcMove m1)
-            (match (tc-move-check-expr ctx env locals m1 b)
+            (match (tc-move-check-expr ctx env locals loop-carried m1 b)
               [(OkTcMove m2)
-                (match (tc-move-check-expr ctx env locals m2 c)
-                  [(OkTcMove m3) (tc-move-check-expr ctx env locals m3 d)]
+                (match (tc-move-check-expr ctx env locals loop-carried m2 c)
+                  [(OkTcMove m3)
+                    (tc-move-check-expr ctx env locals loop-carried m3 d)]
                   [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprStructGet inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (match (tc-move-check-expr ctx env locals moved inner)
+        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
           [(OkTcMove moved1)
             (match (tc-move-struct-field-path expr)
               [(TcSomeString path)
@@ -13070,28 +13144,29 @@
               [(TcNoString) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprWithRegion _ exprs)
-      (tc-move-check-exprs ctx env locals moved exprs)]
+      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExprWithEscape scratch-box exprs)
       (let
         [scratch : AstExpr (box-get scratch-box)]
-        (match (tc-move-check-expr ctx env locals moved scratch)
-          [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 exprs)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved scratch)
+          [(OkTcMove moved1)
+            (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprWithResource _ exprs)
-      (tc-move-check-exprs ctx env locals moved exprs)]
+      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprBoxGet inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprTypeLiteral _) (OkTcMove moved)]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprQuote _) (OkTcMove moved)]
     [(AstExprQuasiquote _) (OkTcMove moved)]
     [(AstExprUnquote _) (OkTcMove moved)]
@@ -13099,11 +13174,11 @@
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprReturn inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (match (tc-move-check-expr ctx env locals moved inner)
+        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
           [(OkTcMove moved1)
             (match (tc-current-return-type env)
               [(OkTcType return-ty)
@@ -13111,6 +13186,7 @@
                   ctx
                   env
                   locals
+                  loop-carried
                   moved1
                   inner
                   return-ty)]
@@ -13120,52 +13196,55 @@
     [(AstExprPtrNullCheck inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprPtrRead inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprPtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
         [value : AstExpr (box-get value-box)]
-        (match (tc-move-check-expr ctx env locals moved ptr)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 value)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprPtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
         [offset : AstExpr (box-get offset-box)]
-        (match (tc-move-check-expr ctx env locals moved ptr)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 offset)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 offset)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprPtrCast inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprPtrToInt inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprIntToPtr inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprStringData inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprStringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
         [len : AstExpr (box-get len-box)]
-        (match (tc-move-check-expr ctx env locals moved ptr)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 len)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 len)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArrayData inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (tc-move-check-expr ctx env locals moved inner))]
+        (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprProgramArgc) (OkTcMove moved)]
     [(AstExprProgramArgv) (OkTcMove moved)]
     [(AstExprProgramEnvp) (OkTcMove moved)]
@@ -13173,34 +13252,38 @@
       (let
         [leaf : AstExpr (box-get leaf-box)]
         [subleaf : AstExpr (box-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals moved leaf)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprCpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (box-get leaf-box)]
         [subleaf : AstExpr (box-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals moved leaf)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprCpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (box-get leaf-box)]
         [subleaf : AstExpr (box-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals moved leaf)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprCpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (box-get leaf-box)]
         [subleaf : AstExpr (box-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals moved leaf)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-move-check-expr ctx env locals moved index))]))
+        (tc-move-check-expr ctx env locals loop-carried moved index))]))
 
 (define (tc-move-check-body
   [ctx : TcContext]
@@ -13211,6 +13294,7 @@
     ctx
     env
     (tc-move-params-locals params (tc-moved-empty))
+    (tc-moved-empty)
     (tc-moved-empty)
     body)
     [(OkTcMove _) OkTcUnit]

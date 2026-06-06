@@ -16,7 +16,7 @@
 
 (import "compiler_ast_types.tl")
 
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
 (defstruct CloneNameSet
   (map StringI64Map))

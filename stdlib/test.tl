@@ -1,7 +1,7 @@
 ;# Minimal TypeLisp test assertion helpers.
 ;#
-;# Provides assertion helpers for TypeLisp fixtures using only compiler/runtime
-;# primitives: `panic`, `string-eq`, and `cast`.
+;# Provides assertion helpers for TypeLisp fixtures using stdlib panic and
+;# non-allocating borrowed string comparison.
 ;#
 ;# Usage: `(import "stdlib/test.tl")`
 ;#
@@ -13,6 +13,8 @@
 ;#     42))
 ;# ```
 (import "io.tl")
+
+(import "string.tl")
 
 ;: Assert that `condition` is true, panicking with `message` when it is false.
 (define (assert-true [condition : bool] [message : String]) : unit
@@ -64,4 +66,4 @@
   [actual : (& actual str)]
   [expected : (& expected str)]
   [message : String]) : unit
-  (assert-true (string-eq actual expected) message))
+  (assert-true (string-eq-borrowed actual expected) message))

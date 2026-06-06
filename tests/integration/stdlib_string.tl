@@ -69,4 +69,10 @@
     (print-newline)
     (print-string (string-replace "abc" "c" "x"))
     (print-newline)
-    42))
+    (if (and
+      (string-eq "same" (string-append "sa" "me"))
+      (and
+        (not (string=? "same" "different"))
+        (and (= (string->int "-42") -42) (= (string->int "12a") 169))))
+      42
+      1)))

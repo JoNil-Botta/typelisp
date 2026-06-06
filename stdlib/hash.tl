@@ -17,6 +17,8 @@
 ;#   (let [key : String "symbol"]
 ;#     (hash-combine (hash-string (& key)) (hash-i64 7))))
 ;# ```
+(import "string.tl")
+
 ;: Return the fixed hash modulus.
 (define (hash-modulus) : i64
   2147483647)
@@ -94,4 +96,4 @@
 
 ;: Return true when two borrowed string keys are equal.
 (define (hash-key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
-  (string-eq a b))
+  (string-eq-borrowed a b))

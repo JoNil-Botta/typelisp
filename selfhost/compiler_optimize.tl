@@ -25,7 +25,7 @@
 
 (import "compiler_ir_types.tl")
 
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
 (defenum ResultCompilerOptimizeLevel
   (OkCompilerOptimizeLevel i64)

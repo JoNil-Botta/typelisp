@@ -5520,10 +5520,30 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (bad-owner-tuple-ref [p : (Tuple FileHandle i64)]) : i64
+(define (owner-tuple-ref-other-element [p : (Tuple FileHandle i64)]) : i64
   (begin
     (take-handle (tuple-ref p 0))
     (tuple-ref p 1)))")
+
+(define (compiler-typecheck-move-owner-tuple-ref-repeat-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-tuple-ref-repeat [p : (Tuple FileHandle i64)]) : unit
+  (begin
+    (take-handle (tuple-ref p 0))
+    (take-handle (tuple-ref p 0))))")
+
+(define (compiler-typecheck-move-owner-tuple-ref-nested-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-tuple-ref-nested [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
+  (take-handle (tuple-ref (tuple-ref p 0) 0)))")
 
 (define (compiler-typecheck-move-owner-array-ref-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -5670,8 +5690,17 @@
         (compiler-typecheck-move-owner-projection-key-collision-source))
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-tuple-ref-reuse-source))
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-tuple-ref-reuse-source)
+        (compiler-typecheck-move-owner-tuple-ref-repeat-source)
+        "typecheck: use of moved value `p.#tuple.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-tuple-ref-nested-source)
         "typecheck: cannot move owner-consuming value out of aggregate path")
         unit
         (set! ok false))

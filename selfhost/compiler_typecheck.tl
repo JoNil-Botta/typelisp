@@ -5596,6 +5596,38 @@
   (let [h : FileHandle (array-ref items i)]
     (struct-get h fd)))")
 
+(define (compiler-typecheck-move-box-get-copyable-source) : String
+  "(define (main) : i64
+  (let
+    [cell : (Box i64) (box 7)]
+    (box-get cell)))")
+
+(define (compiler-typecheck-move-owner-box-get-call-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-box-get-call [cell : (Box FileHandle)]) : unit
+  (take-handle (box-get cell)))")
+
+(define (compiler-typecheck-move-owner-box-get-bind-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-box-get-bind [cell : (Box FileHandle)]) : i64
+  (let [h : FileHandle (box-get cell)]
+    (struct-get h fd)))")
+
+(define (compiler-typecheck-move-owner-box-get-return-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-box-get-return [cell : (Box FileHandle)]) : FileHandle
+  (return (box-get cell)))")
+
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
   (if flag (let [t : String s] t) s))")
@@ -5748,6 +5780,25 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-dyn-array-ref-bind-source)
         "typecheck: cannot move owner-consuming value out of dynamic array element")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-box-get-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-box-get-call-source)
+        "typecheck: cannot move owner-consuming value out of box")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-box-get-bind-source)
+        "typecheck: cannot move owner-consuming value out of box")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-box-get-return-source)
+        "typecheck: cannot move owner-consuming value out of box")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

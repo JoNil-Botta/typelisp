@@ -7,7 +7,7 @@
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
 ;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`,
 ;# `fs-file-kind-status`, `fs-file-size-status`, `fs-file-size`,
-;# `fs-process-id`, `tl_fs_current_dir_status`, and `tl_fs_current_dir`.
+;# `fs-process-id`, `fs-current-dir-status`, and `fs-current-dir`.
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
@@ -32,12 +32,6 @@
 (defenum ResultIoStringList
   (OkIoStringList StringList)
   (ErrIoStringList IoError))
-
-;: Runtime status probe for retrieving the current working directory.
-(extern tl_fs_current_dir_status : (-> i64))
-
-;: Runtime string probe for retrieving the current working directory.
-(extern tl_fs_current_dir : (-> String))
 
 ;: Runtime status probe for listing directory entries.
 (extern fs-runtime-read-dir-status (:symbol ".L_tl_fs_read_dir_status") : (->
@@ -81,6 +75,9 @@
 ;: Linux `getpid` binding for process ids.
 (extern fs-linux-getpid (:symbol "getpid") : (-> i32))
 
+;: Linux `getcwd` binding for current-directory lookup.
+(extern fs-linux-getcwd (:symbol "getcwd") : (-> (MutPtr u8) i64 (Ptr u8)))
+
 ;: Windows CRT `_mkdir` binding for directory creation.
 (extern fs-windows-mkdir (:symbol "_mkdir") : (-> (Ptr u8) i32))
 
@@ -92,6 +89,12 @@
 
 ;: Windows `GetCurrentProcessId` binding for process ids.
 (extern fs-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (->
+  u32))
+
+;: Windows `GetCurrentDirectoryA` binding for current-directory lookup.
+(extern fs-windows-get-current-directory (:symbol "GetCurrentDirectoryA") : (->
+  u32
+  (MutPtr u8)
   u32))
 
 ;: C library `rename` binding for moving paths.
@@ -207,13 +210,111 @@
 (define (fs-file-size [path : String]) : i64
   (fs-runtime-file-size (io-string-data path) (string-length path)))
 
+;: Linux `ERANGE` status returned when the current-dir buffer is too small.
+(define fs-status-range : i64
+  34)
+
+;: Initial current-directory FFI buffer size including the trailing NUL.
+(define fs-current-dir-initial-capacity : i64
+  256)
+
+;: Maximum current-directory buffer size attempted by the bounded grow loop.
+(define fs-current-dir-max-capacity : i64
+  32768)
+
+;: Grow the current-directory buffer, honoring an explicit platform request.
+(define (fs-current-dir-next-capacity [capacity : i64] [requested : i64]) : i64
+  (if (> requested capacity)
+    requested
+    (* capacity 2)))
+
+;: Probe Linux `getcwd` with a caller-sized buffer and retry on ERANGE.
+(define (fs-linux-current-dir-status-loop [capacity : i64]) : i64
+  (if (> capacity fs-current-dir-max-capacity)
+    io-status-name-too-long
+    (let
+      [buf : (Array u8) (make-array u8 capacity)]
+      [result : (Ptr u8) (fs-linux-getcwd (io-array-ptr buf) capacity)]
+      (if (ptr-null? result)
+        (let
+          [status : i64 (io-last-error-code)]
+          (if (= status fs-status-range)
+            (if (< capacity fs-current-dir-max-capacity)
+              (fs-linux-current-dir-status-loop (* capacity 2))
+              io-status-name-too-long)
+            status))
+        io-status-ok))))
+
+;: Read Linux `getcwd` into an owned String, retrying on ERANGE.
+(define (fs-linux-current-dir-loop [capacity : i64]) : String
+  (if (> capacity fs-current-dir-max-capacity)
+    ""
+    (let
+      [buf : (Array u8) (make-array u8 capacity)]
+      [result : (Ptr u8) (fs-linux-getcwd (io-array-ptr buf) capacity)]
+      (if (ptr-null? result)
+        (let
+          [status : i64 (io-last-error-code)]
+          (if (and
+            (= status fs-status-range)
+            (< capacity fs-current-dir-max-capacity))
+            (fs-linux-current-dir-loop (* capacity 2))
+            ""))
+        (io-copy-c-string result)))))
+
+;: Probe Windows `GetCurrentDirectoryA` with a bounded grow loop.
+(define (fs-windows-current-dir-status-loop [capacity : i64]) : i64
+  (if (> capacity fs-current-dir-max-capacity)
+    io-status-name-too-long
+    (let
+      [buf : (Array u8) (make-array u8 capacity)]
+      [written : i64
+        (cast
+          (fs-windows-get-current-directory
+            (cast capacity : u32)
+            (io-array-ptr buf))
+          :
+          i64)]
+      (cond
+        [(= written 0) io-status-io-error]
+        [(< written capacity) io-status-ok]
+        [else
+          (fs-windows-current-dir-status-loop
+            (fs-current-dir-next-capacity capacity written))]))))
+
+;: Read Windows `GetCurrentDirectoryA` into an owned String.
+(define (fs-windows-current-dir-loop [capacity : i64]) : String
+  (if (> capacity fs-current-dir-max-capacity)
+    ""
+    (let
+      [buf : (Array u8) (make-array u8 capacity)]
+      [written : i64
+        (cast
+          (fs-windows-get-current-directory
+            (cast capacity : u32)
+            (io-array-ptr buf))
+          :
+          i64)]
+      (cond
+        [(= written 0) ""]
+        [(< written capacity) (io-copy-c-string (io-array-const-ptr buf))]
+        [else
+          (fs-windows-current-dir-loop
+            (fs-current-dir-next-capacity capacity written))]))))
+
 ;: Return the host status code for retrieving the current working directory.
 (define (fs-current-dir-status) : i64
-  (tl_fs_current_dir_status))
+  (cfg
+    windows
+    (fs-windows-current-dir-status-loop fs-current-dir-initial-capacity)
+    (fs-linux-current-dir-status-loop fs-current-dir-initial-capacity)))
 
 ;: Return the process current directory as an owned String.
 (define (fs-current-dir) : String
-  (tl_fs_current_dir))
+  (cfg
+    windows
+    (fs-windows-current-dir-loop fs-current-dir-initial-capacity)
+    (fs-linux-current-dir-loop fs-current-dir-initial-capacity)))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
@@ -750,12 +851,12 @@
 ;: Return the process current directory as an owned active-arena String.
 ;:
 ;: The returned path is the host-reported cwd; it is not symlink-canonicalized.
-;: Unsupported targets return `ErrIoString` with `IoUnsupported`.
+;: Host lookup failures return `ErrIoString` with the mapped status.
 (define (try-current-dir) : ResultIoString
   (let
-    [status : i64 (tl_fs_current_dir_status)]
+    [status : i64 (fs-current-dir-status)]
     (if (= status io-status-ok)
-      (OkIoString (tl_fs_current_dir))
+      (OkIoString (fs-current-dir))
       (ErrIoString (io-error-from-label "current directory" status)))))
 
 ;: Compose one candidate temporary directory basename from prefix, pid, and attempt.

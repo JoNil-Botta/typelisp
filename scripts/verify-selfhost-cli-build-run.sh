@@ -45,6 +45,7 @@ CLI_SURFACE_DIR="$WORKDIR/cli-surface"
 CLI_SURFACE_SRC="$CLI_SURFACE_DIR/main.tl"
 CLI_SURFACE_RUN_SRC="$CLI_SURFACE_DIR/run-main.tl"
 CLI_SURFACE_DOC_SRC="$CLI_SURFACE_DIR/doc-main.tl"
+CLI_SURFACE_DOC_PKG="$CLI_SURFACE_DIR/doc-package"
 CLI_SURFACE_CHECK_PKG="$CLI_SURFACE_DIR/check-package"
 CLI_SURFACE_FMTLINT_PKG="$CLI_SURFACE_DIR/fmt-lint-package"
 
@@ -271,7 +272,7 @@ assert_cli_surface_help_matches_manifest() {
 }
 
 prepare_cli_surface_files() {
-    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_CHECK_PKG/src" "$CLI_SURFACE_FMTLINT_PKG/src"
+    mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_DOC_PKG/src" "$CLI_SURFACE_CHECK_PKG/src" "$CLI_SURFACE_FMTLINT_PKG/src"
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
@@ -299,6 +300,28 @@ EOF
 ;# Command surface doc smoke.
 (define (main) : i64
   0)
+EOF
+    cat > "$CLI_SURFACE_DOC_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "surface_doc")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    cat > "$CLI_SURFACE_DOC_PKG/src/main.tl" <<'EOF'
+;# Package entry docs.
+;# ```typelisp
+;# (define doc-entry-example : i64 1)
+;# ```
+(import "extra.tl")
+(define (main) : i64 (doc-extra))
+EOF
+    cat > "$CLI_SURFACE_DOC_PKG/src/extra.tl" <<'EOF'
+;# Package extra docs.
+;# ```typelisp
+;# (define doc-extra-example : i64 2)
+;# ```
+(define (doc-extra) : i64 0)
 EOF
     cat > "$CLI_SURFACE_CHECK_PKG/typelisp.pkg" <<'EOF'
 (package
@@ -434,6 +457,43 @@ assert_active_cli_surface_command() {
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
             assert_file_nonempty "$label" "$doc_out"
+            package_label="${label}-package-generate"
+            package_doc_out="$CLI_SURFACE_DOC_PKG/package-doc.md"
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" -o "$package_doc_out"
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Generated:"
+            assert_contains "$package_label" "$package_doc_out" "Package entry docs."
+            if [ "$HOST_OS" = linux ]; then
+                assert_contains "$package_label" "$package_doc_out" "Package extra docs."
+            fi
+            package_label="${label}-package-test"
+            run_cli_capture "$package_label" "$COMPILER" doc --test --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg"
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "---"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "main.tl"
+            if [ "$HOST_OS" = linux ]; then
+                assert_contains "$package_label" "$WORKDIR/$package_label.out" "extra.tl"
+            fi
+            package_label="${label}-package-test-nearest"
+            run_cli_capture_in_dir "$package_label" "$CLI_SURFACE_DOC_PKG/src" "$COMPILER" doc --test
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "main.tl"
+            if [ "$HOST_OS" = linux ]; then
+                assert_contains "$package_label" "$WORKDIR/$package_label.out" "extra.tl"
+            fi
+            package_label="${label}-package-missing-output"
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg"
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "package documentation requires -o"
+            package_label="${label}-package-mixed-input"
+            run_cli_capture "$package_label" "$COMPILER" doc --test --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" "$CLI_SURFACE_DOC_SRC"
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "cannot combine input paths with --manifest-path"
             ;;
         compile)
             asm="$CLI_SURFACE_DIR/compile.s"

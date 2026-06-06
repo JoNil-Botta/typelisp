@@ -552,9 +552,11 @@ end
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
 requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_generate_file:
+contains|_tl_doc_generate_package:
 contains|_tl_doc_generate_html_file:
 contains|_tl_doc_generate_html_module_graph:
 contains|_tl_doc_test_file:
+contains|_tl_doc_test_package:
 contains|_tl_doc_test_run_file_with_roots:
 contains|_tl_doc_test_run_report_render:
 contains|_tl_doc_render_markdown:
@@ -569,7 +571,9 @@ contains|_tl_read_file:
 contains|_tl_write_file:
 contains|Doc tests passed:
 contains|doc tests failed:
-contains|doc: expected --test input path
+contains|: could not find typelisp.pkg from '.' or any parent directory
+contains|doc: package documentation requires -o <out.md>
+contains|doc: cannot combine input paths with --manifest-path
 contains|doc: expected --html input and output paths
 contains|<!doctype html>
 contains|doc: expected input and output paths

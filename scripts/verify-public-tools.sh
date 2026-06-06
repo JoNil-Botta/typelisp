@@ -1641,11 +1641,16 @@ else
     assert_contains "$err" "typelisp doc --test <file.tl>"
 fi
 
-run_cmd doc-test-usage-missing "$COMPILER" doc --test
+if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
+    DOC_NO_PACKAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-doc-nopkg.XXXXXX")
+    run_cmd_cwd doc-test-usage-missing "$DOC_NO_PACKAGE_DIR" "$COMPILER" doc --test
+else
+    run_cmd doc-test-usage-missing "$COMPILER" doc --test
+fi
 assert_failure
 assert_stdout_empty
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
-    assert_contains "$err" "doc: expected --test input path"
+    assert_contains "$err" "doc: could not find typelisp.pkg"
 else
     assert_contains "$err" "Usage:"
     assert_contains "$err" "typelisp doc --test <file.tl>"

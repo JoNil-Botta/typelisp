@@ -71,6 +71,6 @@ jobs:
               ;;
           esac
 
-      - name: CI verification - no-Rust gate + no-libc guard
+      - name: CI verification
         shell: bash
         run: scripts/ci-verify.sh

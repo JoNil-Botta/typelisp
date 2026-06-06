@@ -2,7 +2,7 @@
 
 (import "stdlib/env.tl")
 
-(import "stdlib/process.tl")
+(import "stdlib/process_borrowed.tl")
 
 (import "stdlib/test.tl")
 
@@ -111,6 +111,14 @@
 (define (linux-async-process-command [text : String]) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single text)))
 
+(define (linux-borrowed-process-output [exe : String] [text : String]) : ResultProcessOutput
+  (process-borrowed-output
+    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+
+(define (linux-borrowed-process-start [exe : String] [text : String]) : ResultProcessChild
+  (process-borrowed-start
+    (process-borrowed-command (& exe) (process-borrowed-args-single (& text)))))
+
 (define (linux-missing-command) : ProcessCommand
   (process-command "/definitely-missing-typelisp" (process-args-empty)))
 
@@ -133,6 +141,11 @@
         0
         "stdout=ok"
         "")
+      (assert-process-output-result
+        (linux-borrowed-process-output "/usr/bin/printf" "borrowed-stdout=ok")
+        0
+        "borrowed-stdout=ok"
+        "")
       (assert-process-spawn-failed (process-output (linux-missing-command)))
       (let
         [first : ProcessChild
@@ -141,7 +154,15 @@
         [second : ProcessChild
           (assert-process-child-result
             (process-start (linux-async-process-command "async-two")))]
+        [third : ProcessChild
+          (assert-process-child-result
+            (linux-borrowed-process-start "/usr/bin/printf" "borrowed-async"))]
         (begin
+          (assert-process-output-result
+            (process-wait third)
+            0
+            "borrowed-async"
+            "")
           (assert-process-output-result (process-wait second) 0 "async-two" "")
           (assert-process-output-result (process-wait first) 0 "async-one" "")))
       (assert-process-child-spawn-failed

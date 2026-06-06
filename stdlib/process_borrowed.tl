@@ -1,12 +1,13 @@
-;# Check-only borrowed process command storage surface (#1915).
+;# Borrowed process command storage companion surface (#1915).
 ;#
 ;# `ProcessBorrowedCommand` stores executable, argv, cwd, env, and stdin text as
 ;# `(& lifetime str)` values without copying at each builder step. Rendering to
 ;# the runtime-owned `ProcessCommand` copies at the explicit compatibility
 ;# boundary.
 ;#
-;# This module remains separate from `process.tl` until reference-typed lowering
-;# can compile borrowed aggregate values through ordinary runtime import paths.
+;# This module remains separate from `process.tl` as the explicit borrowed
+;# storage companion. Runtime wrappers validate borrowed commands and copy once
+;# at the owned `ProcessCommand` boundary before calling `process.tl`.
 (import "process.tl")
 
 ;: Borrowed process argument strings in argv order. All entries in one list

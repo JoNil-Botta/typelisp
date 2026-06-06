@@ -215,8 +215,6 @@
     bool
     bool
     bool
-    bool
-    bool
     CompilerBackendRuntimeTailPlan))
 
 (defstruct CompilerBackendRuntimeIndex
@@ -10641,8 +10639,6 @@
   [stdin-eof : bool]
   [flush-stdout : bool]
   [random-system-seed : bool]
-  [windows-setup-instances : bool]
-  [windows-sdk-registry-install : bool]
   [env-var-exists : bool]
   [env-var-value : bool]
   [env-path-separator : bool]) : bool
@@ -10651,19 +10647,11 @@
     [_stdin-eof : bool stdin-eof]
     [_flush-stdout : bool flush-stdout]
     (or
-      (backend-or4
+      (or
         (compiler-backend-provides-runtime-name?
           name
           "tl_random_system_seed"
           random-system-seed)
-        (compiler-backend-provides-runtime-name?
-          name
-          "tl_windows_setup_instances"
-          windows-setup-instances)
-        (compiler-backend-provides-runtime-name?
-          name
-          "tl_windows_sdk_registry_install"
-          windows-sdk-registry-install)
         (compiler-backend-provides-runtime-name?
           name
           "tl_env_var_exists"
@@ -10727,8 +10715,6 @@
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
         provides-env-var-exists
         provides-env-var-value
         provides-env-path-separator
@@ -10931,8 +10917,6 @@
                           stdin-eof
                           flush-stdout
                           random-system-seed
-                          windows-setup-instances
-                          windows-sdk-registry-install
                           provides-env-var-exists
                           provides-env-var-value
                           provides-env-path-separator)
@@ -11003,14 +10987,6 @@
       (compiler-backend-runtime-index-defines? index "tl_process_wait")]
     [defines-random-system-seed : bool
       (compiler-backend-runtime-index-defines? index "tl_random_system_seed")]
-    [defines-windows-setup-instances : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        "tl_windows_setup_instances")]
-    [defines-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        "tl_windows_sdk_registry_install")]
     [defines-env-var-exists : bool
       (compiler-backend-runtime-index-defines? index "tl_env_var_exists")]
     [defines-env-var-value : bool
@@ -11150,14 +11126,6 @@
       (compiler-backend-runtime-index-extern? index "tl_region_reset")]
     [extern-random-system-seed : bool
       (compiler-backend-runtime-index-extern? index "tl_random_system_seed")]
-    [extern-windows-setup-instances : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        "tl_windows_setup_instances")]
-    [extern-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        "tl_windows_sdk_registry_install")]
     [extern-env-var-exists : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
     [extern-env-var-value : bool
@@ -11284,12 +11252,6 @@
       (compiler-backend-runtime-index-calls? index "tl_region_reset")]
     [calls-random-system-seed : bool
       (compiler-backend-runtime-index-calls? index "tl_random_system_seed")]
-    [calls-windows-setup-instances : bool
-      (compiler-backend-runtime-index-calls? index "tl_windows_setup_instances")]
-    [calls-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        "tl_windows_sdk_registry_install")]
     [calls-env-var-exists : bool
       (compiler-backend-runtime-index-calls? index "tl_env_var_exists")]
     [calls-env-var-value : bool
@@ -11397,16 +11359,6 @@
       (and
         (not defines-random-system-seed)
         (or extern-random-system-seed calls-random-system-seed))]
-    [needs-windows-setup-instances : bool
-      (and
-        (not defines-windows-setup-instances)
-        (or extern-windows-setup-instances calls-windows-setup-instances))]
-    [needs-windows-sdk-registry-install : bool
-      (and
-        (not defines-windows-sdk-registry-install)
-        (or
-          extern-windows-sdk-registry-install
-          calls-windows-sdk-registry-install))]
     [needs-env-var-exists : bool
       (and
         (not defines-env-var-exists)
@@ -11446,13 +11398,11 @@
             needs-read-bytes
             needs-random-system-seed
             false)
-          (or
-            needs-windows-setup-instances
-            (backend-or4
-              needs-windows-sdk-registry-install
-              needs-env-var-exists
-              needs-env-var-value
-              needs-env-path-separator))))]
+          (backend-or4
+            needs-env-var-exists
+            needs-env-var-value
+            needs-env-path-separator
+            false)))]
     [needs-profile : bool
       (or
         (backend-or4
@@ -11501,8 +11451,6 @@
         needs-region-mark
         needs-region-reset
         needs-random-system-seed
-        needs-windows-setup-instances
-        needs-windows-sdk-registry-install
         needs-env-var-exists
         needs-env-var-value
         needs-env-path-separator
@@ -11844,8 +11792,6 @@ tl_profile_alloc_peak_bytes:
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
         env-var-exists
         env-var-value
         _
@@ -19642,8 +19588,6 @@ tl_random_system_seed:
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
         env-var-exists
         env-var-value
         env-path-separator
@@ -19854,8 +19798,6 @@ tl_random_system_seed:
               (compiler-backend-runtime-windows-random-system-seed-functions)
               (compiler-backend-runtime-random-system-seed-functions))
             "")]
-        [windows-setup-instances-asm : String ""]
-        [windows-sdk-registry-install-asm : String ""]
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-arena-functions profile)
@@ -19909,12 +19851,7 @@ tl_random_system_seed:
             read-bytes-asm
             stdin-eof-asm
             flush-stdout-asm)]
-        [random-and-windows-asm : String
-          (string-append
-            random-system-seed-asm
-            (string-append
-              windows-setup-instances-asm
-              windows-sdk-registry-install-asm))]
+        [random-and-windows-asm : String random-system-seed-asm]
         [env-var-exists-asm : String
           (if env-var-exists
             (if (compiler-backend-target-windows? target)
@@ -20137,8 +20074,6 @@ tl_random_system_seed:
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances
-        windows-sdk-registry-install
         env-var-exists
         env-var-value
         env-path-separator
@@ -20182,10 +20117,10 @@ tl_random_system_seed:
             region-mark
             region-reset
             random-system-seed
-            windows-setup-instances
-            windows-sdk-registry-install
             env-var-exists
-            env-var-value)]
+            env-var-value
+            false
+            false)]
         [extra-runtime : bool
           (backend-or4
             env-path-separator

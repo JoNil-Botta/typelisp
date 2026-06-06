@@ -592,6 +592,71 @@ EOF
         exit 1
     }
 
+    echo "[host-action-cli] test package discovery"
+    TEST_PKG="$WORKDIR/inline-test-pkg"
+    mkdir -p "$TEST_PKG/src/nested" "$TEST_PKG/target/ignored" "$TEST_PKG/vendor/child/src"
+    cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "inline_test_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$TEST_PKG/src/lib.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(test pkg-entry
+  (assert-i64-eq (inc 41) 42 "package entry inline test"))
+EOF
+    cat > "$TEST_PKG/src/nested/more.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(test pkg-nested
+  (assert-i64-eq (+ 20 22) 42 "package nested inline test"))
+EOF
+    cat > "$TEST_PKG/src/no-tests.tl" <<'EOF'
+(define package-no-test-value : i64 42)
+EOF
+    cat > "$TEST_PKG/target/ignored/fail.tl" <<'EOF'
+(test ignored-target
+  (panic "target directory inline test should be ignored"))
+EOF
+    cat > "$TEST_PKG/vendor/child/typelisp.pkg" <<'EOF'
+(package (name "child") (version "0.1.0") (kind "lib"))
+EOF
+    cat > "$TEST_PKG/vendor/child/src/fail.tl" <<'EOF'
+(test ignored-nested-package
+  (panic "nested package inline test should be ignored"))
+EOF
+    run_capture_cwd test-package-check "$TEST_PKG/src/nested" "$COMPILER" test --check --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
+    assert_empty "$WORKDIR/test-package-check.stderr"
+    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp test file:"
+    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp package test typecheck passed: 2 test(s) in 2 file(s)"
+    run_capture_cwd test-package-run "$TEST_PKG/src/nested" "$COMPILER" test --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
+    assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp package tests passed: 2 test(s) in 2 file(s)"
+    assert_contains "$WORKDIR/test-package-run.stderr" "test pkg-entry"
+    assert_contains "$WORKDIR/test-package-run.stderr" "ok pkg-entry"
+    assert_contains "$WORKDIR/test-package-run.stderr" "test pkg-nested"
+    assert_contains "$WORKDIR/test-package-run.stderr" "ok pkg-nested"
+
+    TEST_EMPTY_PKG="$WORKDIR/inline-test-empty-pkg"
+    mkdir -p "$TEST_EMPTY_PKG/src"
+    cat > "$TEST_EMPTY_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "inline_test_empty_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    cat > "$TEST_EMPTY_PKG/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+    run_capture_cwd test-package-no-tests "$TEST_EMPTY_PKG" "$COMPILER" test --check --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
+    assert_empty "$WORKDIR/test-package-no-tests.stderr"
+    assert_contains "$WORKDIR/test-package-no-tests.stdout" "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)"
+
     echo "[host-action-cli] test failures"
     FAIL_SRC="$WORKDIR/inline-test-fail.tl"
     cat > "$FAIL_SRC" <<'EOF'

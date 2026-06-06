@@ -51,8 +51,10 @@ Top-level `(test name body...)` items are source-owned executable checks. Normal
 `check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`
 loads the import graph, turns tests into private unit-returning functions,
 skips any production `main`, generates a test-owned `main`, and runs the
-resulting executable. `typelisp test --check <file.tl>` type-checks the
-generated harness without assembling or linking.
+resulting executable. With no file, `typelisp test` discovers the nearest
+package and runs package sources that contain top-level inline tests.
+`typelisp test --check` type-checks generated harnesses without assembling or
+linking.
 
 Use inline tests for behavior that naturally belongs next to the declarations
 under test. Import `stdlib/test.tl` for assertions such as `assert-i64-eq`.

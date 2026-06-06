@@ -3662,7 +3662,232 @@
         [(AstBorrowLifetimeNamed b-name) (string-eq a-name b-name)]
         [_ false])]))
 
-(define (ctfe-expr-eq [a : AstExpr] [b : AstExpr]) : bool
+(define (ctfe-maybe-type-eq [a : AstMaybeType] [b : AstMaybeType]) : bool
+  (match a
+    [(AstNoType)
+      (match b
+        [(AstNoType) true]
+        [_ false])]
+    [(AstSomeType a-ty)
+      (match b
+        [(AstSomeType b-ty) (ctfe-type-eq a-ty b-ty)]
+        [_ false])]))
+
+(define (ctfe-param-eq [a : AstParam] [b : AstParam]) : bool
+  (match a
+    [(AstParam a-name a-ty a-comptime)
+      (match b
+        [(AstParam b-name b-ty b-comptime)
+          (and
+            (string-eq a-name b-name)
+            (and (ctfe-type-eq a-ty b-ty) (= a-comptime b-comptime)))])]))
+
+(define (ctfe-param-list-eq [a : AstParamList] [b : AstParamList]) : bool
+  (match a
+    [(AstParamNil)
+      (match b
+        [(AstParamNil) true]
+        [_ false])]
+    [(AstParamCons a-head a-rest)
+      (let
+        [a-rest : AstParamList (box-get a-rest)]
+        (match b
+          [(AstParamCons b-head b-rest)
+            (let
+              [b-rest : AstParamList (box-get b-rest)]
+              (and
+                (ctfe-param-eq a-head b-head)
+                (ctfe-param-list-eq a-rest b-rest)))]
+          [_ false]))]))
+
+(define (ctfe-pattern-eq [a : AstPattern] [b : AstPattern]) : bool
+  (match a
+    [(AstPatVar a-name a-ty)
+      (match b
+        [(AstPatVar b-name b-ty)
+          (and (string-eq a-name b-name) (ctfe-maybe-type-eq a-ty b-ty))]
+        [_ false])]
+    [(AstPatTuple a-items-box)
+      (let
+        [a-items : AstPatternList (box-get a-items-box)]
+        (match b
+          [(AstPatTuple b-items-box)
+            (ctfe-pattern-list-eq a-items (box-get b-items-box))]
+          [_ false]))]
+    [(AstPatWildcard)
+      (match b
+        [(AstPatWildcard) true]
+        [_ false])]
+    [(AstPatBinding a-name)
+      (match b
+        [(AstPatBinding b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstPatVariant a-name a-items-box)
+      (let
+        [a-items : AstPatternList (box-get a-items-box)]
+        (match b
+          [(AstPatVariant b-name b-items-box)
+            (and
+              (string-eq a-name b-name)
+              (ctfe-pattern-list-eq a-items (box-get b-items-box)))]
+          [_ false]))]
+    [(AstPatLiteral a-lit)
+      (match b
+        [(AstPatLiteral b-lit) (ctfe-literal-eq a-lit b-lit)]
+        [_ false])]))
+
+(define (ctfe-pattern-list-eq [a : AstPatternList] [b : AstPatternList]) : bool
+  (match a
+    [(AstPatternNil)
+      (match b
+        [(AstPatternNil) true]
+        [_ false])]
+    [(AstPatternCons a-head a-tail)
+      (let
+        [a-head : AstPattern (box-get a-head)]
+        [a-tail : AstPatternList (box-get a-tail)]
+        (match b
+          [(AstPatternCons b-head b-tail)
+            (let
+              [b-head : AstPattern (box-get b-head)]
+              [b-tail : AstPatternList (box-get b-tail)]
+              (and
+                (ctfe-pattern-eq a-head b-head)
+                (ctfe-pattern-list-eq a-tail b-tail)))]
+          [_ false]))]))
+
+(define (ctfe-let-binding-eq [a : AstLetBinding] [b : AstLetBinding]) : bool
+  (match a
+    [(AstLetBinding a-name a-ty a-value-box)
+      (let
+        [a-value : AstExpr (box-get a-value-box)]
+        (match b
+          [(AstLetBinding b-name b-ty b-value-box)
+            (let
+              [b-value : AstExpr (box-get b-value-box)]
+              (and
+                (string-eq a-name b-name)
+                (and
+                  (ctfe-maybe-type-eq a-ty b-ty)
+                  (ctfe-expr-eq a-value b-value))))]
+          [_ false]))]))
+
+(define (ctfe-let-binding-list-eq
+  [a : AstLetBindingList]
+  [b : AstLetBindingList]) : bool
+  (match a
+    [(AstLetBindingNil)
+      (match b
+        [(AstLetBindingNil) true]
+        [_ false])]
+    [(AstLetBindingCons a-head a-tail)
+      (let
+        [a-tail : AstLetBindingList (box-get a-tail)]
+        (match b
+          [(AstLetBindingCons b-head b-tail)
+            (let
+              [b-tail : AstLetBindingList (box-get b-tail)]
+              (and
+                (ctfe-let-binding-eq a-head b-head)
+                (ctfe-let-binding-list-eq a-tail b-tail)))]
+          [_ false]))]))
+
+(define (ctfe-resource-binding-eq
+  [a : AstResourceBinding]
+  [b : AstResourceBinding]) : bool
+  (match a
+    [(AstResourceBinding a-name a-init-box a-cleanup-box)
+      (let
+        [a-init : AstExpr (box-get a-init-box)]
+        [a-cleanup : AstExpr (box-get a-cleanup-box)]
+        (match b
+          [(AstResourceBinding b-name b-init-box b-cleanup-box)
+            (let
+              [b-init : AstExpr (box-get b-init-box)]
+              [b-cleanup : AstExpr (box-get b-cleanup-box)]
+              (and
+                (string-eq a-name b-name)
+                (and
+                  (ctfe-expr-eq a-init b-init)
+                  (ctfe-expr-eq a-cleanup b-cleanup))))]
+          [_ false]))]))
+
+(define (ctfe-resource-binding-list-eq
+  [a : AstResourceBindingList]
+  [b : AstResourceBindingList]) : bool
+  (match a
+    [(AstResourceBindingNil)
+      (match b
+        [(AstResourceBindingNil) true]
+        [_ false])]
+    [(AstResourceBindingCons a-head a-tail)
+      (let
+        [a-tail : AstResourceBindingList (box-get a-tail)]
+        (match b
+          [(AstResourceBindingCons b-head b-tail)
+            (let
+              [b-tail : AstResourceBindingList (box-get b-tail)]
+              (and
+                (ctfe-resource-binding-eq a-head b-head)
+                (ctfe-resource-binding-list-eq a-tail b-tail)))]
+          [_ false]))]))
+
+(define (ctfe-match-arm-eq [a : AstMatchArm] [b : AstMatchArm]) : bool
+  (match a
+    [(AstMatchArm a-pattern a-body-box)
+      (let
+        [a-body : AstExpr (box-get a-body-box)]
+        (match b
+          [(AstMatchArm b-pattern b-body-box)
+            (let
+              [b-body : AstExpr (box-get b-body-box)]
+              (and
+                (ctfe-pattern-eq a-pattern b-pattern)
+                (ctfe-expr-eq a-body b-body)))]
+          [_ false]))]))
+
+(define (ctfe-match-arm-list-eq [a : AstMatchArmList] [b : AstMatchArmList]) : bool
+  (match a
+    [(AstMatchArmNil)
+      (match b
+        [(AstMatchArmNil) true]
+        [_ false])]
+    [(AstMatchArmCons a-head a-tail)
+      (let
+        [a-tail : AstMatchArmList (box-get a-tail)]
+        (match b
+          [(AstMatchArmCons b-head b-tail)
+            (let
+              [b-tail : AstMatchArmList (box-get b-tail)]
+              (and
+                (ctfe-match-arm-eq a-head b-head)
+                (ctfe-match-arm-list-eq a-tail b-tail)))]
+          [_ false]))]))
+
+(define (ctfe-reduce-op-eq [a : AstReduceOp] [b : AstReduceOp]) : bool
+  (match a
+    [(AstReduceSum)
+      (match b
+        [(AstReduceSum) true]
+        [_ false])]
+    [(AstReduceMin)
+      (match b
+        [(AstReduceMin) true]
+        [_ false])]
+    [(AstReduceMax)
+      (match b
+        [(AstReduceMax) true]
+        [_ false])]
+    [(AstReduceAll)
+      (match b
+        [(AstReduceAll) true]
+        [_ false])]
+    [(AstReduceAny)
+      (match b
+        [(AstReduceAny) true]
+        [_ false])]))
+
+(define (ctfe-expr-eq-inner [a : AstExpr] [b : AstExpr]) : bool
   (match a
     [(AstExprLiteral a-lit)
       (match b
@@ -3709,6 +3934,30 @@
                 (ctfe-expr-eq a-c b-c)
                 (and (ctfe-expr-eq a-t b-t) (ctfe-expr-eq a-e b-e))))]
           [_ false]))]
+    [(AstExprLet a-bindings a-body-box)
+      (let
+        [a-body : AstExpr (box-get a-body-box)]
+        (match b
+          [(AstExprLet b-bindings b-body-box)
+            (let
+              [b-body : AstExpr (box-get b-body-box)]
+              (and
+                (ctfe-let-binding-list-eq a-bindings b-bindings)
+                (ctfe-expr-eq a-body b-body)))]
+          [_ false]))]
+    [(AstExprLambda a-params a-ret a-body-box)
+      (let
+        [a-body : AstExpr (box-get a-body-box)]
+        (match b
+          [(AstExprLambda b-params b-ret b-body-box)
+            (let
+              [b-body : AstExpr (box-get b-body-box)]
+              (and
+                (ctfe-param-list-eq a-params b-params)
+                (and
+                  (ctfe-maybe-type-eq a-ret b-ret)
+                  (ctfe-expr-eq a-body b-body))))]
+          [_ false]))]
     [(AstExprCall a-fun-box a-args)
       (let
         [a-fun : AstExpr (box-get a-fun-box)]
@@ -3718,6 +3967,99 @@
               [b-fun : AstExpr (box-get b-fun-box)]
               (and (ctfe-expr-eq a-fun b-fun) (ctfe-expr-list-eq a-args b-args)))]
           [_ false]))]
+    [(AstExprTuple a-items)
+      (match b
+        [(AstExprTuple b-items) (ctfe-expr-list-eq a-items b-items)]
+        [_ false])]
+    [(AstExprTupleRef a-inner-box a-index)
+      (let
+        [a-inner : AstExpr (box-get a-inner-box)]
+        (match b
+          [(AstExprTupleRef b-inner-box b-index)
+            (let
+              [b-inner : AstExpr (box-get b-inner-box)]
+              (and (= a-index b-index) (ctfe-expr-eq a-inner b-inner)))]
+          [_ false]))]
+    [(AstExprArray a-items)
+      (match b
+        [(AstExprArray b-items) (ctfe-expr-list-eq a-items b-items)]
+        [_ false])]
+    [(AstExprMakeArray a-ty a-size-box)
+      (let
+        [a-size : AstExpr (box-get a-size-box)]
+        (match b
+          [(AstExprMakeArray b-ty b-size-box)
+            (let
+              [b-size : AstExpr (box-get b-size-box)]
+              (and (ctfe-type-eq a-ty b-ty) (ctfe-expr-eq a-size b-size)))]
+          [_ false]))]
+    [(AstExprArrayRef a-target-box a-index-box)
+      (let
+        [a-target : AstExpr (box-get a-target-box)]
+        [a-index : AstExpr (box-get a-index-box)]
+        (match b
+          [(AstExprArrayRef b-target-box b-index-box)
+            (let
+              [b-target : AstExpr (box-get b-target-box)]
+              [b-index : AstExpr (box-get b-index-box)]
+              (and
+                (ctfe-expr-eq a-target b-target)
+                (ctfe-expr-eq a-index b-index)))]
+          [_ false]))]
+    [(AstExprArraySet a-target-box a-index-box a-value-box)
+      (let
+        [a-target : AstExpr (box-get a-target-box)]
+        [a-index : AstExpr (box-get a-index-box)]
+        [a-value : AstExpr (box-get a-value-box)]
+        (match b
+          [(AstExprArraySet b-target-box b-index-box b-value-box)
+            (let
+              [b-target : AstExpr (box-get b-target-box)]
+              [b-index : AstExpr (box-get b-index-box)]
+              [b-value : AstExpr (box-get b-value-box)]
+              (and
+                (ctfe-expr-eq a-target b-target)
+                (and
+                  (ctfe-expr-eq a-index b-index)
+                  (ctfe-expr-eq a-value b-value))))]
+          [_ false]))]
+    [(AstExprArrayPush a-target-box a-value-box)
+      (let
+        [a-target : AstExpr (box-get a-target-box)]
+        [a-value : AstExpr (box-get a-value-box)]
+        (match b
+          [(AstExprArrayPush b-target-box b-value-box)
+            (let
+              [b-target : AstExpr (box-get b-target-box)]
+              [b-value : AstExpr (box-get b-value-box)]
+              (and
+                (ctfe-expr-eq a-target b-target)
+                (ctfe-expr-eq a-value b-value)))]
+          [_ false]))]
+    [(AstExprStringRef a-target-box a-index-box)
+      (let
+        [a-target : AstExpr (box-get a-target-box)]
+        [a-index : AstExpr (box-get a-index-box)]
+        (match b
+          [(AstExprStringRef b-target-box b-index-box)
+            (let
+              [b-target : AstExpr (box-get b-target-box)]
+              [b-index : AstExpr (box-get b-index-box)]
+              (and
+                (ctfe-expr-eq a-target b-target)
+                (ctfe-expr-eq a-index b-index)))]
+          [_ false]))]
+    [(AstExprWhile a-cond-box a-body-box)
+      (let
+        [a-cond : AstExpr (box-get a-cond-box)]
+        [a-body : AstExpr (box-get a-body-box)]
+        (match b
+          [(AstExprWhile b-cond-box b-body-box)
+            (let
+              [b-cond : AstExpr (box-get b-cond-box)]
+              [b-body : AstExpr (box-get b-body-box)]
+              (and (ctfe-expr-eq a-cond b-cond) (ctfe-expr-eq a-body b-body)))]
+          [_ false]))]
     [(AstExprBegin a-exprs)
       (match b
         [(AstExprBegin b-exprs) (ctfe-expr-list-eq a-exprs b-exprs)]
@@ -3726,11 +4068,29 @@
       (match b
         [(AstExprUnsafe b-exprs) (ctfe-expr-list-eq a-exprs b-exprs)]
         [_ false])]
+    [(AstExprSet a-name a-value-box)
+      (let
+        [a-value : AstExpr (box-get a-value-box)]
+        (match b
+          [(AstExprSet b-name b-value-box)
+            (let
+              [b-value : AstExpr (box-get b-value-box)]
+              (and (string-eq a-name b-name) (ctfe-expr-eq a-value b-value)))]
+          [_ false]))]
     [(AstExprAnn a-inner-box a-ty)
       (let
         [a-inner : AstExpr (box-get a-inner-box)]
         (match b
           [(AstExprAnn b-inner-box b-ty)
+            (let
+              [b-inner : AstExpr (box-get b-inner-box)]
+              (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty)))]
+          [_ false]))]
+    [(AstExprCast a-inner-box a-ty)
+      (let
+        [a-inner : AstExpr (box-get a-inner-box)]
+        (match b
+          [(AstExprCast b-inner-box b-ty)
             (let
               [b-inner : AstExpr (box-get b-inner-box)]
               (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty)))]
@@ -3746,6 +4106,111 @@
                 (ctfe-borrow-lifetime-eq a-life b-life)
                 (ctfe-expr-eq a-place b-place)))]
           [_ false]))]
+    [(AstExprMatch a-scrut-box a-arms)
+      (let
+        [a-scrut : AstExpr (box-get a-scrut-box)]
+        (match b
+          [(AstExprMatch b-scrut-box b-arms)
+            (let
+              [b-scrut : AstExpr (box-get b-scrut-box)]
+              (and
+                (ctfe-expr-eq a-scrut b-scrut)
+                (ctfe-match-arm-list-eq a-arms b-arms)))]
+          [_ false]))]
+    [(AstExprForeach a-name a-ty a-start-box a-end-box a-body-box)
+      (let
+        [a-start : AstExpr (box-get a-start-box)]
+        [a-end : AstExpr (box-get a-end-box)]
+        [a-body : AstExpr (box-get a-body-box)]
+        (match b
+          [(AstExprForeach b-name b-ty b-start-box b-end-box b-body-box)
+            (let
+              [b-start : AstExpr (box-get b-start-box)]
+              [b-end : AstExpr (box-get b-end-box)]
+              [b-body : AstExpr (box-get b-body-box)]
+              (and
+                (string-eq a-name b-name)
+                (and
+                  (ctfe-type-eq a-ty b-ty)
+                  (and
+                    (ctfe-expr-eq a-start b-start)
+                    (and
+                      (ctfe-expr-eq a-end b-end)
+                      (ctfe-expr-eq a-body b-body))))))]
+          [_ false]))]
+    [(AstExprSpmdReduce
+        a-op
+        a-name
+        a-ty
+        a-start-box
+        a-end-box
+        a-init-box
+        a-value-box)
+      (let
+        [a-start : AstExpr (box-get a-start-box)]
+        [a-end : AstExpr (box-get a-end-box)]
+        [a-init : AstExpr (box-get a-init-box)]
+        [a-value : AstExpr (box-get a-value-box)]
+        (match b
+          [(AstExprSpmdReduce
+              b-op
+              b-name
+              b-ty
+              b-start-box
+              b-end-box
+              b-init-box
+              b-value-box)
+            (let
+              [b-start : AstExpr (box-get b-start-box)]
+              [b-end : AstExpr (box-get b-end-box)]
+              [b-init : AstExpr (box-get b-init-box)]
+              [b-value : AstExpr (box-get b-value-box)]
+              (and
+                (ctfe-reduce-op-eq a-op b-op)
+                (and
+                  (string-eq a-name b-name)
+                  (and
+                    (ctfe-type-eq a-ty b-ty)
+                    (and
+                      (ctfe-expr-eq a-start b-start)
+                      (and
+                        (ctfe-expr-eq a-end b-end)
+                        (and
+                          (ctfe-expr-eq a-init b-init)
+                          (ctfe-expr-eq a-value b-value))))))))]
+          [_ false]))]
+    [(AstExprStructGet a-inner-box a-field)
+      (let
+        [a-inner : AstExpr (box-get a-inner-box)]
+        (match b
+          [(AstExprStructGet b-inner-box b-field)
+            (let
+              [b-inner : AstExpr (box-get b-inner-box)]
+              (and (string-eq a-field b-field) (ctfe-expr-eq a-inner b-inner)))]
+          [_ false]))]
+    [(AstExprWithRegion a-name a-body)
+      (match b
+        [(AstExprWithRegion b-name b-body)
+          (and (string-eq a-name b-name) (ctfe-expr-list-eq a-body b-body))]
+        [_ false])]
+    [(AstExprWithEscape a-escape-box a-body)
+      (let
+        [a-escape : AstExpr (box-get a-escape-box)]
+        (match b
+          [(AstExprWithEscape b-escape-box b-body)
+            (let
+              [b-escape : AstExpr (box-get b-escape-box)]
+              (and
+                (ctfe-expr-eq a-escape b-escape)
+                (ctfe-expr-list-eq a-body b-body)))]
+          [_ false]))]
+    [(AstExprWithResource a-bindings a-body)
+      (match b
+        [(AstExprWithResource b-bindings b-body)
+          (and
+            (ctfe-resource-binding-list-eq a-bindings b-bindings)
+            (ctfe-expr-list-eq a-body b-body))]
+        [_ false])]
     [(AstExprPtrRead a-ptr-box)
       (let
         [a-ptr : AstExpr (box-get a-ptr-box)]
@@ -3822,6 +4287,19 @@
               [b-inner : AstExpr (box-get b-inner-box)]
               (ctfe-expr-eq a-inner b-inner))]
           [_ false]))]
+    [(AstExprTypeLiteral a-ty)
+      (match b
+        [(AstExprTypeLiteral b-ty) (ctfe-type-eq a-ty b-ty)]
+        [_ false])]
+    [(AstExprComptime a-inner-box)
+      (let
+        [a-inner : AstExpr (box-get a-inner-box)]
+        (match b
+          [(AstExprComptime b-inner-box)
+            (let
+              [b-inner : AstExpr (box-get b-inner-box)]
+              (ctfe-expr-eq a-inner b-inner))]
+          [_ false]))]
     [(AstExprQuote a-inner-box)
       (let
         [a-inner : AstExpr (box-get a-inner-box)]
@@ -3858,11 +4336,33 @@
               [b-inner : AstExpr (box-get b-inner-box)]
               (ctfe-expr-eq a-inner b-inner))]
           [_ false]))]
+    [(AstExprTry a-inner-box)
+      (let
+        [a-inner : AstExpr (box-get a-inner-box)]
+        (match b
+          [(AstExprTry b-inner-box)
+            (let
+              [b-inner : AstExpr (box-get b-inner-box)]
+              (ctfe-expr-eq a-inner b-inner))]
+          [_ false]))]
     [(AstExprReturn a-inner-box)
       (let
         [a-inner : AstExpr (box-get a-inner-box)]
         (match b
           [(AstExprReturn b-inner-box)
+            (let
+              [b-inner : AstExpr (box-get b-inner-box)]
+              (ctfe-expr-eq a-inner b-inner))]
+          [_ false]))]
+    [(AstExprPtrNull a-ty)
+      (match b
+        [(AstExprPtrNull b-ty) (ctfe-type-eq a-ty b-ty)]
+        [_ false])]
+    [(AstExprPtrNullCheck a-inner-box)
+      (let
+        [a-inner : AstExpr (box-get a-inner-box)]
+        (match b
+          [(AstExprPtrNullCheck b-inner-box)
             (let
               [b-inner : AstExpr (box-get b-inner-box)]
               (ctfe-expr-eq a-inner b-inner))]
@@ -3974,6 +4474,9 @@
         [a-inner : AstExpr (box-get a-inner-box)]
         (ctfe-expr-eq a-inner b))]
     [_ false]))
+
+(define (ctfe-expr-eq [a : AstExpr] [b : AstExpr]) : bool
+  (ctfe-expr-eq-inner (ast-expr-unspan a) (ast-expr-unspan b)))
 
 (define (ctfe-expr-list-eq [a : AstExprList] [b : AstExprList]) : bool
   (match a

@@ -1,7 +1,7 @@
 ;# String utility library for TypeLisp.
 ;#
 ;# Provides string operations built on compiler/runtime primitives:
-;# `string-length`, `string-ref`, `string-data`, `array-data`, and
+;# `string-length`, `string-ref`, `string-data`, `array-data`, `tl_alloc`, and
 ;# `string-from-bytes`.
 ;#
 ;# Usage: `(import "stdlib/string.tl")`
@@ -17,6 +17,74 @@
 ;# ```
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern tl_oob_abort : (-> never))
+
+;: Runtime active-arena allocator used by integer rendering.
+(extern string-runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8)))
+
+;: Write one ASCII byte into an active-arena buffer.
+(define (int->string-write-byte!
+  [dst : (MutPtr u8)]
+  [offset : i64]
+  [byte : i64]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset dst offset) (cast byte : u8))))
+
+;: Count decimal digits for a non-positive value without negating i64-min.
+(define (int->string-negative-digit-count [value : i64]) : i64
+  (let
+    [count : i64 1]
+    [cursor : i64 value]
+    (begin
+      (while (<= cursor -10)
+        (begin
+          (set! cursor (/ cursor 10))
+          (set! count (+ count 1))))
+      count)))
+
+;: Write decimal digits for a non-positive value at `base` in `dst`.
+(define (int->string-write-negative-digits!
+  [dst : (MutPtr u8)]
+  [base : i64]
+  [value : i64]
+  [digits : i64]) : unit
+  (let
+    [cursor : i64 value]
+    [index : i64 (- digits 1)]
+    (while (>= index 0)
+      (let
+        [digit : i64 (- 0 (% cursor 10))]
+        (begin
+          (int->string-write-byte! dst (+ base index) (+ 48 digit))
+          (set! cursor (/ cursor 10))
+          (set! index (- index 1)))))))
+
+;: Return the decimal spelling of `value` in fresh active-arena String storage.
+(define (int->string [value : i64]) : String
+  (let
+    [negative : bool (< value 0)]
+    [magnitude : i64
+      (if negative
+        value
+        (- 0 value))]
+    [digits : i64 (int->string-negative-digit-count magnitude)]
+    [len : i64
+      (if negative
+        (+ digits 1)
+        digits)]
+    [buf : (MutPtr u8) (string-runtime-alloc len)]
+    (begin
+      (if negative
+        (int->string-write-byte! buf 0 45)
+        unit)
+      (int->string-write-negative-digits!
+        buf
+        (if negative
+          1
+          0)
+        magnitude
+        digits)
+      (unsafe
+        (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))
 
 ;: Trap when the requested substring range is outside `text`.
 (define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit

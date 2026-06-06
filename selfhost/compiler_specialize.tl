@@ -3859,6 +3859,26 @@
 (comptime-decl (:generated stdlib/hashmap-family HashMapSlot (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/custom-key-v1\")
   (defenum HashMapSlot (HashMapEmpty)))")
 
+(define (compiler-generated-hashmap-family-bundle-source) : String
+  "(comptime-decls (:generated stdlib/hashmap-family (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defenum I64StringFixtureMapSlot
+    (I64StringFixtureMapEmpty)
+    (I64StringFixtureMapOccupied i64 String i64))
+  (defstruct I64StringFixtureMap
+    (slots (Array I64StringFixtureMapSlot))
+    (len i64))
+  (define (i64-string-fixture-map-len [map : I64StringFixtureMap]) : i64
+    (struct-get map len)))
+(comptime-decls (:generated stdlib/hashmap-family (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defenum I64StringFixtureMapSlot
+    (I64StringFixtureMapEmpty)
+    (I64StringFixtureMapOccupied i64 String i64))
+  (defstruct I64StringFixtureMap
+    (slots (Array I64StringFixtureMapSlot))
+    (len i64))
+  (define (i64-string-fixture-map-len [map : I64StringFixtureMap]) : i64
+    (struct-get map len)))")
+
 (define (compiler-generated-decl-visible-count
   [source : String]
   [name : String]) : i64
@@ -4078,6 +4098,33 @@
       "HashMapSlot")
     2))
 
+(define (compiler-generated-hashmap-family-bundle-ok?) : bool
+  (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))
+    [(OkAstProgram program)
+      (and
+        (compiler-specialize-needed? program)
+        (match (compiler-specialize-program program)
+          [(OkSpecProgram normalized)
+            (match normalized
+              [(AstProgram decls-box)
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  [slot-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64StringFixtureMapSlot")]
+                  [map-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64StringFixtureMap")]
+                  [len-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-string-fixture-map-len")]
+                  (and (= slot-count 1) (and (= map-count 1) (= len-count 1))))])]
+          [(ErrSpecProgram _) false]))]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
     [(OkAstProgram program)
@@ -4141,5 +4188,6 @@
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-hashmap-descriptor-distinct-ok?) (return 0))
+    (unless (compiler-generated-hashmap-family-bundle-ok?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

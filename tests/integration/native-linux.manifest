@@ -86,7 +86,7 @@ spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/string.tl stdlib/text_buf.tl stdlib/io.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
-stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/io.tl stdlib/string.tl
+stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n0\n123456789\n-42\n9223372036854775807\n-9223372036854775808\n|-|stdlib/io.tl stdlib/string.tl
 stdlib_substring_negative_len_trap|tests/integration/stdlib_substring_negative_len_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_substring_negative_start_trap|tests/integration/stdlib_substring_negative_start_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_substring_range_overflow_trap|tests/integration/stdlib_substring_range_overflow_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n

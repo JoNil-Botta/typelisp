@@ -5729,6 +5729,56 @@
     (take-handle (array-ref items 0))
     (take-handle (array-ref items 0))))")
 
+(define (compiler-typecheck-move-owner-array-ref-reinit-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-reinit [items : (Array FileHandle 1)]) : unit
+  (begin
+    (take-handle (array-ref items 0))
+    (array-set! items 0 (FileHandle 7))
+    (take-handle (array-ref items 0))))")
+
+(define (compiler-typecheck-move-owner-array-ref-reinit-root-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-reinit-root [items : (Array FileHandle 1)]) : unit
+  (begin
+    (take-handle (array-ref items 0))
+    (array-set! items 0 (FileHandle 7))
+    (let [next : (Array FileHandle 1) items] unit)))")
+
+(define (compiler-typecheck-move-owner-array-ref-reinit-sibling-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-reinit-sibling [items : (Array FileHandle 2)]) : unit
+  (begin
+    (take-handle (array-ref items 0))
+    (array-set! items 1 (FileHandle 7))
+    (take-handle (array-ref items 0))))")
+
+(define (compiler-typecheck-move-owner-array-ref-reinit-nonliteral-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-reinit-nonliteral
+  [items : (Array FileHandle 2)]
+  [index : i64]) : unit
+  (begin
+    (take-handle (array-ref items 0))
+    (array-set! items index (FileHandle 7))
+    (take-handle (array-ref items 0))))")
+
 (define (compiler-typecheck-move-owner-array-ref-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -5871,6 +5921,47 @@
   "(define (foreach-copyable [n : i64] [x : i64]) : i64
   (begin (foreach ([i : i64 0 n]) (let [y : i64 x] unit)) x))")
 
+(define (compiler-typecheck-move-with-cleanup-owner-read-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (cleanup-file-handle [h : FileHandle]) : unit unit)
+(define (with-cleanup-owner-read [fd : i64]) : i64
+  (with ([h (FileHandle fd) cleanup-file-handle])
+    (struct-get h fd)))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-whole-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (cleanup-file-handle [h : FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-with-cleanup-owner-whole [fd : i64]) : i64
+  (with ([h (FileHandle fd) cleanup-file-handle])
+    (begin
+      (take-handle h)
+      0)))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-field-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (cleanup-file-handle [h : FileHandle]) : unit unit)
+(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (cleanup-holder [h : Holder]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-with-cleanup-owner-field [fd : i64]) : i64
+  (with ([h (Holder (FileHandle fd) 7) cleanup-holder])
+    (begin
+      (take-handle (struct-get h handle))
+      0)))")
+
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
     [empty : TcMovedSet (tc-moved-empty)]
@@ -5878,6 +5969,29 @@
     [dupe : TcMovedSet (tc-moved-add (tc-moved-clone one) "alpha")]
     [two : TcMovedSet (tc-moved-add (tc-moved-clone dupe) "beta")]
     [removed : TcMovedSet (tc-moved-remove (tc-moved-clone two) "alpha")]
+    [partial : TcMovedSet
+      (tc-moved-add-projection-path
+        (tc-moved-add-projection-path (tc-moved-empty) "items" "items.#array.0")
+        "items"
+        "items.#array.1")]
+    [partial-one : TcMovedSet
+      (tc-moved-remove-exact-path
+        (tc-moved-clone partial)
+        "items"
+        "items.#array.0")]
+    [partial-clear : TcMovedSet
+      (tc-moved-remove-exact-path
+        (tc-moved-clone partial-one)
+        "items"
+        "items.#array.1")]
+    [partial-keeps-sibling : bool
+      (tc-moved-contains? partial-one (tc-moved-path-key "items.#array.1"))]
+    [partial-keeps-marker : bool (tc-moved-partial? partial-one "items")]
+    [partial-clears-sibling : bool
+      (not
+        (tc-moved-contains? partial-clear (tc-moved-path-key "items.#array.1")))]
+    [partial-clears-marker : bool
+      (not (tc-moved-partial? partial-clear "items"))]
     (and
       (= (tc-moved-len (tc-moved-empty)) 0)
       (and
@@ -5888,7 +6002,11 @@
             (>= (tc-moved-capacity two) 8)
             (and
               (not (tc-moved-contains? removed "alpha"))
-              (tc-moved-contains? removed "beta"))))))))
+              (and
+                partial-keeps-sibling
+                (and
+                  partial-keeps-marker
+                  (and partial-clears-sibling partial-clears-marker))))))))))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
@@ -6038,6 +6156,24 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-array-ref-reinit-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-array-ref-reinit-root-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-array-ref-reinit-sibling-source)
+        "typecheck: use of moved value `items.#array.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-array-ref-reinit-nonliteral-source)
+        "typecheck: use of moved value `items.#array.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         (compiler-typecheck-move-owner-array-ref-nested-source))
         unit
         (set! ok false))
@@ -6126,6 +6262,20 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-foreach-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-with-cleanup-owner-read-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-whole-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-field-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
         unit
         (set! ok false))
       ok)))

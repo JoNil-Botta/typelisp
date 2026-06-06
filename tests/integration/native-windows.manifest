@@ -85,6 +85,10 @@ stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/string.tl stdlib/text_buf.tl stdlib/io.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl stdlib/io.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/string.tl
+stdlib_substring_negative_len_trap|tests/integration/stdlib_substring_negative_len_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_substring_negative_start_trap|tests/integration/stdlib_substring_negative_start_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_substring_range_overflow_trap|tests/integration/stdlib_substring_range_overflow_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_substring_start_past_end_trap|tests/integration/stdlib_substring_start_past_end_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl stdlib/string.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/string.tl

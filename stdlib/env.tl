@@ -148,13 +148,15 @@
                 (set!
                   items
                   (EnvStringCons
-                    (substring value start (- i start))
+                    (substring-borrowed value start (- i start))
                     (box items)))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
           (env-string-list-reverse
-            (EnvStringCons (substring value start (- n start)) (box items))))))))
+            (EnvStringCons
+              (substring-borrowed value start (- n start))
+              (box items))))))))
 
 ;: Split a PATH-style string using the current platform separator.
 (define (env-path-split [value : (& value str)]) : EnvStringList

@@ -291,13 +291,15 @@
                 (text-buf-append
                   (text-buf-append
                     out
-                    (substring text segment-start (- i segment-start)))
+                    (substring-borrowed text segment-start (- i segment-start)))
                   (json-escape-char code)))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
       (text-buf-render
-        (text-buf-append out (substring text segment-start (- n segment-start)))))))
+        (text-buf-append
+          out
+          (substring-borrowed text segment-start (- n segment-start)))))))
 
 ;: Append serialized array elements to `buf`.
 (define (json-stringify-list-into [items : JsonList] [buf : TextBuf]) : TextBuf
@@ -464,7 +466,10 @@
                       out
                       (text-buf-append
                         out
-                        (substring text segment-start (- i segment-start))))
+                        (substring-borrowed
+                          text
+                          segment-start
+                          (- i segment-start))))
                     (set! i (+ i 1))
                     (set! done true))]
                 [(= code 92)
@@ -473,7 +478,10 @@
                       out
                       (text-buf-append
                         out
-                        (substring text segment-start (- i segment-start))))
+                        (substring-borrowed
+                          text
+                          segment-start
+                          (- i segment-start))))
                     (match (json-parse-escape text (+ i 1))
                       [(OkJsonParseEscape decoded next)
                         (begin
@@ -570,7 +578,9 @@
           unit)
         unit)
       (if ok
-        (OkJsonParseValue (JsonNumber (substring text pos (- i pos))) i)
+        (OkJsonParseValue
+          (JsonNumber (substring-borrowed text pos (- i pos)))
+          i)
         (ErrJsonParseValue message)))))
 
 ;: Parse `keyword` at `pos` and return its fixed JSON value.

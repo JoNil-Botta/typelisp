@@ -382,7 +382,7 @@
               (set!
                 segments
                 (fs-path-normalize-segment
-                  (substring path segment-start (- i segment-start))
+                  (substring-borrowed path segment-start (- i segment-start))
                   segments
                   rooted))
               (set! segment-start (+ i 1)))
@@ -391,16 +391,18 @@
       (set!
         segments
         (fs-path-normalize-segment
-          (substring path segment-start (- n segment-start))
+          (substring-borrowed path segment-start (- n segment-start))
           segments
           rooted))
       (let
         [body : String (fs-path-segment-list-render segments)]
         (cond
           [(and drive-root (= (string-length body) 0))
-            (string-append (substring path 0 2) "/")]
+            (string-append (substring-borrowed path 0 2) "/")]
           [drive-root
-            (string-append (substring path 0 2) (string-append "/" body))]
+            (string-append
+              (substring-borrowed path 0 2)
+              (string-append "/" body))]
           [(and rooted (= (string-length body) 0)) "/"]
           [rooted (string-append "/" body)]
           [(= (string-length body) 0) "."]
@@ -451,7 +453,9 @@
         (string-append left (& empty)))]
     [(fs-path-separator? (string-ref left (- (string-length left) 1)))
       (if (fs-path-separator? (string-ref right 0))
-        (string-append left (substring right 1 (- (string-length right) 1)))
+        (string-append
+          left
+          (substring-borrowed right 1 (- (string-length right) 1)))
         (string-append left right))]
     [(fs-path-separator? (string-ref right 0)) (string-append left right)]
     [else (string-append (string-append left (fs-path-separator)) right)]))
@@ -482,7 +486,7 @@
       "."
       (if (= last 0)
         (fs-path-separator)
-        (substring path 0 last)))))
+        (substring-borrowed path 0 last)))))
 
 ;: Final component of `path` (the part after the last separator).
 ;:
@@ -496,7 +500,7 @@
       (let
         [empty : String ""]
         (string-append path (& empty)))
-      (substring path (+ last 1) (- n (+ last 1))))))
+      (substring-borrowed path (+ last 1) (- n (+ last 1))))))
 
 ;: Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
 ;:
@@ -784,7 +788,7 @@
             (if (fs-path-separator? (string-ref name 0))
               (string-append
                 root
-                (substring (& name) 1 (- (string-length name) 1)))
+                (substring-borrowed (& name) 1 (- (string-length name) 1)))
               (string-append root (& name)))]
           [(fs-path-separator? (string-ref name 0))
             (string-append root (& name))]

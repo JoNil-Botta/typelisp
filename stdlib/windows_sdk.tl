@@ -114,7 +114,7 @@
     ""
     (if (windows-sdk-separator-char? (string-ref text (- n 1)))
       (windows-sdk-trim-trailing-separators-from text (- n 1))
-      (substring text 0 n))))
+      (substring-borrowed text 0 n))))
 
 ;: Trim trailing path separators from `text`.
 (define (windows-sdk-trim-trailing-separators [text : (& text str)]) : String

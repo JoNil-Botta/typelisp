@@ -14,24 +14,35 @@
       (let
         [s : String "  outer  "]
         [outer-trimmed : String (string-trim (& s))]
+        [outer-slice : String (substring-borrowed (& s) 2 5)]
         [outer-expected : String "outer"]
         (begin
           (assert-string-eq
             (& outer-trimmed)
             (& outer-expected)
             "outer stdlib string allocation")
+          (assert-string-eq
+            (& outer-slice)
+            (& outer-expected)
+            "outer stdlib substring allocation")
           (with-arena
             inner
             (let
               [inner-replaced : String (string-replace "alpha" "ph" "ren")]
+              [inner-slice : String (string-slice "alphabet" 2 3)]
               [inner-rendered : String (text-buf-render program-buf)]
               [inner-replaced-expected : String "alrena"]
+              [inner-slice-expected : String "pha"]
               [inner-rendered-expected : String "scoped"]
               (begin
                 (assert-string-eq
                   (& inner-replaced)
                   (& inner-replaced-expected)
                   "inner stdlib string allocation")
+                (assert-string-eq
+                  (& inner-slice)
+                  (& inner-slice-expected)
+                  "inner stdlib substring allocation")
                 (assert-string-eq
                   (& inner-rendered)
                   (& inner-rendered-expected)

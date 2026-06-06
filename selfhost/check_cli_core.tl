@@ -130,7 +130,7 @@
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : i64
+  [deps : CompilerPkgDeps]) : i64
   (match (compiler-check-package-file-with-roots
     input-path
     stdlib-roots
@@ -148,7 +148,7 @@
   [sources : StringList]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : i64
+  [deps : CompilerPkgDeps]) : i64
   (match sources
     [(StringNil) 0]
     [(StringCons source rest)

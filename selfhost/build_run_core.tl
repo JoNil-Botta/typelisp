@@ -597,7 +597,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]
+  [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultSourceToolString
   (match (source-tool-try-read-file source)

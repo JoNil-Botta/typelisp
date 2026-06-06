@@ -652,6 +652,34 @@
     emit-entry
     crt-entry))
 
+(define (compiler-driver-emit-package-loaded
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerDriver
+  (match (lower-compiler-program-with-decl-paths-mode
+    input-path
+    (ast-program decls)
+    paths
+    (compiler-driver-lower-mode-for-target target mode))
+    [(OkCompilerLower program spans)
+      (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+        input-path
+        program
+        spans
+        target
+        has-target
+        mode
+        opt-level
+        emit-entry
+        crt-entry)]
+    [(ErrCompilerLower diag) (ErrCompilerDriver diag)]))
+
 (define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
   [input-path : String]
   [target : CompilerBackendTarget]

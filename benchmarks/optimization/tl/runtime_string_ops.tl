@@ -1,5 +1,7 @@
 (import "stdlib/io.tl")
 
+(import "stdlib/string.tl")
+
 (define (string-ops-round [text : String] [suffix : String] [span : i64]) : i64
   (let
     [n : i64 (string-length text)]

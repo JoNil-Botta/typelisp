@@ -1,5 +1,7 @@
 (import "stdlib/io.tl")
 
+(import "stdlib/string.tl")
+
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
 (import "sym_i64_env_core.tl")
 

@@ -11,6 +11,8 @@
 
 (import "package_source_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum FmtConfig
   (FmtFileConfig bool StringList)
   (FmtPackageConfig bool String bool))

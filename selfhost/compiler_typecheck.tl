@@ -5,6 +5,8 @@
 
 (import "compiler_specialize.tl")
 
+(import "../stdlib/string.tl")
+
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
@@ -96,10 +98,26 @@
 "
     src))
 
+(define (compiler-typecheck-with-alloc-string-helper-source [src : String]) : String
+  (string-append
+    "(define (int->string [value : i64]) : String
+  (if (= value 0) \"0\" \"1\"))
+(define (substring [text : String] [start : i64] [len : i64]) : String
+  text)
+(define (string-slice [text : String] [start : i64] [len : i64]) : String
+  (substring text start len))
+(define (string-append [left : String] [right : String]) : String
+  left)
+(define (string-concat [left : String] [right : String]) : String
+  (string-append left right))
+"
+    src))
+
 (define (compiler-typecheck-with-fs-source [src : String]) : String
   (compiler-typecheck-with-io-source
-    (string-append
-      "(extern fs-mkdir-status : (-> String i64))
+    (compiler-typecheck-with-alloc-string-helper-source
+      (string-append
+        "(extern fs-mkdir-status : (-> String i64))
 (extern fs-remove-file-status : (-> String i64))
 (extern fs-remove-dir-status : (-> String i64))
 (extern fs-rename-status : (-> String String i64))
@@ -112,7 +130,7 @@
 (extern fs-current-dir-status : (-> i64))
 (extern fs-current-dir : (-> String))
 "
-      src)))
+        src))))
 
 (define (compiler-typecheck-with-cpu-source [src : String]) : String
   (string-append "(import \"stdlib/cpu.tl\")\n" src))
@@ -140,7 +158,7 @@
 (unsafe (define (arena-destroy [arena : i64]) : unit (unsafe (tl_arena_destroy arena))))
 (unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
 "
-    src))
+    (compiler-typecheck-with-alloc-string-helper-source src)))
 
 (define (compiler-typecheck-smoke-source) : String
   "(extern print-i64 : (-> i64 unit))
@@ -692,7 +710,8 @@
            (match maybe [(Some n) n] [None 0])))))")
 
 (define (compiler-typecheck-global-region-source) : String
-  "(define bad : String (with-arena r (int->string 1)))")
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define bad : String (with-arena r (int->string 1)))"))
 
 (define (compiler-typecheck-global-reference-aggregate-source) : String
   "(define bad : (Tuple (& n i64) i64) (tuple (& n) 1))")
@@ -1708,37 +1727,42 @@
       ok)))
 
 (define (compiler-typecheck-region-builtin-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : i64
   (with-arena r
     (let
       [s : String (int->string 41)]
-      (string-length s))))")
+      (string-length s))))"))
 
 (define (compiler-typecheck-region-escape-source) : String
-  "(define (main) : String
-  (with-arena r (int->string 41)))")
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : String
+  (with-arena r (int->string 41)))"))
 
 (define (compiler-typecheck-region-user-call-source) : String
-  "(define (sink [s : String]) : i64 (string-length s))
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (sink [s : String]) : i64 (string-length s))
 (define (main) : i64
   (with-arena r
     (let
       [s : String (int->string 41)]
-      (sink s))))")
+      (sink s))))"))
 
 (define (compiler-typecheck-region-nested-escape-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : i64
   (with-arena oute
     (let
       [s : String (with-arena inner (int->string 1))]
-      0)))")
+      0)))"))
 
 (define (compiler-typecheck-region-outer-in-inner-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : i64
   (with-arena oute
     (let
       [s : String (int->string 1)]
-      (with-arena inner (string-length s)))))")
+      (with-arena inner (string-length s)))))"))
 
 (define (compiler-typecheck-region-array-source) : String
   "(define (main [n : i64]) : i64
@@ -1750,20 +1774,22 @@
         (array-length a)))))")
 
 (define (compiler-typecheck-region-struct-escape-source) : String
-  "(defstruct Box (s String))
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(defstruct Box (s String))
 (define (main) : String
   (with-arena r
     (let
       [b : Box (Box (int->string 1))]
-      (struct-get b s))))")
+      (struct-get b s))))"))
 
 (define (compiler-typecheck-region-match-source) : String
-  "(defenum Token (Text String) (End))
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(defenum Token (Text String) (End))
 (define (main) : i64
   (with-arena r
     (match (Text (int->string 1))
       [(Text s) (string-length s)]
-      [End 0])))")
+      [End 0])))"))
 
 (define (compiler-typecheck-with-escape-scalar-source) : String
   (compiler-typecheck-with-arena-source
@@ -1894,11 +1920,12 @@
       (box-get b))))")
 
 (define (compiler-typecheck-box-region-project-source) : String
-  "(define (main) : String
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : String
   (with-arena r
     (let
       [b : (in r (Box String)) (box (int->string 41))]
-      (box-get b))))")
+      (box-get b))))"))
 
 (define (compiler-typecheck-box-get-non-box-source) : String
   "(define (main) : i64 (box-get 1))")
@@ -2708,11 +2735,12 @@
   (take text))")
 
 (define (compiler-typecheck-reference-str-region-source) : String
-  "(define (take [s : (& r str)]) : unit unit)
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (take [s : (& r str)]) : unit unit)
 (define (main) : unit
   (with-arena r
     (let [text : String (int->string 41)]
-      (take (& r text)))))")
+      (take (& r text)))))"))
 
 (define (compiler-typecheck-str-value-source) : String
   "(define (main [s : str]) : unit unit)")
@@ -2746,22 +2774,25 @@
   (let [x : i64 1] (& x)))")
 
 (define (compiler-typecheck-owner-default-arena-source) : String
-  "(define (main) : String
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : String
   (let
     [text : String (int->string 42)]
     (with-arena phase
-      (let [n : i64 (string-length text)] text))))")
+      (let [n : i64 (string-length text)] text))))"))
 
 (define (compiler-typecheck-owner-scoped-arena-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : i64
   (with-arena phase
     (let
       [text : String (int->string 42)]
-      (string-length text))))")
+      (string-length text))))"))
 
 (define (compiler-typecheck-owner-scoped-arena-escape-source) : String
-  "(define (main) : String
-  (with-arena phase (int->string 42)))")
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : String
+  (with-arena phase (int->string 42)))"))
 
 (define (compiler-typecheck-owner-model-tests-ok?) : bool
   (and
@@ -3100,7 +3131,7 @@
       ok)))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
-;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
+;; the diagnostic must locate it there (not at the 1:1 fallback) â€” proving the
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
@@ -3960,14 +3991,15 @@
 (define (compiler-typecheck-string-builtin-ok-length-source) : String
   "(define (main) : i64 (string-length \"hi\"))")
 
-(define (compiler-typecheck-string-builtin-ok-append-source) : String
-  "(define (f) : String (string-append \"a\" \"b\"))")
-
-(define (compiler-typecheck-string-builtin-ok-substring-source) : String
-  "(define (f) : String (substring \"abc\" 0 1))")
-
 (define (compiler-typecheck-string-builtin-ok-eq-source) : String
   "(define (f) : bool (string-eq \"a\" \"b\"))")
+
+(define (compiler-typecheck-string-helper-source-defined-source) : String
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (f [s : String]) : String
+  (string-concat
+    (string-append (substring s 0 1) (string-slice s 1 1))
+    (int->string (string->int \"7\"))))"))
 
 (define (compiler-typecheck-string-builtin-borrowed-source) : String
   "(define (main [text : String] [other : String]) : i64
@@ -3977,6 +4009,21 @@
         (+ (cast (string-ref (& text) 0) : i64)
           (+ (if (string-eq (& text) (& other)) 1 0)
              (string->int (& text))))))))")
+
+(define (compiler-typecheck-string-builtin-no-default-int-source) : String
+  "(define (main) : String (int->string 1))")
+
+(define (compiler-typecheck-string-builtin-no-default-append-source) : String
+  "(define (main) : String (string-append \"a\" \"b\"))")
+
+(define (compiler-typecheck-string-builtin-no-default-substring-source) : String
+  "(define (main) : String (substring \"abc\" 0 1))")
+
+(define (compiler-typecheck-string-builtin-no-default-slice-source) : String
+  "(define (main) : String (string-slice \"abc\" 0 1))")
+
+(define (compiler-typecheck-string-builtin-no-default-concat-source) : String
+  "(define (main) : String (string-concat \"a\" \"b\"))")
 
 (define (compiler-typecheck-string-builtin-borrowed-alloc-source) : String
   "(define (main [left : String] [right : String]) : String
@@ -3992,31 +4039,66 @@
   "(define (main [items : (Array i64)]) : i64 (string-length items))")
 
 (define (compiler-typecheck-string-builtin-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      (compiler-typecheck-string-builtin-ok-length-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-string-builtin-ok-append-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-string-builtin-ok-substring-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-string-builtin-ok-eq-source))
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-string-builtin-borrowed-source))
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-string-builtin-borrowed-alloc-source))
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-string-builtin-bad-arg-source)
-                  "typecheck: argument type mismatch")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-string-builtin-bad-array-source)
-                  "typecheck: argument type mismatch")))))))))
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-string-builtin-ok-length-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-string-builtin-ok-eq-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-string-helper-source-defined-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-string-builtin-borrowed-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-no-default-int-source)
+        "typecheck: unbound name int->string")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-no-default-append-source)
+        "typecheck: unbound name string-append")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-no-default-substring-source)
+        "typecheck: unbound name substring")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-no-default-slice-source)
+        "typecheck: unbound name string-slice")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-no-default-concat-source)
+        "typecheck: unbound name string-concat")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-borrowed-alloc-source)
+        "typecheck: unbound name string-append")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-bad-arg-source)
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-string-builtin-bad-array-source)
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      ok)))
 
 ;; Stdlib argv helper signature rules (#1042, #1893): `arg-count` returns i64
 ;; and `arg` accepts an i64 index and returns String. User declarations may
@@ -4088,7 +4170,7 @@
 ;; Closure capture typing (#1542, migrated from src/typechecker.rs): a lambda
 ;; that reads outer locals/params type-checks like its declared `(-> ...)` type.
 ;; Covers scalar, multi-scalar, String, struct capture, and aggregate-returning
-;; lambdas — the capture shapes the selfhost typechecker currently accepts.
+;; lambdas â€” the capture shapes the selfhost typechecker currently accepts.
 (define (compiler-typecheck-lambda-capture-scalar-source) : String
   "(define (main) : i64 (let [n : i64 7] (let [g : (-> i64) (lambda () : i64 n)] (g))))")
 
@@ -4259,7 +4341,7 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
-;; spmd-reduce purity rules (#1011, SPEC.md §5.15): the per-lane value
+;; spmd-reduce purity rules (#1011, SPEC.md Â§5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
@@ -4271,18 +4353,18 @@
     (and
       (compiler-typecheck-error-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.15)")
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.15)")
       (and
         (compiler-typecheck-error-ok?
           "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
-          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.15)")
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md Â§5.15)")
         (and
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
-            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.15)"))))))
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md Â§5.15)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array
@@ -4803,10 +4885,11 @@
     (+ arena (+ current mark))))"))
 
 (define (compiler-typecheck-arena-with-arena-safe-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main) : i64
   (with-arena r
     (let [s : String (int->string 41)]
-      (string-length s))))")
+      (string-length s))))"))
 
 (define (compiler-typecheck-arena-safe-set-source) : String
   (compiler-typecheck-with-arena-source
@@ -5954,17 +6037,19 @@
   (begin (while flag (let [t : String s] unit)) s))")
 
 (define (compiler-typecheck-move-while-loop-carried-local-source) : String
-  "(define (bad-while-loop-carried-local [flag : bool]) : unit
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (bad-while-loop-carried-local [flag : bool]) : unit
   (let
     [s : String (int->string 1)]
-    (while flag (let [t : String s] unit))))")
+    (while flag (let [t : String s] unit))))"))
 
 (define (compiler-typecheck-move-while-body-local-owner-source) : String
-  "(define (while-body-local-owner [flag : bool]) : unit
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (while-body-local-owner [flag : bool]) : unit
   (while flag
     (let
       [s : String (int->string 1)]
-      (let [t : String s] unit))))")
+      (let [t : String s] unit))))"))
 
 (define (compiler-typecheck-move-while-copyable-source) : String
   "(define (while-copyable [flag : bool] [n : i64]) : i64
@@ -5975,17 +6060,19 @@
   (foreach ([i : i64 0 n]) (let [t : String s] unit)))")
 
 (define (compiler-typecheck-move-foreach-loop-carried-local-source) : String
-  "(define (bad-foreach-loop-carried-local [n : i64]) : unit
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (bad-foreach-loop-carried-local [n : i64]) : unit
   (let
     [s : String (int->string 1)]
-    (foreach ([i : i64 0 n]) (let [t : String s] unit))))")
+    (foreach ([i : i64 0 n]) (let [t : String s] unit))))"))
 
 (define (compiler-typecheck-move-foreach-body-local-owner-source) : String
-  "(define (foreach-body-local-owner [n : i64]) : unit
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (foreach-body-local-owner [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
       [s : String (int->string 1)]
-      (let [t : String s] unit))))")
+      (let [t : String s] unit))))"))
 
 (define (compiler-typecheck-move-foreach-copyable-source) : String
   "(define (foreach-copyable [n : i64] [x : i64]) : i64
@@ -6669,14 +6756,15 @@
 
 (define (compiler-typecheck-runtime-builtin-print-region-ok-source) : String
   (compiler-typecheck-with-io-source
-    "(define (main) : i64
+    (compiler-typecheck-with-alloc-string-helper-source
+      "(define (main) : i64
   (let
     [s : String (int->string 42)]
     (begin
       (print-string s)
       (print-str s)
       (print-error s)
-      0)))"))
+      0)))")))
 
 (define (compiler-typecheck-runtime-builtin-xgetbv-ok-source) : String
   (compiler-typecheck-with-cpu-source

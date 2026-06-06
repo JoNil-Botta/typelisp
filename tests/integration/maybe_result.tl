@@ -1,4 +1,6 @@
 ; maybe_result.tl - Monomorphic Maybe/Result convention witness for #228.
+(import "stdlib/string.tl")
+
 (defenum MaybeI64
   (NoneI64)
   (SomeI64 i64))

@@ -18,6 +18,8 @@
 
 (import "../stdlib/hashmap.tl")
 
+(import "../stdlib/string.tl")
+
 (defstruct CloneNameSet
   (map StringI64Map))
 
@@ -395,7 +397,7 @@
 (define (clone-list-rev-name [type-name : String]) : String
   (string-append (clone-helper-name type-name) "$rev"))
 
-;; `(Nil)` — a nullary constructor is a zero-arg call, as in clone-variant-arm.
+;; `(Nil)` â€” a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [nil-ctor : String]) : AstExpr
   (ast-expr-call (AstExprVar nil-ctor) AstExprNil))
 
@@ -501,7 +503,7 @@
         boxed-tail
         (AstExprVar "h")))))
 
-;; clone$L: reverse(acc(x, Nil), Nil) — both folds run in O(1) stack frames.
+;; clone$L: reverse(acc(x, Nil), Nil) â€” both folds run in O(1) stack frames.
 (define (clone-list-entry-decl [type-name : String] [nil-ctor : String]) : AstDecl
   (clone-make-helper-decl
     type-name

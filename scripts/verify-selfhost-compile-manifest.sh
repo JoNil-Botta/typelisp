@@ -434,6 +434,7 @@ while IFS='|' read -r kind a b c d e; do
         copy)
             [ -n "$case_id" ] || fail "copy appears before a case"
             [ "$case_mode" = "stage" ] || fail "$case_id copy is only valid for staged cases"
+            mkdir -p "$(dirname -- "$case_dir/$b")"
             cp "$a" "$case_dir/$b"
             ;;
         contains)

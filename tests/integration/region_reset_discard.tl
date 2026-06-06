@@ -1,3 +1,5 @@
+(import "stdlib/string.tl")
+
 (extern tl_alloc : (-> u64 u64))
 
 (extern tl_region_mark : (-> u64))

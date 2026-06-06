@@ -15,6 +15,8 @@
 
 (import "format_tokens.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum DocItemKind
   (DocKindDefine)
   (DocKindFunction)

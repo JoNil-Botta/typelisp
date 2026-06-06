@@ -3,6 +3,8 @@
 
 (import "../stdlib/arena.tl")
 
+(import "../stdlib/string.tl")
+
 (cfg compile-profile (import "../stdlib/profile.tl"))
 
 (import "compiler_backend.tl")

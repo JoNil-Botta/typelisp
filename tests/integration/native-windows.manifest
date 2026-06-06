@@ -5,11 +5,11 @@
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
-arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl
+arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
-clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:_tl_clone_u24Bundle
+clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:_tl_clone_u24Bundle
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl stdlib/io.tl stdlib/string.tl
 tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
@@ -49,9 +49,9 @@ lambda_capture_scalar|tests/integration/lambda_capture_scalar.tl|42|-|-|-
 lambda_capture_struct_enum|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-
 lambda_capture_tuple|tests/integration/lambda_capture_tuple.tl|42|-|-|-
 lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
-lexer|tests/integration/lexer.tl|12|-|-|-
+lexer|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl
 many_args|tests/integration/many_args.tl|36|-|-|-
-maybe_result|tests/integration/maybe_result.tl|65|-|-|-
+maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 modules_main|tests/integration/modules_main.tl|30|-|-|modules_helper.tl
 narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
@@ -66,9 +66,9 @@ selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stde
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
-region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|-
-region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|-
-region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|-
+region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
+region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
+region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|stdlib/string.tl
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
@@ -90,12 +90,12 @@ stdlib_substring_negative_start_trap|tests/integration/stdlib_substring_negative
 stdlib_substring_range_overflow_trap|tests/integration/stdlib_substring_range_overflow_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_substring_start_past_end_trap|tests/integration/stdlib_substring_start_past_end_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl stdlib/string.tl
-string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
+string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl
 string_length|tests/integration/string_length.tl|5|-|-|-
 string_match|tests/integration/string_match.tl|42|-|-|-
-substring|tests/integration/substring.tl|55|-|-|-
-sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl
+substring|tests/integration/substring.tl|55|-|-|stdlib/string.tl
+sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl stdlib/io.tl stdlib/string.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
 text_buf|tests/integration/text_buf.tl|0|left-right\n|-|text_buf_core.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
@@ -106,10 +106,10 @@ u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
 valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
-with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|-
-with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|-
-with_arena_mark_stress|tests/integration/with_arena_mark_stress.tl|42|-|-|-
-with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:with-escape,_tl_clone_u24EscapeOutcome
+with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|stdlib/string.tl
+with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl
+with_arena_mark_stress|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl
+with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:with-escape,_tl_clone_u24EscapeOutcome
 compiler_ast_types_smoke|selfhost/compiler_ast_types_smoke.tl|42|-|-|compiler_ast_types.tl
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl

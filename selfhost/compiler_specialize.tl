@@ -9,6 +9,8 @@
 
 (import "compiler_parse_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum SpecTemplate
   (SpecTemplate String AstParamList AstType AstExpr))
 

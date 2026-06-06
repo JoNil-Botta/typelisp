@@ -45,11 +45,13 @@
 
 (import "lsp_frame_core.tl")
 
+(import "../stdlib/string.tl")
+
 ;; Keeps the shipped stage0 help surface stable while individual commands route
 ;; through selfhost entry points. The unified selfhost CLI presents the same
 ;; help surface as the published stage0 driver.
 (define (cli-help-text) : String
-  "typelisp — A typed Lisp/Scheme dialect with x86_64 backend
+  "typelisp â€” A typed Lisp/Scheme dialect with x86_64 backend
 
 Usage:
     typelisp lsp                            Start stdio LSP diagnostics server

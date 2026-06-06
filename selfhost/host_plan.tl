@@ -5,6 +5,8 @@
 ;; emitted as netstrings so spaces, colons, and newlines round-trip exactly.
 (import "../stdlib/env.tl")
 
+(import "../stdlib/string.tl")
+
 (define (host-plan-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 

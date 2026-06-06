@@ -21,6 +21,8 @@
 
 (import "package_source_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum DocMaybeString
   (DocNoString)
   (DocSomeString String))

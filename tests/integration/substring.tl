@@ -1,5 +1,7 @@
 ; Exercise substring/string-slice end to end across empty, boundary, short, and
 ; long slices. main returns 55 when every check passes.
+(import "stdlib/string.tl")
+
 (define (score [ok : bool] [points : i64]) : i64
   (if ok
     points

@@ -3,6 +3,8 @@
 
 (import "compiler_backend.tl")
 
+(import "../stdlib/string.tl")
+
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -432,10 +434,19 @@
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for the string runtime helper emission tests
-;; (#1044): source-level string builtins lower to direct calls, and the backend
-;; emits each helper body instead of leaving an extern placeholder.
+;; (#1044/#2064): non-allocating string parsing/equality still use backend
+;; runtime helpers, while migrated allocating public helpers stay as ordinary
+;; source-level calls instead of pulling in legacy helper bodies.
 (define (compiler-backend-string-runtime-source) : String
-  "(define (print-string [text : String]) : unit
+  "(define (int->string [value : i64]) : String
+  \"42\")
+(define (substring [s : String] [start : i64] [len : i64]) : String
+  (let
+    [probe : char (string-ref s start)]
+    \"x\"))
+(define (string-concat [left : String] [right : String]) : String
+  left)
+(define (print-string [text : String]) : unit
   unit)
 (define (print-str [text : String]) : unit
   (print-string text))
@@ -461,57 +472,88 @@
 (define (compiler-backend-string-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-string-runtime-source))
     [(OkCompilerBackend asm)
-      (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
-          (compiler-backend-string-contains? asm "tl_string_to_int:\n")
-          (compiler-backend-string-contains? asm "    call tl_string_to_int\n")
-          (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
-          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
-          (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
-          (compiler-backend-string-contains? asm ".globl tl_substring\n")
-          (compiler-backend-string-contains? asm "    call tl_substring\n"))
-        (and
-          (backend-and8
-            (compiler-backend-string-contains? asm "tl_substring:\n")
-            (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
-            (compiler-backend-string-contains? asm "tl_string_concat:\n")
-            (compiler-backend-string-contains?
-              asm
-              "    call tl_string_concat\n")
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_string_to_int\n"))
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_int_to_string\n"))
-            (not
-              (compiler-backend-string-contains? asm ".extern tl_substring\n"))
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_string_concat\n")))
-          (and
-            (backend-and4
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".globl tl_print_string\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "    call tl_print_string\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_print_string\n"))
-              (compiler-backend-string-contains? asm "    cmpq %rdi, %rdx\n"))
-            (not
-              (compiler-backend-string-contains?
-                asm
-                (compiler-backend-todo-marker))))))]
+      (let
+        [ok : bool true]
+        (begin
+          (if (compiler-backend-string-contains?
+            asm
+            ".globl tl_string_to_int\n")
+            unit
+            (set! ok false))
+          (if (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+            unit
+            (set! ok false))
+          (if (compiler-backend-string-contains?
+            asm
+            "    call tl_string_to_int\n")
+            unit
+            (set! ok false))
+          (if (compiler-backend-string-contains?
+            asm
+            ".extern tl_string_to_int\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            ".globl tl_int_to_string\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            "    call tl_int_to_string\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            ".extern tl_int_to_string\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm ".globl tl_substring\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm "    call tl_substring\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm ".extern tl_substring\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            ".globl tl_string_concat\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            "    call tl_string_concat\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            ".extern tl_string_concat\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm ".globl tl_print_string\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            "    call tl_print_string\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains?
+            asm
+            ".extern tl_print_string\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm "    cmpq %rdi, %rdx\n")
+            unit
+            (set! ok false))
+          (if (compiler-backend-string-contains?
+            asm
+            (compiler-backend-todo-marker))
+            (set! ok false)
+            unit)
+          ok))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-shadowed-string-helpers-source) : String
@@ -534,6 +576,8 @@
           same)))))
 (define (string=? [left : String] [right : String]) : bool
   (string-eq left right))
+(define (string-append [left : String] [right : String]) : String
+  left)
 (define (string->int [text : String]) : i64
   (let
     [n : i64 (string-length text)]
@@ -589,15 +633,22 @@
                 asm
                 ".extern tl_string_to_int\n"))))
         (and
-          (compiler-backend-string-contains? asm "    call tl_string_concat\n")
-          (not
-            (compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))))]
+          (compiler-backend-string-contains? asm "    call _tl_string_append\n")
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_string_concat\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-print-runtime-source) : String
-  "(extern runtime-print-string (:symbol \"tl_print_string\") : (-> String unit))
+  "(define (int->string [value : i64]) : String
+  \"3\")
+(extern runtime-print-string (:symbol \"tl_print_string\") : (-> String unit))
 (define (print-string [text : String]) : unit
   (runtime-print-string text))
 (define (print-newline) : unit
@@ -624,7 +675,7 @@
         (not
           (compiler-backend-string-contains? asm "    call _tl_tl_print_str\n"))
         (not (compiler-backend-string-contains? asm ".extern tl_print_str\n"))
-        (compiler-backend-string-contains? asm ".extern _write\n")
+        (not (compiler-backend-string-contains? asm ".extern _write\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -967,6 +1018,8 @@
   "(defenum MaybeI64 (Some i64) (None))
 (defstruct Pair (x i64) (y i64))
 (defstruct Nested (label String) (choice MaybeI64))
+(define (string-concat [left : String] [right : String]) : String
+  left)
 
 (define greeting : String (string-concat \"he\" \"llo\"))
 (define choice : MaybeI64 (Some 8))
@@ -3109,7 +3162,9 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-region-source) : String
-  "(define (main) : i64
+  "(define (int->string [value : i64]) : String
+  \"41\")
+(define (main) : i64
   (with-arena r
     (let
       [s : String (int->string 41)]

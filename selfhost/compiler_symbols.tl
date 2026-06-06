@@ -11,6 +11,8 @@
 
 (import "../stdlib/hashmap.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum CompilerSymbols
   (CompilerSymbols
     StringI64Map

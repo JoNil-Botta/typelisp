@@ -18,6 +18,8 @@
 
 (import "compiler_typecheck.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum TestMode
   (TestModeRun)
   (TestModeCheck))

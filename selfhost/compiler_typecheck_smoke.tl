@@ -3,6 +3,8 @@
 
 (import "compiler_typecheck.tl")
 
+(import "../stdlib/string.tl")
+
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
   (let
@@ -34,10 +36,11 @@
   (let [x : i64 1] (array-push! items (& x))))")
 
 (define (compiler-typecheck-reference-arena-store-escape-source) : String
-  "(define (main [items : (Array (& r str))]) : unit
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main [items : (Array (& r str))]) : unit
   (with-arena r
     (let [s : String (int->string 1)]
-      (array-set! items 0 (& s)))))")
+      (array-set! items 0 (& s)))))"))
 
 (define (compiler-typecheck-reference-lambda-capture-source) : String
   "(define (main [x : i64]) : (-> unit)
@@ -62,14 +65,16 @@
   (let [n : i64 1] (array (& n))))")
 
 (define (compiler-typecheck-reference-tuple-arena-escape-source) : String
-  "(define (main [seed : (& phase str)]) : (Tuple (& phase str) i64)
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main [seed : (& phase str)]) : (Tuple (& phase str) i64)
   (with-arena phase
-    (let [s : String (int->string 1)] (tuple (& phase s) 1))))")
+    (let [s : String (int->string 1)] (tuple (& phase s) 1))))"))
 
 (define (compiler-typecheck-reference-fixed-arena-escape-source) : String
-  "(define (main [seed : (& phase str)]) : (Array (& phase str) 1)
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (main [seed : (& phase str)]) : (Array (& phase str) 1)
   (with-arena phase
-    (let [s : String (int->string 1)] (array (& phase s)))))")
+    (let [s : String (int->string 1)] (array (& phase s)))))"))
 
 (define (compiler-typecheck-reference-dyn-array-make-ok-source) : String
   "(define (main [n : i64]) : unit

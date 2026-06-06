@@ -29,6 +29,8 @@
 ;;     ASCII constants rather than against char literals.
 (import "stdlib/io.tl")
 
+(import "stdlib/string.tl")
+
 (defenum Token
   (TIdent String)
   (TInt i64)

@@ -27,6 +27,8 @@
 
 (import "../stdlib/hashmap.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum ResultCompilerOptimizeLevel
   (OkCompilerOptimizeLevel i64)
   (ErrCompilerOptimizeLevel))
@@ -2398,7 +2400,7 @@
 ;;
 ;; Invalidation keeps this correct even though the IR is not strictly SSA: when
 ;; an instruction (re)defines a var, every table entry whose key references that
-;; var as an operand — or whose result is that var — is dropped. Calls, stores
+;; var as an operand â€” or whose result is that var â€” is dropped. Calls, stores
 ;; (`Store`/`StorePtr`), and all control-flow boundaries clear the whole table
 ;; (conservative, matching the spec). Commutative operands are NOT canonicalized
 ;; in this slice.
@@ -8235,7 +8237,7 @@
                   ;; global GVN) are super-linear in block count (their dominance
                   ;; queries walk string label-sets), so on the handful of huge
                   ;; self-host functions (hundreds of blocks) they dominate
-                  ;; compile time. Gate them off above a block-count threshold —
+                  ;; compile time. Gate them off above a block-count threshold â€”
                   ;; register allocation and the linear cleanups still run, so
                   ;; only the incremental redundancy elimination is skipped on
                   ;; those few functions, which bounds opt-level-3 compile time.
@@ -8367,7 +8369,7 @@
 ;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
 ;; by the bump allocator. To cap peak memory we run each function's optimization
 ;; in a reusable scratch arena, deep-`clone` only the final result back into the
-;; enclosing (program) arena, then rewind the scratch — so a single function's
+;; enclosing (program) arena, then rewind the scratch â€” so a single function's
 ;; transient generations are reclaimed before the next function is processed.
 (define (optimize-function-list-with-level
   [funcs : CompilerIrFunctionList]

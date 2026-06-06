@@ -9,6 +9,8 @@
 
 (import "build_cli_core.tl")
 
+(import "../stdlib/string.tl")
+
 (defenum CleanConfig
   (CleanSourceConfig String bool)
   (CleanPackageConfig String bool bool))

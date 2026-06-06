@@ -776,17 +776,14 @@
           (compiler-backend-string-contains?
             asm
             ".globl _tl___enum_obj_Shape_Nothing\n")
-          (compiler-backend-string-contains?
-            asm
-            "    leaq _tl___enum_obj_Shape_Nothing(%rip), %rax\n")
           (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
           (compiler-backend-string-contains? asm "    movq $2, (%r10)\n")
-          (compiler-backend-string-contains? asm "    movq %rax, 8(%r10)\n")
           (not (compiler-backend-string-contains? asm "    call _tl_Point\n"))
-          (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n")))
-        (and
+          (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n"))
           (not (compiler-backend-string-contains? asm "    call _tl_Circle\n"))
-          (not (compiler-backend-string-contains? asm "    call _tl_Pair\n"))))]
+          (not (compiler-backend-string-contains? asm "    call _tl_Pair\n")))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
@@ -1797,20 +1794,6 @@
     [(ErrCompilerBackend message)
       (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
-
-(define (compiler-backend-emit-source-inline-aggregates [src : String]) : ResultCompilerBackend
-  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-with-spans program spans)]
-    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
-
-(define (compiler-backend-emit-source-inline-aggregates-for-target
-  [src : String]
-  [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-with-spans-for-target program spans target)]
-    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
   (match (compiler-backend-emit-source src)
@@ -4150,8 +4133,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-inline-struct-ok?) : bool
-  (match (compiler-backend-emit-source-inline-aggregates
-    (compiler-lower-inline-struct-source))
+  (match (compiler-backend-emit-source (compiler-lower-inline-struct-source))
     [(OkCompilerBackend asm)
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
@@ -4162,8 +4144,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-inline-enum-ok?) : bool
-  (match (compiler-backend-emit-source-inline-aggregates
-    (compiler-lower-inline-enum-source))
+  (match (compiler-backend-emit-source (compiler-lower-inline-enum-source))
     [(OkCompilerBackend asm)
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
@@ -4174,14 +4155,24 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-inline-boxed-recursive-ok?) : bool
-  (match (compiler-backend-emit-source-inline-aggregates
+  (match (compiler-backend-emit-source
     (compiler-lower-inline-boxed-recursive-source))
     [(OkCompilerBackend asm)
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 1)
-        (compiler-backend-string-contains?
-          asm
-          "    movq $8, %rdi\n    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    leaq -")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-hot-loop-struct-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-lower-inline-hot-loop-struct-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "main:\n")
         (compiler-backend-string-contains? asm "    leaq -")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -4214,7 +4205,7 @@
 
 (define (compiler-backend-inline-aggregate-call-target-ok?
   [target : CompilerBackendTarget]) : bool
-  (match (compiler-backend-emit-source-inline-aggregates-for-target
+  (match (compiler-backend-emit-source-for-target
     (compiler-backend-inline-aggregate-call-source)
     target)
     [(OkCompilerBackend asm)
@@ -4238,7 +4229,9 @@
       (compiler-backend-inline-enum-ok?)
       (and
         (compiler-backend-inline-boxed-recursive-ok?)
-        (compiler-backend-inline-aggregate-call-ok?)))))
+        (and
+          (compiler-backend-inline-hot-loop-struct-ok?)
+          (compiler-backend-inline-aggregate-call-ok?))))))
 
 (define (compiler-backend-test-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode

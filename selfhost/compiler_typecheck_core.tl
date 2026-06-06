@@ -12098,11 +12098,12 @@
 ;; merge by union (a place moved on any arm is moved afterward); loops and
 ;; lambdas discard their body's moves for the post-state because they may run
 ;; zero times or be deferred. Reassigning a slot with `set!` clears its moved
-;; mark. Owner-consuming struct fields are tracked as root.field paths so other
-;; fields remain usable. Tuple, array, box, and other aggregate projections stay
-;; rejected until their path/reinitialization policy lands; dynamic arrays have
-;; a separate diagnostic because element ownership cannot be made sound without
-;; an index policy.
+;; mark. Owner-consuming struct fields, tuple elements, and fixed-array literal
+;; elements are tracked as root paths so unrelated top-level entries remain
+;; usable. Box, nested, and non-literal aggregate projections stay rejected until
+;; their path/reinitialization policy lands; dynamic arrays have a separate
+;; diagnostic because element ownership cannot be made sound without an index
+;; policy.
 (defstruct TcMovedSet
   (map StringI64Map))
 
@@ -12113,6 +12114,10 @@
 (defenum TcMoveBindings
   (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet)
   (ErrTcMoveBindings String))
+
+(defenum TcMoveMaybeIndex
+  (TcMoveNoIndex)
+  (TcMoveSomeIndex i64))
 
 (define (tc-moved-empty) : TcMovedSet
   (TcMovedSet (string-i64-map-with-capacity 8)))
@@ -12337,6 +12342,29 @@
 (define (tc-move-tuple-index-path [base : String] [index : i64]) : String
   (string-append (string-append base ".#tuple.") (int->string index)))
 
+(define (tc-move-array-index-path [base : String] [index : i64]) : String
+  (string-append (string-append base ".#array.") (int->string index)))
+
+(define (tc-move-literal-index [expr : AstExpr]) : TcMoveMaybeIndex
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-literal-index inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-literal-index inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-literal-index inner))]
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitInt index) (TcMoveSomeIndex index)]
+        [_ (TcMoveNoIndex)])]
+    [_ (TcMoveNoIndex)]))
+
 (define (tc-move-direct-root-base-path [expr : AstExpr]) : TcMaybeString
   (match expr
     [(AstExprSpanned inner-box _)
@@ -12399,10 +12427,40 @@
           [(TcNoString) (TcNoString)]))]
     [_ (TcNoString)]))
 
+(define (tc-move-array-element-path [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-array-element-path inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-array-element-path inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-array-element-path inner))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index-expr : AstExpr (box-get index-box)]
+        (match (tc-move-direct-root-base-path array)
+          [(TcSomeString base)
+            (match (tc-move-literal-index index-expr)
+              [(TcMoveSomeIndex index)
+                (TcSomeString (tc-move-array-index-path base index))]
+              [(TcMoveNoIndex) (TcNoString)])]
+          [(TcNoString) (TcNoString)]))]
+    [_ (TcNoString)]))
+
 (define (tc-move-projection-path [expr : AstExpr]) : TcMaybeString
   (match (tc-move-struct-field-path expr)
     [(TcSomeString path) (TcSomeString path)]
-    [(TcNoString) (tc-move-tuple-element-path expr)]))
+    [(TcNoString)
+      (match (tc-move-tuple-element-path expr)
+        [(TcSomeString path) (TcSomeString path)]
+        [(TcNoString) (tc-move-array-element-path expr)])]))
 
 (define (tc-moved-add-projection-path
   [moved : TcMovedSet]
@@ -12831,7 +12889,16 @@
         [array : AstExpr (box-get array-box)]
         [index : AstExpr (box-get index-box)]
         (match (tc-move-check-expr ctx env locals moved array)
-          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
+          [(OkTcMove moved1)
+            (match (tc-move-check-expr ctx env locals moved1 index)
+              [(OkTcMove moved2)
+                (match (tc-move-array-element-path expr)
+                  [(TcSomeString path)
+                    (if (tc-moved-contains? moved2 (tc-moved-path-key path))
+                      (ErrTcMove (tc-move-use-message path))
+                      (OkTcMove moved2))]
+                  [(TcNoString) (OkTcMove moved2)])]
+              [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArraySet array-box index-box value-box)
       (let

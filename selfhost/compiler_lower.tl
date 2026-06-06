@@ -16460,10 +16460,34 @@
       (compiler-source-spans-insert spans name span)]
     [(CompilerNoSourceSpan) spans]))
 
-;; Direct lowering is now comfortably below the self-build memory budget, so
-;; avoid the old per-function scratch arena and deep clone. Keep only
-;; function-level source spans to preserve the previous backend diagnostic
-;; surface and emitted assembly.
+;; Reusable per-function lowering scratch arena (#1917). Lowering one function
+;; allocates a fresh `LowerState` plus the transient IR/AST-walk scratch the bump
+;; allocator never frees; summed across cli.tl's ~5000 functions this transient
+;; dominates the lower phase's peak live (the headline self-build memory number).
+;; We lower each function inside one shared scratch arena and `arena-rewind` it
+;; after deep-`clone`ing ONLY the produced IR function list back into the
+;; enclosing (program) arena -- reclaiming the per-function transient before the
+;; next function. The arena is created lazily once and reused (rewound, never
+;; remapped) per function, mirroring the optimizer's per-function escape
+;; (`optimize-function-escaping`). The spans side-table insertion is recomputed
+;; in the enclosing arena (it never affects emitted assembly, only backend-error
+;; source locations). `lower-function-escaping` is only ever called at decl
+;; granularity (never re-entrant within `lower-function`'s body walk), so a
+;; single shared mark/rewind region is sound. Output stays byte-identical: the
+;; clone is a structural deep copy, so the escaped IR lowers to the same assembly
+;; as the in-place IR did.
+(define lower-scratch-arena : i64
+  0)
+
+(define (lower-scratch-arena-get) : i64
+  (if (= lower-scratch-arena 0)
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (set! lower-scratch-arena scratch)
+        scratch))
+    lower-scratch-arena))
+
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -16475,20 +16499,58 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (match (lower-function
-    ctx
-    top-env
-    type-cache
-    logical-name
-    params
-    ret
-    body
-    spans
-    names
-    mode)
-    [(OkLowerFunction fns _function-spans)
-      (OkLowerFunction fns (lower-record-function-span spans logical-name body))]
-    [(ErrLowerFunction message) (ErrLowerFunction message)]))
+  (let
+    [enclosing : i64 (arena-current)]
+    [scratch : i64 (lower-scratch-arena-get)]
+    (begin
+      (unsafe
+        (arena-set! scratch))
+      (let
+        [mark : i64 (arena-mark)]
+        (match (lower-function
+          ctx
+          top-env
+          type-cache
+          logical-name
+          params
+          ret
+          body
+          spans
+          names
+          mode)
+          [(OkLowerFunction fns _function-spans)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (unsafe
+                  (arena-set! enclosing))
+                (let
+                  [escaped-fns : CompilerIrFunctionList
+                    (compiler-ir-clone-function-list fns)]
+                  [escaped-spans : CompilerSourceSpans
+                    (lower-record-function-span spans logical-name body)]
+                  [new-enclosing : i64 (arena-current)]
+                  (begin
+                    (unsafe
+                      (arena-set! scratch-head)
+                      (arena-rewind mark)
+                      (arena-set! new-enclosing))
+                    (OkLowerFunction escaped-fns escaped-spans)))))]
+          [(ErrLowerFunction message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (unsafe
+                  (arena-set! enclosing))
+                (let
+                  [escaped-message : CompilerDiagnostic (clone message)]
+                  [new-enclosing : i64 (arena-current)]
+                  (begin
+                    (unsafe
+                      (arena-set! scratch-head)
+                      (arena-rewind mark)
+                      (arena-set! new-enclosing))
+                    (ErrLowerFunction escaped-message)))))])))))
 
 (define (lower-struct-cleanup-param-name) : String
   "__tl_cleanup_value")

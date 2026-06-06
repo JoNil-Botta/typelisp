@@ -1509,18 +1509,27 @@
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : CompilerRegAssignmentList]) : bool
   (or
-    (compiler-backend-plan-uses-reg? assignments "%r12")
+    (compiler-backend-plan-uses-reg? assignments "%rbx")
     (or
-      (compiler-backend-plan-uses-reg? assignments "%r13")
+      (compiler-backend-plan-uses-reg? assignments "%r12")
       (or
-        (compiler-backend-plan-uses-reg? assignments "%r14")
-        (compiler-backend-plan-uses-reg? assignments "%r15")))))
+        (compiler-backend-plan-uses-reg? assignments "%r13")
+        (or
+          (compiler-backend-plan-uses-reg? assignments "%r14")
+          (compiler-backend-plan-uses-reg? assignments "%r15"))))))
 
+;; Callee-saved registers are spilled to frame slots that sit just below the
+;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
+;; occupies idx 4. Reserve the %rbx slot only when the plan actually homes a
+;; value there, so functions that use only r12-r15 keep their previous frame
+;; size (and byte-identical prologue) — %rbx, added last to the pool, is rare.
 (define (compiler-backend-frame-slots
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
   (if (compiler-backend-plan-uses-callee-regs? assignments)
-    (+ vars 4)
+    (if (compiler-backend-plan-uses-reg? assignments "%rbx")
+      (+ vars 5)
+      (+ vars 4))
     vars))
 
 (define (compiler-backend-param-var? [params : CompilerIrParamList] [var : i64]) : bool
@@ -1835,18 +1844,22 @@
       (compiler-backend-emit-save-callee-reg assignments vars "%r13" 1)
       (string-append
         (compiler-backend-emit-save-callee-reg assignments vars "%r14" 2)
-        (compiler-backend-emit-save-callee-reg assignments vars "%r15" 3)))))
+        (string-append
+          (compiler-backend-emit-save-callee-reg assignments vars "%r15" 3)
+          (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4))))))
 
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
   (string-append
-    (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
+    (compiler-backend-emit-restore-callee-reg assignments vars "%rbx" 4)
     (string-append
-      (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+      (compiler-backend-emit-restore-callee-reg assignments vars "%r15" 3)
       (string-append
-        (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
-        (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0)))))
+        (compiler-backend-emit-restore-callee-reg assignments vars "%r14" 2)
+        (string-append
+          (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
+          (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0))))))
 
 (define (compiler-backend-return-label [source-function : String]) : String
   (compiler-backend-asm-label
@@ -3250,7 +3263,7 @@
 
 (define (compiler-backend-div-zero-guard-asm [ty : AstType]) : String
   (let
-    [rhs : String (compiler-backend-sized-reg "%rbx" ty)]
+    [rhs : String (compiler-backend-sized-reg "%r8" ty)]
     (string-append
       (compiler-backend-binop-reg-asm "test" ty rhs rhs)
       "    jne 1f\n    call tl_div_abort\n1:\n")))
@@ -3259,7 +3272,7 @@
   (if (compiler-backend-type-signed? ty)
     (let
       [lhs : String (compiler-backend-sized-reg "%rax" ty)]
-      [rhs : String (compiler-backend-sized-reg "%rbx" ty)]
+      [rhs : String (compiler-backend-sized-reg "%r8" ty)]
       [min-reg : String (compiler-backend-sized-reg "%r10" ty)]
       [neg-one-reg : String (compiler-backend-sized-reg "%r11" ty)]
       (string-append
@@ -3294,32 +3307,32 @@
         [(= size 1)
           (string-append
             (if signed
-              "    cbw\n    idivb %bl\n"
-              "    andw $0x00ff, %ax\n    divb %bl\n")
+              "    cbw\n    idivb %r8b\n"
+              "    andw $0x00ff, %ax\n    divb %r8b\n")
             (if want-remainder
               "    movb %ah, %al\n"
               ""))]
         [(= size 2)
           (string-append
             (if signed
-              "    cwd\n    idivw %bx\n"
-              "    xorw %dx, %dx\n    divw %bx\n")
+              "    cwd\n    idivw %r8w\n"
+              "    xorw %dx, %dx\n    divw %r8w\n")
             (if want-remainder
               "    movw %dx, %ax\n"
               ""))]
         [(= size 4)
           (string-append
             (if signed
-              "    cdq\n    idivl %ebx\n"
-              "    xorl %edx, %edx\n    divl %ebx\n")
+              "    cdq\n    idivl %r8d\n"
+              "    xorl %edx, %edx\n    divl %r8d\n")
             (if want-remainder
               "    movl %edx, %eax\n"
               ""))]
         [else
           (string-append
             (if signed
-              "    cqto\n    idivq %rbx\n"
-              "    xorq %rdx, %rdx\n    divq %rbx\n")
+              "    cqto\n    idivq %r8\n"
+              "    xorq %rdx, %rdx\n    divq %r8\n")
             (if want-remainder
               "    movq %rdx, %rax\n"
               ""))]))))
@@ -3332,11 +3345,11 @@
 
 (define (compiler-backend-shift-guard-asm [ty : AstType]) : String
   (string-append
-    "    testq %rbx, %rbx\n    jge 1f\n    call tl_shift_abort\n1:\n"
+    "    testq %r8, %r8\n    jge 1f\n    call tl_shift_abort\n1:\n"
     (backend-cat5
       "    cmpq $"
       (int->string (compiler-backend-shift-count-width ty))
-      ", %rbx\n    jb 1f\n    call tl_shift_abort\n1:\n"
+      ", %r8\n    jb 1f\n    call tl_shift_abort\n1:\n"
       ""
       "")))
 
@@ -3347,7 +3360,7 @@
   (string-append
     (compiler-backend-shift-guard-asm ty)
     (string-append
-      "    movq %rbx, %rcx\n"
+      "    movq %r8, %rcx\n"
       (backend-cat5
         "    "
         mnemonic
@@ -3358,14 +3371,14 @@
 (define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType]) : String
   (let
     [lhs : String (compiler-backend-sized-reg "%rax" ty)]
-    [rhs : String (compiler-backend-sized-reg "%rbx" ty)]
+    [rhs : String (compiler-backend-sized-reg "%r8" ty)]
     [suffix : String (compiler-backend-int-instruction-suffix ty)]
     (match op
       [(IrBinAdd) (compiler-backend-binop-reg-asm "add" ty rhs lhs)]
       [(IrBinSub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
       [(IrBinMul)
         (if (= (compiler-backend-type-size ty) 1)
-          "    imulq %rbx, %rax\n"
+          "    imulq %r8, %rax\n"
           (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
       [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false)]
       [(IrBinMod) (compiler-backend-binop-divmod-asm ty true)]
@@ -3640,7 +3653,7 @@
 
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
 ;; result can be computed directly in the destination register (dst = lhs <op>
-;; rhs via "<op>q %rbx, dst"). Comparisons, div/mod and shifts are excluded (they
+;; rhs via "<op>q %r8, dst"). Comparisons, div/mod and shifts are excluded (they
 ;; need %rax/%rdx/%rcx) and return "".
 (define (compiler-backend-binop-direct-mnemonic [op : CompilerIrBinOp]) : String
   (match op
@@ -3714,12 +3727,12 @@
               [(CompilerBackendNoImmediate) true]))
           false))
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
-        ;; Load rhs into %rbx FIRST: lhs goes into dst's home register, which may
-        ;; itself be rhs's home â€” loading lhs first would clobber rhs.
+        ;; Load rhs into %r8 FIRST: lhs goes into dst's home register, which may
+        ;; itself be rhs's home; loading lhs first would clobber rhs.
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           rhs
-          "%rbx")
+          "%r8")
           [(OkCompilerBackend rhs-asm)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
@@ -3731,7 +3744,7 @@
                     rhs-asm
                     (string-append
                       lhs-asm
-                      (backend-cat5 "    " mnem " %rbx, " dst-home "\n"))))]
+                      (backend-cat5 "    " mnem " %r8, " dst-home "\n"))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])
         (match (compiler-backend-emit-load-value-with-plan
@@ -3757,7 +3770,7 @@
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
-                      "%rbx")
+                      "%r8")
                       [(OkCompilerBackend rhs-asm)
                         (OkCompilerBackend
                           (string-append
@@ -3777,7 +3790,7 @@
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   rhs
-                  "%rbx")
+                  "%r8")
                   [(OkCompilerBackend rhs-asm)
                     (OkCompilerBackend
                       (string-append
@@ -3853,7 +3866,7 @@
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
-                      "%rbx")
+                      "%r8")
                       [(OkCompilerBackend rhs-asm)
                         (OkCompilerBackend
                           (string-append
@@ -3869,7 +3882,7 @@
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   rhs
-                  "%rbx")
+                  "%r8")
                   [(OkCompilerBackend rhs-asm)
                     (OkCompilerBackend
                       (string-append
@@ -4089,7 +4102,7 @@
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 rhs
-                "%rbx")
+                "%r8")
                 [(OkCompilerBackend rhs-asm)
                   (OkCompilerBackend
                     (string-append
@@ -4099,7 +4112,7 @@
                         (string-append
                           (compiler-backend-emit-compare-flags
                             op
-                            (compiler-backend-sized-reg "%rbx" ty)
+                            (compiler-backend-sized-reg "%r8" ty)
                             ty)
                           (compiler-backend-emit-compare-branch-jumps
                             function
@@ -4162,7 +4175,7 @@
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 rhs
-                "%rbx")
+                "%r8")
                 [(OkCompilerBackend rhs-asm)
                   (OkCompilerBackend
                     (string-append
@@ -4170,7 +4183,7 @@
                       (string-append
                         rhs-asm
                         (string-append
-                          (compiler-backend-emit-compare-memory-flags "%rbx")
+                          (compiler-backend-emit-compare-memory-flags "%r8")
                           (compiler-backend-emit-compare-branch-jumps
                             function
                             true-label
@@ -4231,7 +4244,7 @@
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
-                      "%rbx")
+                      "%r8")
                       [(OkCompilerBackend rhs-asm)
                         (OkCompilerBackend
                           (string-append
@@ -4240,7 +4253,7 @@
                               rhs-asm
                               (string-append
                                 (compiler-backend-emit-compare-memory-address-flags
-                                  "%rbx"
+                                  "%r8"
                                   addr)
                                 (compiler-backend-emit-compare-branch-jumps
                                   function
@@ -4356,12 +4369,12 @@
 
 (define (compiler-backend-gep-index-asm [scale : i64]) : String
   (if (= scale 1)
-    "    addq %rbx, %rax\n"
+    "    addq %r8, %rax\n"
     (if (or (= scale 2) (or (= scale 4) (= scale 8)))
-      (backend-cat4 "    leaq (%rax,%rbx," (int->string scale) "), %rax\n" "")
+      (backend-cat4 "    leaq (%rax,%r8," (int->string scale) "), %rax\n" "")
       (string-append
-        (backend-cat5 "    imulq $" (int->string scale) ", " "%rbx" "\n")
-        "    addq %rbx, %rax\n"))))
+        (backend-cat5 "    imulq $" (int->string scale) ", " "%r8" "\n")
+        "    addq %r8, %rax\n"))))
 
 (define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
   (if (= disp 0)
@@ -4398,7 +4411,7 @@
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   offset
-                  "%rbx")
+                  "%r8")
                   [(OkCompilerBackend offset-asm)
                     (OkCompilerBackend
                       (string-append
@@ -4416,7 +4429,7 @@
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
-              "%rbx")
+              "%r8")
               [(OkCompilerBackend offset-asm)
                 (OkCompilerBackend
                   (string-append

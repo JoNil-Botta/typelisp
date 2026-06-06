@@ -954,7 +954,7 @@ assert_status package-graph-github-cache-program "$status" 47
 assert_empty package-graph-github-cache-program "$WORKDIR/package-graph-github-cache-program.out"
 assert_empty package-graph-github-cache-program "$WORKDIR/package-graph-github-cache-program.err"
 
-GITHUB_LOCK_DIR="$WORKDIR/gh-lock"
+GITHUB_LOCK_DIR="$WORKDIR/gl"
 GITHUB_LOCK_ROOT="$GITHUB_LOCK_DIR/root"
 GITHUB_LOCK_REMOTE="$GITHUB_LOCK_DIR/remote"
 GITHUB_LOCK_CONFIG="$GITHUB_LOCK_DIR/gitconfig"

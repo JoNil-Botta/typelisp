@@ -748,6 +748,51 @@ assert_status package-graph-diamond-program "$status" 42
 assert_empty package-graph-diamond-program "$WORKDIR/package-graph-diamond-program.out"
 assert_empty package-graph-diamond-program "$WORKDIR/package-graph-diamond-program.err"
 
+FAIL_DIR="$WORKDIR/package-graph-failure"
+FAIL_ROOT="$FAIL_DIR/root"
+FAIL_GOOD="$FAIL_DIR/good"
+FAIL_BAD="$FAIL_DIR/bad"
+mkdir -p "$FAIL_ROOT/src" "$FAIL_GOOD/src" "$FAIL_BAD/src"
+cat > "$FAIL_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "fail_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (good "../good")
+    (bad "../bad")))
+EOF
+cat > "$FAIL_ROOT/src/main.tl" <<'EOF'
+(import "pkg:good/src/lib.tl")
+(define (main) : i64 (good-answer))
+EOF
+cat > "$FAIL_GOOD/typelisp.pkg" <<'EOF'
+(package
+  (name "fail_good")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$FAIL_GOOD/src/lib.tl" <<'EOF'
+(define (good-answer) : i64 42)
+EOF
+cat > "$FAIL_BAD/typelisp.pkg" <<'EOF'
+(package
+  (name "fail_bad")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$FAIL_BAD/src/lib.tl" <<'EOF'
+(define (bad-answer) : i64 "bad")
+EOF
+
+set +e
+"$COMPILER" build --manifest-path "$FAIL_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-failure.out" 2> "$WORKDIR/package-graph-failure.err"
+status=$?
+set -e
+assert_status package-graph-failure "$status" 1
+assert_contains package-graph-failure "$WORKDIR/package-graph-failure.err" "typecheck:"
+assert_contains package-graph-failure "$WORKDIR/package-graph-failure.err" 'build: package dependency `fail_bad` failed with status 1'
+
 CYCLE_DIR="$WORKDIR/package-graph-cycle"
 CYCLE_ROOT="$CYCLE_DIR/root"
 CYCLE_A="$CYCLE_DIR/cycle_a"

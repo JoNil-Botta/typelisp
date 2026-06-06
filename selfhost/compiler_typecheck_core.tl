@@ -594,6 +594,25 @@
 ;; Locate an error at the nearest available declaration body span. A top-level
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
 ;; diagnostic at the offending declaration's expression; otherwise fall back 1:1.
+(define (tc-generated-decl-diag
+  [meta : AstGeneratedDeclMeta]
+  [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (match meta
+    [(AstSomeGeneratedDeclMeta generator item _ key)
+      (let
+        [with-context : CompilerDiagnostic
+          (compiler-diagnostic-with-note
+            diag
+            (string-append
+              "generated declaration: "
+              (string-append item (string-append " from " generator))))]
+        (if (> (string-length key) 0)
+          (compiler-diagnostic-with-note
+            with-context
+            (string-append "generated identity: " key))
+          with-context))]
+    [(AstNoGeneratedDeclMeta) diag]))
+
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (match decl
     [(AstDeclDef _ _ expr-box)
@@ -613,10 +632,10 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-decl-diag inner message))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (tc-decl-diag template message))]
+        (tc-generated-decl-diag meta (tc-decl-diag template message)))]
     [_ (tc-diag-at-start message)]))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -4338,6 +4357,51 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
+                [(AstDeclDef name _ _)
+                  (match (tc-top-decl-type-with-env
+                    (tc-context-with-module ctx module)
+                    env
+                    template)
+                    [(OkTcType ty)
+                      (tc-build-top-env-list-in-module
+                        ctx
+                        rest
+                        (tc-bind-module-name env module name ty)
+                        module)]
+                    [(ErrTcType message) (ErrTcEnv message)])]
+                [(AstDeclDefFn name _ _ _)
+                  (match (tc-top-decl-type
+                    (tc-context-with-module ctx module)
+                    template)
+                    [(OkTcType ty)
+                      (tc-build-top-env-list-in-module
+                        ctx
+                        rest
+                        (tc-bind-module-name env module name ty)
+                        module)]
+                    [(ErrTcType message) (ErrTcEnv message)])]
+                [(AstDeclDefDispatch name _)
+                  (match (tc-top-decl-type
+                    (tc-context-with-module ctx module)
+                    template)
+                    [(OkTcType ty)
+                      (tc-build-top-env-list-in-module
+                        ctx
+                        rest
+                        (tc-bind-module-name env module name ty)
+                        module)]
+                    [(ErrTcType message) (ErrTcEnv message)])]
+                [(AstDeclExtern name _ _)
+                  (match (tc-top-decl-type
+                    (tc-context-with-module ctx module)
+                    template)
+                    [(OkTcType ty)
+                      (tc-build-top-env-list-in-module
+                        ctx
+                        rest
+                        (tc-bind-module-name env module name ty)
+                        module)]
+                    [(ErrTcType message) (ErrTcEnv message)])]
                 [(AstDeclDefEnum name variants)
                   (match (tc-bind-enum-variants-in-module
                     (tc-context-with-module ctx module)
@@ -11890,6 +11954,10 @@
           (CompilerTypecheckSummary values (+ functions 1) externs)]
         [(AstDeclExtern _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
+        [(AstDeclComptimeDecl _ template-box)
+          (let
+            [template : AstDecl (box-get template-box)]
+            (tc-summary-add-decl summary template))]
         [(AstDeclUnsafe inner-box)
           (let
             [inner : AstDecl (box-get inner-box)]

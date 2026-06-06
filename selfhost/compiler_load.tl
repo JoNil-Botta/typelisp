@@ -1992,7 +1992,7 @@
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
     [meta : AstGeneratedDeclMeta
-      (AstSomeGeneratedDeclMeta "gen" "generated-fn" AstExprNil)]
+      (AstSomeGeneratedDeclMeta "gen" "generated-fn" AstExprNil "")]
     [inner : AstDecl
       (ast-decl-def-fn
         "generated-fn"
@@ -2012,7 +2012,7 @@
               [template : AstDecl (box-get template-box)]
               (and
                 (match found-meta
-                  [(AstSomeGeneratedDeclMeta generator item arg-keys)
+                  [(AstSomeGeneratedDeclMeta generator item arg-keys _)
                     (and
                       (string-eq generator "gen")
                       (and

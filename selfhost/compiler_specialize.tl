@@ -755,11 +755,15 @@
       (string-append expected (string-append " does not match payload " actual)))))
 
 (define (gen-incompatible-diag [item : String] [key : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start
-    ""
-    (string-append
-      "generated-decl: duplicate generated key for "
-      (string-append item (string-append " has incompatible payload: " key)))))
+  (compiler-diagnostic-with-note
+    (compiler-diagnostic-with-note
+      (compiler-diagnostic-at-start
+        ""
+        (string-append
+          "generated-decl: duplicate generated key for "
+          (string-append item " has incompatible payload")))
+      (string-append "conflicting generated item: " item))
+    (string-append "generated identity: " key)))
 
 (define (gen-rewrite-decl
   [decl : AstDecl]
@@ -774,7 +778,7 @@
         (match meta
           [(AstNoGeneratedDeclMeta)
             (OkGenDecl (SpecSomeDecl decl) registry module)]
-          [(AstSomeGeneratedDeclMeta generator item args)
+          [(AstSomeGeneratedDeclMeta generator item args _)
             (match (gen-decl-visible-name template)
               [(SpecNoString)
                 (ErrGenDecl
@@ -792,7 +796,14 @@
                         (match (gen-registry-lookup registry key)
                           [(GenNoEntry)
                             (OkGenDecl
-                              (SpecSomeDecl template)
+                              (SpecSomeDecl
+                                (ast-decl-comptime-decl-with-meta
+                                  (AstSomeGeneratedDeclMeta
+                                    generator
+                                    item
+                                    args
+                                    key)
+                                  template))
                               (gen-registry-cons key template registry)
                               module)]
                           [(GenSomeEntry existing)
@@ -842,7 +853,7 @@
   (match decl
     [(AstDeclComptimeDecl meta _)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _) true]
+        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
         [(AstNoGeneratedDeclMeta) false])]
     [_ false]))
 
@@ -3307,11 +3318,29 @@
                   (if (string-eq fn-name name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
+                [(AstDeclComptimeDecl _ template-box)
+                  (let
+                    [template : AstDecl (box-get template-box)]
+                    (match template
+                      [(AstDeclDefFn fn-name _ _ _)
+                        (if (string-eq fn-name name)
+                          true
+                          (compiler-specialize-decl-list-defines? rest name))]
+                      [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [(AstDeclDefFn fn-name _ _ _)
             (if (string-eq fn-name name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
+          [(AstDeclComptimeDecl _ template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (match template
+                [(AstDeclDefFn fn-name _ _ _)
+                  (if (string-eq fn-name name)
+                    true
+                    (compiler-specialize-decl-list-defines? rest name))]
+                [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
 (define (compiler-specialize-type-param-source) : String
@@ -3459,11 +3488,31 @@
                   (if (string-eq fn-name name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
+                [(AstDeclComptimeDecl _ template-box)
+                  (let
+                    [template : AstDecl (box-get template-box)]
+                    (match template
+                      [(AstDeclDefFn fn-name _ _ _)
+                        (if (string-eq fn-name name)
+                          (+
+                            1
+                            (compiler-specialize-decl-list-count-defs rest name))
+                          (compiler-specialize-decl-list-count-defs rest name))]
+                      [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [(AstDeclDefFn fn-name _ _ _)
             (if (string-eq fn-name name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
+          [(AstDeclComptimeDecl _ inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn fn-name _ _ _)
+                  (if (string-eq fn-name name)
+                    (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+                    (compiler-specialize-decl-list-count-defs rest name))]
+                [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [_ (compiler-specialize-decl-list-count-defs rest name)]))]))
 
 (define (compiler-specialize-decl-list-count-visible
@@ -3745,6 +3794,13 @@
   (+ (if (option-string-some? (Some_String \"x\")) 1 0)
      (result-i64-string-value-or (Ok_I64_String 41) 0)))")
 
+(define (compiler-generated-decl-expected-string-key) : String
+  (gen-full-key
+    ""
+    "option-family"
+    "Option_String"
+    (string-append (spec-string-key "String") "_none")))
+
 (define (compiler-generated-decl-cross-module-reuse-source) : String
   "(module option.family)
 (comptime-decl (:generated option-family Option_String \"String\")
@@ -3819,6 +3875,22 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram _) true])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-generated-decl-incompatible-note-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-incompatible-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) false]
+        [(ErrSpecProgram diag)
+          (match (compiler-diagnostic-notes diag)
+            [(CompilerDiagnosticNoteCons note _)
+              (string-eq
+                note
+                (string-append
+                  "generated identity: "
+                  (compiler-generated-decl-expected-string-key)))]
+            [(CompilerDiagnosticNoteNil) false])])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-item-mismatch-rejected?) : bool
@@ -3907,6 +3979,37 @@
       "Option_String")
     2))
 
+(define (compiler-generated-decl-origin-preserved-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-reuse-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram normalized)
+          (match normalized
+            [(AstProgram decls-box)
+              (match (box-get decls-box)
+                [(AstDeclCons decl _)
+                  (match decl
+                    [(AstDeclComptimeDecl meta template-box)
+                      (and
+                        (match meta
+                          [(AstSomeGeneratedDeclMeta generator item _ key)
+                            (and
+                              (string-eq generator "option-family")
+                              (and
+                                (string-eq item "Option_String")
+                                (string-eq
+                                  key
+                                  (compiler-generated-decl-expected-string-key))))]
+                          [(AstNoGeneratedDeclMeta) false])
+                        (match (box-get template-box)
+                          [(AstDeclDefStruct name _ _ _)
+                            (string-eq name "Option_String")]
+                          [_ false]))]
+                    [_ false])]
+                [(AstDeclNil) false])])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (unless (compiler-specialize-type-param-ok?) (return 0))
@@ -3923,6 +4026,7 @@
     (unless (compiler-generated-decl-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
+    (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
     (unless (compiler-generated-decl-item-mismatch-rejected?) (return 0))
     (unless (compiler-generated-decl-non-string-key-rejected?) (return 0))
     (unless
@@ -3931,5 +4035,5 @@
     (unless (compiler-generated-option-result-family-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
-    (unless (compiler-generated-option-result-family-ok?) (return 0))
+    (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

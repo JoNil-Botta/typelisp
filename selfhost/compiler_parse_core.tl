@@ -4406,7 +4406,8 @@
                                   (AstSomeGeneratedDeclMeta
                                     generator-name
                                     item-name
-                                    arg-keys))]
+                                    arg-keys
+                                    ""))]
                               [(ErrAstExprList message)
                                 (ErrAstGeneratedDeclMeta message)])]
                           [_
@@ -5833,7 +5834,7 @@
   [want-item : String]
   [want-arg-count : i64]) : bool
   (match meta
-    [(AstSomeGeneratedDeclMeta generator-name item-name arg-keys)
+    [(AstSomeGeneratedDeclMeta generator-name item-name arg-keys _)
       (and
         (string-eq generator-name want-generator)
         (and

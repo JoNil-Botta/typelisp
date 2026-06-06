@@ -8051,6 +8051,376 @@
       (OptSomeFunction (array-ref (struct-get index values) slot))]
     [(StringI64MapMissing) (OptNoFunction)]))
 
+;; ---------------------------------------------------------------------------
+;; Function inlining (opt level 3 only). Splices the body of small single-block
+;; leaf callees into their call sites, removing call/return overhead and exposing
+;; the callee's instructions to the caller's folding/DCE/GVN and to register
+;; allocation. Reserved for opt3 (the quality build) so the cheap opt1/opt2
+;; self-compile path pays nothing for it.
+;;
+;; Determinism: fresh var ids are minted from the caller function's `vars`
+;; counter (the same per-function sequential scheme lowering uses), callee bodies
+;; are walked in list order, and callees are resolved through the deterministic
+;; OptFunctionIndex. Param var ids (0..nparams-1) are substituted with the call's
+;; argument values; other callee var ids are shifted by the caller's var count.
+;; ---------------------------------------------------------------------------
+
+(defenum OptInlineState
+  (OptInlineState CompilerIrInstrList i64))
+
+(defenum OptInlineBlocks
+  (OptInlineBlocks CompilerIrBlockList i64))
+
+(define (opt-inline-max-body) : i64 8)
+
+(define (opt-inline-param-count [params : CompilerIrParamList]) : i64
+  (match params
+    [(IrParamNil) 0]
+    [(IrParamCons _ rest) (+ 1 (opt-inline-param-count (box-get rest)))]))
+
+(define (opt-inline-params-sequential? [params : CompilerIrParamList] [i : i64]) : bool
+  (match params
+    [(IrParamNil) true]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ vid)
+          (if (= vid i)
+            (opt-inline-params-sequential? (box-get rest) (+ i 1))
+            false)])]))
+
+(define (opt-inline-is-return? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrReturn _) true]
+    [_ false]))
+
+(define (opt-inline-body-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (>= dst np)]
+    [(IrInstrGep dst _ _ _) (>= dst np)]
+    [(IrInstrLoad dst _ _) (>= dst np)]
+    [(IrInstrCast dst _ _ _) (>= dst np)]
+    [(IrInstrBinOp dst _ _ _ _) (>= dst np)]
+    [(IrInstrUnOp dst _ _ _) (>= dst np)]
+    [(IrInstrCall dst _ _ _) (>= dst np)]
+    [(IrInstrCallIndirect dst _ _ _) (>= dst np)]
+    [(IrInstrBoundsCheck _ _ _) true]
+    [(IrInstrStorePtr _ _ _) true]
+    [_ false]))
+
+(define (opt-inline-seq-ok? [instrs : CompilerIrInstrList] [np : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil) (opt-inline-is-return? instr)]
+        [_
+          (if (opt-inline-body-instr-ok? instr np)
+            (opt-inline-seq-ok? (box-get rest) np)
+            false)])]))
+
+(define (opt-inline-single-block-ok? [blocks : CompilerIrBlockList] [np : i64]) : bool
+  (match blocks
+    [(IrBlockCons block rest)
+      (match (box-get rest)
+        [(IrBlockNil)
+          (match block
+            [(IrBlock _ seq)
+              (let
+                [n : i64 (compiler-ir-instr-seq-count seq)]
+                (if (< n 1)
+                  false
+                  (if (> (- n 1) (opt-inline-max-body))
+                    false
+                    (opt-inline-seq-ok? (compiler-ir-instr-seq-to-list seq) np))))])]
+        [_ false])]
+    [_ false]))
+
+(define (opt-inline-callee-ok? [callee : CompilerIrFunction] [caller-name : String]) : bool
+  (match callee
+    [(IrFunction cname cparams _ _ cblocks)
+      (if (string-eq cname caller-name)
+        false
+        (if (opt-inline-params-sequential? cparams 0)
+          (opt-inline-single-block-ok? cblocks (opt-inline-param-count cparams))
+          false))]))
+
+(define (opt-inline-arity-ok? [args : CompilerIrCallArgs] [np : i64]) : bool
+  (match args
+    [(IrCallArgsNil) (= np 0)]
+    [(IrCallArgsOne _) (= np 1)]
+    [(IrCallArgsTwo _ _) (= np 2)]
+    [(IrCallArgsArray arr) (= np (array-length arr))]))
+
+(define (opt-inline-clone-arg-at [sa : CompilerIrCallArgs] [id : i64]) : CompilerIrValue
+  (match sa
+    [(IrCallArgsNil) (IrValueUnit)]
+    [(IrCallArgsOne a) (compiler-ir-clone-value a)]
+    [(IrCallArgsTwo a b)
+      (if (= id 0) (compiler-ir-clone-value a) (compiler-ir-clone-value b))]
+    [(IrCallArgsArray arr) (compiler-ir-clone-value (array-ref arr id))]))
+
+(define (opt-inline-remap-value
+  [v : CompilerIrValue]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrValue
+  (match v
+    [(IrValueVar id)
+      (if (< id np)
+        (opt-inline-clone-arg-at sa id)
+        (IrValueVar (+ id base)))]
+    [(IrValueGlobal name) (IrValueGlobal (clone name))]
+    [(IrValueGlobalAddr name) (IrValueGlobalAddr (clone name))]
+    [(IrValueFunction name) (IrValueFunction (clone name))]
+    [(IrValueI64 n) (IrValueI64 n)]
+    [(IrValueF64 s) (IrValueF64 (clone s))]
+    [(IrValueBool b) (IrValueBool b)]
+    [(IrValueChar c) (IrValueChar c)]
+    [(IrValueString s) (IrValueString (clone s))]
+    [(IrValueUnit) (IrValueUnit)]))
+
+(define (opt-inline-remap-args
+  [a : CompilerIrCallArgs]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrCallArgs
+  (match a
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne x) (IrCallArgsOne (opt-inline-remap-value x sa np base))]
+    [(IrCallArgsTwo x y)
+      (IrCallArgsTwo
+        (opt-inline-remap-value x sa np base)
+        (opt-inline-remap-value y sa np base))]
+    [(IrCallArgsArray arr)
+      (let
+        [n : i64 (array-length arr)]
+        [out : (Array CompilerIrValue) (make-array CompilerIrValue n)]
+        [i : i64 0]
+        (begin
+          (while (< i n)
+            (begin
+              (array-set! out i (opt-inline-remap-value (array-ref arr i) sa np base))
+              (set! i (+ i 1))))
+          (IrCallArgsArray out)))]))
+
+(define (opt-inline-clone-instr
+  [instr : CompilerIrInstr]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst src ty)
+      (IrInstrMov (+ dst base) (opt-inline-remap-value src sa np base) (clone ty))]
+    [(IrInstrGep dst b o ty)
+      (IrInstrGep
+        (+ dst base)
+        (opt-inline-remap-value b sa np base)
+        (opt-inline-remap-value o sa np base)
+        (clone ty))]
+    [(IrInstrLoad dst src ty)
+      (IrInstrLoad (+ dst base) (opt-inline-remap-value src sa np base) (clone ty))]
+    [(IrInstrCast dst src from to)
+      (IrInstrCast
+        (+ dst base)
+        (opt-inline-remap-value src sa np base)
+        (clone from)
+        (clone to))]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp
+        (+ dst base)
+        op
+        (opt-inline-remap-value lhs sa np base)
+        (opt-inline-remap-value rhs sa np base)
+        (clone ty))]
+    [(IrInstrUnOp dst op src ty)
+      (IrInstrUnOp
+        (+ dst base)
+        op
+        (opt-inline-remap-value src sa np base)
+        (clone ty))]
+    [(IrInstrBoundsCheck idx len msg)
+      (IrInstrBoundsCheck
+        (opt-inline-remap-value idx sa np base)
+        (opt-inline-remap-value len sa np base)
+        (clone msg))]
+    [(IrInstrStorePtr d s ty)
+      (IrInstrStorePtr
+        (opt-inline-remap-value d sa np base)
+        (opt-inline-remap-value s sa np base)
+        (clone ty))]
+    [(IrInstrCall dst name a ty)
+      (IrInstrCall
+        (+ dst base)
+        (clone name)
+        (opt-inline-remap-args a sa np base)
+        (clone ty))]
+    [(IrInstrCallIndirect dst callee a ty)
+      (IrInstrCallIndirect
+        (+ dst base)
+        (opt-inline-remap-value callee sa np base)
+        (opt-inline-remap-args a sa np base)
+        (clone ty))]
+    [_ instr]))
+
+(define (opt-inline-return->mov
+  [instr : CompilerIrInstr]
+  [dst : i64]
+  [ret : AstType]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstr
+  (match instr
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue v)
+          (IrInstrMov dst (opt-inline-remap-value v sa np base) (clone ret))]
+        [(IrNoValue) (IrInstrMov dst (IrValueUnit) (clone ret))])]
+    [_ (IrInstrMov dst (IrValueUnit) (clone ret))]))
+
+(define (opt-inline-expand-instrs
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [ret : AstType]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) IrInstrNil]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil)
+          (compiler-ir-instr-cons
+            (opt-inline-return->mov instr dst ret sa np base)
+            IrInstrNil)]
+        [_
+          (compiler-ir-instr-cons
+            (opt-inline-clone-instr instr sa np base)
+            (opt-inline-expand-instrs (box-get rest) dst ret sa np base))])]))
+
+(define (opt-inline-single-block-instrs [blocks : CompilerIrBlockList]) : CompilerIrInstrList
+  (match blocks
+    [(IrBlockCons block _)
+      (match block
+        [(IrBlock _ seq) (compiler-ir-instr-seq-to-list seq)])]
+    [_ IrInstrNil]))
+
+(define (opt-inline-append
+  [a : CompilerIrInstrList]
+  [b : CompilerIrInstrList]) : CompilerIrInstrList
+  (match a
+    [(IrInstrNil) b]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons instr (opt-inline-append (box-get rest) b))]))
+
+(define (opt-inline-lookup-inlinable
+  [index : OptFunctionIndex]
+  [cname : String]
+  [caller-name : String]) : OptMaybeFunction
+  (match (opt-function-index-find index cname)
+    [(OptSomeFunction callee)
+      (if (opt-inline-callee-ok? callee caller-name)
+        (OptSomeFunction callee)
+        (OptNoFunction))]
+    [(OptNoFunction) (OptNoFunction)]))
+
+(define (opt-inline-try
+  [instr : CompilerIrInstr]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineState
+  (match instr
+    [(IrInstrCall dst cname cargs cret)
+      (match (opt-inline-lookup-inlinable index cname func-name)
+        [(OptSomeFunction callee)
+          (match callee
+            [(IrFunction _ cparams _ cvars cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (opt-inline-arity-ok? cargs np)
+                  (OptInlineState
+                    (opt-inline-expand-instrs
+                      (opt-inline-single-block-instrs cblocks)
+                      dst
+                      cret
+                      cargs
+                      np
+                      vars)
+                    (+ vars cvars))
+                  (OptInlineState
+                    (compiler-ir-instr-cons (IrInstrCall dst cname cargs cret) IrInstrNil)
+                    vars)))])]
+        [(OptNoFunction)
+          (OptInlineState
+            (compiler-ir-instr-cons (IrInstrCall dst cname cargs cret) IrInstrNil)
+            vars)])]
+    [_ (OptInlineState (compiler-ir-instr-cons instr IrInstrNil) vars)]))
+
+(define (opt-inline-walk-instrs
+  [instrs : CompilerIrInstrList]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineState
+  (match instrs
+    [(IrInstrNil) (OptInlineState IrInstrNil vars)]
+    [(IrInstrCons instr rest)
+      (match (opt-inline-try instr index func-name vars)
+        [(OptInlineState expanded vars2)
+          (match (opt-inline-walk-instrs (box-get rest) index func-name vars2)
+            [(OptInlineState rest-list vars3)
+              (OptInlineState (opt-inline-append expanded rest-list) vars3)])])]))
+
+(define (opt-inline-blocks
+  [blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineBlocks
+  (match blocks
+    [(IrBlockNil) (OptInlineBlocks IrBlockNil vars)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label seq)
+          (match (opt-inline-walk-instrs
+            (compiler-ir-instr-seq-to-list seq)
+            index
+            func-name
+            vars)
+            [(OptInlineState new-instrs vars2)
+              (match (opt-inline-blocks (box-get rest) index func-name vars2)
+                [(OptInlineBlocks rest-blocks vars3)
+                  (OptInlineBlocks
+                    (compiler-ir-block-cons
+                      (compiler-ir-block label new-instrs)
+                      rest-blocks)
+                    vars3)])])])]))
+
+(define (opt-inline-function
+  [func : CompilerIrFunction]
+  [index : OptFunctionIndex]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret vars blocks)
+      (match (opt-inline-blocks blocks index name vars)
+        [(OptInlineBlocks new-blocks new-vars)
+          (IrFunction name params ret new-vars new-blocks)])]))
+
+(define (opt-inline-function-list
+  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) IrFunctionNil]
+    [(IrFunctionCons func rest)
+      (compiler-ir-function-cons
+        (opt-inline-function func index)
+        (opt-inline-function-list (box-get rest) index))]))
+
+;; Inline small single-block leaf callees across the whole program. Only at opt
+;; level 3 (the register-allocated quality build).
+(define (opt-inline-program-functions
+  [functions : CompilerIrFunctionList]
+  [level : i64]) : CompilerIrFunctionList
+  (if (< level 3)
+    functions
+    (opt-inline-function-list functions (opt-function-index-build functions))))
+
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
     [(OptStringNil) false]
@@ -8366,7 +8736,8 @@
           (begin
             (cfg compile-profile (compiler-opt-profile-start))
             (let
-              [reachable-functions : CompilerIrFunctionList functions]
+              [reachable-functions : CompilerIrFunctionList
+                (opt-inline-program-functions functions level)]
               (begin
                 (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
                 (cfg compile-profile (compiler-opt-profile-start))

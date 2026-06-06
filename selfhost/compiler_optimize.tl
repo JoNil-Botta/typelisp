@@ -3991,8 +3991,104 @@
               entry-label
               all-reachable))])]))
 
-(define (opt-cfg-dominators-step-entry
+;; Predecessor map (#perf): the dominator fixpoint previously recomputed every
+;; block's predecessors with opt-cfg-predecessors (an O(blocks*instrs) rescan of
+;; the whole function) once per block per iteration, making dominators
+;; O(blocks^3 * instrs) and the opt-level-3 optimizer pathologically slow on the
+;; large self-host functions. The predecessor relation is loop-invariant, so we
+;; build it ONCE (one pass over the edges, O(edges)) into a label->index hashmap
+;; plus an array of predecessor label-sets, and the fixpoint then looks
+;; predecessors up in O(1).
+(defstruct OptPredMap
+  (ids StringI64Map)
+  (preds (Array OptLabelSet)))
+
+(define (opt-pred-map-capacity [count : i64]) : i64
+  (if (< count 4)
+    8
+    (* count 2)))
+
+(define (opt-pred-map-build-ids
   [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [index : i64]) : StringI64Map
+  (match blocks
+    [(IrBlockNil) ids]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (opt-pred-map-build-ids
+            (box-get rest)
+            (string-i64-map-put ids label index)
+            (+ index 1))])]))
+
+(define (opt-pred-map-fill-empty!
+  [preds : (Array OptLabelSet)]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! preds i (OptLabelNil))
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-pred-map-add-succs!
+  [preds : (Array OptLabelSet)]
+  [ids : StringI64Map]
+  [label : String]
+  [succs : OptLabelSet]) : unit
+  (match succs
+    [(OptLabelNil) unit]
+    [(OptLabelCons s rest)
+      (begin
+        (match (string-i64-map-get ids s)
+          [(StringI64MapFound idx)
+            (array-set! preds idx (opt-label-add (array-ref preds idx) label))]
+          [(StringI64MapMissing) unit])
+        (opt-pred-map-add-succs! preds ids label (box-get rest)))]))
+
+(define (opt-pred-map-fill!
+  [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [preds : (Array OptLabelSet)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (begin
+            (opt-pred-map-add-succs!
+              preds
+              ids
+              label
+              (opt-cfg-block-successors-with-next
+                block
+                (opt-cfg-entry-label (box-get rest))))
+            (opt-pred-map-fill! (box-get rest) ids preds))])]))
+
+(define (opt-pred-map-build [blocks : CompilerIrBlockList]) : OptPredMap
+  (let
+    [count : i64 (compiler-ir-block-list-count blocks)]
+    [ids : StringI64Map
+      (opt-pred-map-build-ids
+        blocks
+        (string-i64-map-with-capacity (opt-pred-map-capacity count))
+        0)]
+    [preds : (Array OptLabelSet) (make-array OptLabelSet count)]
+    (begin
+      (opt-pred-map-fill-empty! preds count)
+      (opt-pred-map-fill! blocks ids preds)
+      (OptPredMap ids preds))))
+
+(define (opt-pred-map-lookup [map : OptPredMap] [label : String]) : OptLabelSet
+  (match (string-i64-map-get (struct-get map ids) label)
+    [(StringI64MapFound idx) (array-ref (struct-get map preds) idx)]
+    [(StringI64MapMissing) (OptLabelNil)]))
+
+(define (opt-cfg-dominators-step-entry
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
   [old : OptDomTable]
@@ -4004,14 +4100,14 @@
         (let
           [preds : OptLabelSet
             (opt-label-intersection
-              (opt-cfg-predecessors blocks label)
+              (opt-pred-map-lookup pred-map label)
               reachable)]
           (OptDomEntry
             label
             (opt-label-add (opt-dom-intersect-preds old preds) label))))]))
 
 (define (opt-cfg-dominators-step
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
   [old : OptDomTable]
@@ -4020,17 +4116,17 @@
     [(OptDomNil) (OptDomNil)]
     [(OptDomCons entry rest)
       (OptDomCons
-        (opt-cfg-dominators-step-entry blocks reachable entry-label old entry)
+        (opt-cfg-dominators-step-entry pred-map reachable entry-label old entry)
         (box
           (opt-cfg-dominators-step
-            blocks
+            pred-map
             reachable
             entry-label
             old
             (box-get rest))))]))
 
 (define (opt-cfg-dominators-fixed
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
   [table : OptDomTable]
@@ -4039,11 +4135,11 @@
     table
     (let
       [next : OptDomTable
-        (opt-cfg-dominators-step blocks reachable entry-label table table)]
+        (opt-cfg-dominators-step pred-map reachable entry-label table table)]
       (if (opt-dom-table-eq? table next)
         next
         (opt-cfg-dominators-fixed
-          blocks
+          pred-map
           reachable
           entry-label
           next
@@ -4053,10 +4149,11 @@
   (let
     [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
     [entry-label : String (opt-cfg-entry-label blocks)]
+    [pred-map : OptPredMap (opt-pred-map-build blocks)]
     [initial : OptDomTable
       (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
     (opt-cfg-dominators-fixed
-      blocks
+      pred-map
       reachable
       entry-label
       initial
@@ -7664,6 +7761,12 @@
         (optimize-block-fast block)
         (optimize-block-list-fast (box-get rest)))]))
 
+;; Block-count ceiling for the super-linear dominator-based passes (GVN, LICM,
+;; induction, global GVN). Functions with more basic blocks than this skip those
+;; passes at opt-level 3 so a few huge self-host functions cannot blow up compile
+;; time; the linear passes and register allocation still run on them.
+(define (opt-heavy-pass-block-limit) : i64 64)
+
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
@@ -7683,14 +7786,32 @@
               (IrFunction name params ret-ty promoted-frame promoted-blocks))
               [(IrFunction _ _ _ _ sroa-blocks)
                 (let
+                  ;; #perf: the dominator-based passes (GVN, LICM, induction,
+                  ;; global GVN) are super-linear in block count (their dominance
+                  ;; queries walk string label-sets), so on the handful of huge
+                  ;; self-host functions (hundreds of blocks) they dominate
+                  ;; compile time. Gate them off above a block-count threshold —
+                  ;; register allocation and the linear cleanups still run, so
+                  ;; only the incremental redundancy elimination is skipped on
+                  ;; those few functions, which bounds opt-level-3 compile time.
+                  [run-heavy? : bool
+                    (<= (compiler-ir-block-list-count sroa-blocks)
+                      (opt-heavy-pass-block-limit))]
                   [gvn : CompilerIrBlockList
-                    (opt-gvn-blocks params sroa-blocks)]
+                    (if run-heavy?
+                      (opt-gvn-blocks params sroa-blocks)
+                      sroa-blocks)]
                   [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
                   [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
                   [licm : CompilerIrFunction
-                    (opt-licm-function
+                    (if run-heavy?
+                      (opt-licm-function
+                        (IrFunction name params ret-ty promoted-frame cfg))
                       (IrFunction name params ret-ty promoted-frame cfg))]
-                  [induction : CompilerIrFunction (opt-induction-function licm)]
+                  [induction : CompilerIrFunction
+                    (if run-heavy?
+                      (opt-induction-function licm)
+                      licm)]
                   [induction-frame : i64 (opt-function-frame induction)]
                   [induction-blocks : CompilerIrBlockList
                     (opt-function-blocks induction)]
@@ -7699,7 +7820,14 @@
                   ;; the post-stack-promotion frame so its slots stay
                   ;; consistent with the promoted blocks.
                   [global : CompilerIrFunction
-                    (opt-global-value-number-function
+                    (if run-heavy?
+                      (opt-global-value-number-function
+                        (IrFunction
+                          name
+                          params
+                          ret-ty
+                          induction-frame
+                          induction-blocks))
                       (IrFunction
                         name
                         params

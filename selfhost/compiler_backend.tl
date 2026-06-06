@@ -12329,68 +12329,6 @@ __errno_location:
     leaq tl_errno(%rip), %rax
     ret
 
-    .globl mkdir
-mkdir:
-    movq $83, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl rmdir
-rmdir:
-    movq $84, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl unlink
-unlink:
-    movq $87, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl rename
-rename:
-    movq $82, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl getcwd
-getcwd:
-    pushq %rdi
-    movq $79, %rax
-    syscall
-    cmpq $-4095, %rax
-    jae .L_tl_shim_getcwd_err
-    popq %rax
-    ret
-.L_tl_shim_getcwd_err:
-    addq $8, %rsp
-    negq %rax
-    movl %eax, tl_errno(%rip)
-    xorq %rax, %rax
-    ret
-    .globl getrandom
-getrandom:
-    movq $318, %rax
-    syscall
-    jmp .L_tl_shim_ret
-.L_tl_shim_ret:
-    cmpq $-4095, %rax
-    jae .L_tl_shim_err
-    ret
-.L_tl_shim_err:
-    negq %rax
-    movl %eax, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-
-    .globl getpid
-getpid:
-    movq $39, %rax
-    syscall
-    ret
-
-    .globl exit
-exit:
-    movq $231, %rax
-    syscall
-    ret
-
     .globl fflush
 fflush:
     xorq %rax, %rax

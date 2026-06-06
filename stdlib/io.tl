@@ -707,31 +707,29 @@
     [body : String ""]
     [ndig : i64 (string-length s)]
     (begin
-      (if (or (< k -4) (>= k 17))
-        ;; scientific
-        (set!
-          body
-          (string-append
-            (substring s 0 1)
-            (string-append
-              (if (> ndig 1)
-                (string-append "." (substring s 1 (- ndig 1)))
-                "")
-              (string-append "e" (ftoa-pad-exp k)))))
-        ;; fixed
-        (if (< k 0)
+      (cond
+        [(or (< k -4) (>= k 17))
           (set!
             body
-            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))
-          (if (>= (+ k 1) ndig)
-            ;; integer, pad zeros on the right
-            (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))
-            ;; split int.frac
-            (set!
-              body
+            (string-append
+              (substring s 0 1)
               (string-append
-                (substring s 0 (+ k 1))
-                (string-append "." (substring s (+ k 1) (- ndig (+ k 1)))))))))
+                (if (> ndig 1)
+                  (string-append "." (substring s 1 (- ndig 1)))
+                  "")
+                (string-append "e" (ftoa-pad-exp k)))))]
+        [(< k 0)
+          (set!
+            body
+            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))]
+        [(>= (+ k 1) ndig)
+          (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))]
+        [else
+          (set!
+            body
+            (string-append
+              (substring s 0 (+ k 1))
+              (string-append "." (substring s (+ k 1) (- ndig (+ k 1))))))])
       (if neg
         (string-append "-" body)
         body))))

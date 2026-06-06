@@ -371,7 +371,7 @@
     (compiler-backend-string-contains? asm ".globl main\n")
     (compiler-backend-string-contains? asm "main:\n")
     (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
-    (not (compiler-backend-string-contains? asm "_start:\n"))))
+    (not (compiler-backend-string-contains? asm "\n_start:\n"))))
 
 (define (compiler-backend-implicit-main-ok?) : bool
   (match (lower-compiler-source (compiler-backend-implicit-main-source))
@@ -1844,7 +1844,7 @@
       (and
         (backend-and8
           (compiler-backend-string-contains? asm ".globl main\n")
-          (not (compiler-backend-string-contains? asm "_start:\n"))
+          (not (compiler-backend-string-contains? asm "\n_start:\n"))
           (not (compiler-backend-string-contains? asm "syscall\n"))
           (compiler-backend-string-contains? asm "    movq %rcx, -8(%rbp)\n")
           (compiler-backend-string-contains? asm "    movq %rdx, -16(%rbp)\n")
@@ -1862,8 +1862,10 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (not (compiler-backend-string-contains? asm "    movq %r12, -"))
-        (not (compiler-backend-string-contains? asm ", %r12\n")))]
+        (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
+        ;; Runtime shims may use callee-saved registers internally; this check
+        ;; covers user-function allocation, where `%r12` must not be selected.
+        (not (compiler-backend-string-contains? asm "    movq %r12, -")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-target-windows-runtime-ok?) : bool
@@ -1871,19 +1873,32 @@
     (compiler-backend-runtime-helper-program)
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
-      (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_alloc\n")
-          (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
-          (compiler-backend-string-contains? asm "    call _write\n")
-          (compiler-backend-string-contains? asm "    call _read\n")
-          (compiler-backend-string-contains?
-            asm
-            "    .extern SystemFunction036\n")
-          (compiler-backend-string-contains? asm "    call SystemFunction036\n")
-          (compiler-backend-string-contains? asm "    call _lseeki64\n")
-          (compiler-backend-string-contains? asm "tl_process_output:\n"))
-        (and
+      (let
+        [kernel-io : bool
+          (backend-and4
+            (compiler-backend-string-contains? asm ".globl tl_alloc\n")
+            (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
+            (compiler-backend-string-contains? asm "    call _write\n")
+            (compiler-backend-string-contains? asm "    call _read\n"))]
+        [kernel-seed : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    call QueryPerformanceCounter\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call GetSystemTimeAsFileTime\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call GetCurrentProcessId\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call GetCurrentThreadId\n"))]
+        [process-runtime : bool
+          (and
+            (compiler-backend-string-contains? asm "    call _lseeki64\n")
+            (compiler-backend-string-contains? asm "tl_process_output:\n"))]
+        [string-runtime : bool
           (backend-and8
             (compiler-backend-string-contains? asm "tl_substring:\n")
             (compiler-backend-string-contains? asm "tl_string_concat:\n")
@@ -1895,25 +1910,33 @@
               (compiler-backend-string-contains?
                 asm
                 ".extern tl_random_system_seed\n"))
-            (compiler-backend-no-stdlib-forwarding-labels? asm))
+            (compiler-backend-no-stdlib-forwarding-labels? asm))]
+        [entry-shape : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    movq %rcx, .L_tl_argc(%rip)\n")
+            (compiler-backend-string-contains? asm "    .extern VirtualAlloc\n")
+            (not (compiler-backend-string-contains? asm "syscall\n"))
+            (not (compiler-backend-string-contains? asm ".globl _start\n")))]
+        [private-file-handles : bool
+          (not
+            (compiler-backend-string-contains? asm ".L_tl_file_handle_next:\n"))]
+        [driver-runtime : bool
           (and
-            (backend-and4
-              (compiler-backend-string-contains?
-                asm
-                "    movq %rcx, .L_tl_argc(%rip)\n")
-              (compiler-backend-string-contains?
-                asm
-                "    .extern VirtualAlloc\n")
-              (not (compiler-backend-string-contains? asm "syscall\n"))
-              (not (compiler-backend-string-contains? asm ".globl _start\n")))
-            (and
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".L_tl_file_handle_next:\n"))
-              (and
-                (compiler-backend-string-contains? asm "    cmpq %rcx, %r8\n")
-                (compiler-backend-windows-driver-runtime-ok?))))))]
+            (compiler-backend-string-contains? asm "    cmpq %rcx, %r8\n")
+            (compiler-backend-windows-driver-runtime-ok?))]
+        [no-advapi-random : bool
+          (not (compiler-backend-string-contains? asm "SystemFunction036"))]
+        (backend-and8
+          kernel-io
+          kernel-seed
+          process-runtime
+          string-runtime
+          entry-shape
+          private-file-handles
+          driver-runtime
+          no-advapi-random))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-windows-runtime-guard-source) : String
@@ -2509,8 +2532,6 @@
     (CompilerBackendGlobalTypeNil)
     (AstTyI64)
     (BackendRuntimePlan
-      false
-      false
       false
       false
       false
@@ -3261,8 +3282,9 @@
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))
       (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
-      (not (compiler-backend-string-contains? asm "    movq $39, %rax\n"))
-      (not (compiler-backend-string-contains? asm "    movq $83, %rax\n"))
+      (not (compiler-backend-string-contains? asm ".globl tl_fs_process_id\n"))
+      (not
+        (compiler-backend-string-contains? asm ".globl tl_fs_mkdir_status\n"))
       (not (compiler-backend-string-contains? asm "    call _mkdir\n")))
     (not
       (compiler-backend-string-contains? asm "    call GetCurrentProcessId\n"))))
@@ -4243,7 +4265,7 @@
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
         (and
-          (not (compiler-backend-string-contains? asm "    addq $64, %rsp\n"))
+          (compiler-backend-string-contains? asm "    call _tl_add8\n")
           (and
             (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n")
             (and

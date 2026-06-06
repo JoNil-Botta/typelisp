@@ -91,6 +91,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers and
   weighted-index selection for selfhost tools, plus an OS-entropy seed source.
   Import it with `(import "stdlib/random.tl")`.
+- `runtime.tl`: always-linked runtime prelude. Holds the fault/abort handlers
+  (out-of-bounds, divide-by-zero, shift) the backend emits checks against, plus
+  the low-level OS write/exit primitives they use, as TypeLisp exported under
+  fixed symbols via `(:export-symbol …)` (#2143/#2142). Imported implicitly into
+  every executable; programs do not import it by hand.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
   including append/concat, substring, equality, integer rendering, and integer parsing
   helpers. Import it with `(import "stdlib/string.tl")`.

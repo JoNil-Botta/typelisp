@@ -361,33 +361,57 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : SymI64Env])
+  :
+  ResultCompilerDriverLowered
+  ;; Always link the runtime prelude (stdlib/runtime.tl): it carries the
+  ;; fault/abort handlers the backend-emitted bounds/division/shift checks call
+  ;; (#2142 / #2150), exported as fixed symbols via #2143. Load it first so the
+  ;; entry's own (possibly transitive) import dedups against it, then concatenate
+  ;; decls + paths.
   (match (compiler-load-file-with-paths-and-roots-cfg
-    input-path
+    "stdlib/runtime.tl"
     (sym-i64-empty)
     stdlib-roots
     cfgs)
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (begin
-        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-        (cfg compile-profile (compiler-driver-profile-start-phase))
-        (match (lower-compiler-program-with-decl-paths-mode
-          input-path
-          (ast-program decls)
-          paths
-          (compiler-driver-lower-mode-for-target target mode))
-          [(OkCompilerLower program spans)
+    [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+      (match (compiler-load-file-with-paths-and-roots-cfg
+        input-path
+        prelude-seen
+        stdlib-roots
+        cfgs)
+        [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
+          (let
+            [decls : AstDeclList
+              (compiler-load-decl-list-append prelude-decls entry-decls)]
+            [paths : AstDeclPathList
+              (compiler-load-decl-path-list-append prelude-paths entry-paths)]
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
-              (OkCompilerDriverLowered program spans))]
-          [(ErrCompilerLower diag)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
-              (ErrCompilerDriverLowered diag))]))]
+                (compiler-driver-profile-finish-phase "load"))
+              (cfg compile-profile (compiler-driver-profile-start-phase))
+              (match (lower-compiler-program-with-decl-paths-mode
+                input-path
+                (ast-program decls)
+                paths
+                (compiler-driver-lower-mode-for-target target mode))
+                [(OkCompilerLower program spans)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-finish-phase "lower"))
+                    (OkCompilerDriverLowered program spans))]
+                [(ErrCompilerLower diag)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-finish-phase "lower"))
+                    (ErrCompilerDriverLowered diag))])))]
+        [(ErrCompilerLoadWithPaths diag)
+          (begin
+            (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+            (ErrCompilerDriverLowered diag))])]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))

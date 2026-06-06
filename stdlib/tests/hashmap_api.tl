@@ -2,6 +2,12 @@
 
 (import "stdlib/hashmap.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 ;; Predicate/extractor helpers return concrete bool/i64 (no panic in a match
 ;; arm) so the module typechecks on every stage0, independent of never-type.
 (define (probe-found? [p : StringI64MapProbe]) : bool
@@ -81,6 +87,62 @@
     [(StringI64MapEntrySome _ v) v]
     [(StringI64MapEntryNone) fallback]))
 
+;; Generated `String -> String` map helpers.
+(define (string-string-lookup-value-or
+  [l : StringStringMapLookup]
+  [fallback : String]) : String
+  (match l
+    [(StringStringMapFound v) v]
+    [(StringStringMapMissing) fallback]))
+
+(define (string-string-insert-result-map [r : StringStringMapInsertResult]) : StringStringMap
+  (match r
+    [(StringStringMapInsertOk m) m]
+    [(StringStringMapInsertFull m) m]))
+
+(define (string-string-remove-ok? [r : StringStringMapRemoveResult]) : bool
+  (match r
+    [(StringStringMapRemoveOk _) true]
+    [(StringStringMapRemoveMissing _) false]))
+
+(define (string-string-remove-result-map [r : StringStringMapRemoveResult]) : StringStringMap
+  (match r
+    [(StringStringMapRemoveOk m) m]
+    [(StringStringMapRemoveMissing m) m]))
+
+(define (string-string-entry-value-length-or
+  [e : StringStringMapEntry]
+  [fallback : i64]) : i64
+  (match e
+    [(StringStringMapEntrySome _ v) (string-length v)]
+    [(StringStringMapEntryNone) fallback]))
+
+;; Generated `i64 -> i64` map helpers.
+(define (i64-i64-lookup-value-or [l : I64I64MapLookup] [fallback : i64]) : i64
+  (match l
+    [(I64I64MapFound v) v]
+    [(I64I64MapMissing) fallback]))
+
+(define (i64-i64-insert-result-map [r : I64I64MapInsertResult]) : I64I64Map
+  (match r
+    [(I64I64MapInsertOk m) m]
+    [(I64I64MapInsertFull m) m]))
+
+(define (i64-i64-remove-ok? [r : I64I64MapRemoveResult]) : bool
+  (match r
+    [(I64I64MapRemoveOk _) true]
+    [(I64I64MapRemoveMissing _) false]))
+
+(define (i64-i64-remove-result-map [r : I64I64MapRemoveResult]) : I64I64Map
+  (match r
+    [(I64I64MapRemoveOk m) m]
+    [(I64I64MapRemoveMissing m) m]))
+
+(define (i64-i64-entry-value-or [e : I64I64MapEntry] [fallback : i64]) : i64
+  (match e
+    [(I64I64MapEntrySome _ v) v]
+    [(I64I64MapEntryNone) fallback]))
+
 ;; Iteration walkers (deterministic bucket order, #829). No first-class
 ;; functions yet, so each walk is its own tail-recursive helper started at
 ;; `(string-i64-map-next-occupied m 0)` and advanced with the cursor.
@@ -111,6 +173,40 @@
       (if (> nxt i)
         (iter-monotonic? m nxt)
         false))))
+
+(define (string-string-iter-count [m : StringStringMap] [i : i64] [acc : i64]) : i64
+  (if (>= i (string-string-map-capacity m))
+    acc
+    (string-string-iter-count
+      m
+      (string-string-map-next-occupied m (+ i 1))
+      (+ acc 1))))
+
+(define (string-string-iter-value-length-sum
+  [m : StringStringMap]
+  [i : i64]
+  [acc : i64]) : i64
+  (if (>= i (string-string-map-capacity m))
+    acc
+    (string-string-iter-value-length-sum
+      m
+      (string-string-map-next-occupied m (+ i 1))
+      (+
+        acc
+        (string-string-entry-value-length-or (string-string-map-entry-at m i) 0)))))
+
+(define (i64-i64-iter-count [m : I64I64Map] [i : i64] [acc : i64]) : i64
+  (if (>= i (i64-i64-map-capacity m))
+    acc
+    (i64-i64-iter-count m (i64-i64-map-next-occupied m (+ i 1)) (+ acc 1))))
+
+(define (i64-i64-iter-value-sum [m : I64I64Map] [i : i64] [acc : i64]) : i64
+  (if (>= i (i64-i64-map-capacity m))
+    acc
+    (i64-i64-iter-value-sum
+      m
+      (i64-i64-map-next-occupied m (+ i 1))
+      (+ acc (i64-i64-entry-value-or (i64-i64-map-entry-at m i) 0)))))
 
 (define (main) : i64
   (begin
@@ -509,4 +605,131 @@
             -1)
           7
           "entry-at the only occupied slot is Some 7")))
+    ;; --- generated String -> String map family (#817) ---
+    (let
+      [alpha : String "alpha"]
+      [beta : String "beta"]
+      [missing : String "missing"]
+      [ss0 : StringStringMap (string-string-map-with-capacity 4)]
+      [ss1 : StringStringMap (string-string-map-put ss0 "alpha" "red")]
+      [ss2 : StringStringMap (string-string-map-put ss1 "beta" "amber")]
+      [ss3 : StringStringMap (string-string-map-put ss2 "gamma" "blue")]
+      [ss4 : StringStringMap (string-string-map-put ss3 "delta" "gold")]
+      [ss5 : StringStringMap (string-string-map-put ss4 "alpha" "green")]
+      (begin
+        (assert-i64-eq (string-string-map-len ss5) 4 "StringString len")
+        (assert-true
+          (> (string-string-map-capacity ss5) 4)
+          "StringString grew past seed capacity")
+        (assert-owned-string-eq
+          (string-string-lookup-value-or
+            (string-string-map-get-borrowed ss5 (& alpha))
+            "fallback")
+          "green"
+          "StringString borrowed get updated alpha")
+        (assert-owned-string-eq
+          (string-string-lookup-value-or
+            (string-string-map-get ss5 "gamma")
+            "fallback")
+          "blue"
+          "StringString owned get gamma")
+        (assert-owned-string-eq
+          (string-string-lookup-value-or
+            (string-string-map-get-borrowed ss5 (& missing))
+            "fallback")
+          "fallback"
+          "StringString missing borrowed get")
+        (assert-true
+          (string-string-map-contains-borrowed? ss5 (& beta))
+          "StringString borrowed contains beta")
+        (let
+          [removed : StringStringMapRemoveResult
+            (string-string-map-remove-borrowed ss5 (& beta))]
+          (begin
+            (assert-true
+              (string-string-remove-ok? removed)
+              "StringString remove borrowed beta")
+            (let
+              [ss6 : StringStringMap (string-string-remove-result-map removed)]
+              (begin
+                (assert-i64-eq
+                  (string-string-map-len ss6)
+                  3
+                  "StringString len after remove")
+                (assert-i64-eq
+                  (string-string-map-deleted ss6)
+                  1
+                  "StringString tombstone after remove")
+                (assert-false
+                  (string-string-map-contains-borrowed? ss6 (& beta))
+                  "StringString beta absent after remove")
+                (assert-i64-eq
+                  (string-string-iter-count
+                    ss6
+                    (string-string-map-next-occupied ss6 0)
+                    0)
+                  3
+                  "StringString iteration count")
+                (assert-i64-eq
+                  (string-string-iter-value-length-sum
+                    ss6
+                    (string-string-map-next-occupied ss6 0)
+                    0)
+                  13
+                  "StringString iteration value length sum")))))))
+    ;; --- generated i64 -> i64 map family (#817) ---
+    (let
+      [ii0 : I64I64Map (i64-i64-map-with-capacity 4)]
+      [ii1 : I64I64Map (i64-i64-map-put ii0 1 10)]
+      [ii2 : I64I64Map (i64-i64-map-put ii1 2 20)]
+      [ii3 : I64I64Map (i64-i64-map-put ii2 3 30)]
+      [ii4 : I64I64Map (i64-i64-map-put ii3 4 40)]
+      [ii5 : I64I64Map (i64-i64-map-put ii4 1 99)]
+      (begin
+        (assert-i64-eq (i64-i64-map-len ii5) 4 "I64I64 len")
+        (assert-true
+          (> (i64-i64-map-capacity ii5) 4)
+          "I64I64 grew past seed capacity")
+        (assert-i64-eq
+          (i64-i64-lookup-value-or (i64-i64-map-get ii5 1) -1)
+          99
+          "I64I64 updated key 1")
+        (assert-i64-eq
+          (i64-i64-lookup-value-or (i64-i64-map-get ii5 3) -1)
+          30
+          "I64I64 get key 3")
+        (assert-i64-eq
+          (i64-i64-lookup-value-or (i64-i64-map-get ii5 99) -1)
+          -1
+          "I64I64 missing key")
+        (assert-true (i64-i64-map-contains? ii5 2) "I64I64 contains key 2")
+        (let
+          [removed : I64I64MapRemoveResult (i64-i64-map-remove ii5 2)]
+          (begin
+            (assert-true (i64-i64-remove-ok? removed) "I64I64 remove key 2")
+            (let
+              [ii6 : I64I64Map (i64-i64-remove-result-map removed)]
+              (begin
+                (assert-i64-eq
+                  (i64-i64-map-len ii6)
+                  3
+                  "I64I64 len after remove")
+                (assert-i64-eq
+                  (i64-i64-map-deleted ii6)
+                  1
+                  "I64I64 tombstone after remove")
+                (assert-false
+                  (i64-i64-map-contains? ii6 2)
+                  "I64I64 removed key absent")
+                (assert-i64-eq
+                  (i64-i64-iter-count ii6 (i64-i64-map-next-occupied ii6 0) 0)
+                  3
+                  "I64I64 iteration count")
+                (assert-i64-eq
+                  (i64-i64-iter-value-sum
+                    ii6
+                    (i64-i64-map-next-occupied ii6 0)
+                    0)
+                  169
+                  "I64I64 iteration value sum")))))))
     42))

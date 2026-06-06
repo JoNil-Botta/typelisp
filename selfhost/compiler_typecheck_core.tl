@@ -23,6 +23,10 @@
   (OkTcType AstType)
   (ErrTcType String))
 
+(defenum ResultTcTypeUnsafe
+  (OkTcTypeUnsafe AstType bool)
+  (ErrTcTypeUnsafe String))
+
 (defenum ResultTcTypeList
   (OkTcTypeList AstTypeList)
   (ErrTcTypeList String))
@@ -1090,6 +1094,23 @@
       (if (string-eq key name)
         (OkTcType ty)
         (tc-lookup (box-get rest) name))]))
+
+(define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
+  (match env
+    [(TcTypeNil)
+      (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))]
+    [(TcTypeCache ids values unsafe-flags _ rest)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound index)
+          (OkTcTypeUnsafe (array-ref values index) (= (array-ref unsafe-flags index) 1))]
+        [(StringI64MapMissing)
+          (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))])]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key name)
+        (OkTcTypeUnsafe
+          ty
+          (tc-binding-unsafe-marker-head? (box-get rest) name))
+        (tc-lookup-unsafe (box-get rest) name))]))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
   (match (tc-lookup env name)
@@ -11333,11 +11354,19 @@
                 (tc-lookup-hygiene-global-visible ctx env global-name)]
               [(ErrTcUnit message) (ErrTcType message)])
             (tc-lookup-hygiene-global-visible ctx env global-name)))
-        (if (tc-binding-unsafe? env name)
-          (match (tc-require-unsafe env name)
-            [(OkTcUnit) (tc-lookup-visible ctx env name)]
-            [(ErrTcUnit message) (ErrTcType message)])
-          (tc-lookup-visible ctx env name)))]
+        (match (tc-lookup-unsafe env name)
+          [(OkTcTypeUnsafe ty unsafe)
+            (if unsafe
+              (match (tc-require-unsafe env name)
+                [(OkTcUnit)
+                  (match (tc-qualified-value-visible-ok ctx name)
+                    [(OkTcUnit) (OkTcType ty)]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)])
+              (match (tc-qualified-value-visible-ok ctx name)
+                [(OkTcUnit) (OkTcType ty)]
+                [(ErrTcUnit message) (ErrTcType message)]))]
+          [(ErrTcTypeUnsafe message) (ErrTcType message)]))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append

@@ -4,8 +4,8 @@
 ;# for tools that need JSON without a private selfhost-only implementation.
 ;#
 ;# Primitives required from the compiler/runtime: `string-length`,
-;# `string-ref`, `substring`, `string-append`, `string-eq`, and the imported
-;# `stdlib/text_buf.tl` buffer helpers.
+;# `string-ref`, `substring`, `string-append`, and the imported
+;# `stdlib/string.tl` / `stdlib/text_buf.tl` helpers.
 ;#
 ;# Usage: `(import "stdlib/json.tl")`
 ;#
@@ -17,7 +17,9 @@
 ;# (import "stdlib/json.tl")
 ;# (define sample : String (json-stringify (JsonBool true)))
 ;# ```
-(import "stdlib/text_buf.tl")
+(import "string.tl")
+
+(import "text_buf.tl")
 
 ;: Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json
@@ -189,7 +191,7 @@
   (match items
     [(JsonMemberListNil) JsonMissing]
     [(JsonMemberListCons item-key value rest)
-      (if (string-eq item-key key)
+      (if (string-eq-borrowed (& item-key) key)
         (JsonFound value)
         (json-member-list-get (box-get rest) key))]))
 

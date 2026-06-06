@@ -410,7 +410,8 @@
 (define (fs-path-normalized-escapes? [normalized : (& normalized str)]) : bool
   (let
     [n : i64 (string-length normalized)]
-    (if (string-eq normalized "..")
+    [parent : String ".."]
+    (if (string-eq-borrowed normalized (& parent))
       true
       (and
         (> n 2)

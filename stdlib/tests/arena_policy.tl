@@ -14,21 +14,27 @@
       (let
         [s : String "  outer  "]
         [outer-trimmed : String (string-trim (& s))]
+        [outer-expected : String "outer"]
         (begin
-          (assert-true
-            (string-eq outer-trimmed "outer")
+          (assert-string-eq
+            (& outer-trimmed)
+            (& outer-expected)
             "outer stdlib string allocation")
           (with-arena
             inner
             (let
               [inner-replaced : String (string-replace "alpha" "ph" "ren")]
               [inner-rendered : String (text-buf-render program-buf)]
+              [inner-replaced-expected : String "alrena"]
+              [inner-rendered-expected : String "scoped"]
               (begin
-                (assert-true
-                  (string-eq inner-replaced "alrena")
+                (assert-string-eq
+                  (& inner-replaced)
+                  (& inner-replaced-expected)
                   "inner stdlib string allocation")
-                (assert-true
-                  (string-eq inner-rendered "scoped")
+                (assert-string-eq
+                  (& inner-rendered)
+                  (& inner-rendered-expected)
                   "inner stdlib text buffer render")
                 (assert-i64-eq
                   (string-length outer-trimmed)

@@ -6,7 +6,7 @@
 
 (import "compiler_ir_types.tl")
 
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
 (defenum CompilerLiveI64Set
   (CompilerLiveI64Nil)

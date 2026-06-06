@@ -23,6 +23,12 @@
 (define (string-test-contains-char [haystack : String] [c : char]) : bool
   (string-contains-char (& haystack) c))
 
+(define (string-test-eq-borrowed [left : String] [right : String]) : bool
+  (string-eq-borrowed (& left) (& right)))
+
+(define (string-test-to-int-borrowed [text : String]) : i64
+  (string->int-borrowed (& text)))
+
 (define (string-test-prefix-at
   [haystack : String]
   [needle : String]
@@ -38,6 +44,27 @@
     (assert-false (is-char-whitespace #A') "letter is not whitespace")
     (assert-true (char-eq #A' #A') "same chars compare equal")
     (assert-false (char-eq #A' #B') "different chars do not compare equal")
+    (assert-true (string-eq "" "") "empty strings compare equal")
+    (assert-true (string-eq "hello" "hello") "same strings compare equal")
+    (assert-true
+      (string=? "alias" (string-append "ali" "as"))
+      "string=? aliases string-eq")
+    (assert-false (string-eq "hello" "world") "different strings differ")
+    (assert-false (string-eq "hi" "high") "length mismatch differs")
+    (assert-true
+      (string-test-eq-borrowed "borrow" (string-append "bor" "row"))
+      "borrowed string equality compares contents")
+    (assert-false
+      (string-test-eq-borrowed "borrow" "borrows")
+      "borrowed string equality rejects length mismatch")
+    (assert-i64-eq (string->int "") 0 "empty string parses as zero")
+    (assert-i64-eq (string->int "-") 0 "minus-only string parses as zero")
+    (assert-i64-eq (string->int "123") 123 "positive integer parses")
+    (assert-i64-eq (string->int "-42") -42 "negative integer parses")
+    (assert-i64-eq
+      (string-test-to-int-borrowed "12a")
+      169
+      "borrowed parser keeps legacy non-digit arithmetic")
     (assert-owned-string-eq
       (string-test-trim-left "  hello")
       "hello"

@@ -12,8 +12,9 @@ set -eu
 # `foreach` tail (#1014) and `spmd-reduce` folds -- matches scalar semantics,
 # not merely that a mode runs on a trivial program (cf. #1148, full-width only).
 #
-# The corpus deliberately includes non-power-of-two lengths (the SIMD tail) and
-# reductions across i64/i32/f64.
+# The corpus deliberately includes non-power-of-two lengths (the SIMD tail),
+# foreach lanes across i64/i32/f64/f32, and reductions across the scalar
+# supported operator/type surface.
 #
 # Usage:
 #   scripts/verify-spmd-simd.sh

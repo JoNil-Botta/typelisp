@@ -2573,9 +2573,10 @@ integer/`char` ↔ float conversions (float → integer truncates toward zero).
 
 This section defines the initial SPMD source surface. The current compiler
 parses and type-checks `foreach`, lowers it to scalar reference loops, and has
-an AVX2 backend path for a first contiguous map/zip subset. The reduction
-surface below is the next source contract; parser/typechecker, scalar lowering,
-IR, and backend support are tracked by follow-up issues.
+AVX2 and AVX-512 backend paths for a first contiguous map/zip subset.
+`spmd-reduce` is also implemented: scalar lowering covers the supported
+operator/type surface below, and SIMD backend modes vectorize eligible
+contiguous array folds.
 
 Initial syntax:
 
@@ -2626,7 +2627,7 @@ Uniform and varying rules:
   lowering.
 - `let` bindings inside the `foreach` body may be uniform or varying by
   inference. `set!` to a binding declared outside the `foreach` is rejected;
-  reductions and cross-lane updates are separate future work.
+  reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
 - Calls with varying arguments are rejected until an SPMD function ABI is
   designed. The first slice only permits built-in arithmetic/comparison
   operators and array operations over supported lane types.
@@ -2707,6 +2708,16 @@ Type rules for the first slice:
 - `f32`, narrow integer widths, unsigned integer widths, `char`, `String`,
   structs, enums, tuples, arrays, function values, public vector types, and
   public mask types are rejected in the first reduction slice.
+
+Backend coverage for reductions:
+
+- Scalar backend modes lower every supported operator/type combination listed
+  above.
+- SIMD backend modes vectorize eligible contiguous array folds. AVX2 supports
+  `sum` over `i32`, `i64`, and `f64`, plus `min`/`max` over `i32`; AVX-512
+  supports those shapes and also `min`/`max` over `i64`.
+- Supported reduction forms outside the current vectorized subset keep scalar
+  semantics in the selected backend mode rather than changing source behavior.
 
 Purity and varying rules for the first slice:
 
@@ -2833,7 +2844,7 @@ Negative examples for later parser/typechecker tests:
         (array-set! out i (array-ref xs i)))))
 ```
 
-```lisp test=ignore name=spmd-reject-mutation-reduction reason="future SPMD negative example"
+```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
   (let
     [sum : i64 0]
@@ -2843,7 +2854,7 @@ Negative examples for later parser/typechecker tests:
       sum)))
 ```
 
-```lisp test=ignore name=spmd-reject-f64-min reason="rejected by the type checker; the spec example harness only asserts positive check/compile/run"
+```lisp test=ignore name=spmd-reject-f64-min reason="covered by tests/safety/spmd_reduce_f64_min_reject.tl"
 (define (min-f64 [xs : (Array f64)] [n : i64] [seed : f64]) : f64
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 ```
@@ -2853,7 +2864,7 @@ Negative examples for later parser/typechecker tests:
   (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
-```lisp test=ignore name=spmd-reject-varying-call reason="future SPMD negative example"
+```lisp test=ignore name=spmd-reject-varying-call reason="covered by tests/safety/spmd_varying_call_reject.tl"
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -3911,7 +3922,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
 | `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
 | Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
-| SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous map/zip subset over `i32`, `i64`, `f32`, and `f64` |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds |
 | Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |

@@ -366,7 +366,8 @@ same local value or type name without colliding.
 ### Expression forms
 
 `if`, `when`, `unless`, `let`, `while`, `begin`, `set!`, `match` (incl.
-nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`, plus
+nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`,
+`spmd-reduce`, plus
 arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
 (`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
@@ -389,9 +390,10 @@ map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes. Runtime-dispatched
 SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`.
-`spmd-reduce` scalar lowering is implemented, and SIMD backend modes vectorize
-eligible contiguous array reductions: `sum` over `i32`, `i64`, and `f64`;
-`min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`.
+`spmd-reduce` scalar lowering supports `sum` over `i32`, `i64`, and `f64`,
+`min`/`max` over `i32` and `i64`, and `all`/`any` over `bool`. SIMD backend
+modes vectorize eligible contiguous array reductions: `sum` over `i32`, `i64`,
+and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`.
 
 ### Builtins
 
@@ -620,8 +622,10 @@ through the TypeLisp-owned build/run path.
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
 `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes, plus
-eligible `spmd-reduce` array folds. AVX-512 uses ZMM vectors and opmask
-predicated tails, and additionally vectorizes `i64` min/max reductions.
+eligible `spmd-reduce` array folds. Scalar `spmd-reduce` lowering supports
+`sum`, `min`, `max`, `all`, and `any` over the SPEC.md supported types.
+AVX-512 uses ZMM vectors and opmask predicated tails, and additionally
+vectorizes `i64` min/max reductions.
 Unsupported vector IR falls back or rejects explicitly.
 
 `compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg

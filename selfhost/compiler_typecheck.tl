@@ -4231,7 +4231,7 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
-;; spmd-reduce purity rules (#1011, SPEC.md §5.16): the per-lane value
+;; spmd-reduce purity rules (#1011, SPEC.md §5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
@@ -4243,18 +4243,18 @@
     (and
       (compiler-typecheck-error-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.15)")
       (and
         (compiler-typecheck-error-ok?
           "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
-          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.15)")
         (and
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
-            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.15)")
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.15)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array

@@ -23,10 +23,24 @@ The corpus emphasizes the cases where SIMD bugs hide:
   f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
-  i64/i32/f64 across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+  i64/i32/f64 plus `all`/`any` bool reductions across empty, sub-lane,
+  exact-lane, and tail lengths. Exit 42.
 - `runtime_dispatch_select.tl` — one `defdispatch` binary whose variants share
   the same i64 SPMD checksum and encode the selected variant in the exit code.
   Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.
+
+Coverage map:
+
+- `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `f64`, and
+  `f32` lives in `../integration/spmd_foreach.tl` and the two tail fixtures.
+- `spmd-reduce` scalar coverage for the documented operator/type surface lives
+  in `../integration/spmd_reduce_scalar.tl`.
+- SIMD reduction vectorization shape checks live in `selfhost/compiler_lower.tl`
+  and `selfhost/compiler_backend_tests.tl`; this corpus runs the executable
+  scalar/SIMD comparison for the same reduction fixture.
+- Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
+  including outer mutation, unsupported `f64` min reduction, and calls with
+  varying arguments.
 
 ## Running
 

@@ -22,7 +22,7 @@
 ;#     [(StringI64MapProbeFound slot) slot]
 ;#     [(StringI64MapProbeFull) -1]))
 ;# ```
-(import "stdlib/hash.tl")
+(import "hash.tl")
 
 ;: One open-addressing slot: empty, a deleted tombstone, or an occupied entry
 ;: carrying the owned key, its copied value, and the cached key hash (#824).
@@ -91,7 +91,7 @@
             index))]
       [(StringI64MapOccupied slot-key _ slot-hash)
         (if (if (= slot-hash hash)
-          (string-eq slot-key key)
+          (string-eq-borrowed (& slot-key) (& key))
           false)
           (StringI64MapProbeFound index)
           (string-i64-map-probe-from

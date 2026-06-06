@@ -284,21 +284,24 @@
 (define (windows-sdk-layout-from-root-version-checked
   [root : (& root str)]
   [version : (& version str)]) : ResultWindowsSdkLayout
-  (if (string-eq root "")
-    (ErrWindowsSdkLayout
-      (WindowsSdkMissingEnvironment "windows-sdk: WindowsSdkDir is empty"))
-    (if (string-eq version "")
+  (let
+    [empty : String ""]
+    (if (string-eq-borrowed root (& empty))
       (ErrWindowsSdkLayout
-        (WindowsSdkMissingEnvironment "windows-sdk: WindowsSDKVersion is empty"))
-      (let
-        [layout : WindowsSdkLayout
-          (windows-sdk-layout-from-root-version root version)]
-        (match (windows-sdk-first-missing-path layout)
-          [(WindowsSdkNoString) (OkWindowsSdkLayout layout)]
-          [(WindowsSdkSomeString path)
-            (ErrWindowsSdkLayout
-              (WindowsSdkInvalidLayout
-                (string-append "windows-sdk: missing SDK path: " path)))])))))
+        (WindowsSdkMissingEnvironment "windows-sdk: WindowsSdkDir is empty"))
+      (if (string-eq-borrowed version (& empty))
+        (ErrWindowsSdkLayout
+          (WindowsSdkMissingEnvironment
+            "windows-sdk: WindowsSDKVersion is empty"))
+        (let
+          [layout : WindowsSdkLayout
+            (windows-sdk-layout-from-root-version root version)]
+          (match (windows-sdk-first-missing-path layout)
+            [(WindowsSdkNoString) (OkWindowsSdkLayout layout)]
+            [(WindowsSdkSomeString path)
+              (ErrWindowsSdkLayout
+                (WindowsSdkInvalidLayout
+                  (string-append "windows-sdk: missing SDK path: " path)))]))))))
 
 ;: Return true when at least one SDK override environment variable is present.
 (define (windows-sdk-env-present?) : bool
@@ -338,15 +341,17 @@
 (define (windows-sdk-layout-from-registry-root-version-checked
   [root : (& root str)]
   [version : (& version str)]) : ResultWindowsSdkLayout
-  (if (string-eq root "")
-    (ErrWindowsSdkLayout
-      (WindowsSdkRegistryUnavailable
-        "windows-sdk: registry KitsRoot10 is empty"))
-    (if (string-eq version "")
+  (let
+    [empty : String ""]
+    (if (string-eq-borrowed root (& empty))
       (ErrWindowsSdkLayout
         (WindowsSdkRegistryUnavailable
-          "windows-sdk: registry SDK version is empty"))
-      (windows-sdk-layout-from-root-version-checked root version))))
+          "windows-sdk: registry KitsRoot10 is empty"))
+      (if (string-eq-borrowed version (& empty))
+        (ErrWindowsSdkLayout
+          (WindowsSdkRegistryUnavailable
+            "windows-sdk: registry SDK version is empty"))
+        (windows-sdk-layout-from-root-version-checked root version)))))
 
 ;: Discover and validate an SDK layout from the Windows registry.
 (define (windows-sdk-discover-from-registry) : ResultWindowsSdkLayout

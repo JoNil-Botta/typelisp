@@ -551,6 +551,17 @@ check_u64_float_cast_asm() {
     fi
 }
 
+check_stdlib_string_helpers_asm() {
+    _asm=$1
+    _label="$2 assembly"
+    assert_not_contains "$_asm" ".globl tl_string_eq" "$_label"
+    assert_not_contains "$_asm" "call tl_string_eq" "$_label"
+    assert_not_contains "$_asm" ".extern tl_string_eq" "$_label"
+    assert_not_contains "$_asm" ".globl tl_string_to_int" "$_label"
+    assert_not_contains "$_asm" "call tl_string_to_int" "$_label"
+    assert_not_contains "$_asm" ".extern tl_string_to_int" "$_label"
+}
+
 assert_empty_file() {
     _file=$1
     _label=$2
@@ -1198,6 +1209,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     if [ "$name" = u64_float_casts ]; then
         check_u64_float_cast_asm "$asm"
     fi
+    case "$name" in
+        stdlib_string | string_eq) check_stdlib_string_helpers_asm "$asm" "$name" ;;
+    esac
 
     if [ -n "$requires_symbol" ]; then
         echo "[integration] NOTE: $name built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2

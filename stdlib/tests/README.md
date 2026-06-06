@@ -20,9 +20,10 @@ Coverage notes:
 - `arena_patterns.tl` covers the standard safe scratch workflows: temporary
   scalar-only work inside `with-arena` and clone-out from a reusable
   first-class scratch arena through `with-escape`.
-- `string_edges.tl` covers the public string predicates, trimming helpers,
-  replacement paths, and prefix checks, including empty strings, empty needles,
-  misses, prefix positions, and replacement edge cases.
+- `string_edges.tl` covers the public string equality/parsing predicates,
+  trimming helpers, replacement paths, and prefix checks, including empty
+  strings, empty needles, misses, prefix positions, legacy `string->int` edge
+  cases, and replacement edge cases.
 - `json_helpers.tl` exercises the JSON data model, list/member helpers, escape
   helpers, parser subroutines, and serializer helpers directly.
 - `json_parse_stringify.tl` covers end-to-end parsing and stringifying for

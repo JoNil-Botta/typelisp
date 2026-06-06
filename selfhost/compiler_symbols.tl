@@ -9,7 +9,7 @@
 
 (import "sym_i64_env.tl")
 
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
 (defenum CompilerSymbols
   (CompilerSymbols

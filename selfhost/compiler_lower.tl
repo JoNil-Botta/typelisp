@@ -18,7 +18,7 @@
 
 (import "compiler_ctfe.tl")
 
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
 (defenum LowerNameEnv
   (LowerNameNil)

@@ -188,6 +188,10 @@
   (OkCompilerBackendBuffer TextBuf)
   (ErrCompilerBackendBuffer CompilerDiagnostic))
 
+(defenum ResultCompilerBackendSymbolValidation
+  (OkCompilerBackendSymbolValidation StringI64Map)
+  (ErrCompilerBackendSymbolValidation CompilerDiagnostic))
+
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan
     bool
@@ -238,7 +242,8 @@
   (extern-signatures StringI64Map)
   (extern-signature-values (Array CompilerBackendMaybeSignature))
   (extern-references StringI64Map)
-  (extern-link-symbols (Array String)))
+  (extern-link-symbols (Array String))
+  (extern-provided (Array bool)))
 
 (defstruct CompilerBackendSourceSpanIndex
   (entries StringI64Map)
@@ -2016,16 +2021,20 @@
 (define (compiler-backend-function-symbol-index
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
-  (if (compiler-backend-compact-function-symbol? name)
-    (match (string-i64-map-get (struct-get index functions) name)
-      [(StringI64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
-      [(StringI64MapMissing) (compiler-backend-user-symbol name)])
-    (compiler-backend-user-symbol name)))
+  (if (compiler-backend-index-extern-provided? index name)
+    (compiler-backend-index-extern-link-symbol index name)
+    (if (compiler-backend-compact-function-symbol? name)
+      (match (string-i64-map-get (struct-get index functions) name)
+        [(StringI64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
+        [(StringI64MapMissing) (compiler-backend-user-symbol name)])
+      (compiler-backend-user-symbol name))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
-  (if (compiler-backend-compact-function-symbol? name)
+  (if (and
+    (compiler-backend-compact-function-symbol? name)
+    (not (compiler-backend-index-extern-provided? index name)))
     (string-append
       "#t "
       (string-append
@@ -2085,26 +2094,30 @@
   [name : String]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
-  (if (compiler-backend-index-extern-references? index name)
-    (let
-      [link-symbol : String
-        (compiler-backend-index-extern-link-symbol index name)]
+  (cond
+    [(compiler-backend-index-extern-provided? index name)
+      (compiler-backend-index-extern-link-symbol index name)]
+    [(compiler-backend-index-extern-references? index name)
+      (let
+        [link-symbol : String
+          (compiler-backend-index-extern-link-symbol index name)]
+        (if (and
+          (and
+            (string-eq link-symbol name)
+            (compiler-backend-plan-provides? plan name))
+          (not (compiler-backend-index-function-defines? index name)))
+          (if (compiler-backend-runtime-user-symbol? name)
+            (compiler-backend-user-symbol name)
+            name)
+          (compiler-backend-link-symbol link-symbol plan)))]
+    [else
       (if (and
-        (and
-          (string-eq link-symbol name)
-          (compiler-backend-plan-provides? plan name))
+        (compiler-backend-plan-provides? plan name)
         (not (compiler-backend-index-function-defines? index name)))
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
           name)
-        (compiler-backend-link-symbol link-symbol plan)))
-    (if (and
-      (compiler-backend-plan-provides? plan name)
-      (not (compiler-backend-index-function-defines? index name)))
-      (if (compiler-backend-runtime-user-symbol? name)
-        (compiler-backend-user-symbol name)
-        name)
-      (compiler-backend-function-symbol-index index name))))
+        (compiler-backend-function-symbol-index index name))]))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
@@ -5030,7 +5043,7 @@
     [(IrExternNil) AstTypeNil]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _ _)
+        [(IrExtern extern-name ty _ _ _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args _) args]
@@ -5058,7 +5071,7 @@
     [(IrExternNil) (CompilerBackendNoSignature)]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _ _)
+        [(IrExtern extern-name ty _ _ _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
@@ -5117,7 +5130,7 @@
     [(IrExternNil) signature-ids]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _ _)
+        [(IrExtern extern-name ty _ _ _ _)
           (begin
             (array-set!
               signatures
@@ -5133,14 +5146,16 @@
   [externs : CompilerIrExternList]
   [reference-ids : StringI64Map]
   [link-symbols : (Array String)]
+  [provideds : (Array bool)]
   [index : i64]) : StringI64Map
   (match externs
     [(IrExternNil) reference-ids]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _)
+        [(IrExtern extern-name _ _ link-symbol _ provided)
           (begin
             (array-set! link-symbols index link-symbol)
+            (array-set! provideds index provided)
             (compiler-backend-program-index-extern-references-into
               (box-get rest)
               (string-i64-map-put
@@ -5148,6 +5163,7 @@
                 link-symbol
                 index)
               link-symbols
+              provideds
               (+ index 1)))])]))
 
 (define (compiler-backend-program-index-build
@@ -5161,6 +5177,7 @@
     [extern-signatures : (Array CompilerBackendMaybeSignature)
       (make-array CompilerBackendMaybeSignature extern-count)]
     [extern-link-symbols : (Array String) (make-array String extern-count)]
+    [extern-provided : (Array bool) (make-array bool extern-count)]
     [function-ids : StringI64Map
       (compiler-backend-program-index-functions-into
         functions
@@ -5178,6 +5195,7 @@
         externs
         (string-i64-map-with-capacity (+ (* extern-count 4) 1))
         extern-link-symbols
+        extern-provided
         0)]
     (CompilerBackendProgramIndex
       function-ids
@@ -5185,7 +5203,8 @@
       extern-signature-ids
       extern-signatures
       extern-reference-ids
-      extern-link-symbols)))
+      extern-link-symbols
+      extern-provided)))
 
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
@@ -5230,6 +5249,61 @@
       (array-ref (struct-get index extern-link-symbols) slot)]
     [(StringI64MapMissing) name]))
 
+(define (compiler-backend-index-extern-provided?
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : bool
+  (match (string-i64-map-get (struct-get index extern-signatures) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index extern-provided) slot)]
+    [(StringI64MapMissing) false]))
+
+(define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
+  (ErrCompilerBackendSymbolValidation (compiler-diagnostic-at-start "" message)))
+
+(define (compiler-backend-validate-function-symbols-into
+  [functions : CompilerIrFunctionList]
+  [_plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]
+  [seen : StringI64Map]) : ResultCompilerBackendSymbolValidation
+  (match functions
+    [(IrFunctionNil) (OkCompilerBackendSymbolValidation seen)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (let
+            [symbol : String
+              (compiler-backend-function-symbol-index index name)]
+            (cond
+              [(string-i64-map-contains? seen symbol)
+                (compiler-backend-symbol-validation-error
+                  (string-append
+                    "backend: duplicate emitted function symbol "
+                    symbol))]
+              [(and
+                  (compiler-backend-index-extern-provided? index name)
+                  (compiler-backend-runtime-helper-known? symbol))
+                (compiler-backend-symbol-validation-error
+                  (string-append
+                    "backend: exported function symbol collides with runtime symbol "
+                    symbol))]
+              [else
+                (compiler-backend-validate-function-symbols-into
+                  (box-get rest)
+                  _plan
+                  index
+                  (string-i64-map-put seen symbol 1))]))])]))
+
+(define (compiler-backend-validate-function-symbols
+  [functions : CompilerIrFunctionList]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
+  (compiler-backend-validate-function-symbols-into
+    functions
+    plan
+    index
+    (string-i64-map-with-capacity
+      (+ (* (compiler-backend-function-list-count functions) 2) 1))))
+
 (define (compiler-backend-signature
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -5261,7 +5335,7 @@
     [(IrExternNil) -1]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ abi link-symbol _)
+        [(IrExtern extern-name _ abi link-symbol _ _)
           (if (or (string-eq name extern-name) (string-eq name link-symbol))
             (match abi
               [(AstExternAbiCVarargs fixed-count) fixed-count]
@@ -10636,7 +10710,7 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _)
+        [(IrExtern extern-name _ _ link-symbol _ _)
           (if (string-eq extern-name name)
             true
             (if (string-eq link-symbol name)
@@ -10658,7 +10732,7 @@
     [(IrExternNil) name]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _)
+        [(IrExtern extern-name _ _ link-symbol _ _)
           (if (string-eq extern-name name)
             link-symbol
             (compiler-backend-extern-list-link-symbol (box-get rest) name))])]))
@@ -10841,12 +10915,16 @@
     [(IrExternNil) index]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _)
-          (compiler-backend-runtime-index-externs
-            (compiler-backend-runtime-index-add-extern-name
-              (compiler-backend-runtime-index-add-extern-name index extern-name)
-              link-symbol)
-            (box-get rest))])]))
+        [(IrExtern extern-name _ _ link-symbol _ provided)
+          (if provided
+            (compiler-backend-runtime-index-externs index (box-get rest))
+            (compiler-backend-runtime-index-externs
+              (compiler-backend-runtime-index-add-extern-name
+                (compiler-backend-runtime-index-add-extern-name
+                  index
+                  extern-name)
+                link-symbol)
+              (box-get rest)))])]))
 
 (define (compiler-backend-runtime-index
   [functions : CompilerIrFunctionList]
@@ -11736,12 +11814,14 @@
     [(IrExternNil) buf]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol _)
+        [(IrExtern name _ _ link-symbol _ provided)
           (if (or
-            (and
-              (string-eq name link-symbol)
-              (compiler-backend-plan-provides? plan name))
-            (compiler-backend-plan-provides? plan link-symbol))
+            provided
+            (or
+              (and
+                (string-eq name link-symbol)
+                (compiler-backend-plan-provides? plan name))
+              (compiler-backend-plan-provides? plan link-symbol)))
             (compiler-backend-emit-externs-into (box-get rest) plan buf)
             (compiler-backend-emit-externs-into
               (box-get rest)
@@ -18543,19 +18623,26 @@ tl_process_output:
                             (cfg
                               compile-profile
                               (compiler-backend-profile-start))
-                            (compiler-backend-emit-program-buffer-after-index
-                              program
-                              target
-                              mode
+                            (match (compiler-backend-validate-function-symbols
                               entry-functions
-                              globals
-                              externs
                               plan
-                              program-index
-                              spans
-                              globals-buf
-                              emit-entry
-                              crt-entry))))]
+                              program-index)
+                              [(OkCompilerBackendSymbolValidation _)
+                                (compiler-backend-emit-program-buffer-after-index
+                                  program
+                                  target
+                                  mode
+                                  entry-functions
+                                  globals
+                                  externs
+                                  plan
+                                  program-index
+                                  spans
+                                  globals-buf
+                                  emit-entry
+                                  crt-entry)]
+                              [(ErrCompilerBackendSymbolValidation message)
+                                (ErrCompilerBackendBuffer message)]))))]
                     [(ErrCompilerBackendBuffer message)
                       (begin
                         (cfg

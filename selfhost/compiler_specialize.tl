@@ -276,7 +276,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn name params ret body-box)
+                [(AstDeclDefFn name params ret body-box _)
                   (let
                     [body : AstExpr (box-get body-box)]
                     (if (spec-param-list-has-comptime? params)
@@ -285,7 +285,7 @@
                         (spec-collect-templates rest))
                       (spec-collect-templates rest)))]
                 [_ (spec-collect-templates rest)]))]
-          [(AstDeclDefFn name params ret body-box)
+          [(AstDeclDefFn name params ret body-box _)
             (let
               [body : AstExpr (box-get body-box)]
               (if (spec-param-list-has-comptime? params)
@@ -485,7 +485,7 @@
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
     [(AstDeclDef name _ _) (SpecSomeString name)]
-    [(AstDeclDefFn name _ _ _) (SpecSomeString name)]
+    [(AstDeclDefFn name _ _ _ _) (SpecSomeString name)]
     [(AstDeclDefEnum name _) (SpecSomeString name)]
     [(AstDeclDefEnumLifetimes name _ _) (SpecSomeString name)]
     [(AstDeclDefStruct name _ _ _) (SpecSomeString name)]
@@ -628,6 +628,17 @@
                 (gen-variant-list-eq? a-rest b-rest)))]
           [_ false]))]))
 
+(define (gen-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
+  (match a
+    [(AstFnNoExport)
+      (match b
+        [(AstFnNoExport) true]
+        [_ false])]
+    [(AstFnExport a-symbol)
+      (match b
+        [(AstFnExport b-symbol) (string-eq a-symbol b-symbol)]
+        [_ false])]))
+
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
   (match a
     [(AstDeclDef a-name a-ty a-value-box)
@@ -643,18 +654,22 @@
                   (gen-maybe-type-eq? a-ty b-ty)
                   (gen-expr-eq? a-value b-value))))]
           [_ false]))]
-    [(AstDeclDefFn a-name a-params a-ret a-body-box)
+    [(AstDeclDefFn a-name a-params a-ret a-body-box a-export)
       (let
         [a-body : AstExpr (box-get a-body-box)]
         (match b
-          [(AstDeclDefFn b-name b-params b-ret b-body-box)
+          [(AstDeclDefFn b-name b-params b-ret b-body-box b-export)
             (let
               [b-body : AstExpr (box-get b-body-box)]
               (and
                 (string-eq a-name b-name)
                 (and
                   (gen-param-list-eq? a-params b-params)
-                  (and (ctfe-type-eq a-ret b-ret) (gen-expr-eq? a-body b-body)))))]
+                  (and
+                    (ctfe-type-eq a-ret b-ret)
+                    (and
+                      (gen-expr-eq? a-body b-body)
+                      (gen-fn-export-eq? a-export b-export))))))]
           [_ false]))]
     [(AstDeclDefEnum a-name a-variants)
       (match b
@@ -5159,7 +5174,7 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecDecl (SpecSomeDecl (ast-decl-def name ty rewritten)) state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
-    [(AstDeclDefFn name params ret body-box)
+    [(AstDeclDefFn name params ret body-box export)
       (let
         [body : AstExpr (box-get body-box)]
         (if (spec-param-list-has-comptime? params)
@@ -5170,7 +5185,8 @@
             state)
             [(OkSpecExpr rewritten state2)
               (OkSpecDecl
-                (SpecSomeDecl (ast-decl-def-fn name params ret rewritten))
+                (SpecSomeDecl
+                  (ast-decl-def-fn-export name params ret rewritten export))
                 state2)]
             [(ErrSpecExpr diag) (ErrSpecDecl diag)])))]
     [(AstDeclUnsafe inner-box)
@@ -5268,7 +5284,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
@@ -5276,13 +5292,13 @@
                   (let
                     [template : AstDecl (box-get template-box)]
                     (match template
-                      [(AstDeclDefFn fn-name _ _ _)
+                      [(AstDeclDefFn fn-name _ _ _ _)
                         (if (string-eq fn-name name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
-          [(AstDeclDefFn fn-name _ _ _)
+          [(AstDeclDefFn fn-name _ _ _ _)
             (if (string-eq fn-name name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
@@ -5290,7 +5306,7 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
@@ -5438,7 +5454,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
@@ -5446,7 +5462,7 @@
                   (let
                     [template : AstDecl (box-get template-box)]
                     (match template
-                      [(AstDeclDefFn fn-name _ _ _)
+                      [(AstDeclDefFn fn-name _ _ _ _)
                         (if (string-eq fn-name name)
                           (+
                             1
@@ -5454,7 +5470,7 @@
                           (compiler-specialize-decl-list-count-defs rest name))]
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
-          [(AstDeclDefFn fn-name _ _ _)
+          [(AstDeclDefFn fn-name _ _ _ _)
             (if (string-eq fn-name name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
@@ -5462,7 +5478,7 @@
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _)
+                [(AstDeclDefFn fn-name _ _ _ _)
                   (if (string-eq fn-name name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]

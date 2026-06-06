@@ -187,7 +187,7 @@
   (IrGlobalCons CompilerIrGlobal (Box CompilerIrGlobalList)))
 
 (defenum CompilerIrExtern
-  (IrExtern String AstType AstExternAbi String AstExternLinkInputList))
+  (IrExtern String AstType AstExternAbi String AstExternLinkInputList bool))
 
 (defenum CompilerIrExternList
   (IrExternNil)
@@ -294,7 +294,7 @@
   (IrExternCons extern (box rest)))
 
 (define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
-  (IrExtern name ty (AstExternAbiC) name AstExternLinkInputNil))
+  (IrExtern name ty (AstExternAbiC) name AstExternLinkInputNil false))
 
 (define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue
   (match value
@@ -709,13 +709,14 @@
 
 (define (compiler-ir-clone-extern [extern : CompilerIrExtern]) : CompilerIrExtern
   (match extern
-    [(IrExtern name ty abi symbol links)
+    [(IrExtern name ty abi symbol links provided)
       (IrExtern
         (clone name)
         (clone ty)
         (clone abi)
         (clone symbol)
-        (clone links))]))
+        (clone links)
+        provided)]))
 
 (define (compiler-ir-clone-extern-list-acc
   [externs : CompilerIrExternList]

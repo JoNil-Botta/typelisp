@@ -541,7 +541,7 @@
         (begin
           (compiler-tc-decl-profile-count-def)
           (compiler-tc-decl-profile-add-def-expr))]
-      [(AstDeclDefFn name _ _ _)
+      [(AstDeclDefFn name _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-fn)
           (compiler-tc-decl-profile-add-fn-expr-named name))]
@@ -643,7 +643,7 @@
       (let
         [expr : AstExpr (box-get expr-box)]
         (tc-expr-diag expr message))]
-    [(AstDeclDefFn _ _ _ body-box)
+    [(AstDeclDefFn _ _ _ body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (tc-expr-diag body message))]
@@ -3279,7 +3279,7 @@
                 "typecheck: storing references in top-level values requires lifetime support (#804)")
               (tc-source-expr-policy-ok ctx expr))]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
-    [(AstDeclDefFn _ params ret body-box)
+    [(AstDeclDefFn _ params ret body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (match (tc-source-param-list-policy-ok ctx params)
@@ -4277,7 +4277,7 @@
               [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
               [(AstExprAnn _ ty) (OkTcType (tc-resolve-type ctx ty))]
               [_ (ErrTcType "typecheck: top-level value requires annotation")])]))]
-    [(AstDeclDefFn _ params ret _)
+    [(AstDeclDefFn _ params ret _ _)
       (OkTcType
         (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
     [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
@@ -4408,7 +4408,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
@@ -4426,7 +4426,7 @@
         decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -4573,7 +4573,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv
@@ -4597,7 +4597,7 @@
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
@@ -4830,7 +4830,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _)
+          [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type ctx inner)
               [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
@@ -4843,7 +4843,7 @@
       (match (tc-top-decl-type-with-env ctx env decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefFn name _ _ _)
+    [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -12156,7 +12156,7 @@
       (match decl
         [(AstDeclDef _ _ _)
           (CompilerTypecheckSummary (+ values 1) functions externs)]
-        [(AstDeclDefFn _ _ _ _)
+        [(AstDeclDefFn _ _ _ _ _)
           (CompilerTypecheckSummary values (+ functions 1) externs)]
         [(AstDeclExtern _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
@@ -15330,7 +15330,7 @@
             [(OkMacroExpr nexpr)
               (OkMacroDecl (ast-decl-def name maybe-ty nexpr))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclDefFn name params ret body-box)
+      [(AstDeclDefFn name params ret body-box export)
         (let
           [body : AstExpr (box-get body-box)]
           (match (macro-expand-expr
@@ -15342,7 +15342,8 @@
             0
             body)
             [(OkMacroExpr nbody)
-              (OkMacroDecl (ast-decl-def-fn name params ret nbody))]
+              (OkMacroDecl
+                (ast-decl-def-fn-export name params ret nbody export))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
       [(AstDeclTest name expr-box span)
         (let
@@ -15423,7 +15424,7 @@
       (let
         [expr : AstExpr (box-get expr-box)]
         (macro-expr-needs-compat-expansion? expr))]
-    [(AstDeclDefFn _ _ _ body-box)
+    [(AstDeclDefFn _ _ _ body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
@@ -15726,7 +15727,7 @@
             (match (tc-expr ctx global-env expr)
               [(OkTcType _) OkTcUnit]
               [(ErrTcType message) (ErrTcUnit message)])]))]
-    [(AstDeclDefFn _ params ret body-box)
+    [(AstDeclDefFn _ params ret body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         [env : TcTypeEnv
@@ -15847,7 +15848,7 @@
 (define (tc-generated-clone-decl-with-path? [decl : AstDecl] [path : String]) : bool
   (if (string-eq path "")
     (match decl
-      [(AstDeclDefFn name _ _ _) (tc-generated-clone-name? name)]
+      [(AstDeclDefFn name _ _ _ _) (tc-generated-clone-name? name)]
       [_ false])
     false))
 

@@ -1064,7 +1064,7 @@
       (let
         [body : AstExpr (box-get body-box)]
         (lint-walk-expr body threshold acc))]
-    [(AstDeclDefFn _ _ _ body-box)
+    [(AstDeclDefFn _ _ _ body-box _)
       (let
         [body : AstExpr (box-get body-box)]
         (lint-walk-tail-expr body threshold acc))]

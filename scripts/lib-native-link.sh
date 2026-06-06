@@ -409,7 +409,11 @@ assemble_and_link() {
     else
         echo "[native-link] assemble $label with as"
         as "$asm" -o "$obj"
-        echo "[native-link] link $label with ld"
-        ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+        echo "[native-link] link $label with ld (freestanding: no libc, no loader)"
+        # The runtime is pure syscalls and the backend emits its own libc-ABI
+        # shims (write/read/open/getenv/...), so the compiler links static with
+        # no `-lc` and no dynamic loader -- the produced binary depends on no
+        # shared library. See compiler-backend-runtime-linux-libc-shim-functions.
+        ld -static "$obj" -o "$bin"
     fi
 }

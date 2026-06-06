@@ -265,7 +265,7 @@ stage1_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
         return 1
     fi
-    if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+    if ! ld "$obj" -o "$bin" -static \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[no-rust-stage0] stage1 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true

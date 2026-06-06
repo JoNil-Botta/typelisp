@@ -146,7 +146,7 @@ assemble_link() {
 
     as "$_asm" -o "$_obj"
     if [ "$_link_libc" -eq 1 ]; then
-        ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+        ld "$_obj" -o "$_bin" -static
     else
         ld "$_obj" -o "$_bin"
     fi

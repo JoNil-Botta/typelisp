@@ -116,7 +116,7 @@ run_spmd_mode() {
             mode_code=1
             return
         fi
-        if ! ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        if ! ld "$_obj" -o "$_bin" -static \
             >> "$mode_out" 2>> "$mode_err"; then
             mode_code=1
             return

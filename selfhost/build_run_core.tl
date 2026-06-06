@@ -826,19 +826,19 @@ _tl_print_string:
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ProcessCommand
   (if (source-tool-link-inputs-empty? link-inputs)
+    ;; No native link inputs: the runtime is pure syscalls and the backend
+    ;; emits its own libc-ABI shims, so link a freestanding static binary with
+    ;; no `-lc` and no dynamic loader. Programs that opt into native libraries
+    ;; (the non-empty branch below) still go through `cc`.
     (process-command
       (source-tool-resolve-command "ld")
       (process-args-cons
-        obj-path
+        "-static"
         (process-args-cons
-          "-o"
+          obj-path
           (process-args-cons
-            bin-path
-            (process-args-cons
-              "-dynamic-linker"
-              (process-args-cons
-                "/lib64/ld-linux-x86-64.so.2"
-                (process-args-cons "-lc" (process-args-empty))))))))
+            "-o"
+            (process-args-cons bin-path (process-args-empty))))))
     (process-command
       (source-tool-env-command-or-default
         "TYPELISP_LINUX_CC"

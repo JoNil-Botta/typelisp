@@ -12210,6 +12210,148 @@ tl_region_mark:
 
 ")
 
+;; Freestanding Linux libc-ABI shims (#no-libc). The stdlib binds file/dir/env
+;; helpers through FFI `extern`s to libc symbols (open/read/write/close/lseek/
+;; access/mkdir/rmdir/unlink/getpid/exit/__errno_location/getenv/strlen). Rather
+;; than link glibc, the entry object DEFINES those symbols itself as raw-syscall
+;; thunks that mimic the glibc ABI (return -1 and set a private errno on a
+;; syscall error result in [-4095,-1]). `getenv` walks the stack-captured
+;; environment (`.L_tl_envp`), `strlen` is a NUL scan. With these present the
+;; final link needs no `-lc` and no dynamic loader. C args rdi/rsi/rdx already
+;; match the System V syscall arg registers for the <=3-argument calls here.
+(define (compiler-backend-runtime-linux-libc-shim-functions) : String
+  "    .globl __errno_location
+__errno_location:
+    leaq tl_errno(%rip), %rax
+    ret
+
+    .globl read
+read:
+    movq $0, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl write
+write:
+    movq $1, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl open
+open:
+    movq $2, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl close
+close:
+    movq $3, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl lseek
+lseek:
+    movq $8, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl access
+access:
+    movq $21, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl mkdir
+mkdir:
+    movq $83, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl rmdir
+rmdir:
+    movq $84, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl unlink
+unlink:
+    movq $87, %rax
+    syscall
+    jmp .L_tl_shim_ret
+    .globl rename
+rename:
+    movq $82, %rax
+    syscall
+    jmp .L_tl_shim_ret
+.L_tl_shim_ret:
+    cmpq $-4095, %rax
+    jae .L_tl_shim_err
+    ret
+.L_tl_shim_err:
+    negq %rax
+    movl %eax, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl getpid
+getpid:
+    movq $39, %rax
+    syscall
+    ret
+
+    .globl exit
+exit:
+    movq $231, %rax
+    syscall
+    ret
+
+    .globl fflush
+fflush:
+    xorq %rax, %rax
+    ret
+
+    .globl strlen
+strlen:
+    movq %rdi, %rax
+.L_tl_strlen_loop:
+    cmpb $0, (%rax)
+    je .L_tl_strlen_done
+    incq %rax
+    jmp .L_tl_strlen_loop
+.L_tl_strlen_done:
+    subq %rdi, %rax
+    ret
+
+    .globl getenv
+getenv:
+    movq .L_tl_envp(%rip), %r8
+.L_tl_getenv_loop:
+    movq (%r8), %rsi
+    testq %rsi, %rsi
+    jz .L_tl_getenv_nf
+    movq %rdi, %rax
+.L_tl_getenv_cmp:
+    movb (%rax), %cl
+    testb %cl, %cl
+    jz .L_tl_getenv_namedone
+    movb (%rsi), %dl
+    cmpb %cl, %dl
+    jne .L_tl_getenv_next
+    incq %rax
+    incq %rsi
+    jmp .L_tl_getenv_cmp
+.L_tl_getenv_namedone:
+    cmpb $61, (%rsi)
+    jne .L_tl_getenv_next
+    leaq 1(%rsi), %rax
+    ret
+.L_tl_getenv_next:
+    addq $8, %r8
+    jmp .L_tl_getenv_loop
+.L_tl_getenv_nf:
+    xorq %rax, %rax
+    ret
+
+    .data
+    .balign 4
+tl_errno:
+    .long 0
+    .text
+
+")
+
 ;; First-class arena runtime (#1633). `tl_arena_make` maps a fresh INDEPENDENT
 ;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
 ;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
@@ -19285,6 +19427,10 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-windows-env-path-separator-functions)
               (compiler-backend-runtime-env-path-separator-functions))
             "")]
+        [linux-libc-shims-asm : String
+          (if (compiler-backend-target-windows? target)
+            ""
+            (compiler-backend-runtime-linux-libc-shim-functions))]
         (backend-cat5
           runtime-front-asm
           runtime-string-asm
@@ -19300,7 +19446,7 @@ tl_windows_sdk_registry_install:
               env-var-exists-asm
               env-var-value-asm
               env-path-separator-asm
-              ""))))]))
+              linux-libc-shims-asm))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;

@@ -1054,7 +1054,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (lint-walk-expr index threshold acc))]))
+        (lint-walk-expr index threshold acc))]
+    [(AstExprSyscall args) (lint-walk-expr-list args threshold acc)]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl [decl : AstDecl] [threshold : i64] [acc : LintFindings]) : LintFindings

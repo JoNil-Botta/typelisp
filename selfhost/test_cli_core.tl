@@ -874,7 +874,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tltest-reach-mark-expr index names))]))
+        (tltest-reach-mark-expr index names))]
+    [(AstExprSyscall args) (tltest-reach-mark-expr-list args names)]))
 
 (define (tltest-reach-mark-tests-from
   [tests : (Array InlineTest)]

@@ -548,6 +548,7 @@
     [(IrInstrEntryEnvp _) (compiler-live-set-empty)]
     [(IrInstrCpuId _ leaf subleaf _) (compiler-live-values2-vars leaf subleaf)]
     [(IrInstrXgetbv _ index) (compiler-live-value-vars index)]
+    [(IrInstrSyscall _ args) (compiler-live-call-args-vars args)]
     [(IrInstrCall _ _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrCallIndirect _ func args _)
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
@@ -585,6 +586,7 @@
     [(IrInstrEntryEnvp dst) (compiler-live-set1 dst)]
     [(IrInstrCpuId dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrXgetbv dst _) (compiler-live-set1 dst)]
+    [(IrInstrSyscall dst _) (compiler-live-set1 dst)]
     [(IrInstrCall dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirect dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]

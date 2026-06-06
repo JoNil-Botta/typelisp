@@ -2261,7 +2261,9 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (lower-clone-roots-expr ctx env decls able roots index))]))
+        (lower-clone-roots-expr ctx env decls able roots index))]
+    [(AstExprSyscall args)
+      (lower-clone-roots-expr-list ctx env decls able roots args)]))
 
 (define (lower-clone-roots-decls-in-module
   [ctx : TcContext]
@@ -2754,7 +2756,9 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (lower-reach-expr all-functions names state index))]))
+        (lower-reach-expr all-functions names state index))]
+    [(AstExprSyscall args)
+      (lower-reach-expr-list all-functions names state args)]))
 
 (define (lower-reach-global-decls
   [all-functions : StringI64Map]
@@ -9351,6 +9355,7 @@
       (let
         [index : AstExpr (box-get index-box)]
         (lower-xgetbv ctx state env type-env index))]
+    [(AstExprSyscall args) (lower-syscall ctx state env type-env args)]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -12532,6 +12537,53 @@
               arr
               "lower: array-push! requires a dynamic array"))])]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
+
+;; Lower each syscall operand and widen it to i64 (the kernel reads the full
+;; 64-bit registers). Mirrors `lower-args` but inserts the cast.
+(define (lower-syscall-args
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : ResultLowerArgs
+  (match args
+    [(AstExprNil) (OkLowerArgs state IrValueNil)]
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (box-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match (lower-expr ctx state env type-env arg)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr arg-state value value-ty)
+                (match (lower-cast-value arg-state value value-ty (AstTyI64))
+                  [(LowerExpr cast-state cast-value _)
+                    (match (lower-syscall-args ctx cast-state env type-env rest)
+                      [(OkLowerArgs rest-state rest-values)
+                        (OkLowerArgs
+                          rest-state
+                          (compiler-ir-value-cons cast-value rest-values))]
+                      [(ErrLowerArgs message) (ErrLowerArgs message)])])])]
+          [(ErrLowerExpr message) (ErrLowerArgs message)]))]))
+
+(define (lower-syscall
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : ResultLowerExpr
+  (match (lower-syscall-args ctx state env type-env args)
+    [(OkLowerArgs args-state values)
+      (match (lower-state-alloc-var args-state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit
+                allocated
+                (IrInstrSyscall var-id (compiler-ir-call-args-from-list values)))
+              (IrValueVar var-id)
+              (AstTyI64)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-args
   [ctx : TcContext]

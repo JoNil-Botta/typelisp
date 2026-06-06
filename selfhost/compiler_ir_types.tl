@@ -138,6 +138,9 @@
   (IrInstrEntryEnvp i64)
   (IrInstrCpuId i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrXgetbv i64 CompilerIrValue)
+  ;; Raw Linux x86_64 syscall: dst var plus the operands (number then up to six
+  ;; arguments) carried as call-args. Lowers to a `syscall` instruction.
+  (IrInstrSyscall i64 CompilerIrCallArgs)
   (IrInstrCall i64 String CompilerIrCallArgs AstType)
   (IrInstrCallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
   (IrInstrTailCall String CompilerIrCallArgs AstType)
@@ -497,6 +500,8 @@
         lanes)]
     [(IrInstrXgetbv dst index)
       (IrInstrXgetbv dst (compiler-ir-clone-value index))]
+    [(IrInstrSyscall dst args)
+      (IrInstrSyscall dst (compiler-ir-clone-call-args args))]
     [(IrInstrCall dst name args ty)
       (IrInstrCall
         dst
@@ -1074,6 +1079,7 @@
     [(IrInstrEntryEnvp _) IrEffectMemoryRead]
     [(IrInstrCpuId _ _ _ _) IrEffectUnknown]
     [(IrInstrXgetbv _ _) IrEffectUnknown]
+    [(IrInstrSyscall _ _) IrEffectUnknown]
     [(IrInstrAlloc _ _) IrEffectMemoryWrite]
     [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
     [(IrInstrStore _ _ _) IrEffectMemoryWrite]
@@ -1335,6 +1341,11 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrSyscall dst _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrCall dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1461,6 +1472,10 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrXgetbv dst _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrSyscall dst _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]

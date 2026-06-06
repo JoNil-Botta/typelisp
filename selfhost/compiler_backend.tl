@@ -12329,36 +12329,6 @@ __errno_location:
     leaq tl_errno(%rip), %rax
     ret
 
-    .globl read
-read:
-    movq $0, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl write
-write:
-    movq $1, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl open
-open:
-    movq $2, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl close
-close:
-    movq $3, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl lseek
-lseek:
-    movq $8, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl access
-access:
-    movq $21, %rax
-    syscall
-    jmp .L_tl_shim_ret
     .globl mkdir
 mkdir:
     movq $83, %rax

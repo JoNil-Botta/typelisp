@@ -2,6 +2,12 @@
 
 (import "stdlib/vector.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 ;; Predicate/extractor helpers return concrete bool/i64 (no panic in a match
 ;; arm) so the module typechecks on every stage0, independent of the never-type.
 (define (pop-ok? [p : I64VecPop]) : bool
@@ -18,6 +24,164 @@
   (match p
     [(I64VecPopOk _ rest) rest]
     [(I64VecPopEmpty) fallback]))
+
+(define (string-pop-ok? [p : StringVecPop]) : bool
+  (match p
+    [(StringVecPopOk _ _) true]
+    [(StringVecPopEmpty) false]))
+
+(define (string-pop-value-or [p : StringVecPop] [fallback : String]) : String
+  (match p
+    [(StringVecPopOk value _) value]
+    [(StringVecPopEmpty) fallback]))
+
+(define (string-pop-vec-or [p : StringVecPop] [fallback : StringVec]) : StringVec
+  (match p
+    [(StringVecPopOk _ rest) rest]
+    [(StringVecPopEmpty) fallback]))
+
+(defenum VecApiTag
+  (VecApiTagA i64)
+  (VecApiTagB i64))
+
+(define (vec-api-tag-score [tag : VecApiTag]) : i64
+  (match tag
+    [(VecApiTagA value) value]
+    [(VecApiTagB value) (+ value 100)]))
+
+(comptime-decl
+  (:generated vector-family VecApiTagVec "VecApiTag")
+  (defstruct VecApiTagVec
+    (slots (Array VecApiTag))
+    (len i64)))
+
+(comptime-decl
+  (:generated vector-family VecApiTagVecPop "VecApiTag")
+  (defenum VecApiTagVecPop
+    (VecApiTagVecPopEmpty)
+    (VecApiTagVecPopOk VecApiTag VecApiTagVec)))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-slots "VecApiTag")
+  (define (vec-api-tag-vec-slots [v : VecApiTagVec]) : (Array VecApiTag)
+    (struct-get v slots)))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-len "VecApiTag")
+  (define (vec-api-tag-vec-len [v : VecApiTagVec]) : i64
+    (struct-get v len)))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-capacity "VecApiTag")
+  (define (vec-api-tag-vec-capacity [v : VecApiTagVec]) : i64
+    (array-length (struct-get v slots))))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-with-capacity "VecApiTag")
+  (define (vec-api-tag-vec-with-capacity [capacity : i64]) : VecApiTagVec
+    (let
+      [cap : i64
+        (if (< capacity 1)
+          1
+          capacity)]
+      (VecApiTagVec (make-array VecApiTag cap) 0))))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-get "VecApiTag")
+  (define (vec-api-tag-vec-get
+    [v : VecApiTagVec]
+    [index : i64]
+    [fallback : VecApiTag]) : VecApiTag
+    (if (if (>= index 0)
+      (< index (vec-api-tag-vec-len v))
+      false)
+      (array-ref (vec-api-tag-vec-slots v) index)
+      fallback)))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-set! "VecApiTag")
+  (define (vec-api-tag-vec-set!
+    [v : VecApiTagVec]
+    [index : i64]
+    [value : VecApiTag]) : VecApiTagVec
+    (begin
+      (if (if (>= index 0)
+        (< index (vec-api-tag-vec-len v))
+        false)
+        (array-set! (vec-api-tag-vec-slots v) index value)
+        unit)
+      v)))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-copy-range "VecApiTag")
+  (define (vec-api-tag-vec-copy-range
+    [dst : (Array VecApiTag)]
+    [src : (Array VecApiTag)]
+    [index : i64]
+    [count : i64]) : unit
+    (if (>= index count)
+      unit
+      (begin
+        (array-set! dst index (array-ref src index))
+        (vec-api-tag-vec-copy-range dst src (+ index 1) count)))))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-grow "VecApiTag")
+  (define (vec-api-tag-vec-grow [v : VecApiTagVec]) : VecApiTagVec
+    (let
+      [n : i64 (vec-api-tag-vec-len v)]
+      [bigger : (Array VecApiTag)
+        (make-array VecApiTag (* (vec-api-tag-vec-capacity v) 2))]
+      (begin
+        (vec-api-tag-vec-copy-range bigger (vec-api-tag-vec-slots v) 0 n)
+        (VecApiTagVec bigger n)))))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-push "VecApiTag")
+  (define (vec-api-tag-vec-push [v : VecApiTagVec] [value : VecApiTag]) : VecApiTagVec
+    (if (< (vec-api-tag-vec-len v) (vec-api-tag-vec-capacity v))
+      (let
+        [slots : (Array VecApiTag) (vec-api-tag-vec-slots v)]
+        (begin
+          (array-set! slots (vec-api-tag-vec-len v) value)
+          (VecApiTagVec slots (+ (vec-api-tag-vec-len v) 1))))
+      (vec-api-tag-vec-push (vec-api-tag-vec-grow v) value))))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-pop "VecApiTag")
+  (define (vec-api-tag-vec-pop [v : VecApiTagVec]) : VecApiTagVecPop
+    (if (<= (vec-api-tag-vec-len v) 0)
+      (VecApiTagVecPopEmpty)
+      (let
+        [last-index : i64 (- (vec-api-tag-vec-len v) 1)]
+        (VecApiTagVecPopOk
+          (array-ref (vec-api-tag-vec-slots v) last-index)
+          (VecApiTagVec (vec-api-tag-vec-slots v) last-index))))))
+
+(comptime-decl
+  (:generated vector-family vec-api-tag-vec-to-array "VecApiTag")
+  (define (vec-api-tag-vec-to-array [v : VecApiTagVec]) : (Array VecApiTag)
+    (let
+      [n : i64 (vec-api-tag-vec-len v)]
+      [out : (Array VecApiTag) (make-array VecApiTag n)]
+      (begin
+        (vec-api-tag-vec-copy-range out (vec-api-tag-vec-slots v) 0 n)
+        out))))
+
+(define (tag-pop-ok? [p : VecApiTagVecPop]) : bool
+  (match p
+    [(VecApiTagVecPopOk _ _) true]
+    [(VecApiTagVecPopEmpty) false]))
+
+(define (tag-pop-score-or [p : VecApiTagVecPop] [fallback : i64]) : i64
+  (match p
+    [(VecApiTagVecPopOk value _) (vec-api-tag-score value)]
+    [(VecApiTagVecPopEmpty) fallback]))
+
+(define (tag-pop-vec-or [p : VecApiTagVecPop] [fallback : VecApiTagVec]) : VecApiTagVec
+  (match p
+    [(VecApiTagVecPopOk _ rest) rest]
+    [(VecApiTagVecPopEmpty) fallback]))
 
 (define (main) : i64
   (begin
@@ -148,4 +312,126 @@
                 (assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
                 (assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
                 (assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
+    ;; --- generated StringVec: growth, mutation, pop, snapshot, reverse ---
+    (let
+      [sv2 : StringVec
+        (string-vec-push
+          (string-vec-push (string-vec-with-capacity 2) "alpha")
+          "beta")]
+      (begin
+        (assert-i64-eq (string-vec-len sv2) 2 "string two pushes -> len 2")
+        (assert-i64-eq (string-vec-capacity sv2) 2 "string capacity unchanged")
+        (assert-owned-string-eq
+          (string-vec-get sv2 0 "missing")
+          "alpha"
+          "string get 0")
+        (assert-owned-string-eq
+          (string-vec-last sv2 "missing")
+          "beta"
+          "string last")
+        (let
+          [sv3 : StringVec (string-vec-push sv2 "gamma")]
+          (begin
+            (assert-i64-eq (string-vec-len sv3) 3 "string third push len")
+            (assert-i64-eq (string-vec-capacity sv3) 4 "string grow capacity")
+            (assert-true
+              (string-vec-contains? sv3 "beta")
+              "string contains beta")
+            (let
+              [sv4 : StringVec (string-vec-set! sv3 1 "BETA")]
+              (begin
+                (assert-owned-string-eq
+                  (string-vec-get sv4 1 "missing")
+                  "BETA"
+                  "string set! 1")
+                (let
+                  [popped : StringVecPop (string-vec-pop sv4)]
+                  (begin
+                    (assert-true (string-pop-ok? popped) "string pop ok")
+                    (assert-owned-string-eq
+                      (string-pop-value-or popped "missing")
+                      "gamma"
+                      "string pop value")
+                    (let
+                      [rest : StringVec (string-pop-vec-or popped sv4)]
+                      (begin
+                        (assert-i64-eq
+                          (string-vec-len rest)
+                          2
+                          "string pop shrinks")
+                        (let
+                          [snap : (Array String) (string-vec-to-array rest)]
+                          (begin
+                            (assert-i64-eq
+                              (array-length snap)
+                              2
+                              "string snapshot length")
+                            (assert-owned-string-eq
+                              (array-ref snap 1)
+                              "BETA"
+                              "string snapshot value")
+                            (array-set! snap 1 "changed")
+                            (assert-owned-string-eq
+                              (string-vec-get rest 1 "missing")
+                              "BETA"
+                              "string snapshot independent")))
+                        (let
+                          [rv : StringVec (string-vec-reverse! rest)]
+                          (begin
+                            (assert-owned-string-eq
+                              (string-vec-get rv 0 "missing")
+                              "BETA"
+                              "string reverse first")
+                            (assert-owned-string-eq
+                              (string-vec-get rv 1 "missing")
+                              "alpha"
+                              "string reverse second")))))))))))))
+    ;; --- generated nominal enum payload vector witness ---
+    (let
+      [tv2 : VecApiTagVec
+        (vec-api-tag-vec-push
+          (vec-api-tag-vec-push
+            (vec-api-tag-vec-with-capacity 1)
+            (VecApiTagA 1))
+          (VecApiTagB 2))]
+      (begin
+        (assert-i64-eq (vec-api-tag-vec-len tv2) 2 "tag vec len")
+        (assert-i64-eq (vec-api-tag-vec-capacity tv2) 2 "tag vec grew")
+        (assert-i64-eq
+          (vec-api-tag-score (vec-api-tag-vec-get tv2 1 (VecApiTagA 0)))
+          102
+          "tag vec get")
+        (let
+          [tv3 : VecApiTagVec (vec-api-tag-vec-set! tv2 0 (VecApiTagB 7))]
+          (begin
+            (assert-i64-eq
+              (vec-api-tag-score (vec-api-tag-vec-get tv3 0 (VecApiTagA 0)))
+              107
+              "tag vec set!")
+            (let
+              [popped : VecApiTagVecPop (vec-api-tag-vec-pop tv3)]
+              (begin
+                (assert-true (tag-pop-ok? popped) "tag pop ok")
+                (assert-i64-eq (tag-pop-score-or popped -1) 102 "tag pop value")
+                (let
+                  [rest : VecApiTagVec (tag-pop-vec-or popped tv3)]
+                  (begin
+                    (assert-i64-eq (vec-api-tag-vec-len rest) 1 "tag pop len")
+                    (let
+                      [snap : (Array VecApiTag) (vec-api-tag-vec-to-array rest)]
+                      (begin
+                        (assert-i64-eq
+                          (array-length snap)
+                          1
+                          "tag snapshot length")
+                        (assert-i64-eq
+                          (vec-api-tag-score (array-ref snap 0))
+                          107
+                          "tag snapshot value")
+                        (array-set! snap 0 (VecApiTagA 99))
+                        (assert-i64-eq
+                          (vec-api-tag-score
+                            (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
+                          107
+                          "tag snapshot independent")))))))))))
     42))

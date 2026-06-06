@@ -493,6 +493,7 @@
     [(IrInstrCpuId dst _ _ _)
       (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrXgetbv dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
+    [(IrInstrSyscall dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))

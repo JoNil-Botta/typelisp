@@ -2,10 +2,11 @@
 ;; (#543 constant folding, #544 dead-code elimination, #546 common
 ;; subexpression elimination, #545 copy propagation, #924 strength reduction,
 ;; #925 typed constant/cast folding, #926 CFG simplification, #930 bounds-check
-;; elimination, #1347 CFG/dominance/SSA verification, opt-level policy, and
-;; #923 fixed-point iteration, #1348 sparse conditional constant propagation,
-;; #1489 aggregate stack promotion, #1349 global value numbering/cross-block
-;; copy propagation, and #1801 conservative loop-invariant code motion).
+;; elimination, #1347 CFG/dominance/SSA verification, opt-level policy, #923
+;; fixed-point iteration, self-tail-recursion lowering, #1348 sparse conditional
+;; constant propagation, #1489 aggregate stack promotion, #1349 global value
+;; numbering/cross-block copy propagation, and #1801 conservative loop-invariant
+;; code motion).
 ;;
 ;; Folds constant arithmetic and typed scalar operations into `Mov` literals,
 ;; reduces safe algebraic identities, eliminates an unused pure temporary,
@@ -38,6 +39,7 @@
     (unless (= (compiler-optimize-ssa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-level-self-test) 42) (return 1))
     (unless (= (compiler-optimize-fixed-point-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-tailrec-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-dce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-aggregate-promote-self-test) 42) (return 1))
     (unless (= (compiler-optimize-aggregate-sroa-self-test) 42) (return 1))

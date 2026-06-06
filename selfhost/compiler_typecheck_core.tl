@@ -3256,6 +3256,7 @@
       (let
         [index : AstExpr (box-get index-box)]
         (tc-source-expr-policy-ok ctx index))]
+    [(AstExprSyscall args) (tc-source-expr-list-policy-ok ctx args)]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -7420,7 +7421,18 @@
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
                 (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]))
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprSyscall args)
+      (match (tc-spmd-expr-list ctx env spmd-env args)
+        [(OkTcSpmdExprListInfo args-info)
+          (match args-info
+            [(TcSpmdExprListInfo args-class args-env)
+              (match (tc-spmd-require-uniform
+                args-class
+                "typecheck: foreach calls with varying arguments are not supported")
+                [(OkTcUnit) (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]))
 
 (define (tc-param-list-add-bound-names
   [params : AstParamList]
@@ -7869,7 +7881,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-expr-uses-free-name? index name bound))]))
+        (tc-expr-uses-free-name? index name bound))]
+    [(AstExprSyscall args) (tc-expr-list-uses-free-name? args name bound)]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
@@ -8247,7 +8260,8 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-expr-sets-free-name? index name bound))]))
+        (tc-expr-sets-free-name? index name bound))]
+    [(AstExprSyscall args) (tc-expr-list-sets-free-name? args name bound)]))
 
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
@@ -11134,6 +11148,30 @@
         (ErrTcType "typecheck: xgetbv index must be integer"))]
     [(ErrTcType message) (ErrTcType message)]))
 
+;; Each syscall operand (number and arguments) must be an integer; the raw
+;; kernel result is an i64.
+(define (tc-syscall-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcUnit
+  (match args
+    [(AstExprNil) (OkTcUnit)]
+    [(AstExprCons arg rest)
+      (match (tc-expr ctx env (box-get arg))
+        [(OkTcType arg-ty)
+          (if (tc-integer-type? arg-ty)
+            (tc-syscall-args ctx env (box-get rest))
+            (ErrTcUnit "typecheck: syscall operands must be integer"))]
+        [(ErrTcType message) (ErrTcUnit message)])]))
+
+(define (tc-syscall-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match (tc-syscall-args ctx env args)
+    [(OkTcUnit) (OkTcType (AstTyI64))]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
 (define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
   (match (tc-ensure-cleanup-resource-not-stored-expr env inner)
     [(OkTcUnit)
@@ -12017,6 +12055,7 @@
       (let
         [index : AstExpr (box-get index-box)]
         (tc-xgetbv-expr ctx env index))]
+    [(AstExprSyscall args) (tc-syscall-expr ctx env args)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
@@ -13736,7 +13775,9 @@
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (box-get index-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved index))]))
+        (tc-move-check-expr ctx env locals loop-carried moved index))]
+    [(AstExprSyscall args)
+      (tc-move-check-exprs ctx env locals loop-carried moved args)]))
 
 (define (tc-move-check-body
   [ctx : TcContext]
@@ -14338,6 +14379,8 @@
       (let
         [index : AstExpr (box-get index-box)]
         (ast-expr-xgetbv (macro-hygiene-expr index env macro-name depth)))]
+    [(AstExprSyscall args)
+      (ast-expr-syscall (macro-hygiene-expr-list args env macro-name depth))]
     [(AstExprQuote _) expr]
     [(AstExprQuasiquote _) expr]
     [(AstExprUnquote _) expr]
@@ -15258,6 +15301,10 @@
           (match (macro-expand-expr ctx env decls depth index)
             [(OkMacroExpr nindex) (OkMacroExpr (ast-expr-xgetbv nindex))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprSyscall args)
+        (match (macro-expand-exprs ctx env decls depth args)
+          [(OkMacroExprList nargs) (OkMacroExpr (ast-expr-syscall nargs))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [_ (OkMacroExpr expr)])))
 
 (define (macro-expand-decl

@@ -640,6 +640,9 @@
 (define (compiler-parse-tag-expr-xgetbv) : i64
   286)
 
+(define (compiler-parse-tag-expr-syscall) : i64
+  287)
+
 (define (compiler-parse-tag-expr-quote) : i64
   265)
 
@@ -878,6 +881,7 @@
         out
         (sym-i64-bind out "cpuid-edx" (compiler-parse-tag-expr-cpuid-edx)))
       (set! out (sym-i64-bind out "xgetbv" (compiler-parse-tag-expr-xgetbv)))
+      (set! out (sym-i64-bind out "syscall" (compiler-parse-tag-expr-syscall)))
       (set!
         out
         (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
@@ -1037,6 +1041,7 @@
           [(string-eq name "box-get") (compiler-parse-tag-expr-box-get)]
           [(string-eq name "unquote") (compiler-parse-tag-expr-unquote)]
           [(string-eq name "defenum") (compiler-parse-tag-decl-defenum)]
+          [(string-eq name "syscall") (compiler-parse-tag-expr-syscall)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 8)
         (cond
@@ -3231,6 +3236,26 @@
     [(OkAstExpr expr) (OkAstExpr (ast-expr-xgetbv expr))]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
+(define (parse-ast-syscall-count [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) 0]
+    [(AstExprCons _ rest) (+ 1 (parse-ast-syscall-count (box-get rest)))]))
+
+;; `(syscall number a0 .. a5)`: the syscall number followed by up to six
+;; arguments (1 to 7 operands total). Lowers to a raw `syscall` instruction.
+(define (parse-ast-syscall [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch rest)
+    [(OkAstExprList args)
+      (let
+        [count : i64 (parse-ast-syscall-count args)]
+        (if (< count 1)
+          (ErrAstExpr "parse: syscall requires a syscall number")
+          (if (> count 7)
+            (ErrAstExpr
+              "parse: syscall takes at most 7 operands (number plus six arguments)")
+            (OkAstExpr (ast-expr-syscall args)))))]
+    [(ErrAstExprList message) (ErrAstExpr message)]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -3637,6 +3662,8 @@
     [(= tag (compiler-parse-tag-expr-cpuid-edx))
       (parse-ast-cpuid-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-xgetbv)) (parse-ast-xgetbv dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-syscall))
+      (parse-ast-syscall dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
       (parse-ast-ptr-null dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))

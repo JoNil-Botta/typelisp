@@ -167,14 +167,28 @@
               (string-append ": " (struct-get finding message)))))))))
 
 ;; Print every finding (one per line) to stdout; returns the number printed.
-(define (selfhost-lint-print-findings [path : String] [items : LintFindingList]) : i64
-  (match items
-    [(LintFindingNil) 0]
-    [(LintFindingCons finding rest)
-      (begin
-        (print-string
-          (string-append (selfhost-lint-render-finding path finding) "\n"))
-        (+ 1 (selfhost-lint-print-findings path (box-get rest))))]))
+;; Findings are stored in discovery order, so render backward to preserve the
+;; historical list-accumulator output order.
+(define (selfhost-lint-print-findings-from
+  [path : String]
+  [items : LintFindings]
+  [index : i64]
+  [printed : i64]) : i64
+  (if (< index 0)
+    printed
+    (begin
+      (print-string
+        (string-append
+          (selfhost-lint-render-finding path (lint-findings-ref items index))
+          "\n"))
+      (selfhost-lint-print-findings-from path items (- index 1) (+ printed 1)))))
+
+(define (selfhost-lint-print-findings [path : String] [items : LintFindings]) : i64
+  (selfhost-lint-print-findings-from
+    path
+    items
+    (- (lint-findings-count items) 1)
+    0))
 
 (define (selfhost-lint-space? [c : char]) : bool
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
@@ -291,24 +305,35 @@
       (selfhost-lint-form-origin? source span "when")
       (selfhost-lint-form-origin? source span "unless"))))
 
-(define (selfhost-lint-filter-derived-origins
+(define (selfhost-lint-filter-derived-origins-from
   [source : String]
-  [items : LintFindingList]) : LintFindingList
-  (match items
-    [(LintFindingNil) LintFindingNil]
-    [(LintFindingCons finding rest)
-      (let
-        [filtered-rest : LintFindingList
-          (selfhost-lint-filter-derived-origins source (box-get rest))]
+  [items : LintFindings]
+  [index : i64]
+  [out : LintFindings]) : LintFindings
+  (if (>= index (lint-findings-count items))
+    out
+    (let
+      [finding : LintFinding (lint-findings-ref items index)]
+      [next : LintFindings
         (if (or
           (selfhost-lint-derived-form-origin? source (struct-get finding span))
           (selfhost-lint-suppressed? source finding))
-          filtered-rest
-          (LintFindingCons finding (box filtered-rest))))]))
+          out
+          (lint-findings-add finding out))]
+      (selfhost-lint-filter-derived-origins-from source items (+ index 1) next))))
+
+(define (selfhost-lint-filter-derived-origins
+  [source : String]
+  [items : LintFindings]) : LintFindings
+  (selfhost-lint-filter-derived-origins-from
+    source
+    items
+    0
+    (lint-findings-empty)))
 
 (define (selfhost-lint-program-findings
   [source : String]
-  [program : AstProgram]) : LintFindingList
+  [program : AstProgram]) : LintFindings
   (match program
     [(AstProgram decls-box)
       (let
@@ -323,11 +348,11 @@
 (define (selfhost-lint-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]) : LintFindingList
+  [stdlib-roots : StringVec]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
     [(OkAstProgramDiagnostic program)
       (selfhost-lint-program-findings source program)]
-    [(ErrAstProgramDiagnostic _) LintFindingNil]))
+    [(ErrAstProgramDiagnostic _) (lint-findings-empty)]))
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
 ;; 1 when the file could not be loaded.
@@ -348,7 +373,7 @@
     (match (parse-ast-source-diagnostic input-path source)
       [(OkAstProgramDiagnostic program)
         (let
-          [findings : LintFindingList
+          [findings : LintFindings
             (selfhost-lint-program-findings source program)]
           (begin
             (selfhost-lint-print-findings input-path findings)
@@ -356,11 +381,11 @@
               (string-append
                 "lint: "
                 (string-append
-                  (int->string (lint-finding-list-count findings))
+                  (int->string (lint-findings-count findings))
                   " finding(s)\n")))
             (selfhost-lint-enforce-exit
               enforcing
-              (lint-finding-list-count findings))))]
+              (lint-findings-count findings))))]
       [(ErrAstProgramDiagnostic diag)
         (begin
           (print-error (compiler-diagnostic-render diag))
@@ -597,10 +622,29 @@
       [b : i64 (+ a 1)]
       (+ a b))))")
 
+(define (selfhost-lint-two-findings-source) : String
+  "(define (first [x : i64]) : i64
+  (if (= x 0)
+    0
+    (if (= x 1)
+      1
+      (if (= x 2)
+        2
+        3))))
+
+(define (second [x : i64]) : i64
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        40))))")
+
 ;; Number of findings reported for `source` (after derived-form-origin +
 ;; suppression filtering), via the public source-lint path.
 (define (selfhost-lint-source-finding-count [source : String]) : i64
-  (lint-finding-list-count
+  (lint-findings-count
     (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
@@ -608,9 +652,9 @@
 
 ;; The reported ladder finding has depth 5, a stable rule id, and a real source
 ;; line.
-(define (selfhost-lint-reported-finding-ok? [findings : LintFindingList]) : bool
-  (match findings
-    [(LintFindingCons finding _)
+(define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintSomeFinding finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -620,21 +664,21 @@
             (string-eq
               (struct-get finding rule-id)
               (lint-rule-nested-if-ladder-id)))))]
-    [(LintFindingNil) false]))
+    [(LintNoFinding) false]))
 
-(define (selfhost-lint-nested-let-finding-ok? [findings : LintFindingList]) : bool
-  (match findings
-    [(LintFindingCons finding _)
+(define (selfhost-lint-nested-let-finding-ok? [findings : LintFindings]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintSomeFinding finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (> (struct-get fspan start-line) 0)
           (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
-    [(LintFindingNil) false]))
+    [(LintNoFinding) false]))
 
-(define (selfhost-lint-return-path-finding-ok? [findings : LintFindingList]) : bool
-  (match findings
-    [(LintFindingCons finding _)
+(define (selfhost-lint-return-path-finding-ok? [findings : LintFindings]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintSomeFinding finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -644,11 +688,11 @@
             (string-eq
               (struct-get finding rule-id)
               (lint-rule-return-path-chain-id)))))]
-    [(LintFindingNil) false]))
+    [(LintNoFinding) false]))
 
-(define (selfhost-lint-unit-if-finding-ok? [findings : LintFindingList]) : bool
-  (match findings
-    [(LintFindingCons finding _)
+(define (selfhost-lint-unit-if-finding-ok? [findings : LintFindings]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintSomeFinding finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -658,40 +702,63 @@
             (string-eq
               (struct-get finding rule-id)
               (lint-rule-unit-if-guard-id)))))]
-    [(LintFindingNil) false]))
+    [(LintNoFinding) false]))
+
+(define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
+  (if (= (lint-findings-count findings) 2)
+    (match (lint-findings-get findings 1)
+      [(LintSomeFinding rendered-first)
+        (match (lint-findings-get findings 0)
+          [(LintSomeFinding rendered-second)
+            (let
+              [first-span : AstSourceSpan (struct-get rendered-first span)]
+              [second-span : AstSourceSpan (struct-get rendered-second span)]
+              (and
+                (= (struct-get first-span start-line) 11)
+                (= (struct-get second-span start-line) 2)))]
+          [(LintNoFinding) false])]
+      [(LintNoFinding) false])
+    false))
 
 (define (compiler-lint-driver-self-test) : i64
   (let
-    [reported : LintFindingList
+    [reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         (string-vec-new))]
-    [return-reported : LintFindingList
+    [return-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-return-path-chain-source)
         (string-vec-new))]
-    [unit-reported : LintFindingList
+    [unit-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
         (string-vec-new))]
-    [unit-set-reported : LintFindingList
+    [unit-set-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
         (string-vec-new))]
+    [two-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-two-findings-source)
+        (string-vec-new))]
     (cond
       ;; one reported finding, carrying the rule id / depth / span
-      [(not (= (lint-finding-list-count reported) 1)) 1]
+      [(not (= (lint-findings-count reported) 1)) 1]
       [(not (selfhost-lint-reported-finding-ok? reported)) 2]
-      [(not (= (lint-finding-list-count return-reported) 1)) 9]
+      [(not (= (lint-findings-count return-reported) 1)) 9]
       [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
-      [(not (= (lint-finding-list-count unit-reported) 1)) 12]
+      [(not (= (lint-findings-count unit-reported) 1)) 12]
       [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
-      [(not (= (lint-finding-list-count unit-set-reported) 1)) 16]
+      [(not (= (lint-findings-count unit-set-reported) 1)) 16]
       [(not (selfhost-lint-unit-if-finding-ok? unit-set-reported)) 17]
+      [(not (= (lint-findings-count two-reported) 2)) 18]
+      [(not (selfhost-lint-render-order-ok? two-reported)) 19]
       [(not
           (=
             (selfhost-lint-source-finding-count

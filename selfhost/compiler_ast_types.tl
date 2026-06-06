@@ -292,7 +292,11 @@
   (AstExprCpuIdEbx (Box AstExpr) (Box AstExpr))
   (AstExprCpuIdEcx (Box AstExpr) (Box AstExpr))
   (AstExprCpuIdEdx (Box AstExpr) (Box AstExpr))
-  (AstExprXgetbv (Box AstExpr)))
+  (AstExprXgetbv (Box AstExpr))
+  ;; Raw Linux x86_64 syscall. `(syscall number a0 .. a5)` lowers directly to a
+  ;; `syscall` instruction: the number plus up to six arguments. Returns the raw
+  ;; kernel result in an i64 (negative is `-errno`); callers translate errno.
+  (AstExprSyscall AstExprList))
 
 (defenum AstExprList
   (AstExprNil)
@@ -632,6 +636,9 @@
 (define (ast-expr-xgetbv [index : AstExpr]) : AstExpr
   (AstExprXgetbv (box index)))
 
+(define (ast-expr-syscall [args : AstExprList]) : AstExpr
+  (AstExprSyscall args))
+
 (define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
   (AstExportItemCons head (box rest)))
 
@@ -784,7 +791,8 @@
     [(AstExprCpuIdEbx _ _) 56]
     [(AstExprCpuIdEcx _ _) 57]
     [(AstExprCpuIdEdx _ _) 58]
-    [(AstExprXgetbv _) 59]))
+    [(AstExprXgetbv _) 59]
+    [(AstExprSyscall _) 60]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

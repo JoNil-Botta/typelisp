@@ -1968,6 +1968,53 @@
         (not (compiler-backend-string-contains? asm "syscall\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-syscall-source) : String
+  "(define (ptr-i64 [p : (Ptr u8)]) : i64
+  (cast (unsafe (ptr->int p)) : i64))
+
+(define (main) : i64
+  (let
+    [message : String \"syscall-ok\\n\"]
+    [addr : i64 (ptr-i64 (unsafe (string-data message)))]
+    [wrote : i64 (syscall 1 1 addr (string-length message))]
+    [bad-read : i64 (syscall 0 -1 addr 1)]
+    (if (and (= wrote (string-length message)) (= bad-read -9))
+      (begin
+        (syscall 231 42)
+        1)
+      2)))")
+
+(define (compiler-backend-syscall-source-linux-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-syscall-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    syscall\n")
+          (compiler-backend-string-contains? asm "    popq %rax\n")
+          (compiler-backend-string-contains? asm "    popq %rdi\n")
+          (compiler-backend-string-contains? asm "    popq %rsi\n")
+          (compiler-backend-string-contains? asm "    popq %rdx\n")
+          (compiler-backend-string-contains? asm "    movq $231,")
+          (compiler-backend-string-contains? asm "    movq $42,")
+          true)
+        (not (compiler-backend-string-contains? asm ".extern syscall\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-syscall-source-windows-guard-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-syscall-source)
+    (BackendTargetWindows))
+    [(ErrCompilerBackend diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "backend: syscall is only supported on the linux-x86_64 target")]
+    [(OkCompilerBackend _) false]))
+
+(define (compiler-backend-syscall-source-ok?) : bool
+  (and
+    (compiler-backend-syscall-source-linux-ok?)
+    (compiler-backend-syscall-source-windows-guard-ok?)))
+
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
@@ -2711,71 +2758,9 @@
         "tl_int_to_string"))
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_hash_string")))
 
-(define (compiler-backend-runtime-helper-inventory-stdlib-file-ok?
-  [plan : CompilerBackendRuntimePlan]) : bool
-  (and
-    (backend-and8
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_read_file")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_write_file")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_exists")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_read_file_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_write_file_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_append_file_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_exists_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_open_status"))
-    (backend-and8
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_close_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_read_chunk_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_write_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_flush_status")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_read_chunk_bytes")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_file_read_chunk_eof")
-      true
-      true)))
-
 (define (compiler-backend-runtime-helper-inventory-stdlib-io-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
-  (backend-and8
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
-      plan
-      ".L_tl_read_stdin_line")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
-      plan
-      ".L_tl_read_stdin_bytes")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
-      plan
-      ".L_tl_stdin_eof")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
-      plan
-      ".L_tl_flush_stdout")
+  (backend-and4
     (compiler-backend-runtime-helper-inventory-symbol-ok?
       plan
       "tl_env_var_exists")
@@ -2787,23 +2772,116 @@
       "env-path-separator")
     true))
 
-(define (compiler-backend-runtime-helper-inventory-compat-ok?
+(define (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (and
+    (not (compiler-backend-runtime-helper-known? name))
+    (not (compiler-backend-plan-provides? plan name))))
+
+(define (compiler-backend-runtime-helper-inventory-retired-file-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_read_file")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_write_file")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_exists")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_read_file_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_write_file_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_append_file_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_exists_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_open_status"))
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_close_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_read_chunk_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_write_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_flush_status")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_read_chunk_bytes")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_file_read_chunk_eof")
+      true
+      true)))
+
+(define (compiler-backend-runtime-helper-inventory-retired-io-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (backend-and8
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_err")
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_str")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_read_stdin_line")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_read_stdin_bytes")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_stdin_eof")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_flush_stdout")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_print_err")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_print_str")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       "tl_print_string")
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_char")
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_f64")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    true))
+
+(define (compiler-backend-runtime-helper-inventory-retired-compat-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (backend-and8
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_print_char")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_print_f64")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       ".L_tl_arg_count")
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_arg_count")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_arg_count")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_arg")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok? plan "tl_arg")
+    true
     (and
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan ".L_tl_arg")
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_arg"))))
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        "tl_print_err")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        "tl_print_string"))))
 
 (define (compiler-backend-runtime-helper-inventory-negative-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -2824,17 +2902,15 @@
   (let
     [plan : CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
-    (and
-      (backend-and8
-        (compiler-backend-runtime-helper-inventory-core-ok? plan)
-        (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
-        (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
-        (compiler-backend-runtime-helper-inventory-stdlib-file-ok? plan)
-        (compiler-backend-runtime-helper-inventory-stdlib-io-ok? plan)
-        (compiler-backend-runtime-helper-inventory-compat-ok? plan)
-        (compiler-backend-runtime-helper-inventory-negative-ok? plan)
-        true)
-      true)))
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-core-ok? plan)
+      (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
+      (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
+      (compiler-backend-runtime-helper-inventory-stdlib-io-ok? plan)
+      (compiler-backend-runtime-helper-inventory-retired-file-ok? plan)
+      (compiler-backend-runtime-helper-inventory-retired-io-ok? plan)
+      (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
+      (compiler-backend-runtime-helper-inventory-negative-ok? plan))))
 
 (define (compiler-backend-memory-op-ok?) : bool
   (and
@@ -2865,6 +2941,37 @@
                 (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
                 "    jb .L_tl_test_bounds_ok\n"))))))))
 
+(define (compiler-backend-full-syscall-instr) : CompilerIrInstr
+  (IrInstrSyscall
+    0
+    (compiler-ir-call-args-from-list
+      (compiler-ir-value-cons
+        (IrValueI64 231)
+        (compiler-ir-value-cons
+          (IrValueI64 1)
+          (compiler-ir-value-cons
+            (IrValueI64 2)
+            (compiler-ir-value-cons
+              (IrValueI64 3)
+              (compiler-ir-value-cons
+                (IrValueI64 4)
+                (compiler-ir-value-cons
+                  (IrValueI64 5)
+                  (compiler-ir-value-cons (IrValueI64 6) IrValueNil))))))))))
+
+(define (compiler-backend-full-syscall-registers-ok?) : bool
+  (let
+    [instr : CompilerIrInstr (compiler-backend-full-syscall-instr)]
+    (backend-and8
+      (compiler-backend-instr-contains? instr "    popq %rax\n")
+      (compiler-backend-instr-contains? instr "    popq %rdi\n")
+      (compiler-backend-instr-contains? instr "    popq %rsi\n")
+      (compiler-backend-instr-contains? instr "    popq %rdx\n")
+      (compiler-backend-instr-contains? instr "    popq %r10\n")
+      (compiler-backend-instr-contains? instr "    popq %r8\n")
+      (compiler-backend-instr-contains? instr "    popq %r9\n")
+      (compiler-backend-instr-contains? instr "    syscall\n"))))
+
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
     (backend-and8
@@ -2886,9 +2993,29 @@
       (compiler-backend-instr-contains?
         (IrInstrXgetbv 0 (IrValueI64 0))
         "    xgetbv\n"))
-    (compiler-backend-instr-contains?
-      (IrInstrXgetbv 0 (IrValueI64 0))
-      "    orq %rdx, %rax\n")))
+    (and
+      (compiler-backend-instr-contains?
+        (IrInstrXgetbv 0 (IrValueI64 0))
+        "    orq %rdx, %rax\n")
+      (backend-and8
+        ;; A one-operand syscall loads the number into %rax and issues `syscall`.
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
+          "    syscall\n")
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsOne (IrValueI64 231)))
+          "    popq %rax\n")
+        ;; A two-operand syscall additionally loads argument 0 into %rdi.
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 42)))
+          "    popq %rdi\n")
+        (compiler-backend-instr-contains?
+          (IrInstrSyscall 0 (IrCallArgsTwo (IrValueI64 231) (IrValueI64 42)))
+          "    popq %rax\n")
+        (compiler-backend-full-syscall-registers-ok?)
+        true
+        true
+        true))))
 
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
   (backend-and8
@@ -4846,7 +4973,9 @@
       (and
         (compiler-backend-memory-op-ok?)
         (and
-          (compiler-backend-low-level-instr-ok?)
+          (and
+            (compiler-backend-low-level-instr-ok?)
+            (compiler-backend-syscall-source-ok?))
           (and
             (compiler-backend-numeric-cast-shape-ok?)
             (compiler-backend-implicit-main-ok?))))

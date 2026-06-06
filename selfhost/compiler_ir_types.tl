@@ -138,6 +138,9 @@
   (IrInstrEntryEnvp i64)
   (IrInstrCpuId i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrXgetbv i64 CompilerIrValue)
+  ;; Raw Linux x86_64 syscall: dst var plus the operands (number then up to six
+  ;; arguments) carried as call-args. Lowers to a `syscall` instruction.
+  (IrInstrSyscall i64 CompilerIrCallArgs)
   (IrInstrCall i64 String CompilerIrCallArgs AstType)
   (IrInstrCallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
   (IrInstrTailCall String CompilerIrCallArgs AstType)
@@ -255,6 +258,12 @@
 
 (define (compiler-ir-instr-seq-count [instrs : CompilerIrInstrSeq]) : i64
   (struct-get instrs len))
+
+(define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
+  (= (struct-get instrs len) 0))
+
+(define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
+  (array-ref (struct-get instrs slots) index))
 
 (define (compiler-ir-block [label : String] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (IrBlock label (compiler-ir-instr-seq-from-list instrs)))
@@ -497,6 +506,8 @@
         lanes)]
     [(IrInstrXgetbv dst index)
       (IrInstrXgetbv dst (compiler-ir-clone-value index))]
+    [(IrInstrSyscall dst args)
+      (IrInstrSyscall dst (compiler-ir-clone-call-args args))]
     [(IrInstrCall dst name args ty)
       (IrInstrCall
         dst
@@ -1074,6 +1085,7 @@
     [(IrInstrEntryEnvp _) IrEffectMemoryRead]
     [(IrInstrCpuId _ _ _ _) IrEffectUnknown]
     [(IrInstrXgetbv _ _) IrEffectUnknown]
+    [(IrInstrSyscall _ _) IrEffectUnknown]
     [(IrInstrAlloc _ _) IrEffectMemoryWrite]
     [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
     [(IrInstrStore _ _ _) IrEffectMemoryWrite]
@@ -1335,6 +1347,11 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrSyscall dst _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrCall dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1461,6 +1478,10 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrXgetbv dst _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrSyscall dst _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
@@ -2681,10 +2702,16 @@
     (and
       (= (compiler-ir-instr-seq-count seq) 3)
       (and
-        (= (compiler-ir-instr-list-count roundtrip) 3)
         (and
-          (= (compiler-ir-block-list-instruction-count block-list) 3)
-          (compiler-ir-instr-list-first-mov-dst? roundtrip 1))))))
+          (not (compiler-ir-instr-seq-empty? seq))
+          (match (compiler-ir-instr-seq-ref seq 2)
+            [(IrInstrReturn _) true]
+            [_ false]))
+        (and
+          (= (compiler-ir-instr-list-count roundtrip) 3)
+          (and
+            (= (compiler-ir-block-list-instruction-count block-list) 3)
+            (compiler-ir-instr-list-first-mov-dst? roundtrip 1)))))))
 
 (define (compiler-ir-effect-self-test) : i64
   (begin

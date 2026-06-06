@@ -10966,28 +10966,26 @@
     false
     (let
       [c : char (string-ref name 0)]
-      (or
-        (char-eq c #t')
-        (or (char-eq c #.') (char-eq c #e'))))))
+      (or (char-eq c #t') (or (char-eq c #.') (char-eq c #e'))))))
 
 (define (compiler-backend-runtime-helper-core? [name : String]) : bool
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     false
-  (or
-    (backend-or8
-      (string-eq name "tl_alloc")
-      (string-eq name "tl_oob_abort")
-      (string-eq name "tl_div_abort")
-      (string-eq name "tl_shift_abort")
-      (string-eq name ".L_tl_abort")
-      (string-eq name "tl_region_mark")
-      (string-eq name "tl_region_reset")
-      (string-eq name "tl_arena_make"))
-    (backend-or4
-      (string-eq name "tl_arena_current")
-      (string-eq name "tl_arena_set")
-      (string-eq name "tl_arena_destroy")
-      (string-eq name "tl_arena_poison_enable")))))
+    (or
+      (backend-or8
+        (string-eq name "tl_alloc")
+        (string-eq name "tl_oob_abort")
+        (string-eq name "tl_div_abort")
+        (string-eq name "tl_shift_abort")
+        (string-eq name ".L_tl_abort")
+        (string-eq name "tl_region_mark")
+        (string-eq name "tl_region_reset")
+        (string-eq name "tl_arena_make"))
+      (backend-or4
+        (string-eq name "tl_arena_current")
+        (string-eq name "tl_arena_set")
+        (string-eq name "tl_arena_destroy")
+        (string-eq name "tl_arena_poison_enable")))))
 
 ;; Current stdlib modules still depend on these backend runtime shims for
 ;; unavoidable OS/process/profile operations. `stdlib/fs.tl` read-dir and
@@ -10995,25 +10993,25 @@
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     false
-  (or
-    (backend-or8
-      (string-eq name "tl_process_output")
-      (string-eq name "tl_process_start")
-      (string-eq name "tl_process_wait")
-      (string-eq name "tl_profile_now_ms")
-      (string-eq name "tl_profile_alloc_total")
-      (string-eq name "tl_profile_alloc_live")
-      (string-eq name "tl_profile_alloc_peak")
-      (string-eq name "tl_profile_alloc_reset_peak"))
-    (backend-or8
-      (string-eq name ".L_tl_fs_read_dir_status")
-      (string-eq name ".L_tl_fs_read_dir")
-      (string-eq name ".L_tl_fs_file_kind_status")
-      (string-eq name ".L_tl_fs_file_size_status")
-      (string-eq name ".L_tl_fs_file_size")
-      false
-      false
-      false))))
+    (or
+      (backend-or8
+        (string-eq name "tl_process_output")
+        (string-eq name "tl_process_start")
+        (string-eq name "tl_process_wait")
+        (string-eq name "tl_profile_now_ms")
+        (string-eq name "tl_profile_alloc_total")
+        (string-eq name "tl_profile_alloc_live")
+        (string-eq name "tl_profile_alloc_peak")
+        (string-eq name "tl_profile_alloc_reset_peak"))
+      (backend-or8
+        (string-eq name ".L_tl_fs_read_dir_status")
+        (string-eq name ".L_tl_fs_read_dir")
+        (string-eq name ".L_tl_fs_file_kind_status")
+        (string-eq name ".L_tl_fs_file_size_status")
+        (string-eq name ".L_tl_fs_file_size")
+        false
+        false
+        false))))
 
 ;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
 ;; string equality/parsing moved in #2036, allocating string helpers in #2037,
@@ -11023,21 +11021,21 @@
 (define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     false
-  (or
-    (backend-or8
-      (string-eq name "tl_substring")
-      (string-eq name "tl_string_concat")
-      (string-eq name "tl_string_concat3")
-      (string-eq name "tl_string_concat4")
-      (string-eq name "tl_string_concat5")
-      (string-eq name "tl_string_eq")
-      (string-eq name "tl_string_to_int")
-      (string-eq name "tl_int_to_string"))
-    (backend-or4
-      (string-eq name "tl_hash_string")
-      (string-eq name "tl_env_var_exists")
-      (string-eq name "tl_env_var_value")
-      (string-eq name "env-path-separator")))))
+    (or
+      (backend-or8
+        (string-eq name "tl_substring")
+        (string-eq name "tl_string_concat")
+        (string-eq name "tl_string_concat3")
+        (string-eq name "tl_string_concat4")
+        (string-eq name "tl_string_concat5")
+        (string-eq name "tl_string_eq")
+        (string-eq name "tl_string_to_int")
+        (string-eq name "tl_int_to_string"))
+      (backend-or4
+        (string-eq name "tl_hash_string")
+        (string-eq name "tl_env_var_exists")
+        (string-eq name "tl_env_var_value")
+        (string-eq name "env-path-separator")))))
 
 (define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
   (let

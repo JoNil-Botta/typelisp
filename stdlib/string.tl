@@ -128,7 +128,9 @@
       (while (< b n)
         (begin
           (unsafe
-            (ptr-write! (ptr-offset dst (+ doff b)) (ptr-read (ptr-offset src b))))
+            (ptr-write!
+              (ptr-offset dst (+ doff b))
+              (ptr-read (ptr-offset src b))))
           (set! b (+ b 1))))
       unit)))
 
@@ -143,7 +145,12 @@
       (unsafe
         (array-data buf))]
     (begin
-      (str-copy-bytes-into (unsafe (ptr-offset src start)) dst 0 len)
+      (str-copy-bytes-into
+        (unsafe
+          (ptr-offset src start))
+        dst
+        0
+        len)
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
 

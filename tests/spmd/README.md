@@ -29,6 +29,12 @@ The corpus emphasizes the cases where SIMD bugs hide:
   the same i64 SPMD checksum and encode the selected variant in the exit code.
   Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.
 
+Future `(program-index)`/`(program-count)` fixtures should be kept separate from
+the scalar-vs-SIMD same-exit corpus when they intentionally observe backend gang
+width. They should instead assert the scalar contract (`program-index = 0`,
+`program-count = 1`) and backend-specific SIMD lane/tail behavior from
+`SPEC.md` section 5.15.
+
 Coverage map:
 
 - `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `f64`, and
@@ -41,6 +47,9 @@ Coverage map:
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
   including outer mutation, unsupported `f64` min reduction, and calls with
   varying arguments.
+- Future lane identity diagnostics should cover use outside SPMD scope, use in
+  `foreach` start/end or `spmd-reduce` start/end/init expressions, and nested
+  SPMD scope behavior once nested SPMD is designed.
 
 ## Running
 

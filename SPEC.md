@@ -2650,9 +2650,10 @@ type-checks `foreach`, lowers it to scalar reference loops, and has AVX2 and
 AVX-512 backend paths for a first contiguous map/zip subset. `spmd-reduce` is
 also implemented: scalar lowering covers the supported operator/type surface
 below, and SIMD backend modes vectorize eligible contiguous array folds. The v2
-masked varying `if` contract is specified here before compiler implementation;
-until that implementation lands, the current checker still rejects varying
-control-flow conditions inside `foreach`.
+masked varying `if` contract and public lane identity forms are specified here
+before compiler implementation; until those implementations land, the current
+checker still rejects varying control-flow conditions inside `foreach` and
+rejects `(program-index)`/`(program-count)`.
 
 Initial syntax:
 
@@ -2672,9 +2673,13 @@ Semantics:
 - `start` and `end` are uniform `i64` expressions evaluated once before the
   loop. If `end <= start`, the loop has zero logical iterations.
 - `body` must have type `unit`; the `foreach` expression has type `unit`.
-- The semantic result must match an ordinary scalar loop over the same range.
-  SIMD lowering may group iterations into lanes, but programs must not depend
+- Programs that do not evaluate public lane identity forms must produce the
+  same observable result as an ordinary scalar loop over the same range. SIMD
+  lowering may group iterations into lanes, but those programs must not depend
   on lane width or on an ordering between distinct logical iterations.
+- Programs that evaluate `(program-index)` or `(program-count)` explicitly
+  observe the selected backend gang shape. Those results are allowed to differ
+  by backend mode as described under lane identity below.
 - Existing dynamic-array bounds checks still apply. If a `foreach` indexes past
   an array's length, the program traps the same way `array-ref`/`array-set!`
   traps today.
@@ -2694,6 +2699,7 @@ Uniform and varying rules:
 - Values are uniform by default.
 - The `foreach` index binding is varying: each logical program instance has its
   own `i`.
+- `(program-index)` is varying and `(program-count)` is uniform in SPMD scope.
 - Arithmetic and comparisons involving a varying value produce varying values.
 - `array-ref` with a varying index produces a varying element value.
 - `array-set!` with a varying index or value performs one write per active
@@ -2712,13 +2718,71 @@ Uniform and varying rules:
   uniform. The v2 masked-control-flow slice admits varying `if` with the
   restrictions below; `while` remains uniform-only.
 
-Lane builtins:
+Lane identity forms:
 
-- Public lane builtins equivalent to ISPC `programIndex` and `programCount` are
-  explicitly deferred from the first slice.
-- Reserve the names `program-index` and `program-count` for a later design.
-  They should only become valid after target selection and vector/mask IR exist,
-  because their semantics depend on gang width and tail-mask behavior.
+- The public source names are the no-argument forms `(program-index)` and
+  `(program-count)`. They are reserved until the compiler implementation lands,
+  but this section fixes their source semantics.
+- Both forms are valid only in SPMD scope: inside a `foreach` body or inside the
+  `value` expression of `spmd-reduce`. They are invalid in ordinary expression
+  contexts outside SPMD, in `foreach` start/end expressions, in `spmd-reduce`
+  start/end/init expressions, and in type positions.
+- Nested public SPMD constructs are still unsupported. If nested SPMD is
+  specified later, lane identity forms refer to the innermost SPMD region.
+- `(program-index)` has type `i64` and SPMD class varying. It is the zero-based
+  lane slot within the current gang, not the logical loop index. Use the
+  `foreach`/`spmd-reduce` index binding for the logical iteration value.
+- `(program-count)` has type `i64` and SPMD class uniform. It is the current
+  backend gang width for the SPMD region.
+- Scalar fallback and scalar backend modes always execute one active program
+  instance at a time: `(program-index)` is `0` and `(program-count)` is `1`.
+- SIMD backend modes group consecutive logical iterations into gangs of
+  `(program-count)` lanes. For a gang with logical base index `g`, active lane
+  slot `k` executes logical index `(+ g k)` when `(< (+ g k) end)`. Active lanes
+  observe `(program-index) = k` and the shared `(program-count)`.
+- Inactive tail lanes execute no source expressions and perform no source
+  effects. Their lane identity values are not observable.
+- `(program-count)` may differ by backend mode, target, and lane element type.
+  Programs that evaluate lane identity forms are intentionally
+  backend-mode-observable; the compiler is not required to preserve scalar
+  equivalent exit status, output, or memory contents for those programs. Safe
+  SPMD programs that do not evaluate these forms retain scalar equivalence.
+- In `spmd-reduce`, lane identity forms are allowed only in the `value`
+  expression. A reduction value that uses them is pure but
+  backend-mode-observable, so the reduced result may differ between scalar and
+  SIMD backend modes.
+
+```lisp test=ignore name=spmd-program-index-foreach reason="future lane identity implementation"
+(define (write-lane-ids [idxs : (Array i64)]
+                        [counts : (Array i64)]
+                        [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (begin
+      (array-set! idxs i (program-index))
+      (array-set! counts i (program-count)))))
+```
+
+In scalar backend modes, `write-lane-ids` stores `0` in every `idxs` element and
+`1` in every `counts` element. In a SIMD backend mode with gang width `W`, each
+full gang stores indexes `0` through `W - 1` and count `W`; a non-divisible tail
+stores only the active prefix of those lane indexes.
+
+```lisp test=ignore name=spmd-program-index-empty-range reason="future lane identity implementation"
+(define (empty-lane-ids [out : (Array i64)]) : unit
+  (foreach ([i : i64 0 0])
+    (array-set! out i (+ (program-index) (program-count)))))
+```
+
+```lisp test=ignore name=spmd-program-index-tail reason="future lane identity implementation"
+(define (write-tail-lane-ids [out : (Array i64)]) : unit
+  (foreach ([i : i64 0 13])
+    (array-set! out i (+ (* (program-count) 100) (program-index)))))
+```
+
+```lisp test=ignore name=spmd-program-index-reduce reason="future lane identity implementation"
+(define (sum-lane-slots [n : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (program-index)))
+```
 
 Tail behavior:
 
@@ -2873,9 +2937,10 @@ Backend coverage for reductions:
 
 Purity and varying rules for the first slice:
 
-- The `value` expression may use the varying index, dynamic-array reads,
-  arithmetic/comparison/boolean operators over supported types, and local `let`
-  bindings whose values satisfy the same rules.
+- The `value` expression may use the varying index, `(program-index)`,
+  `(program-count)`, dynamic-array reads, arithmetic/comparison/boolean
+  operators over supported types, and local `let` bindings whose values satisfy
+  the same rules.
 - `value` must not perform writes or other side effects. In particular, `set!`,
   `array-set!`, `print*`, file I/O, `panic`/`error`, nested `foreach`, nested
   `spmd-reduce`, and user-defined calls with varying arguments are rejected in
@@ -2888,8 +2953,8 @@ Cross-lane operations:
 
 - `spmd-reduce` is the only public cross-lane source operation in this slice.
 - Scans/prefix reductions, shuffles, broadcasts, lane extraction/insertion,
-  public `program-index`/`program-count`, gathers/scatters, atomics, task
-  parallelism, and public vector/mask values remain deferred.
+  gathers/scatters, atomics, task parallelism, and public vector/mask values
+  remain deferred.
 - IR and backend work may add private horizontal-reduction primitives as needed
   to implement `spmd-reduce`; those primitives are not user-denotable source
   operations.
@@ -2951,7 +3016,11 @@ Rules:
 - A call to the logical name type-checks like a call to the shared signature.
   Lowering may emit a small wrapper, an indirect call through a cached function
   pointer, or equivalent target code, but the selected body must produce the
-  same observable result as the scalar body for all safe programs.
+  same observable result as the scalar body for all safe programs that do not
+  evaluate lane identity forms. A variant that evaluates `(program-index)` or
+  `(program-count)` may expose the selected backend mode by construction;
+  libraries should only put such functions behind a dispatch API when that
+  observation is intended.
 - Feature detection happens on the first call to each logical dispatch function
   and the selected target is cached for the life of the process. An
   implementation may instead resolve at program startup if that has the same
@@ -2975,9 +3044,11 @@ Rules:
   avoid recursive dispatch declarations until resolver cycles have a specified
   model.
 
-Unsupported in the initial SPMD surface:
+Unsupported in the current SPMD implementation:
 
-- Public vector types, public mask types, `program-index`, and `program-count`.
+- Parser/typechecker/lowerer/backend support for `(program-index)` and
+  `(program-count)`.
+- Public vector types and public mask types.
 - Gather/scatter, indirect indexing through arrays, and non-contiguous memory.
 - Scans, general cross-lane operations, atomics, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
@@ -3033,6 +3104,11 @@ Negative examples for later parser/typechecker tests:
 (define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (array-set! out i (inc (array-ref xs i)))))
+```
+
+```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="future lane identity negative example"
+(define (bad-lane-id) : i64
+  (program-index))
 ```
 
 ---
@@ -4635,6 +4711,7 @@ expr          ::= literal
                 | "(" "foreach" foreach-clause expr ")"
                 | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
+                | "(" spmd-lane-form ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "return" expr ")"
                 | "(" "with-arena" ident expr+ ")"
@@ -4668,6 +4745,7 @@ binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
+spmd-lane-form ::= "program-index" | "program-count"
 cond-arm      ::= "[" expr expr "]"
                 | "[" "else" expr "]"         ; required final arm
 match-arm     ::= "[" pattern expr "]"

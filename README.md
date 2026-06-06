@@ -422,7 +422,10 @@ using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`.
 modes vectorize eligible contiguous array reductions: `sum` over `i32`, `i64`,
 and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over `i64`. The
 SPEC also defines the next masked varying `if` slice; the current compiler
-still rejects varying `if` until that implementation lands.
+still rejects varying `if` until that implementation lands. `SPEC.md` also
+defines the future `(program-index)` and `(program-count)` SPMD lane identity
+forms; compiler support is still pending, and programs that use those forms
+intentionally observe backend gang width.
 
 ### Builtins
 
@@ -657,7 +660,9 @@ AVX-512 uses ZMM vectors and opmask predicated tails, and additionally
 vectorizes `i64` min/max reductions.
 Unsupported vector IR falls back or rejects explicitly.
 Masked varying `if` semantics are specified in SPEC.md as the next SPMD slice,
-but are not implemented yet.
+but are not implemented yet. The future `(program-index)`/`(program-count)`
+lane identity forms are also specified in `SPEC.md` but not accepted by the
+current compiler.
 
 `compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
 predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`

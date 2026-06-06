@@ -60,9 +60,7 @@
 (define (string-i64-map-power-two-capacity? [capacity : i64]) : bool
   (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))
 
-(define (string-i64-map-normalized-bucket-index
-  [hash : i64]
-  [capacity : i64]) : i64
+(define (string-i64-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
   (if (string-i64-map-power-two-capacity? capacity)
     (bit-and hash (- capacity 1))
     (% hash capacity)))
@@ -305,8 +303,7 @@
         (begin
           (while (< walked capacity)
             (match (array-ref slots cursor)
-              [(StringI64MapEmpty)
-                (return (StringI64MapMissing))]
+              [(StringI64MapEmpty) (return (StringI64MapMissing))]
               [(StringI64MapTombstone)
                 (let
                   [next : i64 (+ cursor 1)]
@@ -330,7 +327,7 @@
                         (if (>= next capacity)
                           0
                           next))
-                      (set! walked (+ walked 1))))) ]))
+                      (set! walked (+ walked 1)))))]))
           (StringI64MapMissing))))))
 
 ;: Compatibility owned-key lookup wrapper for existing callers.
@@ -353,8 +350,7 @@
         (begin
           (while (< walked capacity)
             (match (array-ref slots cursor)
-              [(StringI64MapEmpty)
-                (return false)]
+              [(StringI64MapEmpty) (return false)]
               [(StringI64MapTombstone)
                 (let
                   [next : i64 (+ cursor 1)]
@@ -378,7 +374,7 @@
                         (if (>= next capacity)
                           0
                           next))
-                      (set! walked (+ walked 1))))) ]))
+                      (set! walked (+ walked 1)))))]))
           false)))))
 
 ;: Compatibility owned-key containment wrapper for existing callers.
@@ -422,7 +418,10 @@
                   [reused-tombstone : bool (>= first 0)]
                   [deleted : i64 (string-i64-map-deleted map)]
                   (begin
-                    (array-set! slots index (StringI64MapOccupied key value hash))
+                    (array-set!
+                      slots
+                      index
+                      (StringI64MapOccupied key value hash))
                     (return
                       (StringI64MapInsertOk
                         (StringI64Map
@@ -449,7 +448,10 @@
                   (hash-key-string-eq? (& slot-key) (& key))
                   false)
                   (begin
-                    (array-set! slots cursor (StringI64MapOccupied key value hash))
+                    (array-set!
+                      slots
+                      cursor
+                      (StringI64MapOccupied key value hash))
                     (return (StringI64MapInsertOk map)))
                   (let
                     [next : i64 (+ cursor 1)]
@@ -459,7 +461,7 @@
                         (if (>= next capacity)
                           0
                           next))
-                      (set! walked (+ walked 1))))) ]))
+                      (set! walked (+ walked 1)))))]))
           (if (>= first 0)
             (let
               [deleted : i64 (string-i64-map-deleted map)]
@@ -493,8 +495,7 @@
         (begin
           (while (< walked capacity)
             (match (array-ref slots cursor)
-              [(StringI64MapEmpty)
-                (return (StringI64MapRemoveMissing map))]
+              [(StringI64MapEmpty) (return (StringI64MapRemoveMissing map))]
               [(StringI64MapTombstone)
                 (let
                   [next : i64 (+ cursor 1)]
@@ -525,7 +526,7 @@
                         (if (>= next capacity)
                           0
                           next))
-                      (set! walked (+ walked 1))))) ]))
+                      (set! walked (+ walked 1)))))]))
           (StringI64MapRemoveMissing map))))))
 
 ;: Compatibility owned-key remove wrapper for existing callers.

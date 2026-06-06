@@ -214,9 +214,7 @@
                 (text-buf-chunks-render-array-range items start index))))))
       status)))
 
-(define (text-buf-write-chunks-batched
-  [raw : i64]
-  [chunks : TextBufChunkList]) : i64
+(define (text-buf-write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
   (let
     [count : i64 (text-buf-chunk-count chunks 0)]
     [items : (Array String) (make-array String count)]

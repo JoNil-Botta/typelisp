@@ -296,7 +296,9 @@
   [size : i64]) : bool
   (if (= size 16)
     (and
-      (compiler-backend-string-contains? asm "    movq tl_current_arena(%rip), %r8\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq tl_current_arena(%rip), %r8\n")
       (compiler-backend-string-contains? asm "    addq $16, "))
     false))
 
@@ -334,9 +336,7 @@
                 (compiler-backend-string-count asm "    call .L_tl_alloc48\n")
                 (+
                   (compiler-backend-string-count asm "    call .L_tl_alloc56\n")
-                  (compiler-backend-string-count
-                    asm
-                    "    call .L_tl_alloc64\n"))))))))))
+                  (compiler-backend-string-count asm "    call .L_tl_alloc64\n"))))))))))
 
 (define (compiler-backend-source-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)

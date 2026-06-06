@@ -1903,9 +1903,7 @@
 (define (compiler-backend-symbol-safe-char? [c : char]) : bool
   (or
     (and (>= c #A') (<= c #Z'))
-    (or
-      (and (>= c #a') (<= c #z'))
-      (or (and (>= c #0') (<= c #9')) (= c #_')))))
+    (or (and (>= c #a') (<= c #z')) (or (and (>= c #0') (<= c #9')) (= c #_')))))
 
 (define (compiler-backend-asm-safe-symbol-flush-run
   [name : String]
@@ -2216,7 +2214,9 @@
             (set! i (+ i 1))
             (begin
               (if (< start i)
-                (set! buf (text-buf-append buf (substring text start (- i start))))
+                (set!
+                  buf
+                  (text-buf-append buf (substring text start (- i start))))
                 unit)
               (set!
                 buf
@@ -2265,12 +2265,9 @@
         (let
           [next : i64
             (+
-              (+
-                (* hash 131)
-                (compiler-backend-char-code (string-ref text i)))
+              (+ (* hash 131) (compiler-backend-char-code (string-ref text i)))
               1)]
-          [reduced : i64
-            (+ (bit-and next 2147483647) (shr next 31))]
+          [reduced : i64 (+ (bit-and next 2147483647) (shr next 31))]
           (begin
             (set!
               hash
@@ -5416,7 +5413,8 @@
     (begin
       (while (and (< index count) (not found))
         (begin
-          (if (compiler-backend-instr-needs-outgoing-space? (array-ref slots index))
+          (if (compiler-backend-instr-needs-outgoing-space?
+            (array-ref slots index))
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -5451,7 +5449,8 @@
     (begin
       (while (< index count)
         (begin
-          (set! out
+          (set!
+            out
             (compiler-reg-max
               out
               (compiler-backend-instr-outgoing-stack-space
@@ -5469,9 +5468,7 @@
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
             (box-get rest)
-            (compiler-backend-instr-seq-outgoing-stack-space
-              instrs
-              max-space))])]))
+            (compiler-backend-instr-seq-outgoing-stack-space instrs max-space))])]))
 
 (define (compiler-backend-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -5910,8 +5907,7 @@
     [(IrInstrReturn _) 1]
     [_ 0]))
 
-(define (compiler-backend-instr-seq-return-count
-  [instrs : CompilerIrInstrSeq]) : i64
+(define (compiler-backend-instr-seq-return-count [instrs : CompilerIrInstrSeq]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -5920,8 +5916,11 @@
     (begin
       (while (< index count)
         (begin
-          (set! out
-            (+ out (compiler-backend-instr-return-count (array-ref slots index))))
+          (set!
+            out
+            (+
+              out
+              (compiler-backend-instr-return-count (array-ref slots index))))
           (set! index (+ index 1))))
       out)))
 
@@ -10031,7 +10030,8 @@
     (begin
       (while (< index count)
         (begin
-          (set! out
+          (set!
+            out
             (compiler-backend-collect-instr-collections
               out
               (array-ref slots index)))
@@ -10520,7 +10520,8 @@
     (begin
       (while (< i count)
         (begin
-          (set! out
+          (set!
+            out
             (compiler-backend-runtime-index-instr out (array-ref slots i)))
           (set! i (+ i 1))))
       out)))
@@ -11373,9 +11374,7 @@
         (not defines-string-to-int)
         (or extern-string-to-int calls-string-to-int))]
     [needs-hash-string : bool
-      (and
-        (not defines-hash-string)
-        (or extern-hash-string calls-hash-string))]
+      (and (not defines-hash-string) (or extern-hash-string calls-hash-string))]
     [needs-int-to-string : bool
       (and
         (not defines-int-to-string)

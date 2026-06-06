@@ -14,7 +14,12 @@
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType (Box TcTypeEnv))
-  (TcTypeCache StringI64Map (Array AstType) (Array i64) StringI64Map (Box TcTypeEnv)))
+  (TcTypeCache
+    StringI64Map
+    (Array AstType)
+    (Array i64)
+    StringI64Map
+    (Box TcTypeEnv)))
 
 (defenum TcContext
   (TcContext AstProgram CompilerSymbols CompilerRegistries String))
@@ -753,7 +758,8 @@
         (tc-env-default-shadow-fill
           (box-get rest)
           (string-i64-map-put shadows name 1)))]
-    [(TcTypeCache _ _ _ _ rest) (tc-env-default-shadow-fill (box-get rest) shadows)]))
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-env-default-shadow-fill (box-get rest) shadows)]))
 
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -1102,14 +1108,14 @@
     [(TcTypeCache ids values unsafe-flags _ rest)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index)
-          (OkTcTypeUnsafe (array-ref values index) (= (array-ref unsafe-flags index) 1))]
+          (OkTcTypeUnsafe
+            (array-ref values index)
+            (= (array-ref unsafe-flags index) 1))]
         [(StringI64MapMissing)
           (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))])]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
-        (OkTcTypeUnsafe
-          ty
-          (tc-binding-unsafe-marker-head? (box-get rest) name))
+        (OkTcTypeUnsafe ty (tc-binding-unsafe-marker-head? (box-get rest) name))
         (tc-lookup-unsafe (box-get rest) name))]))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
@@ -1348,9 +1354,7 @@
   (match items
     [(TcStringNil) AstLifetimeNil]
     [(TcStringCons item rest)
-      (ast-lifetime-cons
-        item
-        (tc-string-list-to-lifetime-list (box-get rest)))]))
+      (ast-lifetime-cons item (tc-string-list-to-lifetime-list (box-get rest)))]))
 
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : String]) : TcMaybeString
   (match subst
@@ -2257,8 +2261,7 @@
     (set! tc-nominal-owner-cache-handle7 0)
     (set! tc-resolve-type-name-cache-valid false)))
 
-(define (tc-resolve-type-name-cache-lookup
-  [lookup-name : String]) : TcTypeNameLookupCache
+(define (tc-resolve-type-name-cache-lookup [lookup-name : String]) : TcTypeNameLookupCache
   (if (and
     tc-resolve-type-name-cache-valid
     (string-eq tc-resolve-type-name-cache-key lookup-name))
@@ -2504,9 +2507,9 @@
     [(TcContext _ symbols _ module)
       (let
         [lookup-name : String
-            (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
-              (compiler-symbol-module-key module name)
-              name)]
+          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+            (compiler-symbol-module-key module name)
+            name)]
         (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
@@ -2555,9 +2558,9 @@
     [(TcContext _ symbols _ module)
       (let
         [lookup-name : String
-            (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
-              (compiler-symbol-module-key module name)
-              name)]
+          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+            (compiler-symbol-module-key module name)
+            name)]
         (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
@@ -5333,7 +5336,8 @@
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ shadows _) (not (string-i64-map-contains? shadows name))]
+    [(TcTypeCache _ _ _ shadows _)
+      (not (string-i64-map-contains? shadows name))]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         false
@@ -14991,15 +14995,26 @@
           [(AstDeclModule next-module)
             (begin
               (set! macro-expand-active-module next-module)
-              (match (macro-expand-decls ctx top-env orig-decls rest compat-only)
+              (match (macro-expand-decls
+                ctx
+                top-env
+                orig-decls
+                rest
+                compat-only)
                 [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
                 [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
           [_
             (if (and compat-only (not (macro-decl-needs-expansion? decl)))
               (begin
                 (macro-local-decl-index-step! decl)
-                (match (macro-expand-decls ctx top-env orig-decls rest compat-only)
-                  [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
+                (match (macro-expand-decls
+                  ctx
+                  top-env
+                  orig-decls
+                  rest
+                  compat-only)
+                  [(OkMacroDecls nrest)
+                    (OkMacroDecls (ast-decl-cons decl nrest))]
                   [(ErrMacroDecls diag) (ErrMacroDecls diag)]))
               (let
                 [decl-ctx : TcContext
@@ -15079,9 +15094,7 @@
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (or
-          (macro-decl-has-defmacro? decl)
-          (macro-program-has-defmacro? rest)))]))
+        (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without

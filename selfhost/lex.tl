@@ -926,8 +926,7 @@
     [cap : i64 (+ (string-length src) 1)]
     [stoks : (Array SpannedToken) (make-array SpannedToken cap)]
     (match (lex-into-spanned-tokens-result src stoks)
-      [(OkLexIntoSpanned count)
-        (OkSpannedTokens stoks)]
+      [(OkLexIntoSpanned count) (OkSpannedTokens stoks)]
       [(ErrLexIntoSpanned err) (ErrSpannedTokens err)])))
 
 (define (lex-spanned [src : String]) : (Array SpannedToken)

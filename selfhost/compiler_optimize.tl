@@ -1424,17 +1424,14 @@
         (begin
           (if (opt-instr-dead-array? items (array-ref slots index))
             unit
-            (set! out
-              (compiler-ir-instr-cons (array-ref slots index) out)))
+            (set! out (compiler-ir-instr-cons (array-ref slots index) out)))
           (set! index (- index 1))))
       out)))
 
 (define (opt-dce-block-array [items : (Array bool)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-dce-instr-seq-array items instrs))]))
+      (compiler-ir-block label (opt-dce-instr-seq-array items instrs))]))
 
 (define (opt-dce-block-list-array
   [items : (Array bool)]
@@ -1882,8 +1879,7 @@
     (OptAggregateAccessNil)
     false))
 
-(define (opt-aggregate-candidates-from-instrs
-  [scan : CompilerIrInstrList]) : OptAggregateAllocCandidateList
+(define (opt-aggregate-candidates-from-instrs [scan : CompilerIrInstrList]) : OptAggregateAllocCandidateList
   (match scan
     [(IrInstrNil) (OptAggregateAllocCandidateNil)]
     [(IrInstrCons instr rest)
@@ -5315,7 +5311,8 @@
     (begin
       (while (>= index 0)
         (begin
-          (set! out
+          (set!
+            out
             (compiler-ir-instr-cons
               (opt-cfg-fold-branch (array-ref slots index))
               out))
@@ -5325,9 +5322,7 @@
 (define (opt-cfg-fold-branches-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-cfg-fold-branches-instr-seq instrs))]))
+      (compiler-ir-block label (opt-cfg-fold-branches-instr-seq instrs))]))
 
 (define (opt-cfg-fold-branches-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -5361,8 +5356,7 @@
 
 (define (opt-cfg-block-successors [block : CompilerIrBlock]) : OptLabelSet
   (match block
-    [(IrBlock _ instrs)
-      (opt-cfg-instr-seq-successors (OptLabelNil) instrs)]))
+    [(IrBlock _ instrs) (opt-cfg-instr-seq-successors (OptLabelNil) instrs)]))
 
 (define (opt-cfg-terminator-instr? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -6655,7 +6649,8 @@
     (begin
       (while (>= index 0)
         (begin
-          (set! out
+          (set!
+            out
             (compiler-ir-instr-cons
               (opt-cfg-clean-instr reachable (array-ref slots index))
               out))
@@ -6667,9 +6662,7 @@
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-cfg-clean-instr-seq reachable instrs))]))
+      (compiler-ir-block label (opt-cfg-clean-instr-seq reachable instrs))]))
 
 (define (opt-cfg-filter-clean-blocks
   [reachable : OptLabelSet]

@@ -633,8 +633,7 @@
     (begin
       (while (>= index 0)
         (begin
-          (set! out
-            (compiler-reg-instr-moves (array-ref slots index) out))
+          (set! out (compiler-reg-instr-moves (array-ref slots index) out))
           (set! index (- index 1))))
       out)))
 
@@ -970,8 +969,7 @@
     (begin
       (while (< index count)
         (begin
-          (set! out
-            (compiler-reg-ineligible-instr (array-ref slots index) out))
+          (set! out (compiler-reg-ineligible-instr (array-ref slots index) out))
           (set! index (+ index 1))))
       out)))
 
@@ -1002,7 +1000,8 @@
     (begin
       (while (< index count)
         (begin
-          (set! out
+          (set!
+            out
             (match (array-ref slots index)
               [(IrInstrCall _ _ _ _)
                 (compiler-live-set-union
@@ -1029,12 +1028,7 @@
           (compiler-reg-call-live-blocks
             (box-get rest)
             liveness
-            (compiler-reg-call-live-instr-seq
-              instrs
-              liveness
-              label
-              0
-              set))])]))
+            (compiler-reg-call-live-instr-seq instrs liveness label 0 set))])]))
 
 (define (compiler-reg-call-arg-vars-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -1047,12 +1041,17 @@
     (begin
       (while (< index count)
         (begin
-          (set! out
+          (set!
+            out
             (match (array-ref slots index)
               [(IrInstrCall _ _ args _)
-                (compiler-live-set-union out (compiler-live-call-args-vars args))]
+                (compiler-live-set-union
+                  out
+                  (compiler-live-call-args-vars args))]
               [(IrInstrTailCall _ args _)
-                (compiler-live-set-union out (compiler-live-call-args-vars args))]
+                (compiler-live-set-union
+                  out
+                  (compiler-live-call-args-vars args))]
               [_ out]))
           (set! index (+ index 1))))
       out)))
@@ -1175,14 +1174,12 @@
     (begin
       (while (< index count)
         (begin
-          (set! out-vector
-            (compiler-reg-vector-defs-instr
-              (array-ref slots index)
-              out-vector))
-          (set! out-mask
-            (compiler-reg-mask-defs-instr
-              (array-ref slots index)
-              out-mask))
+          (set!
+            out-vector
+            (compiler-reg-vector-defs-instr (array-ref slots index) out-vector))
+          (set!
+            out-mask
+            (compiler-reg-mask-defs-instr (array-ref slots index) out-mask))
           (set! index (+ index 1))))
       (CompilerLiveUseDef out-vector out-mask))))
 

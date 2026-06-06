@@ -86,10 +86,8 @@
     (begin
       (while (< i n)
         (let
-          [next : i64
-            (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
-          [reduced : i64
-            (+ (bit-and next 2147483647) (shr next 31))]
+          [next : i64 (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
+          [reduced : i64 (+ (bit-and next 2147483647) (shr next 31))]
           (begin
             (set!
               hash

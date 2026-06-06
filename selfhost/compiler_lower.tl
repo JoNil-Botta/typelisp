@@ -3520,7 +3520,9 @@
         next-label
         IrInstrNil
         (compiler-ir-block-cons
-          (IrBlock current-label (lower-instr-seq-from-reversed-list current-instrs))
+          (IrBlock
+            current-label
+            (lower-instr-seq-from-reversed-list current-instrs))
           blocks)
         functions
         function
@@ -3534,7 +3536,9 @@
     [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
       (let
         [current-block : CompilerIrBlock
-          (IrBlock current-label (lower-instr-seq-from-reversed-list current-instrs))]
+          (IrBlock
+            current-label
+            (lower-instr-seq-from-reversed-list current-instrs))]
         (lower-block-list-reverse-onto
           blocks
           (compiler-ir-block-cons current-block IrBlockNil)))]))
@@ -16026,7 +16030,9 @@
       (lower-supported-function-return-type? ctx (box-get inner))]
     [_ true]))
 
-(define (lower-logical-name-has-suffix? [logical-name : String] [suffix : String]) : bool
+(define (lower-logical-name-has-suffix?
+  [logical-name : String]
+  [suffix : String]) : bool
   (let
     [name-len : i64 (string-length logical-name)]
     [suffix-len : i64 (string-length suffix)]
@@ -16060,8 +16066,7 @@
             (match rest
               [(AstParamNil)
                 (match param
-                  [(AstParam _ ty _)
-                    (lower-stdlib-hash-string-param? ctx ty)])]
+                  [(AstParam _ ty _) (lower-stdlib-hash-string-param? ctx ty)])]
               [_ false]))]
         [_ false]))))
 
@@ -16097,9 +16102,7 @@
       (match (lower-runtime-call-values
         fields-state
         "tl_hash_string"
-        (compiler-ir-value-cons
-          ptr
-          (compiler-ir-value-cons len IrValueNil))
+        (compiler-ir-value-cons ptr (compiler-ir-value-cons len IrValueNil))
         ret-ty)
         [(OkLowerExpr lowered)
           (match lowered
@@ -16210,11 +16213,7 @@
           mode)]
       [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       (if (lower-supported-function-return-type? ctx ret-ty)
-        (if (lower-stdlib-hash-string-signature?
-          ctx
-          logical-name
-          params
-          ret-ty)
+        (if (lower-stdlib-hash-string-signature? ctx logical-name params ret-ty)
           (lower-stdlib-hash-string-function
             ctx
             logical-name
@@ -17181,47 +17180,49 @@
                   module)
                 (begin
                   (cfg compile-profile (compiler-lower-profile-detail-start))
-                (match (lower-function-escaping
-                  decl-ctx
-                  local-top-env
-                  type-cache
-                  logical-name
-                  params
-                  ret
-                  body
-                  spans
-                  name-cache
-                  mode)
-                  [(OkLowerFunction lowered-functions function-spans)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-detail-finish
-                          "function"
-                          logical-name))
-                      (lower-decls-in-module
-                        ctx
-                        top-env
-                        local-top-env
-                        rest
-                        globals
-                        (lower-function-list-append lowered-functions functions)
-                        externs
-                        function-spans
-                        names
-                        name-cache
-                        type-cache
-                        dispatch-variants
-                        mode
-                        module))]
-                  [(ErrLowerFunction message)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-detail-finish
-                          "function"
-                          logical-name))
-                      (ErrLowerDecls message))]))))]
+                  (match (lower-function-escaping
+                    decl-ctx
+                    local-top-env
+                    type-cache
+                    logical-name
+                    params
+                    ret
+                    body
+                    spans
+                    name-cache
+                    mode)
+                    [(OkLowerFunction lowered-functions function-spans)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-detail-finish
+                            "function"
+                            logical-name))
+                        (lower-decls-in-module
+                          ctx
+                          top-env
+                          local-top-env
+                          rest
+                          globals
+                          (lower-function-list-append
+                            lowered-functions
+                            functions)
+                          externs
+                          function-spans
+                          names
+                          name-cache
+                          type-cache
+                          dispatch-variants
+                          mode
+                          module))]
+                    [(ErrLowerFunction message)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-detail-finish
+                            "function"
+                            logical-name))
+                        (ErrLowerDecls message))]))))]
           [(AstDeclDefMacro _ _ _ _)
             (lower-decls-in-module
               ctx
@@ -21367,17 +21368,20 @@
                 [name : String "stdlib/hash.tl::hash-string"]
                 [ok : bool true]
                 (begin
-                  (if (= (lower-test-function-call-count
-                    functions
-                    name
-                    "tl_hash_string")
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      name
+                      "tl_hash_string")
                     1)
                     unit
                     (set! ok false))
                   (if (= (lower-test-function-bounds-count functions name) 0)
                     unit
                     (set! ok false))
-                  (if (= (lower-test-function-call-count functions "main" name) 1)
+                  (if (=
+                    (lower-test-function-call-count functions "main" name)
+                    1)
                     unit
                     (set! ok false))
                   ok))])]

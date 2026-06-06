@@ -14499,21 +14499,23 @@
   [arg : AstExpr]) : ResultMacroCheck
   (let
     [resolved-expected : AstType (tc-resolve-type ctx expected)]
-    (match (tc-expr ctx env arg)
-      [(OkTcType actual)
-        (if (tc-type-compatible? resolved-expected actual)
-          OkMacroCheck
+    (if (tc-type-eq resolved-expected (AstTyExpr))
+      OkMacroCheck
+      (match (tc-expr ctx env arg)
+        [(OkTcType actual)
+          (if (tc-type-compatible? resolved-expected actual)
+            OkMacroCheck
+            (ErrMacroCheck
+              (tc-expr-diag
+                arg
+                (macro-operand-mismatch-message resolved-expected actual))))]
+        [(ErrTcType message)
           (ErrMacroCheck
             (tc-expr-diag
               arg
-              (macro-operand-mismatch-message resolved-expected actual))))]
-      [(ErrTcType message)
-        (ErrMacroCheck
-          (tc-expr-diag
-            arg
-            (string-append
-              "typecheck: macro operand typecheck failed: "
-              message)))])))
+              (string-append
+                "typecheck: macro operand typecheck failed: "
+                message)))]))))
 
 (define (macro-check-variadic-operands
   [ctx : TcContext]

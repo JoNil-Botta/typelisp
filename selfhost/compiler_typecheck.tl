@@ -5049,8 +5049,8 @@
 
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;; A macro call in an evaluated position is expanded before typechecking; the
-;; spliced form must then typecheck. Arity and operand types are checked at the
-;; call site before the transformer runs.
+;; spliced form must then typecheck. Arity and typed operands are checked at the
+;; call site before the transformer runs; Expr operands are syntax captures.
 (define (compiler-typecheck-macro-expand-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
@@ -5071,6 +5071,20 @@
 (define (compiler-typecheck-macro-expand-variadic-operand-source) : String
   "(defmacro (first [head : bool] [rest : bool ...]) : bool head)
 (define (main) : i64 (if (first true 1) 1 0))")
+
+(define (compiler-typecheck-macro-expr-wildcard-operand-source) : String
+  "(defmacro (choose [condition : bool] [then-expr : Expr] [else-expr : Expr]) : Expr
+  `(if ,condition ,then-expr ,else-expr))
+(define (int-value [x : i64]) : i64
+  (choose true (+ x 1) 0))
+(define (bool-value [x : bool]) : bool
+  (choose x true false))
+(define (main) : i64 (int-value 10))")
+
+(define (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source) : String
+  "(defmacro (choose [condition : bool] [then-expr : Expr] [else-expr : Expr]) : Expr
+  `(if ,condition ,then-expr ,else-expr))
+(define (main) : i64 (choose true 1 false))")
 
 (define (compiler-typecheck-macro-expand-depth-source) : String
   "(defmacro (again) : Expr `(again))
@@ -5244,9 +5258,16 @@
             (compiler-typecheck-error-ok?
               (compiler-typecheck-macro-expand-variadic-operand-source)
               "typecheck: macro operand type mismatch: expected bool, got i64")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-macro-expand-depth-source)
-              "macro expansion exceeded depth limit")))))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-macro-expr-wildcard-operand-source))
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
+                  "typecheck: if branches must match")
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-macro-expand-depth-source)
+                  "macro expansion exceeded depth limit")))))))
     (and
       (compiler-typecheck-macro-export-tests-ok?)
       (and

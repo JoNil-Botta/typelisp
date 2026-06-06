@@ -107,7 +107,7 @@
   :
   never
   (begin
-    (runtime-abort-write "fatal: index out of bounds\n")
+    (runtime-abort-write "tl: array index out of bounds\n")
     (runtime-os-exit 134)))
 
 ;: Fault handler for division (or remainder) by zero, exported as `tl_div_abort`.
@@ -116,7 +116,7 @@
   :
   never
   (begin
-    (runtime-abort-write "fatal: divide by zero\n")
+    (runtime-abort-write "tl: integer division or remainder error\n")
     (runtime-os-exit 135)))
 
 ;: Fault handler for an out-of-range shift amount, exported as `tl_shift_abort`.
@@ -125,5 +125,5 @@
   :
   never
   (begin
-    (runtime-abort-write "fatal: shift amount out of range\n")
+    (runtime-abort-write "tl: shift count out of range\n")
     (runtime-os-exit 129)))

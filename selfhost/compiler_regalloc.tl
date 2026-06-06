@@ -1357,9 +1357,12 @@
                 (- vars 1)
                 CompilerRegIntervalNil)))))]))
 
+;; When handles-ok? is true (scalar path) 8-byte aggregate handles are register
+;; eligible; when false (SIMD/AVX path, unchanged) only CPU scalars/pointers are.
 (define (compiler-reg-ineligible-non-scalars
   [types : CompilerRegVarTypeList]
-  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  [set : CompilerLiveI64Set]
+  [handles-ok? : bool]) : CompilerLiveI64Set
   (match types
     [(CompilerRegVarTypeNil) set]
     [(CompilerRegVarTypeCons item rest)
@@ -1367,9 +1370,12 @@
         [(CompilerRegVarType var ty)
           (compiler-reg-ineligible-non-scalars
             (box-get rest)
-            (if (compiler-reg-register-eligible-type? ty)
+            (if (if handles-ok?
+              (compiler-reg-register-eligible-type? ty)
+              (compiler-reg-scalar-type? ty))
               set
-              (compiler-live-set-insert set var)))])]))
+              (compiler-live-set-insert set var))
+            handles-ok?)])]))
 
 (define (compiler-reg-ineligible-params
   [params : CompilerIrParamList]
@@ -1528,7 +1534,33 @@
             blocks
             (compiler-reg-ineligible-non-scalars
               types
-              (compiler-live-set-empty)))))]))
+              (compiler-live-set-empty)
+              true))))]))
+
+;; SIMD/AVX register planning keeps the original (pre-#perf) ineligibility: every
+;; value live across a call is ineligible (the vector/mask/XMM pools are
+;; caller-saved and the backend has no callee-saved save/restore for them), and
+;; only CPU scalars/pointers — not aggregate handles — are register eligible.
+;; This keeps the AVX backend golden output byte-identical.
+(define (compiler-reg-ineligible-vars-simd
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ params _ _ blocks)
+      (compiler-reg-call-live-blocks
+        blocks
+        liveness
+        (compiler-reg-ineligible-memory
+          blocks
+          (compiler-reg-ineligible-params
+            params
+            (compiler-reg-call-arg-vars-blocks
+              blocks
+              (compiler-reg-ineligible-non-scalars
+                types
+                (compiler-live-set-empty)
+                false)))))]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]
@@ -2138,14 +2170,129 @@
                     var
                     (CompilerRegRegister reg))))))])]))
 
-(define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
+;; Call points (#perf/correctness): the integer pool admits only callee-saved
+;; registers, so a value live across a call keeps its home safely. The XMM/float
+;; pool, however, uses CALLER-saved registers (the backend has no callee-saved
+;; XMM save/restore), which a call clobbers — so a FLOAT value live across a call
+;; must NOT be register-homed. We compute the set of instruction points that hold
+;; a call (using the same 2-per-instruction numbering as the live intervals) and
+;; mark any float-typed value whose interval strictly spans a call point
+;; ineligible. Integers are unaffected (their pool is call-safe).
+(defenum CompilerRegCallScan
+  (CompilerRegCallScan i64 CompilerLiveI64Set))
+
+(define (compiler-reg-call-points-seq
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
   (let
-    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
-    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
-    [intervals : CompilerRegIntervalList
-      (compiler-reg-block-intervals func)]
-    [ineligible : CompilerLiveI64Set
-      (compiler-reg-ineligible-vars func types)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (match (array-ref slots index)
+              [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
+              [_ out]))
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      (CompilerRegCallScan p out))))
+
+(define (compiler-reg-call-points-blocks
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [set : CompilerLiveI64Set]) : CompilerRegCallScan
+  (match blocks
+    [(IrBlockNil) (CompilerRegCallScan point set)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (compiler-reg-call-points-seq instrs point set)
+            [(CompilerRegCallScan p2 s2)
+              (compiler-reg-call-points-blocks (box-get rest) p2 s2)])])]))
+
+(define (compiler-reg-call-points [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match (compiler-reg-call-points-blocks blocks 0 (compiler-live-set-empty))
+        [(CompilerRegCallScan _ set) set])]))
+
+(define (compiler-reg-call-word-in-range?
+  [bits : i64]
+  [var-base : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (if (= bits 0)
+    false
+    (let
+      [i : i64 (compiler-reg-low-bit-index bits)]
+      [c : i64 (+ var-base i)]
+      (if (if (< start c) (< c end) false)
+        true
+        (compiler-reg-call-word-in-range?
+          (bit-and bits (- bits 1))
+          var-base
+          start
+          end)))))
+
+(define (compiler-reg-call-set-in-range?
+  [set : CompilerLiveI64Set]
+  [start : i64]
+  [end : i64]) : bool
+  (match set
+    [(CompilerLiveI64Nil) false]
+    [(CompilerLiveI64Cons chunk rest)
+      (if (compiler-reg-call-word-in-range?
+        (compiler-live-set-chunk-bits chunk)
+        (*
+          (compiler-live-set-chunk-word-index chunk)
+          (compiler-live-set-word-bits))
+        start
+        end)
+        true
+        (compiler-reg-call-set-in-range? (box-get rest) start end))]))
+
+(define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
+  (match (compiler-reg-var-types-lookup type-info var)
+    [(CompilerRegSomeType ty) (compiler-reg-float-type? ty)]
+    [(CompilerRegNoType) false]))
+
+(define (compiler-reg-mark-float-spanning
+  [intervals : CompilerRegIntervalList]
+  [type-info : CompilerRegVarTypes]
+  [call-points : CompilerLiveI64Set]
+  [ineligible : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match intervals
+    [(CompilerRegIntervalNil) ineligible]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval var start end)
+          (compiler-reg-mark-float-spanning
+            (box-get rest)
+            type-info
+            call-points
+            (if (if (compiler-reg-var-float? type-info var)
+              (compiler-reg-call-set-in-range? call-points start end)
+              false)
+              (compiler-live-set-insert ineligible var)
+              ineligible))])]))
+
+;; Shared linear-scan body: assign the integer pool, then XMM, then vector, then
+;; mask registers over the given intervals/ineligible set.
+(define (compiler-reg-plan-from
+  [func : CompilerIrFunction]
+  [type-info : CompilerRegVarTypes]
+  [types : CompilerRegVarTypeList]
+  [intervals : CompilerRegIntervalList]
+  [ineligible : CompilerLiveI64Set]) : CompilerRegPlan
+  (let
     [moves : CompilerRegMoveList (compiler-reg-function-moves func)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
@@ -2188,6 +2335,41 @@
                       vector-assignments)
                       [(CompilerRegAssignState _ assignments)
                         (CompilerRegPlan assignments ineligible intervals types)])])])])])))
+
+;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
+;; intervals + the call-live-conservative ineligibility, keeping AVX backend
+;; golden output byte-identical.
+(define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
+  (let
+    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+    (compiler-reg-plan-from
+      func
+      type-info
+      types
+      (compiler-reg-live-intervals func liveness)
+      (compiler-reg-ineligible-vars-simd func liveness types))))
+
+;; Scalar register plan (#perf, opt level 3): cheap block-level live intervals,
+;; structural ineligibility that keeps call-spanning integers/handles in
+;; callee-saved registers, and float-call-spanning exclusion for the caller-saved
+;; XMM pool.
+(define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
+  (let
+    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+    [intervals : CompilerRegIntervalList (compiler-reg-block-intervals func)]
+    (compiler-reg-plan-from
+      func
+      type-info
+      types
+      intervals
+      (compiler-reg-mark-float-spanning
+        intervals
+        type-info
+        (compiler-reg-call-points func)
+        (compiler-reg-ineligible-vars func types)))))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
@@ -2251,6 +2433,15 @@
   [var : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegNoLocation) true]
+    [_ false]))
+
+(define (compiler-reg-location-any-register?
+  [maybe-location : CompilerRegMaybeLocation]) : bool
+  (match maybe-location
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegRegister _) true]
+        [_ false])]
     [_ false]))
 
 (define (compiler-reg-i64-ty) : AstType
@@ -2809,6 +3000,29 @@
               (compiler-reg-assignment-lookup assignments 2)
               "%r12"))))]))
 
+;; Scalar plan (#perf): the same function, but an integer value live across a
+;; call now keeps a callee-saved register home (the integer pool is call-safe),
+;; while the unit call result stays ineligible.
+(define (compiler-reg-scalar-call-live-ok?) : bool
+  (match (compiler-reg-plan-function-scalar (compiler-reg-call-live-function))
+    [(CompilerRegPlan assignments ineligible _ _)
+      (and
+        (not (compiler-live-set-contains? ineligible 0))
+        (and
+          (compiler-reg-location-any-register?
+            (compiler-reg-assignment-lookup assignments 0))
+          (compiler-reg-location-any-register?
+            (compiler-reg-assignment-lookup assignments 2))))]))
+
+;; Scalar plan correctness: a FLOAT value live across a call must NOT be homed in
+;; the caller-saved XMM pool, so it stays ineligible even on the scalar path.
+(define (compiler-reg-scalar-f64-call-live-ok?) : bool
+  (match (compiler-reg-plan-function-scalar (compiler-reg-f64-call-live-function))
+    [(CompilerRegPlan assignments ineligible _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (compiler-reg-unassigned? assignments 0))]))
+
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
     [(CompilerRegPlan assignments ineligible _ _)
@@ -2883,6 +3097,22 @@
               (compiler-reg-assignment-lookup assignments 5)
               "%r12"))]
         (and marked (and unassigned homes)))]))
+
+;; Scalar plan (#perf): String/DynArray handles (vars 2/4) are register-eligible
+;; 8-byte values; params (var 0) and address-taken values (var 3 via the AddrOf
+;; into var 6) stay ineligible.
+(define (compiler-reg-scalar-handle-eligible-ok?) : bool
+  (match (compiler-reg-plan-function-scalar (compiler-reg-ineligible-function))
+    [(CompilerRegPlan _ ineligible _ _)
+      (and
+        (and
+          (compiler-live-set-contains? ineligible 0)
+          (and
+            (compiler-live-set-contains? ineligible 3)
+            (compiler-live-set-contains? ineligible 6)))
+        (and
+          (not (compiler-live-set-contains? ineligible 2))
+          (not (compiler-live-set-contains? ineligible 4))))]))
 
 (define (compiler-reg-same-location?
   [assignments : CompilerRegAssignmentList]
@@ -3088,7 +3318,13 @@
                         (compiler-reg-xmm-clobbers-ok?)
                         (and
                           (compiler-reg-coalesce-ok?)
-                          (compiler-reg-vector-mask-homes-ok?)))))))))))))
+                          (and
+                            (compiler-reg-vector-mask-homes-ok?)
+                            (and
+                              (compiler-reg-scalar-call-live-ok?)
+                              (and
+                                (compiler-reg-scalar-f64-call-live-ok?)
+                                (compiler-reg-scalar-handle-eligible-ok?))))))))))))))))
     42
     (begin
       (panic "regalloc: smoke mismatch")

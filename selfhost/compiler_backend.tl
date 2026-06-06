@@ -9163,10 +9163,10 @@
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index span-index name "")]
         [reg-plan : CompilerRegPlan
-          (if (if (compiler-backend-mode-scalar? mode)
-            (not compiler-backend-scalar-registers-enabled)
-            false)
-            (compiler-reg-plan-function-stack-only func)
+          (if (compiler-backend-mode-scalar? mode)
+            (if compiler-backend-scalar-registers-enabled
+              (compiler-reg-plan-function-scalar func)
+              (compiler-reg-plan-function-stack-only func))
             (compiler-reg-plan-function func))]
         [raw-assignments : CompilerRegAssignmentList
           (compiler-reg-plan-assignments reg-plan)]

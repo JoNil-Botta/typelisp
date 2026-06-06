@@ -855,18 +855,17 @@ _tl_print_string:
               bin-path
               (source-tool-link-inputs-linux-args link-inputs))))))))
 
+;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt). The backend emits
+;; its own entry (_tl_start) plus kernel32-backed shims for the CRT-ABI symbols
+;; the runtime/stdlib reference, so only Win32 system libraries are linked.
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons
-    "msvcrt.lib"
+    "kernel32.lib"
     (process-args-cons
-      "legacy_stdio_definitions.lib"
+      "advapi32.lib"
       (process-args-cons
-        "kernel32.lib"
-        (process-args-cons
-          "advapi32.lib"
-          (process-args-cons
-            "ole32.lib"
-            (process-args-cons "oleaut32.lib" (process-args-empty))))))))
+        "ole32.lib"
+        (process-args-cons "oleaut32.lib" (process-args-empty))))))
 
 (define (source-tool-windows-link-search-args [dirs : ProcessStringList]) : ProcessStringList
   (match dirs
@@ -905,12 +904,16 @@ _tl_print_string:
         (process-args-cons
           "/SUBSYSTEM:CONSOLE"
           (process-args-cons
-            "/DYNAMICBASE:NO"
+            "/ENTRY:_tl_start"
             (process-args-cons
-              "/STACK:16777216"
-              (process-args-append
-                (source-tool-link-inputs-windows-args link-inputs)
-                (source-tool-windows-link-libs)))))))))
+              "/NODEFAULTLIB"
+              (process-args-cons
+                "/DYNAMICBASE:NO"
+                (process-args-cons
+                  "/STACK:16777216"
+                  (process-args-append
+                    (source-tool-link-inputs-windows-args link-inputs)
+                    (source-tool-windows-link-libs)))))))))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

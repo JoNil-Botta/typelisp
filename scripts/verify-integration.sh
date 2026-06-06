@@ -797,7 +797,7 @@ assemble_link_windows() {
         exit 1
     }
     lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib || {
+        -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib advapi32.lib ole32.lib oleaut32.lib || {
         echo "FAIL: $_label link failed" >&2
         exit 1
     }
@@ -1126,7 +1126,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         # shellcheck disable=SC2086
         if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" $native_objs "-OUT:$(cygpath -aw "$bin.exe")" \
-            -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+            -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib advapi32.lib ole32.lib oleaut32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"

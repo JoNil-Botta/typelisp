@@ -12352,6 +12352,582 @@ tl_errno:
 
 ")
 
+(define (compiler-backend-runtime-windows-libc-shim-functions) : String
+  "    .globl _errno
+_errno:
+    leaq tl_errno(%rip), %rax
+    ret
+
+    .globl __chkstk
+__chkstk:
+    pushq %rcx
+    pushq %rax
+    movq %rax, %rcx
+    leaq 16(%rsp), %rax
+.L_tl_ck_loop:
+    cmpq $4096, %rcx
+    jb .L_tl_ck_done
+    subq $4096, %rax
+    movb $0, (%rax)
+    subq $4096, %rcx
+    jmp .L_tl_ck_loop
+.L_tl_ck_done:
+    subq %rcx, %rax
+    movb $0, (%rax)
+    popq %rax
+    popq %rcx
+    ret
+
+    .globl memcpy
+memcpy:
+    movq %rcx, %rax
+    movq %rcx, %rdi
+    movq %rdx, %rsi
+    movq %r8, %rcx
+    rep movsb
+    ret
+
+    .globl memset
+memset:
+    movq %rcx, %r9
+    movq %rcx, %rdi
+    movl %edx, %eax
+    movq %r8, %rcx
+    rep stosb
+    movq %r9, %rax
+    ret
+
+.L_tl_win_fd_handle:
+    cmpq $2, %rcx
+    ja .L_tl_fdh_id
+    movl $-11, %edx
+    cmpq $0, %rcx
+    jne .L_tl_fdh_chk2
+    movl $-10, %edx
+    jmp .L_tl_fdh_get
+.L_tl_fdh_chk2:
+    cmpq $2, %rcx
+    jne .L_tl_fdh_get
+    movl $-12, %edx
+.L_tl_fdh_get:
+    movslq %edx, %rcx
+    subq $40, %rsp
+    call GetStdHandle
+    addq $40, %rsp
+    ret
+.L_tl_fdh_id:
+    movq %rcx, %rax
+    ret
+
+    .globl _write
+_write:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    subq $64, %rsp
+    movq %rdx, %r12
+    movl %r8d, %r13d
+    call .L_tl_win_fd_handle
+    movq %rax, %rcx
+    movq %r12, %rdx
+    movl %r13d, %r8d
+    leaq -8(%rbp), %r9
+    movq $0, 32(%rsp)
+    call WriteFile
+    testl %eax, %eax
+    je .L_tl_write_err
+    movl -8(%rbp), %eax
+    movslq %eax, %rax
+    jmp .L_tl_write_ret
+.L_tl_write_err:
+    movq $-1, %rax
+.L_tl_write_ret:
+    addq $64, %rsp
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+
+    .globl _read
+_read:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    subq $64, %rsp
+    movq %rdx, %r12
+    movl %r8d, %r13d
+    call .L_tl_win_fd_handle
+    movq %rax, %rcx
+    movq %r12, %rdx
+    movl %r13d, %r8d
+    leaq -8(%rbp), %r9
+    movq $0, 32(%rsp)
+    call ReadFile
+    testl %eax, %eax
+    je .L_tl_read_err
+    movl -8(%rbp), %eax
+    movslq %eax, %rax
+    jmp .L_tl_read_ret
+.L_tl_read_err:
+    movq $-1, %rax
+.L_tl_read_ret:
+    addq $64, %rsp
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+
+    .globl _lseeki64
+_lseeki64:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    subq $64, %rsp
+    movq %rdx, %r12
+    movl %r8d, %r13d
+    call .L_tl_win_fd_handle
+    movq %rax, %rcx
+    movq %r12, %rdx
+    leaq -8(%rbp), %r8
+    movl %r13d, %r9d
+    call SetFilePointerEx
+    testl %eax, %eax
+    je .L_tl_seek_err
+    movq -8(%rbp), %rax
+    jmp .L_tl_seek_ret
+.L_tl_seek_err:
+    movq $-1, %rax
+.L_tl_seek_ret:
+    addq $64, %rsp
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+
+    .globl _open
+_open:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    subq $72, %rsp
+    movq %rcx, %rbx
+    movl %edx, %r12d
+    xorl %r13d, %r13d
+    testl $8, %r12d
+    jz .L_tl_open_noapp
+    movl $4, %r13d
+    jmp .L_tl_open_acc_done
+.L_tl_open_noapp:
+    testl $2, %r12d
+    jz .L_tl_open_nordwr
+    movl $0xC0000000, %r13d
+    jmp .L_tl_open_acc_done
+.L_tl_open_nordwr:
+    testl $1, %r12d
+    jz .L_tl_open_rd
+    movl $0x40000000, %r13d
+    jmp .L_tl_open_acc_done
+.L_tl_open_rd:
+    movl $0x80000000, %r13d
+.L_tl_open_acc_done:
+    movl $3, %eax
+    testl $0x100, %r12d
+    jz .L_tl_open_disp_chk_trunc
+    testl $0x200, %r12d
+    jz .L_tl_open_creat_only
+    movl $2, %eax
+    jmp .L_tl_open_disp_done
+.L_tl_open_creat_only:
+    movl $4, %eax
+    jmp .L_tl_open_disp_done
+.L_tl_open_disp_chk_trunc:
+    testl $0x200, %r12d
+    jz .L_tl_open_disp_done
+    movl $5, %eax
+.L_tl_open_disp_done:
+    movq %rbx, %rcx
+    movl %r13d, %edx
+    movl $3, %r8d
+    xorq %r9, %r9
+    movq %rax, 32(%rsp)
+    movq $0x80, 40(%rsp)
+    movq $0, 48(%rsp)
+    call CreateFileA
+    cmpq $-1, %rax
+    jne .L_tl_open_ret
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+.L_tl_open_ret:
+    addq $72, %rsp
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+    .globl _close
+_close:
+    cmpq $2, %rcx
+    jbe .L_tl_close_ok
+    subq $40, %rsp
+    call CloseHandle
+    addq $40, %rsp
+.L_tl_close_ok:
+    xorq %rax, %rax
+    ret
+
+    .globl _access
+_access:
+    subq $40, %rsp
+    call GetFileAttributesA
+    addq $40, %rsp
+    cmpl $-1, %eax
+    je .L_tl_acc_err
+    xorq %rax, %rax
+    ret
+.L_tl_acc_err:
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl _mkdir
+_mkdir:
+    xorq %rdx, %rdx
+    subq $40, %rsp
+    call CreateDirectoryA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+    .globl _rmdir
+_rmdir:
+    subq $40, %rsp
+    call RemoveDirectoryA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+    .globl _unlink
+_unlink:
+    subq $40, %rsp
+    call DeleteFileA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+    .globl rename
+rename:
+    movl $1, %r8d
+    subq $40, %rsp
+    call MoveFileExA
+    addq $40, %rsp
+    testl %eax, %eax
+    je .L_tl_dir_err
+    xorq %rax, %rax
+    ret
+.L_tl_dir_err:
+    movl $2, tl_errno(%rip)
+    movq $-1, %rax
+    ret
+
+    .globl exit
+exit:
+    subq $40, %rsp
+    call ExitProcess
+
+    .globl strlen
+strlen:
+    movq %rcx, %rax
+.L_tl_win_sl:
+    cmpb $0, (%rax)
+    je .L_tl_win_sld
+    incq %rax
+    jmp .L_tl_win_sl
+.L_tl_win_sld:
+    subq %rcx, %rax
+    ret
+
+    .globl fflush
+fflush:
+    xorq %rax, %rax
+    ret
+
+    .globl getenv
+getenv:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    leaq tl_getenv_buf(%rip), %rdx
+    movl $4096, %r8d
+    call GetEnvironmentVariableA
+    testl %eax, %eax
+    je .L_tl_ge_null
+    leaq tl_getenv_buf(%rip), %rax
+    jmp .L_tl_ge_ret
+.L_tl_ge_null:
+    xorq %rax, %rax
+.L_tl_ge_ret:
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+
+    .globl tmpfile
+tmpfile:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $64, %rsp
+    movq $24, tl_temp_sa(%rip)
+    movq $0, tl_temp_sa+8(%rip)
+    movq $1, tl_temp_sa+16(%rip)
+    movl $300, %ecx
+    leaq tl_temp_dir(%rip), %rdx
+    call GetTempPathA
+    leaq tl_temp_dir(%rip), %rcx
+    leaq tl_temp_pfx(%rip), %rdx
+    xorl %r8d, %r8d
+    leaq tl_temp_name(%rip), %r9
+    call GetTempFileNameA
+    testl %eax, %eax
+    je .L_tl_tmp_err
+    leaq tl_temp_name(%rip), %rcx
+    movl $0xC0000000, %edx
+    movl $3, %r8d
+    leaq tl_temp_sa(%rip), %r9
+    movq $2, 32(%rsp)
+    movq $0x04000100, 40(%rsp)
+    movq $0, 48(%rsp)
+    call CreateFileA
+    cmpq $-1, %rax
+    je .L_tl_tmp_err
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_tmp_err:
+    xorq %rax, %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+
+    .globl _fileno
+_fileno:
+    movq %rcx, %rax
+    ret
+    .globl _get_osfhandle
+_get_osfhandle:
+    movq %rcx, %rax
+    ret
+    .globl fclose
+fclose:
+    subq $40, %rsp
+    call CloseHandle
+    addq $40, %rsp
+    xorq %rax, %rax
+    ret
+
+    .globl __p__environ
+__p__environ:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    subq $8, %rsp
+    movq tl_environ_arr(%rip), %rax
+    testq %rax, %rax
+    jnz .L_tl_pe_done
+    call GetEnvironmentStringsA
+    movq %rax, %rbx
+    movq %rbx, %r12
+    xorq %r13, %r13
+.L_tl_pe_count:
+    cmpb $0, (%r12)
+    je .L_tl_pe_count_done
+    incq %r13
+.L_tl_pe_count_skip:
+    cmpb $0, (%r12)
+    je .L_tl_pe_count_next
+    incq %r12
+    jmp .L_tl_pe_count_skip
+.L_tl_pe_count_next:
+    incq %r12
+    jmp .L_tl_pe_count
+.L_tl_pe_count_done:
+    leaq 1(%r13), %rcx
+    shlq $3, %rcx
+    subq $32, %rsp
+    call .L_tl_boot_alloc
+    addq $32, %rsp
+    movq %rax, %r14
+    movq %rbx, %r12
+    xorq %r13, %r13
+.L_tl_pe_fill:
+    cmpb $0, (%r12)
+    je .L_tl_pe_fill_done
+    movq %r12, (%r14,%r13,8)
+    incq %r13
+.L_tl_pe_fill_skip:
+    cmpb $0, (%r12)
+    je .L_tl_pe_fill_next
+    incq %r12
+    jmp .L_tl_pe_fill_skip
+.L_tl_pe_fill_next:
+    incq %r12
+    jmp .L_tl_pe_fill
+.L_tl_pe_fill_done:
+    movq $0, (%r14,%r13,8)
+    movq %r14, tl_environ_arr(%rip)
+.L_tl_pe_done:
+    leaq tl_environ_arr(%rip), %rax
+    addq $8, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+    .globl tl_setup_argv
+tl_setup_argv:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    subq $40, %rsp
+    call GetCommandLineA
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    call strlen
+    movq %rax, %r12
+    leaq 1(%r12), %rcx
+    subq $32, %rsp
+    call .L_tl_boot_alloc
+    addq $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_argv_cp:
+    cmpq %r12, %rcx
+    jge .L_tl_argv_cpd
+    movb (%rbx,%rcx), %al
+    movb %al, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_argv_cp
+.L_tl_argv_cpd:
+    movb $0, (%r13,%r12)
+    movq $2056, %rcx
+    subq $32, %rsp
+    call .L_tl_boot_alloc
+    addq $32, %rsp
+    movq %rax, %r14
+    xorq %r15, %r15
+    movq %r13, %rbx
+.L_tl_argv_scan:
+    movb (%rbx), %al
+    cmpb $0, %al
+    je .L_tl_argv_done
+    cmpb $0x20, %al
+    jne .L_tl_argv_tokstart
+    incq %rbx
+    jmp .L_tl_argv_scan
+.L_tl_argv_tokstart:
+    cmpq $255, %r15
+    jge .L_tl_argv_done
+    movq %rbx, (%r14,%r15,8)
+    incq %r15
+    xorl %r9d, %r9d
+.L_tl_argv_tok:
+    movb (%rbx), %al
+    cmpb $0, %al
+    je .L_tl_argv_done
+    cmpb $0x22, %al
+    jne .L_tl_argv_notq
+    xorl $1, %r9d
+    movq %rbx, %rcx
+.L_tl_argv_shift:
+    movb 1(%rcx), %al
+    movb %al, (%rcx)
+    incq %rcx
+    cmpb $0, %al
+    jne .L_tl_argv_shift
+    jmp .L_tl_argv_tok
+.L_tl_argv_notq:
+    cmpb $0x20, %al
+    jne .L_tl_argv_adv
+    testl %r9d, %r9d
+    jnz .L_tl_argv_adv
+    movb $0, (%rbx)
+    incq %rbx
+    jmp .L_tl_argv_scan
+.L_tl_argv_adv:
+    incq %rbx
+    jmp .L_tl_argv_tok
+.L_tl_argv_done:
+    movq $0, (%r14,%r15,8)
+    movq %r15, .L_tl_argc(%rip)
+    movq %r14, .L_tl_argv(%rip)
+    addq $40, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+.L_tl_boot_alloc:
+    movq tl_boot_off(%rip), %rax
+    leaq tl_boot_pool(%rip), %rdx
+    addq %rdx, %rax
+    addq %rcx, tl_boot_off(%rip)
+    ret
+
+    .globl _tl_start
+_tl_start:
+    subq $40, %rsp
+    call tl_setup_argv
+    movq .L_tl_argc(%rip), %rcx
+    movq .L_tl_argv(%rip), %rdx
+    call main
+    movq %rax, %rcx
+    call ExitProcess
+
+    .bss
+    .balign 8
+tl_errno:
+    .long 0
+    .balign 8
+tl_environ_arr:
+    .quad 0
+tl_getenv_buf:
+    .space 4096
+tl_temp_dir:
+    .space 320
+tl_temp_name:
+    .space 320
+tl_temp_pfx:
+    .space 8
+tl_temp_sa:
+    .space 24
+    .balign 8
+tl_boot_off:
+    .quad 0
+tl_boot_pool:
+    .space 524288
+    .text
+
+")
+
 ;; First-class arena runtime (#1633). `tl_arena_make` maps a fresh INDEPENDENT
 ;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
 ;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
@@ -19429,7 +20005,7 @@ tl_windows_sdk_registry_install:
             "")]
         [linux-libc-shims-asm : String
           (if (compiler-backend-target-windows? target)
-            ""
+            (compiler-backend-runtime-windows-libc-shim-functions)
             (compiler-backend-runtime-linux-libc-shim-functions))]
         (backend-cat5
           runtime-front-asm

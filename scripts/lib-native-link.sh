@@ -381,17 +381,21 @@ assemble_and_link_windows() {
     if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
         repro_arg=/Brepro
     fi
-    echo "[native-link] link $label with MSVC link.exe"
+    echo "[native-link] link $label with MSVC link.exe (freestanding: no CRT)"
+    # Freestanding Win32: the backend emits its own entry (_tl_start) plus
+    # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use, so
+    # the binary links against no C runtime (no vcruntime140/ucrt/msvcrt).
+    # /NODEFAULTLIB keeps link.exe from pulling a default CRT for the entry.
     MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
         /NOLOGO \
         ${repro_arg:+"$repro_arg"} \
         "$obj_win" \
         "/OUT:$bin_win" \
         /SUBSYSTEM:CONSOLE \
+        /ENTRY:_tl_start \
+        /NODEFAULTLIB \
         /DYNAMICBASE:NO \
         "/STACK:$NL_WINDOWS_STACK_RESERVE" \
-        msvcrt.lib \
-        legacy_stdio_definitions.lib \
         kernel32.lib \
         advapi32.lib \
         ole32.lib \

@@ -281,6 +281,63 @@
       (compiler-backend-string-contains? asm "    jmp .Lf1_while_header.0\n")
       true)))
 
+(define (compiler-backend-alloc-generic-call-text [size : i64] [reg : String]) : String
+  (backend-cat4
+    "    movq $"
+    (int->string size)
+    (backend-cat3 ", " reg "\n    call tl_alloc\n")
+    ""))
+
+(define (compiler-backend-alloc-fixed-call-text [size : i64]) : String
+  (backend-cat3 "    call .L_tl_alloc" (int->string size) "\n"))
+
+(define (compiler-backend-string-contains-inline-alloc-size?
+  [asm : String]
+  [size : i64]) : bool
+  (if (= size 16)
+    (and
+      (compiler-backend-string-contains?
+        asm
+        "    movq tl_current_arena(%rip), %r8\n")
+      (compiler-backend-string-contains? asm "    addq $16, "))
+    false))
+
+(define (compiler-backend-string-contains-alloc-size?
+  [asm : String]
+  [size : i64]) : bool
+  (or
+    (compiler-backend-string-contains?
+      asm
+      (compiler-backend-alloc-generic-call-text size "%rdi"))
+    (or
+      (compiler-backend-string-contains?
+        asm
+        (compiler-backend-alloc-generic-call-text size "%rcx"))
+      (or
+        (compiler-backend-string-contains?
+          asm
+          (compiler-backend-alloc-fixed-call-text size))
+        (compiler-backend-string-contains-inline-alloc-size? asm size)))))
+
+(define (compiler-backend-alloc-call-count [asm : String]) : i64
+  (+
+    (compiler-backend-string-count asm "    call tl_alloc\n")
+    (+
+      (compiler-backend-string-count asm "    call .L_tl_alloc8\n")
+      (+
+        (compiler-backend-string-count asm "    call .L_tl_alloc16\n")
+        (+
+          (compiler-backend-string-count asm "    call .L_tl_alloc24\n")
+          (+
+            (compiler-backend-string-count asm "    call .L_tl_alloc32\n")
+            (+
+              (compiler-backend-string-count asm "    call .L_tl_alloc40\n")
+              (+
+                (compiler-backend-string-count asm "    call .L_tl_alloc48\n")
+                (+
+                  (compiler-backend-string-count asm "    call .L_tl_alloc56\n")
+                  (compiler-backend-string-count asm "    call .L_tl_alloc64\n"))))))))))
+
 (define (compiler-backend-source-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend asm) (compiler-backend-asm-ok? asm)]
@@ -354,24 +411,24 @@
   (match (compiler-backend-emit-source (compiler-backend-string-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".L_tl_str_data_6869:")
+        (compiler-backend-string-contains? asm ".L_tl_str_data_l2_13861_13991:")
         (and
-          (compiler-backend-string-contains? asm ".L_tl_str_6869:")
+          (compiler-backend-string-contains? asm ".L_tl_str_l2_13861_13991:")
           (and
             (compiler-backend-string-contains? asm "    .string \"hi\"\n")
             (and
               (compiler-backend-string-contains?
                 asm
-                "    .quad .L_tl_str_data_6869\n")
+                "    .quad .L_tl_str_data_l2_13861_13991\n")
               (and
                 (compiler-backend-string-contains? asm "    .quad 2\n")
                 (and
                   (compiler-backend-string-contains?
                     asm
-                    "_tl_greeting:\n    .quad .L_tl_str_6869\n")
+                    "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n")
                   (compiler-backend-string-contains?
                     asm
-                    "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
+                    "    leaq .L_tl_str_l2_13861_13991(%rip), %rax\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for the string runtime helper emission tests
@@ -384,12 +441,14 @@
   (print-string text))
 (define (parse-and-render [s : String]) : i64
   (+
-    (string->int s)
+    (if (string-eq s \"42\") 1 0)
     (+
-      (string-length (int->string 42))
+      (string->int s)
       (+
-        (string-length (substring s 0 1))
-        (string-length (string-concat s \"!\"))))))
+        (string-length (int->string 42))
+        (+
+          (string-length (substring s 0 1))
+          (string-length (string-concat s \"!\")))))))
 (define (emit-stdout [s : String]) : unit
   (begin
     (print-string s)
@@ -448,7 +507,7 @@
                 (compiler-backend-string-contains?
                   asm
                   ".extern tl_print_string\n"))
-              true)
+              (compiler-backend-string-contains? asm "    cmpq %rdi, %rdx\n"))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -682,9 +741,11 @@
         (compiler-backend-string-contains? asm ".extern tl_cabi_color_make\n")
         (compiler-backend-string-contains? asm ".extern tl_cabi_color_use\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_make\n")
-        (compiler-backend-string-contains?
-          asm
-          "    movq $4, %rdi\n    call tl_alloc\n")
+        (or
+          (compiler-backend-string-contains?
+            asm
+            (compiler-backend-alloc-generic-call-text 4 "%rdi"))
+          (compiler-backend-string-contains-alloc-size? asm 8))
         (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
         (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
@@ -701,9 +762,11 @@
         (compiler-backend-string-contains? asm ".extern tl_cabi_color_make\n")
         (compiler-backend-string-contains? asm ".extern tl_cabi_color_use\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_make\n")
-        (compiler-backend-string-contains?
-          asm
-          "    movq $4, %rcx\n    call tl_alloc\n")
+        (or
+          (compiler-backend-string-contains?
+            asm
+            (compiler-backend-alloc-generic-call-text 4 "%rcx"))
+          (compiler-backend-string-contains-alloc-size? asm 8))
         (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
         (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
@@ -820,12 +883,14 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_str_data_617a:")
-          (compiler-backend-string-contains? asm ".L_tl_str_617a:")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_str_data_l2_12961_16211:")
+          (compiler-backend-string-contains? asm ".L_tl_str_l2_12961_16211:")
           (compiler-backend-string-contains? asm "    .string \"az\"\n")
           (compiler-backend-string-contains?
             asm
-            "    .quad .L_tl_str_data_617a\n")
+            "    .quad .L_tl_str_data_l2_12961_16211\n")
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
           (compiler-backend-string-contains? asm "    jb .Lf0_str_bounds_ok")
           (compiler-backend-string-contains? asm "    call tl_oob_abort")
@@ -852,9 +917,7 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains?
-            asm
-            "    movq $16, %rdi\n    call tl_alloc\n")
+          (compiler-backend-string-contains-alloc-size? asm 16)
           (compiler-backend-string-contains?
             asm
             ".globl _tl___enum_obj_Shape_Nothing\n")
@@ -889,13 +952,15 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "    call tl_alloc")
+          (> (compiler-backend-alloc-call-count asm) 0)
           (compiler-backend-string-contains? asm "tl_alloc:")
-          (compiler-backend-string-contains? asm "movq $16")
+          (compiler-backend-string-contains-alloc-size? asm 16)
           (compiler-backend-string-contains? asm "movq $7,")
           (compiler-backend-string-contains? asm "movq $1,")
           (compiler-backend-string-contains? asm "movq $2,")
-          (compiler-backend-string-contains? asm ".L_tl_str_data_6869:")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_str_data_l2_13861_13991:")
           (compiler-backend-string-contains? asm "    .quad 2\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -1104,7 +1169,7 @@
           (and
             (backend-and4
               (compiler-backend-string-contains? asm "tl_alloc:\n")
-              (>= (compiler-backend-string-count asm "    call tl_alloc\n") 4)
+              (>= (compiler-backend-alloc-call-count asm) 4)
               (>= (compiler-backend-string-count asm "    call *%rax\n") 4)
               (not
                 (compiler-backend-string-contains?
@@ -1255,6 +1320,32 @@
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false]))))))))
 
+(define (compiler-backend-direct-immediate-mov-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
+    (and
+      (match (compiler-backend-emit-mov
+        assignments
+        0
+        (IrValueI64 0)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm) (string-eq asm "    xorq %r12, %r12\n")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-mov
+        CompilerRegAssignmentNil
+        1
+        (IrValueI64 7)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
+        [(ErrCompilerBackend _) false]))))
+
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -1356,18 +1447,20 @@
   (and
     (compiler-backend-peephole-register-moves-ok?)
     (and
-      (compiler-backend-peephole-asm-ok?)
+      (compiler-backend-direct-immediate-mov-ok?)
       (and
-        (compiler-backend-fallthrough-jump-ok?)
+        (compiler-backend-peephole-asm-ok?)
         (and
-          (compiler-backend-branch-fallthrough-ok?)
+          (compiler-backend-fallthrough-jump-ok?)
           (and
-            (compiler-backend-zero-load-ok?)
+            (compiler-backend-branch-fallthrough-ok?)
             (and
-              (compiler-backend-zero-compare-ok?)
+              (compiler-backend-zero-load-ok?)
               (and
-                (compiler-backend-call-return-ok?)
-                (compiler-backend-global-immediate-store-ok?)))))))))
+                (compiler-backend-zero-compare-ok?)
+                (and
+                  (compiler-backend-call-return-ok?)
+                  (compiler-backend-global-immediate-store-ok?))))))))))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -1821,7 +1914,9 @@
                 (compiler-backend-string-contains?
                   asm
                   ".L_tl_file_handle_next:\n"))
-              (compiler-backend-windows-driver-runtime-ok?)))))]
+              (and
+                (compiler-backend-string-contains? asm "    cmpq %rcx, %r8\n")
+                (compiler-backend-windows-driver-runtime-ok?))))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-windows-runtime-guard-source) : String
@@ -2452,7 +2547,7 @@
       false
       false
       false
-      (CompilerBackendRuntimeTailPlan false false))
+      (CompilerBackendRuntimeTailPlan false false false))
     IrFunctionNil
     IrExternNil
     (compiler-backend-program-index-build IrFunctionNil IrExternNil)
@@ -3608,7 +3703,7 @@
   (match (compiler-backend-emit-source (compiler-backend-shift-guard-source))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "    movq $-1, %rax\n")
+        (compiler-backend-string-contains? asm "    movq $-1,")
         (compiler-backend-string-contains?
           asm
           "    testq %rbx, %rbx\n    jge 1f\n    call tl_shift_abort\n1:\n")
@@ -4194,9 +4289,7 @@
     [(OkCompilerBackend asm)
       (backend-and4
         ;; (box 42): allocate size-of(i64)=8 bytes for the box storage,
-        (compiler-backend-string-contains?
-          asm
-          "    movq $8, %rdi\n    call tl_alloc\n")
+        (compiler-backend-string-contains-alloc-size? asm 8)
         ;; store the boxed value (materialized in %rax) into the box pointer,
         (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n")
         ;; (box-get b): load the boxed value back through the box pointer.
@@ -4219,12 +4312,10 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains?
-            asm
-            "    movq $16, %rdi\n    call tl_alloc\n")
-          (compiler-backend-string-contains? asm "    movq $1, %rax\n")
+          (compiler-backend-string-contains-alloc-size? asm 16)
+          (compiler-backend-string-contains? asm "    movq $1,")
           (compiler-backend-string-contains? asm "    movb %al, (%r10)\n")
-          (compiler-backend-string-contains? asm "    movq $42, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $42,")
           (compiler-backend-string-contains? asm "    movq %rax, 8(%r10)\n")
           (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
           true
@@ -4262,10 +4353,8 @@
     (compiler-lower-inline-boxed-recursive-source))
     [(OkCompilerBackend asm)
       (backend-and4
-        (= (compiler-backend-string-count asm "    call tl_alloc\n") 1)
-        (compiler-backend-string-contains?
-          asm
-          "    movq $8, %rdi\n    call tl_alloc\n")
+        (= (compiler-backend-alloc-call-count asm) 1)
+        (compiler-backend-string-contains-alloc-size? asm 8)
         (compiler-backend-string-contains? asm "    leaq -")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -4305,7 +4394,7 @@
       (backend-and4
         (compiler-backend-string-contains? asm "main:\n")
         (>= (compiler-backend-string-count asm "    call ") 6)
-        (compiler-backend-string-contains? asm "    call tl_alloc\n")
+        (> (compiler-backend-alloc-call-count asm) 0)
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))

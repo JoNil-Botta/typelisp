@@ -20,12 +20,9 @@ stage0_host_exe_suffix() {
     esac
 }
 
-# resolve_stage0_compiler ROOT
-#   Echo the path to a usable no-Rust stage0 compiler. If TYPELISP_STAGE0_DIR
-#   already holds a fetched binary it is reused; otherwise scripts/fetch-stage0.sh
-#   downloads the published stage0-latest binary. Honours the same
-#   TYPELISP_STAGE0_* environment knobs as scripts/fetch-stage0.sh.
-resolve_stage0_compiler() {
+# stage0_compiler_path ROOT
+#   Echo the default published stage0 compiler path for this host.
+stage0_compiler_path() {
     _ls0_root=$1
     _ls0_dir=${TYPELISP_STAGE0_DIR:-target/stage0}
     case "$_ls0_dir" in
@@ -33,10 +30,25 @@ resolve_stage0_compiler() {
         *) _ls0_dir="$_ls0_root/$_ls0_dir" ;;
     esac
     _ls0_suffix=$(stage0_host_exe_suffix)
-    _ls0_bin="$_ls0_dir/typelisp$_ls0_suffix"
-    if [ ! -x "$_ls0_bin" ]; then
-        "$_ls0_root/scripts/fetch-stage0.sh" >&2
-    fi
+    printf '%s\n' "$_ls0_dir/typelisp$_ls0_suffix"
+}
+
+# fetch_stage0_compiler ROOT
+#   Refresh the published stage0 compiler using the repository fetch script.
+fetch_stage0_compiler() {
+    _ls0_root=$1
+    "$_ls0_root/scripts/fetch-stage0.sh" >&2
+}
+
+# resolve_stage0_compiler ROOT
+#   Echo the path to a usable no-Rust stage0 compiler. Always refreshes the
+#   published stage0 first so mutable stage0-latest caches do not silently go
+#   stale. Honours the same TYPELISP_STAGE0_* environment knobs as
+#   scripts/fetch-stage0.sh.
+resolve_stage0_compiler() {
+    _ls0_root=$1
+    fetch_stage0_compiler "$_ls0_root" || return 1
+    _ls0_bin=$(stage0_compiler_path "$_ls0_root")
     if [ ! -x "$_ls0_bin" ]; then
         echo "no-Rust stage0 compiler unavailable after fetch: $_ls0_bin" >&2
         echo "set TYPELISP_BIN to a stage0 binary, or run scripts/fetch-stage0.sh" >&2

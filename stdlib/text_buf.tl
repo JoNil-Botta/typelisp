@@ -177,20 +177,75 @@
           (file-write-status raw chunk)
           status))]))
 
+;: Buffers larger than this are rendered and written in bounded batches. This
+;: avoids pathological many-small-write behavior on mounted host filesystems
+;: without materializing the entire buffer in one extra String.
+(define (text-buf-batched-write-threshold) : i64
+  1048576)
+
+;: Write `items` to `raw` in rendered batches no larger than `batch-limit`
+;: bytes, stopping at the first file-write error status.
+(define (text-buf-write-array-batches
+  [raw : i64]
+  [items : (Array String)]
+  [count : i64]
+  [batch-limit : i64]) : i64
+  (let
+    [index : i64 0]
+    [status : i64 io-status-ok]
+    (begin
+      (while (and (= status io-status-ok) (< index count))
+        (let
+          [start : i64 index]
+          [bytes : i64 0]
+          [done : bool false]
+          (begin
+            (while (and (not done) (< index count))
+              (let
+                [chunk : String (array-ref items index)]
+                [chunk-len : i64 (string-length chunk)]
+                (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
+                  (set! done true)
+                  (begin
+                    (set! bytes (+ bytes chunk-len))
+                    (set! index (+ index 1))))))
+            (set!
+              status
+              (file-write-status
+                raw
+                (text-buf-chunks-render-array-range items start index))))))
+      status)))
+
+;: Write chunked buffer contents to `raw` by first flattening chunk order into
+;: an array, then emitting bounded batches.
+(define (text-buf-write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
+  (let
+    [count : i64 (text-buf-chunk-count chunks 0)]
+    [items : (Array String) (make-array String count)]
+    (begin
+      (text-buf-chunks-fill-array-rev chunks items (- count 1))
+      (text-buf-write-array-batches
+        raw
+        items
+        count
+        (text-buf-batched-write-threshold)))))
+
 ;: Write the rendered buffer contents to `path`, replacing any existing file.
 (define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
-  (match (file-open (& path) (OpenWriteTruncate))
-    [(OkIoFile handle)
-      (let
-        [write-status : i64
-          (match buf
-            [(TextBuf chunks _)
-              (text-buf-write-chunks-rev (struct-get handle id) chunks)])]
-        [close-result : ResultIoUnit (file-close handle)]
-        (match close-result
-          [(OkIoUnit) write-status]
-          [(ErrIoUnit _) 1]))]
-    [(ErrIoFile _) 1]))
+  (match buf
+    [(TextBuf chunks len)
+      (match (file-open (& path) (OpenWriteTruncate))
+        [(OkIoFile handle)
+          (let
+            [write-status : i64
+              (if (> len (text-buf-batched-write-threshold))
+                (text-buf-write-chunks-batched (struct-get handle id) chunks)
+                (text-buf-write-chunks-rev (struct-get handle id) chunks))]
+            [close-result : ResultIoUnit (file-close handle)]
+            (match close-result
+              [(OkIoUnit) write-status]
+              [(ErrIoUnit _) 1]))]
+        [(ErrIoFile _) 1])]))
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [buf : TextBuf]) : TextBuf

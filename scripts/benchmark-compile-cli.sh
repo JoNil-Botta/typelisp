@@ -17,6 +17,7 @@ export TYPELISP_WINDOWS_LINK_REPRO
 
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
+. "$ROOT/scripts/lib-stage0.sh"
 
 usage() {
     cat <<'EOF'
@@ -44,13 +45,14 @@ if [ "$#" -eq 1 ]; then
     esac
 fi
 
+fetch_stage0_compiler "$ROOT" || exit 1
+
 if [ "$#" -eq 1 ]; then
     SEED=$1
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     SEED=$TYPELISP_BIN
 else
-    . "$ROOT/scripts/lib-stage0.sh"
-    SEED=$(resolve_stage0_compiler "$ROOT") || exit 1
+    SEED=$(stage0_compiler_path "$ROOT") || exit 1
 fi
 
 if [ ! -x "$SEED" ]; then

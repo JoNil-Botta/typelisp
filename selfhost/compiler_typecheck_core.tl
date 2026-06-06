@@ -14,7 +14,12 @@
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType (Box TcTypeEnv))
-  (TcTypeCache StringI64Map (Array AstType) StringI64Map (Box TcTypeEnv)))
+  (TcTypeCache
+    StringI64Map
+    (Array AstType)
+    (Array i64)
+    StringI64Map
+    (Box TcTypeEnv)))
 
 (defenum TcContext
   (TcContext AstProgram CompilerSymbols CompilerRegistries String))
@@ -22,6 +27,10 @@
 (defenum ResultTcType
   (OkTcType AstType)
   (ErrTcType String))
+
+(defenum ResultTcTypeUnsafe
+  (OkTcTypeUnsafe AstType bool)
+  (ErrTcTypeUnsafe String))
 
 (defenum ResultTcTypeList
   (OkTcTypeList AstTypeList)
@@ -41,6 +50,11 @@
 (defenum TcTryKind
   (TcTryResult)
   (TcTryOption))
+
+(defenum TcTypeNameLookupCache
+  (TcTypeNameLookupCacheMiss)
+  (TcTypeNameLookupCacheFound i64)
+  (TcTypeNameLookupCacheMissing))
 
 (defenum TcResultInfo
   (TcResultInfo TcTryKind String String AstType String AstType))
@@ -651,9 +665,6 @@
 (define (tc-unsafe-decl-marker-name [name : String]) : String
   (string-append " __tl_unsafe_decl:" name))
 
-(define (tc-unsafe-cache-key [name : String]) : String
-  (string-append " __tl_unsafe_cache:" name))
-
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind (tc-bind env (tc-unsafe-decl-marker-name name) (AstTyUnit)) name ty))
 
@@ -665,12 +676,9 @@
 (define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ shadows rest)
+    [(TcTypeCache ids _ unsafe-flags _ rest)
       (match (string-i64-map-get ids name)
-        [(StringI64MapFound _)
-          (match (string-i64-map-get shadows (tc-unsafe-cache-key name))
-            [(StringI64MapFound flag) (= flag 1)]
-            [(StringI64MapMissing) false])]
+        [(StringI64MapFound index) (= (array-ref unsafe-flags index) 1)]
         [(StringI64MapMissing) false])]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
@@ -681,7 +689,7 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-cache-count (box-get rest))]))
+    [(TcTypeCache _ _ _ _ rest) (tc-env-cache-count (box-get rest))]))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -691,8 +699,10 @@
 (define (tc-env-cache-add
   [ids : StringI64Map]
   [values : (Array AstType)]
+  [unsafe-flags : (Array i64)]
   [name : String]
-  [ty : AstType]) : StringI64Map
+  [ty : AstType]
+  [unsafe : bool]) : StringI64Map
   (match (string-i64-map-get ids name)
     [(StringI64MapFound _) ids]
     [(StringI64MapMissing)
@@ -700,20 +710,35 @@
         [next : i64 (string-i64-map-len ids)]
         (begin
           (array-set! values next ty)
+          (array-set!
+            unsafe-flags
+            next
+            (if unsafe
+              1
+              0))
           (string-i64-map-put ids name next)))]))
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
   [ids : StringI64Map]
-  [values : (Array AstType)]) : StringI64Map
+  [values : (Array AstType)]
+  [unsafe-flags : (Array i64)]) : StringI64Map
   (match env
     [(TcTypeNil) ids]
     [(TcTypeBind name ty rest)
       (tc-env-cache-fill
         (box-get rest)
-        (tc-env-cache-add ids values name ty)
-        values)]
-    [(TcTypeCache _ _ _ rest) (tc-env-cache-fill (box-get rest) ids values)]))
+        (tc-env-cache-add
+          ids
+          values
+          unsafe-flags
+          name
+          ty
+          (tc-binding-unsafe-marker-head? (box-get rest) name))
+        values
+        unsafe-flags)]
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-env-cache-fill (box-get rest) ids values unsafe-flags)]))
 
 (define (tc-env-default-shadow-count [env : TcTypeEnv]) : i64
   (match env
@@ -722,7 +747,7 @@
       (if (string-eq name (tc-default-boundary-name))
         0
         (+ 1 (tc-env-default-shadow-count (box-get rest))))]
-    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
+    [(TcTypeCache _ _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
 
 (define (tc-env-default-shadow-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
   (match env
@@ -733,55 +758,26 @@
         (tc-env-default-shadow-fill
           (box-get rest)
           (string-i64-map-put shadows name 1)))]
-    [(TcTypeCache _ _ _ rest)
+    [(TcTypeCache _ _ _ _ rest)
       (tc-env-default-shadow-fill (box-get rest) shadows)]))
-
-(define (tc-env-unsafe-cache-add
-  [shadows : StringI64Map]
-  [name : String]
-  [unsafe : bool]) : StringI64Map
-  (let
-    [key : String (tc-unsafe-cache-key name)]
-    (match (string-i64-map-get shadows key)
-      [(StringI64MapFound _) shadows]
-      [(StringI64MapMissing)
-        (string-i64-map-put
-          shadows
-          key
-          (if unsafe
-            1
-            0))])))
-
-(define (tc-env-unsafe-cache-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
-  (match env
-    [(TcTypeNil) shadows]
-    [(TcTypeBind name _ rest)
-      (tc-env-unsafe-cache-fill
-        (box-get rest)
-        (tc-env-unsafe-cache-add
-          shadows
-          name
-          (tc-binding-unsafe-marker-head? (box-get rest) name)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-unsafe-cache-fill (box-get rest) shadows)]))
 
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (let
     [count : i64 (tc-env-cache-count env)]
     [shadow-count : i64 (tc-env-default-shadow-count env)]
     [values : (Array AstType) (make-array AstType count)]
+    [unsafe-flags : (Array i64) (make-array i64 count)]
     [ids : StringI64Map
       (tc-env-cache-fill
         env
         (string-i64-map-with-capacity (tc-env-cache-capacity count))
-        values)]
+        values
+        unsafe-flags)]
     [shadows : StringI64Map
-      (tc-env-unsafe-cache-fill
+      (tc-env-default-shadow-fill
         env
-        (tc-env-default-shadow-fill
-          env
-          (string-i64-map-with-capacity
-            (tc-env-cache-capacity (+ count shadow-count)))))]
-    (TcTypeCache ids values shadows (box env))))
+        (string-i64-map-with-capacity (tc-env-cache-capacity shadow-count)))]
+    (TcTypeCache ids values unsafe-flags shadows (box env))))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
@@ -873,7 +869,7 @@
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
@@ -886,7 +882,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeCache _ _ _ _)
+    [(TcTypeCache _ _ _ _ _)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
@@ -1095,7 +1091,7 @@
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (ErrTcType (string-append "typecheck: unbound name " name))]
-    [(TcTypeCache ids values _ rest)
+    [(TcTypeCache ids values _ _ rest)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index) (OkTcType (array-ref values index))]
         [(StringI64MapMissing)
@@ -1104,6 +1100,23 @@
       (if (string-eq key name)
         (OkTcType ty)
         (tc-lookup (box-get rest) name))]))
+
+(define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
+  (match env
+    [(TcTypeNil)
+      (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))]
+    [(TcTypeCache ids values unsafe-flags _ rest)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound index)
+          (OkTcTypeUnsafe
+            (array-ref values index)
+            (= (array-ref unsafe-flags index) 1))]
+        [(StringI64MapMissing)
+          (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))])]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key name)
+        (OkTcTypeUnsafe ty (tc-binding-unsafe-marker-head? (box-get rest) name))
+        (tc-lookup-unsafe (box-get rest) name))]))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
   (match (tc-lookup env name)
@@ -1119,7 +1132,7 @@
   [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup root name)]
-    [(TcTypeCache _ _ _ rest)
+    [(TcTypeCache _ _ _ _ rest)
       (tc-lookup-hygiene-global-scan root (box-get rest) name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
@@ -1146,7 +1159,7 @@
   [name : String]) : bool
   (match env
     [(TcTypeNil) (tc-binding-unsafe? root name)]
-    [(TcTypeCache _ _ _ rest)
+    [(TcTypeCache _ _ _ _ rest)
       (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
@@ -1159,7 +1172,7 @@
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
-    [(TcTypeCache _ _ _ _) (TcNoString)]
+    [(TcTypeCache _ _ _ _ _) (TcNoString)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-region-marker-name))
         (match ty
@@ -1206,13 +1219,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (tc-cleanup-owner-marker-head? (box-get rest) name)
@@ -1221,7 +1234,7 @@
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
-    [(TcTypeCache _ _ _ _) TcStringNil]
+    [(TcTypeCache _ _ _ _ _) TcStringNil]
     [(TcTypeBind key ty rest)
       (let
         [owners : TcStringList
@@ -1400,7 +1413,7 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
@@ -1423,7 +1436,7 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         seen-target
@@ -1459,7 +1472,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _) false]
+      [(TcTypeCache _ _ _ _ _) false]
       [(TcTypeBind key ty rest)
         (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
           seen-target
@@ -1523,41 +1536,73 @@
     [(AstTyRegion _ inner) (tc-type-strip-region (box-get inner))]
     [_ ty]))
 
-(define (tc-type-list-without-regions [types : AstTypeList]) : AstTypeList
+(define (tc-type-list-contains-region-tag? [types : AstTypeList]) : bool
   (match types
-    [(AstTypeNil) AstTypeNil]
+    [(AstTypeNil) false]
     [(AstTypeCons head tail)
       (let
         [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
-        (ast-type-cons
-          (tc-type-without-regions head)
-          (tc-type-list-without-regions tail)))]))
+        (if (tc-type-contains-region-tag? head)
+          true
+          (tc-type-list-contains-region-tag? tail)))]))
 
-(define (tc-type-without-regions [ty : AstType]) : AstType
+(define (tc-type-contains-region-tag? [ty : AstType]) : bool
   (match ty
     [(AstTyFunc args ret)
-      (ast-ty-func
-        (tc-type-list-without-regions args)
-        (tc-type-without-regions (box-get ret)))]
-    [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
-    [(AstTyArray elem len)
-      (ast-ty-array (tc-type-without-regions (box-get elem)) len)]
-    [(AstTyDynArray elem)
-      (ast-ty-dyn-array (tc-type-without-regions (box-get elem)))]
-    [(AstTyBox elem) (ast-ty-box (tc-type-without-regions (box-get elem)))]
-    [(AstTyPtr elem) (ast-ty-ptr (tc-type-without-regions (box-get elem)))]
-    [(AstTyMutPtr elem)
-      (ast-ty-mut-ptr (tc-type-without-regions (box-get elem)))]
-    [(AstTyRef region inner)
-      (ast-ty-ref region (tc-type-without-regions (box-get inner)))]
-    [(AstTyMutRef region inner)
-      (ast-ty-mut-ref region (tc-type-without-regions (box-get inner)))]
-    [(AstTyRegion _ inner) (tc-type-without-regions (box-get inner))]
-    [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
-    [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
-    [(AstTyVarArgs name lifetimes) (AstTyVarArgs name lifetimes)]
-    [_ ty]))
+      (if (tc-type-list-contains-region-tag? args)
+        true
+        (tc-type-contains-region-tag? (box-get ret)))]
+    [(AstTyTuple elems) (tc-type-list-contains-region-tag? elems)]
+    [(AstTyArray elem _) (tc-type-contains-region-tag? (box-get elem))]
+    [(AstTyDynArray elem) (tc-type-contains-region-tag? (box-get elem))]
+    [(AstTyBox elem) (tc-type-contains-region-tag? (box-get elem))]
+    [(AstTyPtr elem) (tc-type-contains-region-tag? (box-get elem))]
+    [(AstTyMutPtr elem) (tc-type-contains-region-tag? (box-get elem))]
+    [(AstTyRef _ inner) (tc-type-contains-region-tag? (box-get inner))]
+    [(AstTyMutRef _ inner) (tc-type-contains-region-tag? (box-get inner))]
+    [(AstTyRegion _ _) true]
+    [_ false]))
+
+(define (tc-type-list-without-regions [types : AstTypeList]) : AstTypeList
+  (if (tc-type-list-contains-region-tag? types)
+    (match types
+      [(AstTypeNil) AstTypeNil]
+      [(AstTypeCons head tail)
+        (let
+          [head : AstType (box-get head)]
+          [tail : AstTypeList (box-get tail)]
+          (ast-type-cons
+            (tc-type-without-regions head)
+            (tc-type-list-without-regions tail)))])
+    types))
+
+(define (tc-type-without-regions [ty : AstType]) : AstType
+  (if (tc-type-contains-region-tag? ty)
+    (match ty
+      [(AstTyFunc args ret)
+        (ast-ty-func
+          (tc-type-list-without-regions args)
+          (tc-type-without-regions (box-get ret)))]
+      [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
+      [(AstTyArray elem len)
+        (ast-ty-array (tc-type-without-regions (box-get elem)) len)]
+      [(AstTyDynArray elem)
+        (ast-ty-dyn-array (tc-type-without-regions (box-get elem)))]
+      [(AstTyBox elem) (ast-ty-box (tc-type-without-regions (box-get elem)))]
+      [(AstTyPtr elem) (ast-ty-ptr (tc-type-without-regions (box-get elem)))]
+      [(AstTyMutPtr elem)
+        (ast-ty-mut-ptr (tc-type-without-regions (box-get elem)))]
+      [(AstTyRef region inner)
+        (ast-ty-ref region (tc-type-without-regions (box-get inner)))]
+      [(AstTyMutRef region inner)
+        (ast-ty-mut-ref region (tc-type-without-regions (box-get inner)))]
+      [(AstTyRegion _ inner) (tc-type-without-regions (box-get inner))]
+      [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
+      [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
+      [(AstTyVarArgs name lifetimes) (AstTyVarArgs name lifetimes)]
+      [_ ty])
+    ty))
 
 (define (tc-type-list-contains-region [types : AstTypeList] [region : String]) : bool
   (match types
@@ -1880,7 +1925,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _) false]
+      [(TcTypeCache _ _ _ _ _) false]
       [(TcTypeBind key ty rest)
         (if (string-eq key (tc-region-marker-name))
           (match ty
@@ -1947,29 +1992,58 @@
                 (string-append context "; region value would escape")))))])))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : AstTypeList]) : AstTypeList
+  (if (tc-type-list-needs-resolution? types)
+    (match types
+      [(AstTypeNil) AstTypeNil]
+      [(AstTypeCons head tail)
+        (let
+          [head : AstType (box-get head)]
+          [tail : AstTypeList (box-get tail)]
+          (ast-type-cons
+            (tc-resolve-type ctx head)
+            (tc-resolve-type-list ctx tail)))])
+    types))
+
+(define (tc-type-list-needs-resolution? [types : AstTypeList]) : bool
   (match types
-    [(AstTypeNil) AstTypeNil]
+    [(AstTypeNil) false]
     [(AstTypeCons head tail)
       (let
         [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
-        (ast-type-cons
-          (tc-resolve-type ctx head)
-          (tc-resolve-type-list ctx tail)))]))
+        (if (tc-type-needs-resolution? head)
+          true
+          (tc-type-list-needs-resolution? tail)))]))
+
+(define (tc-type-needs-resolution? [ty : AstType]) : bool
+  (match ty
+    [(AstTyFunc args ret)
+      (if (tc-type-list-needs-resolution? args)
+        true
+        (tc-type-needs-resolution? (box-get ret)))]
+    [(AstTyTuple elems) (tc-type-list-needs-resolution? elems)]
+    [(AstTyArray elem _) (tc-type-needs-resolution? (box-get elem))]
+    [(AstTyDynArray elem) (tc-type-needs-resolution? (box-get elem))]
+    [(AstTyBox elem) (tc-type-needs-resolution? (box-get elem))]
+    [(AstTyPtr elem) (tc-type-needs-resolution? (box-get elem))]
+    [(AstTyMutPtr elem) (tc-type-needs-resolution? (box-get elem))]
+    [(AstTyRef _ inner) (tc-type-needs-resolution? (box-get inner))]
+    [(AstTyMutRef _ inner) (tc-type-needs-resolution? (box-get inner))]
+    [(AstTyRegion _ inner) (tc-type-needs-resolution? (box-get inner))]
+    [(AstTyVarArgs _ _) true]
+    [(AstTyVar _) true]
+    [_ false]))
 
 (define (tc-name-qualified? [name : String]) : bool
   (let
     [i : i64 0]
     [n : i64 (string-length name)]
-    [found : bool false]
     (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (= (string-ref name i) #/')
-            (set! found true)
-            (set! found false))
+      (while (< i n)
+        (if (= (string-ref name i) #/')
+          (return true)
           (set! i (+ i 1))))
-      found)))
+      false)))
 
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
@@ -2163,6 +2237,18 @@
 (define tc-nominal-owner-cache-name7 : String
   "")
 
+(define tc-resolve-type-name-cache-valid : bool
+  false)
+
+(define tc-resolve-type-name-cache-found : bool
+  false)
+
+(define tc-resolve-type-name-cache-key : String
+  "")
+
+(define tc-resolve-type-name-cache-handle : i64
+  0)
+
 (define (tc-nominal-owner-cache-reset!) : unit
   (begin
     (set! tc-nominal-owner-cache-handle 0)
@@ -2172,7 +2258,44 @@
     (set! tc-nominal-owner-cache-handle4 0)
     (set! tc-nominal-owner-cache-handle5 0)
     (set! tc-nominal-owner-cache-handle6 0)
-    (set! tc-nominal-owner-cache-handle7 0)))
+    (set! tc-nominal-owner-cache-handle7 0)
+    (set! tc-resolve-type-name-cache-valid false)))
+
+(define (tc-resolve-type-name-cache-lookup [lookup-name : String]) : TcTypeNameLookupCache
+  (if (and
+    tc-resolve-type-name-cache-valid
+    (string-eq tc-resolve-type-name-cache-key lookup-name))
+    (if tc-resolve-type-name-cache-found
+      (TcTypeNameLookupCacheFound tc-resolve-type-name-cache-handle)
+      (TcTypeNameLookupCacheMissing))
+    (TcTypeNameLookupCacheMiss)))
+
+(define (tc-resolve-type-name-cache-store!
+  [lookup-name : String]
+  [found : bool]
+  [handle : i64]) : unit
+  (begin
+    (set! tc-resolve-type-name-cache-key lookup-name)
+    (set! tc-resolve-type-name-cache-found found)
+    (set! tc-resolve-type-name-cache-handle handle)
+    (set! tc-resolve-type-name-cache-valid true)))
+
+(define (tc-resolve-type-name-symbol-lookup
+  [symbols : CompilerSymbols]
+  [lookup-name : String]) : MaybeI64
+  (match (tc-resolve-type-name-cache-lookup lookup-name)
+    [(TcTypeNameLookupCacheFound handle) (SomeI64 handle)]
+    [(TcTypeNameLookupCacheMissing) NoneI64]
+    [(TcTypeNameLookupCacheMiss)
+      (match (compiler-symbols-lookup-type symbols lookup-name)
+        [(SomeI64 handle)
+          (begin
+            (tc-resolve-type-name-cache-store! lookup-name true handle)
+            (SomeI64 handle))]
+        [(NoneI64)
+          (begin
+            (tc-resolve-type-name-cache-store! lookup-name false 0)
+            NoneI64)])]))
 
 (define (tc-nominal-owner-cache-slot [handle : i64]) : i64
   (% (compiler-symbol-handle-index handle) 8))
@@ -2183,7 +2306,9 @@
   [cached-handle : i64]
   [cached-name : String]) : ResultTcString
   (if (= cached-handle handle)
-    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) cached-name)
+    (match (tc-resolve-type-name-symbol-lookup
+      (tc-context-symbols ctx)
+      cached-name)
       [(SomeI64 cached-handle)
         (if (= cached-handle handle)
           (OkTcString cached-name)
@@ -2385,7 +2510,7 @@
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
             (compiler-symbol-module-key module name)
             name)]
-        (match (compiler-symbols-lookup-type symbols lookup-name)
+        (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
               [(OkTcString canonical-name)
@@ -2399,29 +2524,31 @@
                 (AstTyVar name)))]))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
-  (match ty
-    [(AstTyFunc args ret)
-      (ast-ty-func
-        (tc-resolve-type-list ctx args)
-        (tc-resolve-type ctx (box-get ret)))]
-    [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
-    [(AstTyArray elem len)
-      (ast-ty-array (tc-resolve-type ctx (box-get elem)) len)]
-    [(AstTyDynArray elem)
-      (ast-ty-dyn-array (tc-resolve-type ctx (box-get elem)))]
-    [(AstTyBox elem) (ast-ty-box (tc-resolve-type ctx (box-get elem)))]
-    [(AstTyPtr elem) (ast-ty-ptr (tc-resolve-type ctx (box-get elem)))]
-    [(AstTyMutPtr elem) (ast-ty-mut-ptr (tc-resolve-type ctx (box-get elem)))]
-    [(AstTyRef region inner)
-      (ast-ty-ref region (tc-resolve-type ctx (box-get inner)))]
-    [(AstTyMutRef region inner)
-      (ast-ty-mut-ref region (tc-resolve-type ctx (box-get inner)))]
-    [(AstTyRegion region inner)
-      (ast-ty-region region (tc-resolve-type ctx (box-get inner)))]
-    [(AstTyVarArgs name lifetimes)
-      (tc-resolve-type-name-with-args ctx name lifetimes)]
-    [(AstTyVar name) (tc-resolve-type-name ctx name)]
-    [_ ty]))
+  (if (tc-type-needs-resolution? ty)
+    (match ty
+      [(AstTyFunc args ret)
+        (ast-ty-func
+          (tc-resolve-type-list ctx args)
+          (tc-resolve-type ctx (box-get ret)))]
+      [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
+      [(AstTyArray elem len)
+        (ast-ty-array (tc-resolve-type ctx (box-get elem)) len)]
+      [(AstTyDynArray elem)
+        (ast-ty-dyn-array (tc-resolve-type ctx (box-get elem)))]
+      [(AstTyBox elem) (ast-ty-box (tc-resolve-type ctx (box-get elem)))]
+      [(AstTyPtr elem) (ast-ty-ptr (tc-resolve-type ctx (box-get elem)))]
+      [(AstTyMutPtr elem) (ast-ty-mut-ptr (tc-resolve-type ctx (box-get elem)))]
+      [(AstTyRef region inner)
+        (ast-ty-ref region (tc-resolve-type ctx (box-get inner)))]
+      [(AstTyMutRef region inner)
+        (ast-ty-mut-ref region (tc-resolve-type ctx (box-get inner)))]
+      [(AstTyRegion region inner)
+        (ast-ty-region region (tc-resolve-type ctx (box-get inner)))]
+      [(AstTyVarArgs name lifetimes)
+        (tc-resolve-type-name-with-args ctx name lifetimes)]
+      [(AstTyVar name) (tc-resolve-type-name ctx name)]
+      [_ ty])
+    ty))
 
 (define (tc-resolve-type-name-with-args
   [ctx : TcContext]
@@ -2434,7 +2561,7 @@
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
             (compiler-symbol-module-key module name)
             name)]
-        (match (compiler-symbols-lookup-type symbols lookup-name)
+        (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
             (match (tc-nominal-owner-name ctx handle)
               [(OkTcString canonical-name)
@@ -3643,7 +3770,7 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
-    [(TcTypeCache _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
+    [(TcTypeCache _ _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
     [(TcTypeBind name ty rest)
       (TcSpmdEnvBind
         name
@@ -5209,7 +5336,8 @@
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ shadows _) (not (string-i64-map-contains? shadows name))]
+    [(TcTypeCache _ _ _ shadows _)
+      (not (string-i64-map-contains? shadows name))]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         false
@@ -8376,7 +8504,7 @@
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
-    [(TcTypeCache _ _ _ _) OkTcUnit]
+    [(TcTypeCache _ _ _ _ _) OkTcUnit]
     [(TcTypeBind key ty rest)
       (cond
         [(or
@@ -10395,17 +10523,13 @@
 
 (define (tc-qualified-name-last-slash [name : String]) : i64
   (let
-    [i : i64 0]
-    [n : i64 (string-length name)]
-    [last : i64 -1]
+    [i : i64 (- (string-length name) 1)]
     (begin
-      (while (< i n)
-        (begin
-          (if (= (string-ref name i) #/')
-            (set! last i)
-            (set! last last))
-          (set! i (+ i 1))))
-      last)))
+      (while (>= i 0)
+        (if (= (string-ref name i) #/')
+          (return i)
+          (set! i (- i 1))))
+      -1)))
 
 (define (tc-qualified-name-module [name : String]) : String
   (let
@@ -11234,11 +11358,19 @@
                 (tc-lookup-hygiene-global-visible ctx env global-name)]
               [(ErrTcUnit message) (ErrTcType message)])
             (tc-lookup-hygiene-global-visible ctx env global-name)))
-        (if (tc-binding-unsafe? env name)
-          (match (tc-require-unsafe env name)
-            [(OkTcUnit) (tc-lookup-visible ctx env name)]
-            [(ErrTcUnit message) (ErrTcType message)])
-          (tc-lookup-visible ctx env name)))]
+        (match (tc-lookup-unsafe env name)
+          [(OkTcTypeUnsafe ty unsafe)
+            (if unsafe
+              (match (tc-require-unsafe env name)
+                [(OkTcUnit)
+                  (match (tc-qualified-value-visible-ok ctx name)
+                    [(OkTcUnit) (OkTcType ty)]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)])
+              (match (tc-qualified-value-visible-ok ctx name)
+                [(OkTcUnit) (OkTcType ty)]
+                [(ErrTcUnit message) (ErrTcType message)]))]
+          [(ErrTcTypeUnsafe message) (ErrTcType message)]))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -14917,7 +15049,8 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
-  [decls : AstDeclList]) : ResultMacroDecls
+  [decls : AstDeclList]
+  [compat-only : bool]) : ResultMacroDecls
   (match decls
     [(AstDeclNil) (OkMacroDecls (AstDeclNil))]
     [(AstDeclCons decl rest)
@@ -14927,22 +15060,44 @@
           [(AstDeclModule next-module)
             (begin
               (set! macro-expand-active-module next-module)
-              (match (macro-expand-decls ctx top-env orig-decls rest)
+              (match (macro-expand-decls
+                ctx
+                top-env
+                orig-decls
+                rest
+                compat-only)
                 [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
                 [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
           [_
-            (let
-              [decl-ctx : TcContext
-                (tc-context-with-module ctx macro-expand-active-module)]
-              (match (macro-expand-decl decl-ctx top-env orig-decls decl)
-                [(OkMacroDecl ndecl)
-                  (begin
-                    (macro-local-decl-index-step! decl)
-                    (match (macro-expand-decls ctx top-env orig-decls rest)
-                      [(OkMacroDecls nrest)
-                        (OkMacroDecls (ast-decl-cons ndecl nrest))]
-                      [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
-                [(ErrMacroDecl diag) (ErrMacroDecls diag)]))]))]))
+            (if (and compat-only (not (macro-decl-needs-expansion? decl)))
+              (begin
+                (macro-local-decl-index-step! decl)
+                (match (macro-expand-decls
+                  ctx
+                  top-env
+                  orig-decls
+                  rest
+                  compat-only)
+                  [(OkMacroDecls nrest)
+                    (OkMacroDecls (ast-decl-cons decl nrest))]
+                  [(ErrMacroDecls diag) (ErrMacroDecls diag)]))
+              (let
+                [decl-ctx : TcContext
+                  (tc-context-with-module ctx macro-expand-active-module)]
+                (match (macro-expand-decl decl-ctx top-env orig-decls decl)
+                  [(OkMacroDecl ndecl)
+                    (begin
+                      (macro-local-decl-index-step! decl)
+                      (match (macro-expand-decls
+                        ctx
+                        top-env
+                        orig-decls
+                        rest
+                        compat-only)
+                        [(OkMacroDecls nrest)
+                          (OkMacroDecls (ast-decl-cons ndecl nrest))]
+                        [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
+                  [(ErrMacroDecl diag) (ErrMacroDecls diag)])))]))]))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
@@ -14974,6 +15129,19 @@
         (macro-decl-needs-expansion? template))]
     [_ false]))
 
+(define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefMacro _ _ _ _) true]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (macro-decl-has-defmacro? inner))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (macro-decl-has-defmacro? template))]
+    [_ false]))
+
 ;; Whether a program needs the macro expansion pass.
 (define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
   (match decls
@@ -14985,6 +15153,14 @@
           (macro-decl-needs-expansion? decl)
           (macro-program-needs-expansion? rest)))]))
 
+(define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
@@ -14994,7 +15170,8 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (if (macro-program-needs-expansion? decls)
+        [has-defmacro : bool (macro-program-has-defmacro? decls)]
+        (if (or has-defmacro (macro-program-needs-expansion? decls))
           (match (build-compiler-symbols program)
             [(OkCompilerSymbols symbols)
               (match (build-compiler-registries-with-symbols program symbols)
@@ -15016,7 +15193,8 @@
                                 ctx
                                 top-env
                                 decls
-                                decls)
+                                decls
+                                (not has-defmacro))
                                 [(OkMacroDecls ndecls)
                                   (OkMacroExpand (ast-program ndecls))]
                                 [(ErrMacroDecls diag) (ErrMacroExpand diag)])]

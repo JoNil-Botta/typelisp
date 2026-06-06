@@ -554,9 +554,7 @@ check_u64_float_cast_asm() {
 check_stdlib_string_helpers_asm() {
     _asm=$1
     _label="$2 assembly"
-    assert_not_contains "$_asm" ".globl tl_string_eq" "$_label"
-    assert_not_contains "$_asm" "call tl_string_eq" "$_label"
-    assert_not_contains "$_asm" ".extern tl_string_eq" "$_label"
+    assert_contains "$_asm" "call tl_string_eq" "$_label"
     assert_not_contains "$_asm" ".globl tl_string_to_int" "$_label"
     assert_not_contains "$_asm" "call tl_string_to_int" "$_label"
     assert_not_contains "$_asm" ".extern tl_string_to_int" "$_label"
@@ -656,7 +654,7 @@ run_linux_backend_fixtures() {
         ".L_tl_string_eq_word_loop:" \
         "shrq \$3, %r8" \
         "cmpq (%rdx), %rax" \
-        ".L_tl_string_eq_tail_loop:" \
+        ".L_tl_string_eq_tail_1:" \
         "rep movsb" \
         "tl_current_arena:" \
         ".L_tl_alloc_new_arena:" \
@@ -848,7 +846,7 @@ run_windows_backend_fixtures() {
         ".L_tl_string_eq_word_loop:" \
         "shrq \$3, %r10" \
         "cmpq (%r8), %rax" \
-        ".L_tl_string_eq_tail_loop:" \
+        ".L_tl_string_eq_tail_1:" \
         ".globl tl_string_to_int" \
         "tl_string_to_int:" \
         ".globl tl_int_to_string" \

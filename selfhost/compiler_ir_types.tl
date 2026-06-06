@@ -237,12 +237,15 @@
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (compiler-ir-instr-seq-to-list-rev
-      slots
-      (- index 1)
-      (compiler-ir-instr-cons (array-ref slots index) acc))))
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrInstrList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set! out (IrInstrCons (array-ref slots cursor) (box out)))
+          (set! cursor (- cursor 1))))
+      out)))
 
 (define (compiler-ir-instr-seq-to-list [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (compiler-ir-instr-seq-to-list-rev
@@ -1005,7 +1008,11 @@
     (string-eq name "tl_string_eq")
     (or
       (string-eq name "tl_string_to_int")
-      (or (string-eq name "tl_region_mark") (string-eq name ".L_tl_stdin_eof")))))
+      (or
+        (string-eq name "tl_hash_string")
+        (or
+          (string-eq name "tl_region_mark")
+          (string-eq name ".L_tl_stdin_eof"))))))
 
 (define (compiler-ir-runtime-memory-write? [name : String]) : bool
   (or
@@ -1017,8 +1024,14 @@
         (or
           (string-eq name "tl_string_concat")
           (or
-            (string-eq name "tl_region_reset")
-            (string-eq name ".L_tl_flush_stdout")))))))
+            (string-eq name "tl_string_concat3")
+            (or
+              (string-eq name "tl_string_concat4")
+              (or
+                (string-eq name "tl_string_concat5")
+                (or
+                  (string-eq name "tl_region_reset")
+                  (string-eq name ".L_tl_flush_stdout"))))))))))
 
 (define (compiler-ir-runtime-control-flow? [name : String]) : bool
   (or

@@ -124,6 +124,11 @@
 
 (cfg
   compile-profile
+  (define compiler-opt-profile-detail-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
   (define (compiler-opt-profile-field [value : i64]) : String
     (string-append "|" (int->string value))))
 
@@ -160,6 +165,35 @@
                   (compiler-opt-profile-field
                     (- end-live compiler-opt-profile-start-live))
                   (string-append (compiler-opt-profile-field peak-delta) "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-detail-start) : unit
+    (set! compiler-opt-profile-detail-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
+    (let
+      [elapsed : i64 (- (profile-now-ms) compiler-opt-profile-detail-start-ms)]
+      (if (>= elapsed 1)
+        (print-error
+          (string-append
+            "compile-profile-detail|optimize."
+            (string-append
+              phase
+              (string-append
+                "|"
+                (string-append
+                  (int->string elapsed)
+                  (string-append "|" (string-append name "\n")))))))
+        unit))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-function-name [func : CompilerIrFunction]) : String
+    (match func
+      [(IrFunction name _ _ _ _) name])))
 
 (define (compiler-optimize-default-level) : i64
   compiler-optimize-level-default)
@@ -1319,15 +1353,19 @@
     [(IrInstrPhi _ inputs _) (opt-collect-phi-uses-array items inputs)]
     [_ unit]))
 
-(define (opt-collect-instrs-uses-array
+(define (opt-collect-instr-seq-uses-array
   [items : (Array bool)]
-  [instrs : CompilerIrInstrList]) : unit
-  (match instrs
-    [(IrInstrNil) unit]
-    [(IrInstrCons instr rest)
-      (begin
-        (opt-collect-instr-uses-array items instr)
-        (opt-collect-instrs-uses-array items (box-get rest)))]))
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (opt-collect-instr-uses-array items (array-ref slots index))
+          (set! index (+ index 1))))
+      unit)))
 
 (define (opt-collect-blocks-uses-array-into
   [items : (Array bool)]
@@ -1338,9 +1376,7 @@
       (match block
         [(IrBlock _ instrs)
           (begin
-            (opt-collect-instrs-uses-array
-              items
-              (compiler-ir-instr-seq-to-list instrs))
+            (opt-collect-instr-seq-uses-array items instrs)
             (opt-collect-blocks-uses-array-into items (box-get rest)))])]))
 
 (define (opt-collect-blocks-uses-array
@@ -1376,24 +1412,26 @@
     [(IrInstrTailMask dst _ _ _) (not (opt-used-array-contains items dst))]
     [_ false]))
 
-(define (opt-dce-instrs-array
+(define (opt-dce-instr-seq-array
   [items : (Array bool)]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(IrInstrNil) (IrInstrNil)]
-    [(IrInstrCons instr rest)
-      (if (opt-instr-dead-array? items instr)
-        (opt-dce-instrs-array items (box-get rest))
-        (compiler-ir-instr-cons
-          instr
-          (opt-dce-instrs-array items (box-get rest))))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [index : i64 (- (struct-get instrs len) 1)]
+    [out : CompilerIrInstrList IrInstrNil]
+    (begin
+      (while (>= index 0)
+        (begin
+          (if (opt-instr-dead-array? items (array-ref slots index))
+            unit
+            (set! out (compiler-ir-instr-cons (array-ref slots index) out)))
+          (set! index (- index 1))))
+      out)))
 
 (define (opt-dce-block-array [items : (Array bool)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-dce-instrs-array items (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-dce-instr-seq-array items instrs))]))
 
 (define (opt-dce-block-list-array
   [items : (Array bool)]
@@ -1841,23 +1879,21 @@
     (OptAggregateAccessNil)
     false))
 
-(define (opt-aggregate-candidates-from-instrs
-  [scan : CompilerIrInstrList]
-  [all : CompilerIrInstrList]) : OptAggregateAllocCandidateList
+(define (opt-aggregate-candidates-from-instrs [scan : CompilerIrInstrList]) : OptAggregateAllocCandidateList
   (match scan
     [(IrInstrNil) (OptAggregateAllocCandidateNil)]
     [(IrInstrCons instr rest)
       (match (opt-aggregate-direct-alloc instr)
         [(OptSomeAggregateAlloc base ty size)
-          (match (opt-aggregate-classify-one base ty size all)
+          (match (opt-aggregate-classify-one base ty size scan)
             [(OptAggregateScanOk ptrs accesses)
               (OptAggregateAllocCandidateCons
                 (OptAggregateAllocCandidate base ty size ptrs accesses)
-                (box (opt-aggregate-candidates-from-instrs (box-get rest) all)))]
+                (box (opt-aggregate-candidates-from-instrs (box-get rest))))]
             [(OptAggregateScanReject)
-              (opt-aggregate-candidates-from-instrs (box-get rest) all)])]
+              (opt-aggregate-candidates-from-instrs (box-get rest))])]
         [(OptNoAggregateAlloc)
-          (opt-aggregate-candidates-from-instrs (box-get rest) all)])]))
+          (opt-aggregate-candidates-from-instrs (box-get rest))])]))
 
 (define (opt-aggregate-instr-list-append
   [left : CompilerIrInstrList]
@@ -1885,7 +1921,7 @@
     [(IrFunction _ _ _ _ blocks)
       (let
         [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
-        (opt-aggregate-candidates-from-instrs instrs instrs))]))
+        (opt-aggregate-candidates-from-instrs instrs))]))
 
 (define (opt-aggregate-candidate-list-append
   [left : OptAggregateAllocCandidateList]
@@ -3718,14 +3754,18 @@
   (OptLabelCons String (Box OptLabelSet)))
 
 (define (opt-label-contains [set : OptLabelSet] [label : String]) : bool
-  (match set
-    [(OptLabelNil) false]
-    [(OptLabelCons head rest)
-      (let
-        [rest : OptLabelSet (box-get rest)]
-        (if (string-eq head label)
-          true
-          (opt-label-contains rest label)))]))
+  (let
+    [cursor : OptLabelSet set]
+    [found : bool false]
+    (begin
+      (while (not found)
+        (match cursor
+          [(OptLabelNil) (return false)]
+          [(OptLabelCons head rest)
+            (if (string-eq head label)
+              (set! found true)
+              (set! cursor (box-get rest)))]))
+      true)))
 
 (define (opt-label-add [set : OptLabelSet] [label : String]) : OptLabelSet
   (if (opt-label-contains set label)
@@ -5263,20 +5303,26 @@
         [_ instr])]
     [_ instr]))
 
-(define (opt-cfg-fold-branches-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(IrInstrNil) (IrInstrNil)]
-    [(IrInstrCons instr rest)
-      (compiler-ir-instr-cons
-        (opt-cfg-fold-branch instr)
-        (opt-cfg-fold-branches-instrs (box-get rest)))]))
+(define (opt-cfg-fold-branches-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [index : i64 (- (struct-get instrs len) 1)]
+    [out : CompilerIrInstrList IrInstrNil]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (compiler-ir-instr-cons
+              (opt-cfg-fold-branch (array-ref slots index))
+              out))
+          (set! index (- index 1))))
+      out)))
 
 (define (opt-cfg-fold-branches-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-cfg-fold-branches-instrs (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-cfg-fold-branches-instr-seq instrs))]))
 
 (define (opt-cfg-fold-branches-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -5293,22 +5339,24 @@
       (opt-label-add (opt-label-add set true-label) false-label)]
     [_ set]))
 
-(define (opt-cfg-instrs-successors
+(define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]
-  [instrs : CompilerIrInstrList]) : OptLabelSet
-  (match instrs
-    [(IrInstrNil) set]
-    [(IrInstrCons instr rest)
-      (opt-cfg-instrs-successors
-        (opt-cfg-instr-successors set instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]) : OptLabelSet
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : OptLabelSet set]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out (opt-cfg-instr-successors out (array-ref slots index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-cfg-block-successors [block : CompilerIrBlock]) : OptLabelSet
   (match block
-    [(IrBlock _ instrs)
-      (opt-cfg-instrs-successors
-        (OptLabelNil)
-        (compiler-ir-instr-seq-to-list instrs))]))
+    [(IrBlock _ instrs) (opt-cfg-instr-seq-successors (OptLabelNil) instrs)]))
 
 (define (opt-cfg-terminator-instr? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -5318,13 +5366,14 @@
     [(IrInstrTailCall _ _ _) true]
     [_ false]))
 
-(define (opt-cfg-instrs-can-fallthrough? [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) true]
-    [(IrInstrCons instr rest)
-      (match (box-get rest)
-        [(IrInstrNil) (not (opt-cfg-terminator-instr? instr))]
-        [_ (opt-cfg-instrs-can-fallthrough? (box-get rest))])]))
+(define (opt-cfg-instr-seq-can-fallthrough? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (struct-get instrs len)]
+    (if (= count 0)
+      true
+      (not
+        (opt-cfg-terminator-instr?
+          (array-ref (struct-get instrs slots) (- count 1)))))))
 
 (define (opt-cfg-block-successors-with-next
   [block : CompilerIrBlock]
@@ -5333,13 +5382,10 @@
     [(IrBlock _ instrs)
       (let
         [explicit : OptLabelSet
-          (opt-cfg-instrs-successors
-            (OptLabelNil)
-            (compiler-ir-instr-seq-to-list instrs))]
+          (opt-cfg-instr-seq-successors (OptLabelNil) instrs)]
         (if (and
           (> (string-length next-label) 0)
-          (opt-cfg-instrs-can-fallthrough?
-            (compiler-ir-instr-seq-to-list instrs)))
+          (opt-cfg-instr-seq-can-fallthrough? instrs))
           (opt-label-add explicit next-label)
           explicit))]))
 
@@ -6593,24 +6639,30 @@
           (IrInstrPhi dst kept ty)))]
     [_ instr]))
 
-(define (opt-cfg-clean-instrs
+(define (opt-cfg-clean-instr-seq
   [reachable : OptLabelSet]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(IrInstrNil) (IrInstrNil)]
-    [(IrInstrCons instr rest)
-      (compiler-ir-instr-cons
-        (opt-cfg-clean-instr reachable instr)
-        (opt-cfg-clean-instrs reachable (box-get rest)))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [index : i64 (- (struct-get instrs len) 1)]
+    [out : CompilerIrInstrList IrInstrNil]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (compiler-ir-instr-cons
+              (opt-cfg-clean-instr reachable (array-ref slots index))
+              out))
+          (set! index (- index 1))))
+      out)))
 
 (define (opt-cfg-clean-block
   [reachable : OptLabelSet]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-cfg-clean-instrs reachable (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-cfg-clean-instr-seq reachable instrs))]))
 
 (define (opt-cfg-filter-clean-blocks
   [reachable : OptLabelSet]
@@ -7760,9 +7812,20 @@
   (match funcs
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
-      (compiler-ir-function-cons
-        (optimize-function-escaping func level scratch)
-        (optimize-function-list-escaping (box-get rest) level scratch))]))
+      (begin
+        (cfg compile-profile (compiler-opt-profile-detail-start))
+        (let
+          [optimized : CompilerIrFunction
+            (optimize-function-escaping func level scratch)]
+          (begin
+            (cfg
+              compile-profile
+              (compiler-opt-profile-detail-finish
+                "function"
+                (compiler-opt-profile-function-name func)))
+            (compiler-ir-function-cons
+              optimized
+              (optimize-function-list-escaping (box-get rest) level scratch)))))]))
 
 ;; Optimize one function inside `scratch`, then escape the result by deep-cloning
 ;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing

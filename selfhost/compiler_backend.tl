@@ -32,6 +32,11 @@
 
 (cfg
   compile-profile
+  (define compiler-backend-profile-detail-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
   (define (compiler-backend-profile-field [value : i64]) : String
     (string-append "|" (int->string value))))
 
@@ -70,6 +75,38 @@
                   (string-append
                     (compiler-backend-profile-field peak-delta)
                     "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-detail-start) : unit
+    (set! compiler-backend-profile-detail-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-detail-finish
+    [phase : String]
+    [name : String]) : unit
+    (let
+      [elapsed : i64
+        (- (profile-now-ms) compiler-backend-profile-detail-start-ms)]
+      (if (>= elapsed 1)
+        (print-error
+          (string-append
+            "compile-profile-detail|backend."
+            (string-append
+              phase
+              (string-append
+                "|"
+                (string-append
+                  (int->string elapsed)
+                  (string-append "|" (string-append name "\n")))))))
+        unit))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-function-name [func : CompilerIrFunction]) : String
+    (match func
+      [(IrFunction name _ _ _ _) name])))
 
 (defenum ResultBackendReg
   (OkBackendReg String)
@@ -137,7 +174,8 @@
 
 (defstruct CompilerBackendRuntimeTailPlan
   (fs-current-dir bool)
-  (profile bool))
+  (profile bool)
+  (hash-string bool))
 
 (defenum ResultCompilerBackendBuffer
   (OkCompilerBackendBuffer TextBuf)
@@ -208,6 +246,10 @@
 (define (compiler-backend-runtime-tail-profile?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail profile))
+
+(define (compiler-backend-runtime-tail-hash-string?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail hash-string))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -1534,6 +1576,66 @@
       [(BackendTargetLinux)
         (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" "")])))
 
+(define (compiler-backend-emit-windows-seh-proc
+  [target : CompilerBackendTarget]
+  [symbol : String]) : String
+  (if (compiler-backend-target-windows? target)
+    (backend-cat4 ".seh_proc " symbol "\n" "")
+    ""))
+
+(define (compiler-backend-emit-windows-seh-push-rbp
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_pushreg %rbp\n"
+    ""))
+
+(define (compiler-backend-emit-windows-seh-set-rbp
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_setframe %rbp, 0\n"
+    ""))
+
+(define (compiler-backend-emit-windows-seh-stackalloc
+  [target : CompilerBackendTarget]
+  [frame : i64]) : String
+  (if (and (compiler-backend-target-windows? target) (> frame 0))
+    (backend-cat4 "    .seh_stackalloc " (int->string frame) "\n" "")
+    ""))
+
+(define (compiler-backend-emit-windows-seh-endprologue
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_endprologue\n"
+    ""))
+
+(define (compiler-backend-emit-windows-seh-endproc
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .seh_endproc\n"
+    ""))
+
+(define (compiler-backend-emit-function-entry
+  [target : CompilerBackendTarget]
+  [symbol : String]
+  [frame : i64]) : String
+  (string-append
+    (compiler-backend-emit-windows-seh-proc target symbol)
+    (string-append
+      symbol
+      (string-append
+        ":\n    pushq %rbp\n"
+        (string-append
+          (compiler-backend-emit-windows-seh-push-rbp target)
+          (string-append
+            "    movq %rsp, %rbp\n"
+            (string-append
+              (compiler-backend-emit-windows-seh-set-rbp target)
+              (string-append
+                (compiler-backend-emit-stack-sub target frame)
+                (string-append
+                  (compiler-backend-emit-windows-seh-stackalloc target frame)
+                  (compiler-backend-emit-windows-seh-endprologue target))))))))))
+
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (backend-cat5 "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
 
@@ -1798,21 +1900,47 @@
         "_u"
         (compiler-backend-hex-byte (compiler-backend-char-code c)))]))
 
+(define (compiler-backend-symbol-safe-char? [c : char]) : bool
+  (or
+    (and (>= c #A') (<= c #Z'))
+    (or (and (>= c #a') (<= c #z')) (or (and (>= c #0') (<= c #9')) (= c #_')))))
+
+(define (compiler-backend-asm-safe-symbol-flush-run
+  [name : String]
+  [start : i64]
+  [end : i64]
+  [buf : TextBuf]) : TextBuf
+  (if (> end start)
+    (text-buf-append buf (substring name start (- end start)))
+    buf))
+
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
   (let
     [i : i64 0]
     [n : i64 (string-length name)]
-    [out : String ""]
+    [start : i64 0]
+    [changed : bool false]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
         (let
           [c : char (string-ref name i)]
-          (begin
-            (set!
-              out
-              (string-append out (compiler-backend-symbol-char name i c)))
-            (set! i (+ i 1)))))
-      out)))
+          (if (compiler-backend-symbol-safe-char? c)
+            (set! i (+ i 1))
+            (begin
+              (set! changed true)
+              (set!
+                buf
+                (compiler-backend-asm-safe-symbol-flush-run name start i buf))
+              (set!
+                buf
+                (text-buf-append buf (compiler-backend-symbol-char name i c)))
+              (set! i (+ i 1))
+              (set! start i)))))
+      (if changed
+        (text-buf-render
+          (compiler-backend-asm-safe-symbol-flush-run name start n buf))
+        name))))
 
 (define (compiler-backend-user-symbol [name : String]) : String
   (if (string-eq name "main")
@@ -2063,23 +2191,48 @@
     [(and (>= c #\space') (<= c #~')) (substring text idx 1)]
     [else (compiler-backend-octal-escape (compiler-backend-char-code c))]))
 
+(define (compiler-backend-string-byte-raw? [c : char]) : bool
+  (cond
+    [(= c #"') false]
+    [(= c #\\') false]
+    [(< c #\space') false]
+    [(> c #~') false]
+    [else true]))
+
 (define (compiler-backend-escape-string [text : String]) : String
   (let
     [i : i64 0]
     [n : i64 (string-length text)]
     [buf : TextBuf (text-buf-empty)]
+    [start : i64 0]
+    [escaped : bool false]
     (begin
       (while (< i n)
         (let
           [c : char (string-ref text i)]
-          (begin
-            (set!
-              buf
-              (text-buf-append
+          (if (compiler-backend-string-byte-raw? c)
+            (set! i (+ i 1))
+            (begin
+              (if (< start i)
+                (set!
+                  buf
+                  (text-buf-append buf (substring text start (- i start))))
+                unit)
+              (set!
                 buf
-                (compiler-backend-escape-string-byte text i c)))
-            (set! i (+ i 1)))))
-      (text-buf-render buf))))
+                (text-buf-append
+                  buf
+                  (compiler-backend-escape-string-byte text i c)))
+              (set! i (+ i 1))
+              (set! start i)
+              (set! escaped true)))))
+      (if escaped
+        (begin
+          (if (< start n)
+            (set! buf (text-buf-append buf (substring text start (- n start))))
+            unit)
+          (text-buf-render buf))
+        text))))
 
 (define (compiler-backend-quoted-gas-string [text : String]) : String
   (string-append
@@ -2088,22 +2241,41 @@
 
 (define (compiler-backend-string-label-suffix [text : String]) : String
   (let
-    [i : i64 0]
     [n : i64 (string-length text)]
-    [buf : TextBuf (text-buf-empty)]
+    (if (= n 0)
+      "empty"
+      (backend-cat5
+        "l"
+        (int->string n)
+        "_"
+        (int->string (compiler-backend-string-label-forward-hash text))
+        (string-append
+          "_"
+          (int->string (compiler-backend-string-label-reverse-hash text)))))))
+
+(define (compiler-backend-string-label-forward-hash [key : String]) : i64
+  (hash-string (& key)))
+
+(define (compiler-backend-string-label-reverse-hash [text : String]) : i64
+  (let
+    [i : i64 (- (string-length text) 1)]
+    [hash : i64 0]
     (begin
-      (while (< i n)
-        (begin
-          (set!
-            buf
-            (text-buf-append
-              buf
-              (compiler-backend-hex-byte
-                (compiler-backend-char-code (string-ref text i)))))
-          (set! i (+ i 1))))
-      (if (= n 0)
-        "empty"
-        (text-buf-render buf)))))
+      (while (>= i 0)
+        (let
+          [next : i64
+            (+
+              (+ (* hash 131) (compiler-backend-char-code (string-ref text i)))
+              1)]
+          [reduced : i64 (+ (bit-and next 2147483647) (shr next 31))]
+          (begin
+            (set!
+              hash
+              (if (>= reduced 2147483647)
+                (- reduced 2147483647)
+                reduced))
+            (set! i (- i 1)))))
+      hash)))
 
 (define (compiler-backend-string-data-label [text : String]) : String
   (string-append ".L_tl_str_data_" (compiler-backend-string-label-suffix text)))
@@ -2455,6 +2627,47 @@
                 imm
                 (backend-cat3 ", " addr "\n")))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
+
+(define (compiler-backend-emit-load-immediate-to-reg
+  [value : CompilerIrValue]
+  [reg : String]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-value-as-i64 value)
+    [(CompilerBackendSomeI64 n)
+      (CompilerBackendSomeAsm (compiler-backend-emit-load-i64-immediate n reg))]
+    [(CompilerBackendNoI64)
+      (match (compiler-backend-immediate-operand value)
+        [(CompilerBackendSomeImmediate imm)
+          (CompilerBackendSomeAsm (backend-cat5 "    movq " imm ", " reg "\n"))]
+        [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])]))
+
+(define (compiler-backend-emit-store-immediate-to-var-home
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [value : CompilerIrValue]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-immediate-operand value)
+    [(CompilerBackendSomeImmediate imm)
+      (match (compiler-reg-assignment-lookup assignments var-id)
+        [(CompilerRegSomeLocation location)
+          (match location
+            [(CompilerRegRegister home)
+              (compiler-backend-emit-load-immediate-to-reg value home)]
+            [(CompilerRegSpill offset)
+              (CompilerBackendSomeAsm
+                (backend-cat5
+                  "    movq "
+                  imm
+                  ", "
+                  (compiler-backend-frame-offset offset)
+                  "\n"))])]
+        [(CompilerRegNoLocation)
+          (CompilerBackendSomeAsm
+            (backend-cat5
+              "    movq "
+              imm
+              ", "
+              (compiler-backend-slot var-id)
+              "\n"))])]
+    [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
   (match elem-ty
@@ -4551,6 +4764,97 @@
           (IrValueUnit)))]
     [(IrCallArgsArray values) (array-ref values index)]))
 
+(define (compiler-backend-fast-alloc-size [args : CompilerIrCallArgs]) : i64
+  (match args
+    [(IrCallArgsOne (IrValueI64 size))
+      (if (or (<= size 0) (> size 64))
+        0
+        (* (/ (+ size 7) 8) 8))]
+    [_ 0]))
+
+(define (compiler-backend-fast-alloc-label [size : i64]) : String
+  (backend-cat4 ".L_tl_alloc" (int->string size) "" ""))
+
+(define (compiler-backend-inline-fast-alloc? [size : i64]) : bool
+  (= size 16))
+
+(define (compiler-backend-fast-alloc-site-label
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [suffix : String]) : String
+  (compiler-backend-asm-label
+    function
+    (backend-cat5 "alloc" current-label "_v" (int->string dst) suffix)))
+
+(define (compiler-backend-emit-inline-fast-alloc
+  [target : CompilerBackendTarget]
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [size : i64]
+  [profile : bool]) : String
+  (let
+    [size-text : String (int->string size)]
+    [slow-label : String
+      (compiler-backend-fast-alloc-site-label
+        function
+        current-label
+        dst
+        "_slow")]
+    [done-label : String
+      (compiler-backend-fast-alloc-site-label
+        function
+        current-label
+        dst
+        "_done")]
+    [profile-label : String
+      (compiler-backend-fast-alloc-site-label
+        function
+        current-label
+        dst
+        "_profile_done")]
+    [next-reg : String
+      (if (compiler-backend-target-windows? target)
+        "%r10"
+        "%rcx")]
+    (string-append
+      (backend-cat5
+        "    movq tl_current_arena(%rip), %r8\n    testq %r8, %r8\n    jz "
+        slow-label
+        "\n    movq 16(%r8), %rax\n    movq %rax, "
+        next-reg
+        "\n")
+      (string-append
+        (backend-cat5 "    addq $" size-text ", " next-reg "\n")
+        (string-append
+          (backend-cat5
+            "    jc "
+            slow-label
+            "\n    cmpq 24(%r8), "
+            next-reg
+            "\n")
+          (string-append
+            (backend-cat5
+              "    ja "
+              slow-label
+              "\n    movq "
+              next-reg
+              ", 16(%r8)\n")
+            (string-append
+              (compiler-backend-runtime-profile-alloc-account
+                (string-append "$" size-text)
+                profile-label
+                profile)
+              (string-append
+                (backend-cat5 "    jmp " done-label "\n" slow-label ":\n")
+                (backend-cat5
+                  "    call "
+                  (compiler-backend-fast-alloc-label size)
+                  "\n"
+                  done-label
+                  ":\n")))))))))
+
 (define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
   (match target
     [(BackendTargetLinux) 6]
@@ -5099,14 +5403,22 @@
     [(IrInstrBoundsCheck _ _ _) true]
     [_ false]))
 
-(define (compiler-backend-instrs-need-outgoing-space?
-  [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-needs-outgoing-space? instr)
-        true
-        (compiler-backend-instrs-need-outgoing-space? (box-get rest)))]))
+(define (compiler-backend-instr-seq-need-outgoing-space?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (if (compiler-backend-instr-needs-outgoing-space?
+            (array-ref slots index))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
 
 (define (compiler-backend-blocks-need-outgoing-space?
   [blocks : CompilerIrBlockList]) : bool
@@ -5115,8 +5427,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-backend-instrs-need-outgoing-space?
-            (compiler-ir-instr-seq-to-list instrs))
+          (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
             true
             (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]))
 
@@ -5127,17 +5438,25 @@
       (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
 
-(define (compiler-backend-instrs-outgoing-stack-space
-  [instrs : CompilerIrInstrList]
+(define (compiler-backend-instr-seq-outgoing-stack-space
+  [instrs : CompilerIrInstrSeq]
   [max-space : i64]) : i64
-  (match instrs
-    [(IrInstrNil) max-space]
-    [(IrInstrCons instr rest)
-      (compiler-backend-instrs-outgoing-stack-space
-        (box-get rest)
-        (compiler-reg-max
-          max-space
-          (compiler-backend-instr-outgoing-stack-space instr)))]))
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : i64 max-space]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (compiler-reg-max
+              out
+              (compiler-backend-instr-outgoing-stack-space
+                (array-ref slots index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-blocks-outgoing-stack-space
   [blocks : CompilerIrBlockList]
@@ -5149,9 +5468,7 @@
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
             (box-get rest)
-            (compiler-backend-instrs-outgoing-stack-space
-              (compiler-ir-instr-seq-to-list instrs)
-              max-space))])]))
+            (compiler-backend-instr-seq-outgoing-stack-space instrs max-space))])]))
 
 (define (compiler-backend-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -5590,14 +5907,22 @@
     [(IrInstrReturn _) 1]
     [_ 0]))
 
-(define (compiler-backend-instr-list-return-count
-  [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(IrInstrNil) 0]
-    [(IrInstrCons instr rest)
-      (+
-        (compiler-backend-instr-return-count instr)
-        (compiler-backend-instr-list-return-count (box-get rest)))]))
+(define (compiler-backend-instr-seq-return-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (+
+              out
+              (compiler-backend-instr-return-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-block-list-return-count
   [blocks : CompilerIrBlockList]) : i64
@@ -5607,8 +5932,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (compiler-backend-instr-list-return-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-instr-seq-return-count instrs)
             (compiler-backend-block-list-return-count (box-get rest)))])]))
 
 (define (compiler-backend-use-shared-return?
@@ -5901,41 +6225,55 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-value-same-home? assignments dst src)
     (OkCompilerBackend "")
-    (match (match src
-      [(IrValueGlobalAddr name)
-        (if (compiler-backend-float-type? ty)
-          (compiler-backend-emit-load-typed-value-with-plan
-            assignments
-            src
-            ty
-            program-index)
+    (if (compiler-backend-float-type? ty)
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        ty
+        program-index)
+        [(OkCompilerBackend load)
           (OkCompilerBackend
-            (backend-cat5
-              "    leaq "
-              (compiler-backend-function-or-global-addr-symbol
-                program-index
-                name)
-              "(%rip), %rax\n"
-              ""
-              "")))]
-      [_
-        (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          src
-          ty
-          program-index)])
-      [(OkCompilerBackend load)
-        (OkCompilerBackend
-          (string-append
-            load
-            (compiler-backend-emit-store-typed-var-with-plan
-              assignments
-              dst
-              (if (compiler-backend-float-type? ty)
+            (string-append
+              load
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
                 "%xmm0"
-                "%rax")
-              ty)))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                ty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-emit-store-immediate-to-var-home
+        assignments
+        dst
+        src)
+        [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+        [(CompilerBackendNoAsm)
+          (match (match src
+            [(IrValueGlobalAddr name)
+              (OkCompilerBackend
+                (backend-cat5
+                  "    leaq "
+                  (compiler-backend-function-or-global-addr-symbol
+                    program-index
+                    name)
+                  "(%rip), %rax\n"
+                  ""
+                  ""))]
+            [_
+              (compiler-backend-emit-load-typed-value-with-plan
+                assignments
+                src
+                ty
+                program-index)])
+            [(OkCompilerBackend load)
+              (OkCompilerBackend
+                (string-append
+                  load
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
 
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
@@ -6246,53 +6584,84 @@
         (compiler-backend-emit-xgetbv assignments dst index)]
       [(IrInstrCall dst name args ty)
         (let
-          [param-types : AstTypeList
-            (compiler-backend-call-param-types-index name program-index)]
-          [call-space : i64
-            (compiler-backend-call-arg-space target args param-types)]
-          (match (compiler-backend-emit-call-args
-            target
-            assignments
-            args
-            param-types
-            0
-            0
-            0
-            0
-            0
-            instr-diag)
-            [(OkCompilerBackend args-asm)
-              (OkCompilerBackend
-                (string-append
-                  (compiler-backend-emit-call-space-sub call-space)
-                  (string-append
-                    args-asm
+          [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
+          [call-symbol : String
+            (compiler-backend-call-symbol-index name plan program-index)]
+          (if (and
+            (> fast-alloc-size 0)
+            (and
+              (string-eq name "tl_alloc")
+              (and
+                (compiler-backend-plan-provides? plan "tl_alloc")
+                (string-eq call-symbol "tl_alloc"))))
+            (OkCompilerBackend
+              (string-append
+                (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
+                  (compiler-backend-emit-inline-fast-alloc
+                    target
+                    function
+                    current-label
+                    dst
+                    fast-alloc-size
+                    (compiler-backend-plan-provides?
+                      plan
+                      "tl_profile_alloc_total"))
+                  (backend-cat5
+                    "    call "
+                    (compiler-backend-fast-alloc-label fast-alloc-size)
+                    "\n"
+                    ""
+                    ""))
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  ty)))
+            (let
+              [param-types : AstTypeList
+                (compiler-backend-call-param-types-index name program-index)]
+              [call-space : i64
+                (compiler-backend-call-arg-space target args param-types)]
+              (match (compiler-backend-emit-call-args
+                target
+                assignments
+                args
+                param-types
+                0
+                0
+                0
+                0
+                0
+                instr-diag)
+                [(OkCompilerBackend args-asm)
+                  (OkCompilerBackend
                     (string-append
-                      (compiler-backend-varargs-pre-call
-                        target
-                        name
-                        externs
-                        param-types)
-                      (backend-cat5
-                        "    call "
-                        (compiler-backend-call-symbol-index
-                          name
-                          plan
-                          program-index)
-                        "\n"
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (string-append
+                        args-asm
                         (string-append
-                          (compiler-backend-emit-call-space-add call-space)
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            (if (compiler-backend-float-type? ty)
-                              "%xmm0"
-                              "%rax")
-                            ty))
-                        "")))))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
+                          (compiler-backend-varargs-pre-call
+                            target
+                            name
+                            externs
+                            param-types)
+                          (backend-cat5
+                            "    call "
+                            call-symbol
+                            "\n"
+                            (string-append
+                              (compiler-backend-emit-call-space-add call-space)
+                              (compiler-backend-emit-store-typed-var-with-plan
+                                assignments
+                                dst
+                                (if (compiler-backend-float-type? ty)
+                                  "%xmm0"
+                                  "%rax")
+                                ty))
+                            "")))))]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))))]
       [(IrInstrCallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           target
@@ -6569,15 +6938,19 @@
       (compiler-backend-count-phi-input-uses counts inputs)]
     [_ unit]))
 
-(define (compiler-backend-count-instr-list-uses
+(define (compiler-backend-count-instr-seq-uses
   [counts : (Array i64)]
-  [instrs : CompilerIrInstrList]) : unit
-  (match instrs
-    [(IrInstrNil) unit]
-    [(IrInstrCons instr rest)
-      (begin
-        (compiler-backend-count-instr-uses counts instr)
-        (compiler-backend-count-instr-list-uses counts (box-get rest)))]))
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-backend-count-instr-uses counts (array-ref slots index))
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-backend-count-block-uses
   [counts : (Array i64)]
@@ -6588,9 +6961,7 @@
       (match block
         [(IrBlock _ instrs)
           (begin
-            (compiler-backend-count-instr-list-uses
-              counts
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-count-instr-seq-uses counts instrs)
             (compiler-backend-count-block-uses counts (box-get rest)))])]))
 
 (define (compiler-backend-function-use-counts
@@ -8840,9 +9211,12 @@
                         symbol
                         "\n"
                         (backend-cat5
-                          symbol
-                          ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                          (compiler-backend-emit-stack-sub target frame)
+                          (compiler-backend-emit-function-entry
+                            target
+                            symbol
+                            frame)
+                          ""
+                          ""
                           (string-append
                             (compiler-backend-mode-prologue mode)
                             (string-append
@@ -8877,11 +9251,14 @@
                                       spills
                                       (string-append
                                         body
-                                        (compiler-backend-return-epilogue
-                                          name
-                                          assignments
-                                          vars
-                                          blocks))))))))
+                                        (string-append
+                                          (compiler-backend-return-epilogue
+                                            name
+                                            assignments
+                                            vars
+                                            blocks)
+                                          (compiler-backend-emit-windows-seh-endproc
+                                            target)))))))))
                           "\n"))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
@@ -9117,35 +9494,50 @@
   (match functions
     [(IrFunctionNil) (OkCompilerBackendBuffer buf)]
     [(IrFunctionCons func rest)
-      (match (compiler-backend-emit-function-escaping
-        target
-        (compiler-backend-effective-function-mode mode func)
-        func
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        crt-entry)
-        [(OkCompilerBackend head)
-          (compiler-backend-emit-functions-buffer-into
-            target
-            mode
-            (box-get rest)
-            all-functions
-            globals
-            global-types
-            externs
-            plan
-            program-index
-            spans
-            span-index
-            crt-entry
-            (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
+      (begin
+        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (match (compiler-backend-emit-function-escaping
+          target
+          (compiler-backend-effective-function-mode mode func)
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          crt-entry)
+          [(OkCompilerBackend head)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (compiler-backend-emit-functions-buffer-into
+                target
+                mode
+                (box-get rest)
+                all-functions
+                globals
+                global-types
+                externs
+                plan
+                program-index
+                spans
+                span-index
+                crt-entry
+                (text-buf-append buf head)))]
+          [(ErrCompilerBackend message)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (ErrCompilerBackendBuffer message))]))]))
 
 (define (compiler-backend-emit-functions-buffer
   [target : CompilerBackendTarget]
@@ -9308,9 +9700,12 @@
           [(OkCompilerBackend args-asm)
             (OkCompilerBackend
               (backend-cat5
-                (compiler-backend-closure-entry-label name)
-                ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                (compiler-backend-emit-stack-sub target frame)
+                (compiler-backend-emit-function-entry
+                  target
+                  (compiler-backend-closure-entry-label name)
+                  frame)
+                ""
+                ""
                 (string-append
                   spills
                   (string-append
@@ -9332,7 +9727,12 @@
                           "\n"
                           (string-append
                             (compiler-backend-emit-call-space-add call-space)
-                            "    movq %rbp, %rsp\n    popq %rbp\n    ret\n\n")
+                            (string-append
+                              "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                              (string-append
+                                (compiler-backend-emit-windows-seh-endproc
+                                  target)
+                                "\n")))
                           "")))))
                 ""))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -9619,15 +10019,24 @@
       (compiler-backend-collect-value-collections collections index)]
     [_ collections]))
 
-(define (compiler-backend-collect-instr-list-collections
+(define (compiler-backend-collect-instr-seq-collections
   [collections : CompilerBackendProgramCollections]
-  [instrs : CompilerIrInstrList]) : CompilerBackendProgramCollections
-  (match instrs
-    [(IrInstrNil) collections]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-collections
-        (compiler-backend-collect-instr-collections collections instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerBackendProgramCollections
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerBackendProgramCollections collections]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (compiler-backend-collect-instr-collections
+              out
+              (array-ref slots index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-collect-block-collections
   [collections : CompilerBackendProgramCollections]
@@ -9638,9 +10047,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-collections
-            (compiler-backend-collect-instr-list-collections
-              collections
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-collect-instr-seq-collections collections instrs)
             (box-get rest))])]))
 
 (define (compiler-backend-collect-function-collections
@@ -9974,51 +10381,6 @@
             link-symbol
             (compiler-backend-extern-list-link-symbol (box-get rest) name))])]))
 
-(define (compiler-backend-instr-calls?
-  [instr : CompilerIrInstr]
-  [name : String]) : bool
-  (match instr
-    [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
-    [(IrInstrTailCall call-name _ _) (string-eq call-name name)]
-    [(IrInstrBoundsCheck _ _ _) (string-eq name "tl_oob_abort")]
-    [_ false]))
-
-(define (compiler-backend-instr-list-calls?
-  [instrs : CompilerIrInstrList]
-  [name : String]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-calls? instr name)
-        true
-        (compiler-backend-instr-list-calls? (box-get rest) name))]))
-
-(define (compiler-backend-block-list-calls?
-  [blocks : CompilerIrBlockList]
-  [name : String]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-calls?
-            (compiler-ir-instr-seq-to-list instrs)
-            name)
-            true
-            (compiler-backend-block-list-calls? (box-get rest) name))])]))
-
-(define (compiler-backend-function-list-calls?
-  [functions : CompilerIrFunctionList]
-  [name : String]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-block-list-calls? blocks name)
-            true
-            (compiler-backend-function-list-calls? (box-get rest) name))])]))
-
 (define (compiler-backend-binop-needs-div-abort?
   [op : CompilerIrBinOp]
   [ty : AstType]) : bool
@@ -10038,81 +10400,6 @@
       [(IrBinShl) true]
       [(IrBinShr) true]
       [_ false])))
-
-(define (compiler-backend-instr-needs-div-abort? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(IrInstrBinOp _ op _ _ ty) (compiler-backend-binop-needs-div-abort? op ty)]
-    [_ false]))
-
-(define (compiler-backend-instr-needs-shift-abort? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(IrInstrBinOp _ op _ _ ty)
-      (compiler-backend-binop-needs-shift-abort? op ty)]
-    [_ false]))
-
-(define (compiler-backend-instr-list-needs-div-abort?
-  [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-needs-div-abort? instr)
-        true
-        (compiler-backend-instr-list-needs-div-abort? (box-get rest)))]))
-
-(define (compiler-backend-instr-list-needs-shift-abort?
-  [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(IrInstrNil) false]
-    [(IrInstrCons instr rest)
-      (if (compiler-backend-instr-needs-shift-abort? instr)
-        true
-        (compiler-backend-instr-list-needs-shift-abort? (box-get rest)))]))
-
-(define (compiler-backend-block-list-needs-div-abort?
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-needs-div-abort?
-            (compiler-ir-instr-seq-to-list instrs))
-            true
-            (compiler-backend-block-list-needs-div-abort? (box-get rest)))])]))
-
-(define (compiler-backend-block-list-needs-shift-abort?
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-list-needs-shift-abort?
-            (compiler-ir-instr-seq-to-list instrs))
-            true
-            (compiler-backend-block-list-needs-shift-abort? (box-get rest)))])]))
-
-(define (compiler-backend-function-list-needs-div-abort?
-  [functions : CompilerIrFunctionList]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-block-list-needs-div-abort? blocks)
-            true
-            (compiler-backend-function-list-needs-div-abort? (box-get rest)))])]))
-
-(define (compiler-backend-function-list-needs-shift-abort?
-  [functions : CompilerIrFunctionList]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-block-list-needs-shift-abort? blocks)
-            true
-            (compiler-backend-function-list-needs-shift-abort? (box-get rest)))])]))
 
 (define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
   (CompilerBackendRuntimeIndex
@@ -10222,15 +10509,22 @@
           with-div))]
     [_ index]))
 
-(define (compiler-backend-runtime-index-instrs
+(define (compiler-backend-runtime-index-instr-seq
   [index : CompilerBackendRuntimeIndex]
-  [instrs : CompilerIrInstrList]) : CompilerBackendRuntimeIndex
-  (match instrs
-    [(IrInstrNil) index]
-    [(IrInstrCons instr rest)
-      (compiler-backend-runtime-index-instrs
-        (compiler-backend-runtime-index-instr index instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerBackendRuntimeIndex
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [i : i64 0]
+    [out : CompilerBackendRuntimeIndex index]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (compiler-backend-runtime-index-instr out (array-ref slots i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-runtime-index-blocks
   [index : CompilerBackendRuntimeIndex]
@@ -10241,9 +10535,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-runtime-index-blocks
-            (compiler-backend-runtime-index-instrs
-              index
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-runtime-index-instr-seq index instrs)
             (box-get rest))])]))
 
 (define (compiler-backend-runtime-index-functions
@@ -10288,6 +10580,45 @@
   [candidate : String]
   [enabled : bool]) : bool
   (and (string-eq name candidate) enabled))
+
+(define (compiler-backend-runtime-concat-name? [name : String]) : bool
+  (or
+    (backend-or4
+      (string-eq name "tl_string_concat")
+      (string-eq name "tl_string_concat3")
+      (string-eq name "tl_string_concat4")
+      (string-eq name "tl_string_concat5"))
+    false))
+
+(define (compiler-backend-runtime-index-defines-concat?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-defines? index "tl_string_concat")
+      (compiler-backend-runtime-index-defines? index "tl_string_concat3")
+      (compiler-backend-runtime-index-defines? index "tl_string_concat4")
+      (compiler-backend-runtime-index-defines? index "tl_string_concat5"))
+    false))
+
+(define (compiler-backend-runtime-index-extern-concat?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-extern? index "tl_string_concat")
+      (compiler-backend-runtime-index-extern? index "tl_string_concat3")
+      (compiler-backend-runtime-index-extern? index "tl_string_concat4")
+      (compiler-backend-runtime-index-extern? index "tl_string_concat5"))
+    false))
+
+(define (compiler-backend-runtime-index-calls-concat?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-calls? index "tl_string_concat")
+      (compiler-backend-runtime-index-calls? index "tl_string_concat3")
+      (compiler-backend-runtime-index-calls? index "tl_string_concat4")
+      (compiler-backend-runtime-index-calls? index "tl_string_concat5"))
+    false))
 
 (define (compiler-backend-provides-runtime-alias?
   [name : String]
@@ -10425,10 +10756,7 @@
             name
             "tl_substring"
             substring)
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_string_concat"
-            concat)
+          (and concat (compiler-backend-runtime-concat-name? name))
           (compiler-backend-provides-runtime-name?
             name
             "tl_string_eq"
@@ -10657,7 +10985,11 @@
                             name
                             (compiler-backend-runtime-tail-profile?
                               provides-tail))
-                          false))))))))))]))
+                          (compiler-backend-provides-runtime-name?
+                            name
+                            "tl_hash_string"
+                            (compiler-backend-runtime-tail-hash-string?
+                              provides-tail))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -10676,11 +11008,13 @@
     [defines-substring : bool
       (compiler-backend-runtime-index-defines? index "tl_substring")]
     [defines-concat : bool
-      (compiler-backend-runtime-index-defines? index "tl_string_concat")]
+      (compiler-backend-runtime-index-defines-concat? index)]
     [defines-string-eq : bool
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [defines-string-to-int : bool
       (compiler-backend-runtime-index-defines? index "tl_string_to_int")]
+    [defines-hash-string : bool
+      (compiler-backend-runtime-index-defines? index "tl_hash_string")]
     [defines-int-to-string : bool
       (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
     [defines-print-err : bool
@@ -10741,12 +11075,13 @@
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
     [extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [extern-concat : bool
-      (compiler-backend-runtime-index-extern? index "tl_string_concat")]
+    [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
     [extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
+    [extern-hash-string : bool
+      (compiler-backend-runtime-index-extern? index "tl_hash_string")]
     [extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
@@ -10891,12 +11226,13 @@
       (compiler-backend-runtime-index-calls? index "tl_shift_abort")]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls? index "tl_substring")]
-    [calls-concat : bool
-      (compiler-backend-runtime-index-calls? index "tl_string_concat")]
+    [calls-concat : bool (compiler-backend-runtime-index-calls-concat? index)]
     [calls-string-eq : bool
       (compiler-backend-runtime-index-calls? index "tl_string_eq")]
     [calls-string-to-int : bool
       (compiler-backend-runtime-index-calls? index "tl_string_to_int")]
+    [calls-hash-string : bool
+      (compiler-backend-runtime-index-calls? index "tl_hash_string")]
     [calls-int-to-string : bool
       (compiler-backend-runtime-index-calls? index "tl_int_to_string")]
     [calls-abort : bool
@@ -10959,11 +11295,9 @@
     [calls-fs-file-kind-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_kind_status")]
     [calls-fs-file-size-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_fs_file_size_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size_status")]
     [calls-fs-file-size : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_fs_file_size")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size")]
     [calls-fs-process-id : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
     [calls-fs-read-dir-status : bool
@@ -11039,6 +11373,8 @@
       (and
         (not defines-string-to-int)
         (or extern-string-to-int calls-string-to-int))]
+    [needs-hash-string : bool
+      (and (not defines-hash-string) (or extern-hash-string calls-hash-string))]
     [needs-int-to-string : bool
       (and
         (not defines-int-to-string)
@@ -11251,7 +11587,10 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        (CompilerBackendRuntimeTailPlan needs-fs-current-dir needs-profile)))))
+        (CompilerBackendRuntimeTailPlan
+          needs-fs-current-dir
+          needs-profile
+          needs-hash-string)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -11747,9 +12086,120 @@ tl_profile_alloc_peak_bytes:
           ", tl_profile_alloc_live_bytes(%rip)\n")))
     ""))
 
+(define (compiler-backend-runtime-fast-alloc-function
+  [size : i64]
+  [size-reg : String]
+  [next-reg : String]
+  [profile : bool]) : String
+  (let
+    [size-text : String (int->string size)]
+    [size-imm : String (string-append "$" size-text)]
+    [label : String (compiler-backend-fast-alloc-label size)]
+    [slow-label : String (string-append label "_slow")]
+    [profile-label : String (string-append label "_profile_done")]
+    (backend-cat5
+      label
+      ":
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz "
+      slow-label
+      "
+"
+      (backend-cat5
+        "    movq 16(%r8), %rax
+    movq %rax, "
+        next-reg
+        "
+    addq $"
+        size-text
+        (backend-cat5
+          ", "
+          next-reg
+          "
+    jc "
+          slow-label
+          (backend-cat5
+            "
+    cmpq 24(%r8), "
+            next-reg
+            "
+    ja "
+            slow-label
+            (backend-cat5
+              "
+    movq "
+              next-reg
+              ", 16(%r8)
+"
+              (compiler-backend-runtime-profile-alloc-account
+                size-imm
+                profile-label
+                profile)
+              (backend-cat5
+                "    ret
+"
+                slow-label
+                ":
+    movq $"
+                size-text
+                (backend-cat4 ", " size-reg "
+    jmp tl_alloc
+" "")))))))))
+
+(define (compiler-backend-runtime-fast-alloc-functions
+  [size-reg : String]
+  [next-reg : String]
+  [profile : bool]) : String
+  (string-append
+    (string-append
+      (compiler-backend-runtime-fast-alloc-function 8 size-reg next-reg profile)
+      (compiler-backend-runtime-fast-alloc-function
+        16
+        size-reg
+        next-reg
+        profile))
+    (string-append
+      (string-append
+        (compiler-backend-runtime-fast-alloc-function
+          24
+          size-reg
+          next-reg
+          profile)
+        (compiler-backend-runtime-fast-alloc-function
+          32
+          size-reg
+          next-reg
+          profile))
+      (string-append
+        (string-append
+          (compiler-backend-runtime-fast-alloc-function
+            40
+            size-reg
+            next-reg
+            profile)
+          (compiler-backend-runtime-fast-alloc-function
+            48
+            size-reg
+            next-reg
+            profile))
+        (string-append
+          (compiler-backend-runtime-fast-alloc-function
+            56
+            size-reg
+            next-reg
+            profile)
+          (compiler-backend-runtime-fast-alloc-function
+            64
+            size-reg
+            next-reg
+            profile))))))
+
 (define (compiler-backend-runtime-alloc-functions [profile : bool]) : String
   (string-append
-    "    .globl tl_alloc
+    (compiler-backend-runtime-fast-alloc-functions "%rdi" "%rcx" profile)
+    (string-append
+      "    .globl tl_alloc
 tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
@@ -11766,13 +12216,13 @@ tl_alloc:
     ja .L_tl_alloc_new_arena
     movq %rcx, 16(%r8)
 "
-    (string-append
       (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%rsi"
-          ".L_tl_alloc_profile_fast_done"
-          profile)
-        "    ret
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%rsi"
+            ".L_tl_alloc_profile_fast_done"
+            profile)
+          "    ret
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
@@ -11810,12 +12260,12 @@ tl_alloc:
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
 ")
-      (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%rsi"
-          ".L_tl_alloc_profile_new_done"
-          profile)
-        "    ret
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%rsi"
+            ".L_tl_alloc_profile_new_done"
+            profile)
+          "    ret
 .L_tl_alloc_abort:
     movq $1, %rax
     movq $2, %rdi
@@ -11826,7 +12276,7 @@ tl_alloc:
     movq $134, %rdi
     syscall
 
-"))))
+")))))
 
 (define (compiler-backend-runtime-region-mark-functions) : String
   "    .globl tl_region_mark
@@ -12130,7 +12580,9 @@ tl_region_reset:
 
 (define (compiler-backend-runtime-windows-alloc-functions [profile : bool]) : String
   (string-append
-    "    .globl tl_alloc
+    (compiler-backend-runtime-fast-alloc-functions "%rcx" "%r10" profile)
+    (string-append
+      "    .globl tl_alloc
 tl_alloc:
     testq %rcx, %rcx
     jnz .L_tl_alloc_win_size_ready
@@ -12151,13 +12603,13 @@ tl_alloc:
     ja .L_tl_alloc_new_arena_entry
     movq %r10, 16(%r8)
 "
-    (string-append
       (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%r11"
-          ".L_tl_alloc_profile_win_fast_done"
-          profile)
-        "    ret
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%r11"
+            ".L_tl_alloc_profile_win_fast_done"
+            profile)
+          "    ret
 .L_tl_alloc_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -12202,12 +12654,12 @@ tl_alloc:
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
 ")
-      (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%r11"
-          ".L_tl_alloc_profile_win_new_done"
-          profile)
-        "
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%r11"
+            ".L_tl_alloc_profile_win_new_done"
+            profile)
+          "
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -12219,7 +12671,7 @@ tl_alloc:
     movq $134, %rcx
     call exit
 
-"))))
+")))))
 
 (define (compiler-backend-runtime-oob-functions) : String
   "    .globl tl_oob_abort
@@ -12413,8 +12865,7 @@ tl_arg:
     incq %rcx
     jmp .L_tl_arg_copy_loop
 .L_tl_arg_copy_done:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -12543,8 +12994,7 @@ _tl_env_var_value:
     xorq %r12, %r12
     xorq %r13, %r13
 .L_tl_env_var_value_fat:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -12565,12 +13015,10 @@ _tl_env_path_separator:
     mov %rsp, %rbp
     push %r12
     sub $8, %rsp
-    movq $1, %rdi
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, %r12
     movb $58, (%r12)
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq $1, 8(%rax)
     add $8, %rsp
@@ -12591,16 +13039,10 @@ _tl_env_path_separator:
     mov %rsp, %rbp
     push %r12
     sub $8, %rsp
-    movq $1, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc8
     movq %rax, %r12
     movb $59, (%r12)
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq $1, 8(%rax)
     add $8, %rsp
@@ -12736,10 +13178,7 @@ _tl_env_var_value:
     xorq %r12, %r12
     xorq %r13, %r13
 .L_tl_env_var_value_win_fat:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -12908,8 +13347,15 @@ tl_profile_alloc_reset_peak:
 tl_profile_now_ms:
     push %rbp
     mov %rsp, %rbp
-    sub $32, %rsp
-    call GetTickCount64
+    sub $64, %rsp
+    leaq -8(%rbp), %rcx
+    call QueryPerformanceCounter
+    leaq -16(%rbp), %rcx
+    call QueryPerformanceFrequency
+    movq -8(%rbp), %rax
+    imulq $1000, %rax, %rax
+    cqto
+    idivq -16(%rbp)
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -13010,8 +13456,7 @@ tl_profile_alloc_reset_peak:
     syscall
     testq %rax, %rax
     js .L_tl_read_file_error
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -13829,8 +14274,7 @@ tl_profile_alloc_reset_peak:
     leaq .L_tl_file_handle_last_lens(%rip), %rcx
     movq (%rcx,%rbx,8), %r13
 .L_tl_file_read_chunk_bytes_alloc:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -13866,11 +14310,9 @@ tl_profile_alloc_reset_peak:
     mov %rsp, %rbp
     push %r12
     sub $40, %rsp
-    movq $1, %rcx
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, %r12
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq $0, 8(%rax)
     add $40, %rsp
@@ -14334,13 +14776,11 @@ tl_profile_alloc_reset_peak:
     movq %rbx, %rdi
     syscall
 .L_tl_fs_read_dir_empty:
-    movq $1, %rdi
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, %r12
     xorq %r15, %r15
 .L_tl_fs_read_dir_return_string:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r15, 8(%rax)
     add $24, %rsp
@@ -14568,8 +15008,7 @@ tl_fs_current_dir:
 .L_tl_fs_current_dir_empty:
     xorq %r12, %r12
 .L_tl_fs_current_dir_alloc_result:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -14774,11 +15213,9 @@ tl_fs_current_dir:
     push %rbp
     mov %rsp, %rbp
     sub $48, %rsp
-    movq $1, %rcx
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, -8(%rbp)
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq -8(%rbp), %r8
     movq %r8, 0(%rax)
     movq $0, 8(%rax)
@@ -14823,8 +15260,7 @@ tl_fs_current_dir:
     xorq %rcx, %rcx
     call tl_alloc
     movq %rax, %rbx
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq $0, 8(%rax)
     add $40, %rsp
@@ -14918,10 +15354,7 @@ tl_fs_current_dir:
     add $32, %rsp
     testl %eax, %eax
     js .L_tl_read_file_error
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -15664,10 +16097,7 @@ tl_arg:
     incq %rcx
     jmp .L_tl_arg_copy_loop
 .L_tl_arg_copy_done:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -15689,6 +16119,8 @@ tl_arg:
 tl_string_eq:
     cmpq %rcx, %rsi
     jne .L_tl_string_eq_false
+    cmpq %rdi, %rdx
+    je .L_tl_string_eq_true
     movq %rsi, %r8
     shrq $3, %r8
     jz .L_tl_string_eq_tail
@@ -15703,20 +16135,97 @@ tl_string_eq:
 .L_tl_string_eq_tail:
     andq $7, %rsi
     jz .L_tl_string_eq_true
-.L_tl_string_eq_tail_loop:
+    cmpq $4, %rsi
+    jb .L_tl_string_eq_tail_2
+    movl (%rdi), %eax
+    cmpl (%rdx), %eax
+    jne .L_tl_string_eq_false
+    addq $4, %rdi
+    addq $4, %rdx
+    subq $4, %rsi
+.L_tl_string_eq_tail_2:
+    cmpq $2, %rsi
+    jb .L_tl_string_eq_tail_1
+    movzwl (%rdi), %eax
+    movzwl (%rdx), %r8d
+    cmpw %r8w, %ax
+    jne .L_tl_string_eq_false
+    addq $2, %rdi
+    addq $2, %rdx
+    subq $2, %rsi
+.L_tl_string_eq_tail_1:
+    testq %rsi, %rsi
+    jz .L_tl_string_eq_true
     movzbl (%rdi), %eax
     movzbl (%rdx), %r8d
     cmpb %r8b, %al
     jne .L_tl_string_eq_false
-    incq %rdi
-    incq %rdx
-    decq %rsi
-    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
 .L_tl_string_eq_false:
     xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-hash-string-functions) : String
+  "    .globl tl_hash_string
+tl_hash_string:
+    movq %rdi, %r10
+    movq %rsi, %r11
+    xorq %rax, %rax
+    cmpq $4, %r11
+    jb .L_tl_hash_string_tail_check
+.L_tl_hash_string_loop4:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 1(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 2(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 3(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    shrq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep4
+    subq $2147483647, %rax
+.L_tl_hash_string_keep4:
+    addq $4, %r10
+    subq $4, %r11
+    cmpq $4, %r11
+    jae .L_tl_hash_string_loop4
+.L_tl_hash_string_tail_check:
+    testq %r11, %r11
+    jz .L_tl_hash_string_done
+.L_tl_hash_string_loop:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    sarq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep
+    subq $2147483647, %rax
+.L_tl_hash_string_keep:
+    incq %r10
+    decq %r11
+    jne .L_tl_hash_string_loop
+.L_tl_hash_string_done:
     ret
 
 ")
@@ -15758,6 +16267,8 @@ tl_string_to_int:
 tl_string_eq:
     cmpq %r9, %rdx
     jne .L_tl_string_eq_false
+    cmpq %rcx, %r8
+    je .L_tl_string_eq_true
     movq %rdx, %r10
     shrq $3, %r10
     jz .L_tl_string_eq_tail
@@ -15772,20 +16283,97 @@ tl_string_eq:
 .L_tl_string_eq_tail:
     andq $7, %rdx
     jz .L_tl_string_eq_true
-.L_tl_string_eq_tail_loop:
+    cmpq $4, %rdx
+    jb .L_tl_string_eq_tail_2
+    movl (%rcx), %eax
+    cmpl (%r8), %eax
+    jne .L_tl_string_eq_false
+    addq $4, %rcx
+    addq $4, %r8
+    subq $4, %rdx
+.L_tl_string_eq_tail_2:
+    cmpq $2, %rdx
+    jb .L_tl_string_eq_tail_1
+    movzwl (%rcx), %eax
+    movzwl (%r8), %r10d
+    cmpw %r10w, %ax
+    jne .L_tl_string_eq_false
+    addq $2, %rcx
+    addq $2, %r8
+    subq $2, %rdx
+.L_tl_string_eq_tail_1:
+    testq %rdx, %rdx
+    jz .L_tl_string_eq_true
     movzbl (%rcx), %eax
     movzbl (%r8), %r10d
     cmpb %r10b, %al
     jne .L_tl_string_eq_false
-    incq %rcx
-    incq %r8
-    decq %rdx
-    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
 .L_tl_string_eq_false:
     xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-hash-string-functions) : String
+  "    .globl tl_hash_string
+tl_hash_string:
+    movq %rcx, %r10
+    movq %rdx, %r11
+    xorq %rax, %rax
+    cmpq $4, %r11
+    jb .L_tl_hash_string_tail_check
+.L_tl_hash_string_loop4:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 1(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 2(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 3(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    shrq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep4
+    subq $2147483647, %rax
+.L_tl_hash_string_keep4:
+    addq $4, %r10
+    subq $4, %r11
+    cmpq $4, %r11
+    jae .L_tl_hash_string_loop4
+.L_tl_hash_string_tail_check:
+    testq %r11, %r11
+    jz .L_tl_hash_string_done
+.L_tl_hash_string_loop:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    sarq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep
+    subq $2147483647, %rax
+.L_tl_hash_string_keep:
+    incq %r10
+    decq %r11
+    jne .L_tl_hash_string_loop
+.L_tl_hash_string_done:
     ret
 
 ")
@@ -15878,8 +16466,7 @@ tl_int_to_string:
     incq %rcx
     jmp .L_tl_int_to_string_copy_loop
 .L_tl_int_to_string_copy_done:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $72, %rsp
@@ -15948,10 +16535,7 @@ tl_int_to_string:
     incq %rcx
     jmp .L_tl_int_to_string_copy_loop
 .L_tl_int_to_string_copy_done:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $72, %rsp
@@ -15982,8 +16566,7 @@ tl_substring:
     movq %rbx, %rsi
     movq %r13, %rdi
     rep movsb
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -16018,10 +16601,7 @@ tl_substring:
     movq %rbx, %rsi
     movq %r13, %rdi
     rep movsb
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -16063,8 +16643,7 @@ tl_string_concat:
     movq %r15, %rdi
     addq %r12, %rdi
     rep movsb
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r15, 0(%rax)
     movq %r12, %rdx
     addq %r14, %rdx
@@ -16076,6 +16655,99 @@ tl_string_concat:
     pop %r12
     pop %rbx
     pop %rbp
+    ret
+
+    .globl tl_string_concat3
+tl_string_concat3:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    movq $0, 0(%rsp)
+    movq $0, 8(%rsp)
+    movq $0, 16(%rsp)
+    movq $0, 24(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat4
+tl_string_concat4:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    movq 16(%rbp), %rax
+    movq %rax, 0(%rsp)
+    movq 24(%rbp), %rax
+    movq %rax, 8(%rsp)
+    movq $0, 16(%rsp)
+    movq $0, 24(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat5
+tl_string_concat5:
+    push %rbp
+    mov %rsp, %rbp
+    sub $112, %rsp
+    movq %rdi, -8(%rbp)
+    movq %rsi, -16(%rbp)
+    movq %rdx, -24(%rbp)
+    movq %rcx, -32(%rbp)
+    movq %r8, -40(%rbp)
+    movq %r9, -48(%rbp)
+    movq 16(%rbp), %rax
+    movq %rax, -56(%rbp)
+    movq 24(%rbp), %rax
+    movq %rax, -64(%rbp)
+    movq 32(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movq 40(%rbp), %rax
+    movq %rax, -80(%rbp)
+    movq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    addq -80(%rbp), %rdi
+    movq %rdi, -88(%rbp)
+    call tl_alloc
+    movq %rax, -96(%rbp)
+    movq -96(%rbp), %rdi
+    movq -8(%rbp), %rsi
+    movq -16(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    movq -24(%rbp), %rsi
+    movq -32(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    movq -40(%rbp), %rsi
+    movq -48(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    movq -56(%rbp), %rsi
+    movq -64(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    movq -72(%rbp), %rsi
+    movq -80(%rbp), %rcx
+    rep movsb
+    call .L_tl_alloc16
+    movq -96(%rbp), %rdx
+    movq %rdx, 0(%rax)
+    movq -88(%rbp), %rdx
+    movq %rdx, 8(%rax)
+    leave
     ret
 
 ")
@@ -16112,10 +16784,7 @@ tl_string_concat:
     movq %r15, %rdi
     addq %r12, %rdi
     rep movsb
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r15, 0(%rax)
     movq %r12, %rdx
     addq %r14, %rdx
@@ -16129,6 +16798,115 @@ tl_string_concat:
     pop %r12
     pop %rbx
     pop %rbp
+    ret
+
+    .globl tl_string_concat3
+tl_string_concat3:
+    push %rbp
+    mov %rsp, %rbp
+    sub $80, %rsp
+    movq 48(%rbp), %rax
+    movq %rax, 32(%rsp)
+    movq 56(%rbp), %rax
+    movq %rax, 40(%rsp)
+    movq $0, 48(%rsp)
+    movq $0, 56(%rsp)
+    movq $0, 64(%rsp)
+    movq $0, 72(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat4
+tl_string_concat4:
+    push %rbp
+    mov %rsp, %rbp
+    sub $80, %rsp
+    movq 48(%rbp), %rax
+    movq %rax, 32(%rsp)
+    movq 56(%rbp), %rax
+    movq %rax, 40(%rsp)
+    movq 64(%rbp), %rax
+    movq %rax, 48(%rsp)
+    movq 72(%rbp), %rax
+    movq %rax, 56(%rsp)
+    movq $0, 64(%rsp)
+    movq $0, 72(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat5
+tl_string_concat5:
+    push %rbp
+    mov %rsp, %rbp
+    sub $128, %rsp
+    movq %rsi, -8(%rbp)
+    movq %rdi, -16(%rbp)
+    movq %rcx, -24(%rbp)
+    movq %rdx, -32(%rbp)
+    movq %r8, -40(%rbp)
+    movq %r9, -48(%rbp)
+    movq 48(%rbp), %rax
+    movq %rax, -56(%rbp)
+    movq 56(%rbp), %rax
+    movq %rax, -64(%rbp)
+    movq 64(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movq 72(%rbp), %rax
+    movq %rax, -80(%rbp)
+    movq 80(%rbp), %rax
+    movq %rax, -88(%rbp)
+    movq 88(%rbp), %rax
+    movq %rax, -96(%rbp)
+    movq -32(%rbp), %rcx
+    addq -48(%rbp), %rcx
+    addq -64(%rbp), %rcx
+    addq -80(%rbp), %rcx
+    addq -96(%rbp), %rcx
+    movq %rcx, -104(%rbp)
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, -112(%rbp)
+    movq -112(%rbp), %rdi
+    movq -24(%rbp), %rsi
+    movq -32(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    movq -40(%rbp), %rsi
+    movq -48(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    movq -56(%rbp), %rsi
+    movq -64(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    movq -72(%rbp), %rsi
+    movq -80(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    addq -80(%rbp), %rdi
+    movq -88(%rbp), %rsi
+    movq -96(%rbp), %rcx
+    rep movsb
+    call .L_tl_alloc16
+    movq -112(%rbp), %rdx
+    movq %rdx, 0(%rax)
+    movq -104(%rbp), %rdx
+    movq %rdx, 8(%rax)
+    movq -16(%rbp), %rdi
+    movq -8(%rbp), %rsi
+    leave
     ret
 
 ")
@@ -16314,20 +17092,14 @@ tl_process_output:
     jz .L_tl_process_output_wait_failed_close
     movq %rax, -104(%rbp)
     call .L_tl_process_close_temp_files
-    movq $24, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc24
     movq %r15, 0(%rax)
     movq -96(%rbp), %rdx
     movq %rdx, 8(%rax)
     movq -104(%rbp), %rdx
     movq %rdx, 16(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     jmp .L_tl_process_output_epilogue
@@ -16901,8 +17673,7 @@ tl_process_output:
     addq %rax, %r14
     jmp .L_tl_process_read_fd_to_string_loop
 .L_tl_process_read_fd_to_string_fat:
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r14, 8(%rax)
     jmp .L_tl_process_read_fd_to_string_done
@@ -16929,18 +17700,15 @@ tl_process_output:
     movq %rcx, %rbx
     movq %rdx, %r12
     movq %r8, %r13
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r14
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r14, 8(%rax)
     movq %rax, %r15
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r15, 8(%rax)
     add $8, %rsp
@@ -17965,8 +18733,7 @@ tl_process_output:
     movq %r10, %r14
     jmp .L_tl_process_read_loop
 .L_tl_process_read_done:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r14, 0(%rax)
     movq %r15, 8(%rax)
     addq $8, %rsp
@@ -17989,14 +18756,12 @@ tl_process_output:
     movq %rdi, %rbx
     movq %rsi, %r12
     movq %rdx, %r13
-    movq $24, %rdi
-    call tl_alloc
+    call .L_tl_alloc24
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     movq %r13, 16(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     addq $8, %rsp
@@ -18017,18 +18782,15 @@ tl_process_output:
     movq %rdi, %r12
     movq %rsi, %r13
     movq %rdx, %r14
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r14, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     pop %r14
@@ -18119,8 +18881,7 @@ tl_process_output:
 .L_tl_read_stdin_line_done:
     movq $0, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_line_return:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18195,10 +18956,7 @@ tl_process_output:
 .L_tl_read_stdin_line_done:
     movq $0, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_line_return:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18254,8 +19012,7 @@ tl_process_output:
 .L_tl_read_stdin_bytes_eof:
     movq $1, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_bytes_return:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -18314,10 +19071,7 @@ tl_process_output:
 .L_tl_read_stdin_bytes_eof:
     movq $1, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_bytes_return:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -18387,8 +19141,7 @@ tl_random_system_seed:
     cmpq $8, %rax
     jne .L_tl_random_system_seed_err
     movq (%rsp), %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18399,23 +19152,19 @@ tl_random_system_seed:
 .L_tl_random_system_seed_err:
     leaq .L_tl_random_system_seed_err_msg(%rip), %r12
     movq $.L_tl_random_system_seed_err_msg_len, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18442,10 +19191,7 @@ tl_random_system_seed:
     testb %al, %al
     jz .L_tl_random_system_seed_err
     movq (%rsp), %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18456,31 +19202,19 @@ tl_random_system_seed:
 .L_tl_random_system_seed_err:
     leaq .L_tl_random_system_seed_err_msg(%rip), %r12
     movq $.L_tl_random_system_seed_err_msg_len, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18502,24 +19236,15 @@ tl_windows_setup_instances:
     push %r13
     leaq .L_tl_windows_setup_unavailable_msg(%rip), %r12
     movq $.L_tl_windows_setup_unavailable_msg_len, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     pop %r13
@@ -18536,18 +19261,15 @@ tl_windows_setup_instances:
     push %r13
     leaq .L_tl_windows_setup_unsupported_msg(%rip), %r12
     movq $.L_tl_windows_setup_unsupported_msg_len, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     pop %r13
@@ -18571,24 +19293,15 @@ tl_windows_sdk_registry_install:
     movq $0, %r12
     leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
     movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r14, 8(%rax)
     movq %rax, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -18610,18 +19323,15 @@ tl_windows_sdk_registry_install:
     movq $0, %r12
     leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
     movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r14, 8(%rax)
     movq %rax, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -18691,6 +19401,8 @@ tl_windows_sdk_registry_install:
         [fs-current-dir : bool
           (compiler-backend-runtime-tail-fs-current-dir? tail-plan)]
         [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
+        [hash-string : bool
+          (compiler-backend-runtime-tail-hash-string? tail-plan)]
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
@@ -18732,6 +19444,12 @@ tl_windows_sdk_registry_install:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-string-eq-functions)
               (compiler-backend-runtime-string-eq-functions))
+            "")]
+        [hash-string-asm : String
+          (if hash-string
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-hash-string-functions)
+              (compiler-backend-runtime-hash-string-functions))
             "")]
         [string-to-int-asm : String
           (if string-to-int
@@ -18923,8 +19641,10 @@ tl_windows_sdk_registry_install:
               substring-asm
               concat-asm
               string-eq-asm
-              string-to-int-asm)
-            (string-append int-to-string-asm abort-asm))]
+              hash-string-asm)
+            (string-append
+              string-to-int-asm
+              (string-append int-to-string-asm abort-asm)))]
         [runtime-io-asm : String
           (string-append
             (backend-cat5
@@ -19230,7 +19950,9 @@ tl_windows_sdk_registry_install:
             shift-abort
             (or
               (compiler-backend-runtime-tail-fs-current-dir? tail-plan)
-              (compiler-backend-runtime-tail-profile? tail-plan)))]
+              (or
+                (compiler-backend-runtime-tail-profile? tail-plan)
+                (compiler-backend-runtime-tail-hash-string? tail-plan))))]
         (not
           (or
             front-runtime
@@ -19297,7 +20019,8 @@ tl_windows_sdk_registry_install:
                   "")
                 (string-append
                   (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
-                    "    .extern GetTickCount64
+                    "    .extern QueryPerformanceCounter
+    .extern QueryPerformanceFrequency
 "
                     "")
                   ;; The Windows tl_process_output spawns the child via CreateProcessA
@@ -20006,18 +20729,46 @@ tl_windows_sdk_registry_install:
           (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
           (compiler-backend-string-contains? asm "tl_string_concat:\n"))
         (and
-          (backend-and8
-            (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
-            (compiler-backend-string-contains? asm "tl_string_eq:\n")
-            (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
-            (compiler-backend-string-contains? asm "tl_string_to_int:\n")
-            (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
-            (compiler-backend-string-contains? asm "tl_int_to_string:\n")
-            (compiler-backend-string-contains? asm "tl_process_output:\n")
-            (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
+          (and
+            (backend-and8
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_concat3\n")
+              (compiler-backend-string-contains? asm "tl_string_concat3:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_concat4\n")
+              (compiler-backend-string-contains? asm "tl_string_concat4:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_concat5\n")
+              (compiler-backend-string-contains? asm "tl_string_concat5:\n")
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_string_concat5\n")
+              true)
+            (backend-and8
+              (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
+              (compiler-backend-string-contains? asm "tl_string_eq:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_to_int\n")
+              (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_int_to_string\n")
+              (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+              (compiler-backend-string-contains? asm "tl_process_output:\n")
+              (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
           (and
             (backend-and4
-              (compiler-backend-string-contains? asm "    call tl_alloc\n")
+              (or
+                (compiler-backend-string-contains?
+                  asm
+                  "    call .L_tl_alloc8\n")
+                (compiler-backend-string-contains?
+                  asm
+                  "    call .L_tl_alloc16\n"))
               (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
               (not
                 (compiler-backend-string-contains?

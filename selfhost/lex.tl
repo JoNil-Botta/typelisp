@@ -55,6 +55,10 @@
   (OkLexCheck i64)
   (ErrLexCheck SourceError))
 
+(defenum ResultLexIntoSpanned
+  (OkLexIntoSpanned i64)
+  (ErrLexIntoSpanned SourceError))
+
 (defenum ResultLexChar
   (OkLexChar char)
   (ErrLexChar String))
@@ -106,7 +110,23 @@
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
 (define (is-symbol-char [c : char]) : bool
-  (or (is-alpha c) (or (is-digit c) (is-symbol-punct c))))
+  (let
+    [code : i64 (cast c : i64)]
+    (cond
+      [(and (>= code 97) (<= code 122)) true]
+      [(and (>= code 65) (<= code 90)) true]
+      [(and (>= code 48) (<= code 57)) true]
+      [(= code 45) true]
+      [(= code 95) true]
+      [(= code 33) true]
+      [(and (>= code 37) (<= code 38)) true]
+      [(= code 42) true]
+      [(= code 43) true]
+      [(= code 46) true]
+      [(= code 47) true]
+      [(= code 58) true]
+      [(and (>= code 60) (<= code 63)) true]
+      [else false])))
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
@@ -465,25 +485,28 @@
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 ;; large enough to hold every token plus the TEnd sentinel) and returning the
 ;; token count. Compatibility callers use this panic-on-error path through
-;; `lex`; the recoverable `lex-result` validates with `lex-check` first.
+;; `lex`; recoverable callers use `lex-into-spanned-result` directly.
 (define (lex-into [src : String] [toks : (Array Token)]) : i64
   (lex-into-spanned src toks (make-array i64 (array-length toks))))
 
 ;; Core scanner. Fills `toks` with the token stream and, in parallel, records
-;; each token's starting byte index into `starts[count]` (#599). `lex-into`
-;; passes a throwaway `starts` array so the plain token path is unchanged;
-;; `lex-spanned-result` passes a real one and converts each start index to a
-;; 1-based line/column. Returns the token count (excluding the trailing TEnd).
-(define (lex-into-spanned
+;; each token's starting byte index into `starts[count]` (#599). The plain token
+;; path uses this through `lex-into`; `lex-spanned-result` uses a direct scanner
+;; that records line/column positions while tokenizing. Returns the token count
+;; (excluding the trailing TEnd).
+(define (lex-into-spanned-result
   [src : String]
   [toks : (Array Token)]
-  [starts : (Array i64)]) : i64
+  [starts : (Array i64)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string-length src)]
     [count : i64 0]
+    [ok : bool true]
+    [message : String ""]
+    [err-pos : i64 0]
     (begin
-      (while (< i n)
+      (while (and (< i n) ok)
         (let
           [c : char (string-ref src i)]
           (cond
@@ -543,28 +566,45 @@
               ; '"' - a string literal
               (let
                 [start : i64 (+ i 1)]
-                [end : i64 (scan-str-end src start n)]
-                (begin
-                  (array-set! starts count i)
-                  (array-set!
-                    toks
-                    count
-                    (TStr (unescape-string-literal src start end)))
-                  (set! count (+ count 1))
-                  (set! i (+ end 1))))]
+                (match (scan-str-end-result src start n)
+                  [(OkLexI64 end)
+                    (begin
+                      (array-set! starts count i)
+                      (array-set!
+                        toks
+                        count
+                        (TStr (unescape-string-literal src start end)))
+                      (set! count (+ count 1))
+                      (set! i (+ end 1)))]
+                  [(ErrLexI64 err)
+                    (begin
+                      (set! ok false)
+                      (set! message err)
+                      (set! err-pos i))]))]
             [(= c #;')
               ; ';' - a line comment
               (set! i (scan-comment-end src (+ i 1) n))]
             [(= c ##')
               ; '#' - a char literal
-              (let
-                [value : char (char-literal-value src i n)]
-                [end : i64 (char-literal-end src i n)]
-                (begin
-                  (array-set! starts count i)
-                  (array-set! toks count (TChar value))
-                  (set! count (+ count 1))
-                  (set! i end)))]
+              (match (char-literal-value-result src i n)
+                [(OkLexChar value)
+                  (match (char-literal-end-result src i n)
+                    [(OkLexI64 end)
+                      (begin
+                        (array-set! starts count i)
+                        (array-set! toks count (TChar value))
+                        (set! count (+ count 1))
+                        (set! i end))]
+                    [(ErrLexI64 err)
+                      (begin
+                        (set! ok false)
+                        (set! message err)
+                        (set! err-pos i))])]
+                [(ErrLexChar err)
+                  (begin
+                    (set! ok false)
+                    (set! message err)
+                    (set! err-pos i))])]
             [(or (is-digit c) (negative-number-start? src i n))
               (let
                 [end : i64 (scan-number-end src i n)]
@@ -588,25 +628,246 @@
                   (set! i end)))]
             [else
               (begin
-                (panic "lexer: unexpected character")
-                (set! i (+ i 1)))])))
-      (array-set! starts count n)
-      (array-set! toks count TEnd)
-      count)))
+                (set! ok false)
+                (set! message "lexer: unexpected character")
+                (set! err-pos i))])))
+      (if ok
+        (begin
+          (array-set! starts count n)
+          (array-set! toks count TEnd)
+          (OkLexIntoSpanned count))
+        (ErrLexIntoSpanned (source-error-at src err-pos message))))))
+
+(define (lex-into-spanned
+  [src : String]
+  [toks : (Array Token)]
+  [starts : (Array i64)]) : i64
+  (match (lex-into-spanned-result src toks starts)
+    [(OkLexIntoSpanned count) count]
+    [(ErrLexIntoSpanned err)
+      (begin
+        (panic (source-error-message err))
+        0)]))
+
+(defenum LexPosition
+  (LexPosition i64 i64))
+
+(define (lex-advance-position
+  [src : String]
+  [start : i64]
+  [end : i64]
+  [line : i64]
+  [col : i64]) : LexPosition
+  (let
+    [j : i64 start]
+    [next-line : i64 line]
+    [next-col : i64 col]
+    (begin
+      (while (< j end)
+        (begin
+          (if (= (string-ref src j) #\newline')
+            (begin
+              (set! next-line (+ next-line 1))
+              (set! next-col 1))
+            (set! next-col (+ next-col 1)))
+          (set! j (+ j 1))))
+      (LexPosition next-line next-col))))
+
+(define (lex-into-spanned-tokens-result
+  [src : String]
+  [stoks : (Array SpannedToken)]) : ResultLexIntoSpanned
+  (let
+    [i : i64 0]
+    [n : i64 (string-length src)]
+    [count : i64 0]
+    [line : i64 1]
+    [col : i64 1]
+    [ok : bool true]
+    [message : String ""]
+    [err-pos : i64 0]
+    (begin
+      (while (and (< i n) ok)
+        (let
+          [c : char (string-ref src i)]
+          (cond
+            [(is-space c)
+              (begin
+                (if (= c #\newline')
+                  (begin
+                    (set! line (+ line 1))
+                    (set! col 1))
+                  (set! col (+ col 1)))
+                (set! i (+ i 1)))]
+            [(= c #(')
+              (begin
+                (array-set! stoks count (SpannedToken TLParen line col))
+                (set! count (+ count 1))
+                (set! i (+ i 1))
+                (set! col (+ col 1)))]
+            [(= c #[')
+              (begin
+                (array-set! stoks count (SpannedToken TLBracket line col))
+                (set! count (+ count 1))
+                (set! i (+ i 1))
+                (set! col (+ col 1)))]
+            [(= c #)')
+              (begin
+                (array-set! stoks count (SpannedToken TRParen line col))
+                (set! count (+ count 1))
+                (set! i (+ i 1))
+                (set! col (+ col 1)))]
+            [(= c #]')
+              (begin
+                (array-set! stoks count (SpannedToken TRBracket line col))
+                (set! count (+ count 1))
+                (set! i (+ i 1))
+                (set! col (+ col 1)))]
+            [(= c #'')
+              (begin
+                (array-set! stoks count (SpannedToken TQuote line col))
+                (set! count (+ count 1))
+                (set! i (+ i 1))
+                (set! col (+ col 1)))]
+            [(= c #`')
+              (begin
+                (array-set! stoks count (SpannedToken TBacktick line col))
+                (set! count (+ count 1))
+                (set! i (+ i 1))
+                (set! col (+ col 1)))]
+            [(= c #,')
+              (begin
+                (if (< (+ i 1) n)
+                  (if (= (string-ref src (+ i 1)) #@')
+                    (begin
+                      (array-set! stoks count (SpannedToken TCommaAt line col))
+                      (set! i (+ i 2))
+                      (set! col (+ col 2)))
+                    (begin
+                      (array-set! stoks count (SpannedToken TComma line col))
+                      (set! i (+ i 1))
+                      (set! col (+ col 1))))
+                  (begin
+                    (array-set! stoks count (SpannedToken TComma line col))
+                    (set! i (+ i 1))
+                    (set! col (+ col 1))))
+                (set! count (+ count 1)))]
+            [(= c #"')
+              (let
+                [start : i64 (+ i 1)]
+                [token-line : i64 line]
+                [token-col : i64 col]
+                (match (scan-str-end-result src start n)
+                  [(OkLexI64 end)
+                    (begin
+                      (array-set!
+                        stoks
+                        count
+                        (SpannedToken
+                          (TStr (unescape-string-literal src start end))
+                          token-line
+                          token-col))
+                      (set! count (+ count 1))
+                      (match (lex-advance-position src i (+ end 1) line col)
+                        [(LexPosition next-line next-col)
+                          (begin
+                            (set! line next-line)
+                            (set! col next-col))])
+                      (set! i (+ end 1)))]
+                  [(ErrLexI64 err)
+                    (begin
+                      (set! ok false)
+                      (set! message err)
+                      (set! err-pos i))]))]
+            [(= c #;')
+              (let
+                [end : i64 (scan-comment-end src (+ i 1) n)]
+                (begin
+                  (set! col (+ col (- end i)))
+                  (set! i end)))]
+            [(= c ##')
+              (let
+                [token-line : i64 line]
+                [token-col : i64 col]
+                (match (char-literal-value-result src i n)
+                  [(OkLexChar value)
+                    (match (char-literal-end-result src i n)
+                      [(OkLexI64 end)
+                        (begin
+                          (array-set!
+                            stoks
+                            count
+                            (SpannedToken (TChar value) token-line token-col))
+                          (set! count (+ count 1))
+                          (set! col (+ col (- end i)))
+                          (set! i end))]
+                      [(ErrLexI64 err)
+                        (begin
+                          (set! ok false)
+                          (set! message err)
+                          (set! err-pos i))])]
+                  [(ErrLexChar err)
+                    (begin
+                      (set! ok false)
+                      (set! message err)
+                      (set! err-pos i))]))]
+            [(or (is-digit c) (negative-number-start? src i n))
+              (let
+                [end : i64 (scan-number-end src i n)]
+                [token-line : i64 line]
+                [token-col : i64 col]
+                (begin
+                  (if (number-float? src i n)
+                    (array-set!
+                      stoks
+                      count
+                      (SpannedToken
+                        (TFloat (substring src i (- end i)))
+                        token-line
+                        token-col))
+                    (array-set!
+                      stoks
+                      count
+                      (SpannedToken
+                        (TInt (string->int (substring src i (- end i))))
+                        token-line
+                        token-col)))
+                  (set! count (+ count 1))
+                  (set! col (+ col (- end i)))
+                  (set! i end)))]
+            [(is-symbol-char c)
+              (let
+                [end : i64 (scan-symbol-end src i n)]
+                (begin
+                  (array-set!
+                    stoks
+                    count
+                    (SpannedToken (TSym (substring src i (- end i))) line col))
+                  (set! count (+ count 1))
+                  (set! col (+ col (- end i)))
+                  (set! i end)))]
+            [else
+              (begin
+                (set! ok false)
+                (set! message "lexer: unexpected character")
+                (set! err-pos i))])))
+      (if ok
+        (begin
+          (array-set! stoks count (SpannedToken TEnd line col))
+          (OkLexIntoSpanned count))
+        (ErrLexIntoSpanned (source-error-at src err-pos message))))))
 
 ;; `lex : (-> String (Array Token))` - the public entry point. Size the token
 ;; array by an upper bound (every char yields at most one token, plus the TEnd
 ;; sentinel), lex into it, then return that exact array. The trailing TEnd marks
 ;; the logical end even though the backing array may be larger.
 (define (lex-result [src : String]) : ResultTokens
-  (match (lex-check src)
-    [(OkLexI64 _)
-      (let
-        [toks : (Array Token) (make-array Token (+ (string-length src) 1))]
-        (begin
-          (lex-into src toks)
-          (OkTokens toks)))]
-    [(ErrLexI64 message) (ErrTokens message)]))
+  (let
+    [cap : i64 (+ (string-length src) 1)]
+    [toks : (Array Token) (make-array Token cap)]
+    [starts : (Array i64) (make-array i64 cap)]
+    (match (lex-into-spanned-result src toks starts)
+      [(OkLexIntoSpanned _) (OkTokens toks)]
+      [(ErrLexIntoSpanned err) (ErrTokens (source-error-message err))])))
 
 (define (lex [src : String]) : (Array Token)
   (match (lex-result src)
@@ -651,33 +912,6 @@
           (set! k (+ k 1))))
       col)))
 
-(define (fill-spanned
-  [src : String]
-  [toks : (Array Token)]
-  [starts : (Array i64)]
-  [stoks : (Array SpannedToken)]
-  [total : i64]) : unit
-  (let
-    [k : i64 0]
-    [pos : i64 0]
-    [line : i64 1]
-    [col : i64 1]
-    (while (< k total)
-      (begin
-        (let
-          [at : i64 (array-ref starts k)]
-          (begin
-            (while (< pos at)
-              (begin
-                (if (= (string-ref src pos) #\newline')
-                  (begin
-                    (set! line (+ line 1))
-                    (set! col 1))
-                  (set! col (+ col 1)))
-                (set! pos (+ pos 1))))
-            (array-set! stoks k (SpannedToken (array-ref toks k) line col))))
-        (set! k (+ k 1))))))
-
 (define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError
   (let
     [line : i64 (index-line src idx)]
@@ -688,18 +922,12 @@
 ;; start-index pair of arrays, then materialize `count + 1` spanned tokens
 ;; (including the trailing TEnd).
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
-  (match (lex-check-spanned src)
-    [(OkLexCheck _)
-      (let
-        [cap : i64 (+ (string-length src) 1)]
-        [toks : (Array Token) (make-array Token cap)]
-        [starts : (Array i64) (make-array i64 cap)]
-        [count : i64 (lex-into-spanned src toks starts)]
-        [stoks : (Array SpannedToken) (make-array SpannedToken (+ count 1))]
-        (begin
-          (fill-spanned src toks starts stoks (+ count 1))
-          (OkSpannedTokens stoks)))]
-    [(ErrLexCheck err) (ErrSpannedTokens err)]))
+  (let
+    [cap : i64 (+ (string-length src) 1)]
+    [stoks : (Array SpannedToken) (make-array SpannedToken cap)]
+    (match (lex-into-spanned-tokens-result src stoks)
+      [(OkLexIntoSpanned count) (OkSpannedTokens stoks)]
+      [(ErrLexIntoSpanned err) (ErrSpannedTokens err)])))
 
 (define (lex-spanned [src : String]) : (Array SpannedToken)
   (match (lex-spanned-result src)

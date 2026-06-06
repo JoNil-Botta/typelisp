@@ -6,6 +6,8 @@
 ;; produce the package artifact selected by manifest kind.
 (import "../stdlib/fs.tl")
 
+(import "../stdlib/env.tl")
+
 (import "../stdlib/io.tl")
 
 (import "host_plan.tl")
@@ -88,6 +90,45 @@
   (BuildPackagePathNil)
   (BuildPackagePathCons String (Box BuildPackagePathList)))
 
+(defstruct BuildPackageWorkerConfig
+  (manifest-path String)
+  (has-manifest bool)
+  (target CompilerBackendTarget)
+  (mode CompilerBackendMode)
+  (profile BuildProfile)
+  (opt-level i64)
+  (stdlib-roots CompilerLoadRootList))
+
+(defenum ResultBuildPackageWorkerConfig
+  (OkBuildPackageWorkerConfig BuildPackageWorkerConfig)
+  (ErrBuildPackageWorkerConfig String))
+
+(defstruct BuildPackageGraphWorker
+  (node BuildPackageGraphNode)
+  (child ProcessChild))
+
+(defenum ResultBuildPackageGraphWorker
+  (OkBuildPackageGraphWorker BuildPackageGraphWorker)
+  (ErrBuildPackageGraphWorker String))
+
+(defenum BuildPackageGraphWorkerList
+  (BuildPackageGraphWorkerNil)
+  (BuildPackageGraphWorkerCons
+    BuildPackageGraphWorker
+    (Box BuildPackageGraphWorkerList)))
+
+(defstruct BuildPackageSchedulePass
+  (scheduled StringI64Map)
+  (workers BuildPackageGraphWorkerList))
+
+(defenum ResultBuildPackageSchedulePass
+  (OkBuildPackageSchedulePass BuildPackageSchedulePass)
+  (ErrBuildPackageSchedulePass String))
+
+(defenum ResultBuildPackageWait
+  (OkBuildPackageWait StringI64Map)
+  (ErrBuildPackageWait i64))
+
 (defenum BuildProfile
   (BuildProfileDev)
   (BuildProfileRelease))
@@ -133,6 +174,12 @@
   (match profile
     [(BuildProfileDev) "dev"]
     [(BuildProfileRelease) "release"]))
+
+(define (build-backend-mode-name [mode : CompilerBackendMode]) : String
+  (match mode
+    [(BackendModeScalar) "scalar"]
+    [(BackendModeAvx2) "avx2"]
+    [(BackendModeAvx512) "avx512"]))
 
 (define (build-profile-default-opt-level [profile : BuildProfile]) : i64
   (match profile
@@ -471,6 +518,162 @@
     build-default-opt-level
     false
     ""
+    CompilerLoadRootNil))
+
+(define (build-package-worker-parse-options
+  [idx : i64]
+  [count : i64]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [profile : BuildProfile]
+  [opt-level : i64]
+  [stdlib-roots : CompilerLoadRootList]) : ResultBuildPackageWorkerConfig
+  (if (>= idx count)
+    (if has-manifest
+      (OkBuildPackageWorkerConfig
+        (BuildPackageWorkerConfig
+          manifest-path
+          has-manifest
+          target
+          mode
+          profile
+          opt-level
+          stdlib-roots))
+      (ErrBuildPackageWorkerConfig
+        "build: --package-worker requires --manifest-path"))
+    (let
+      [current : String (arg idx)]
+      (cond
+        [(string-eq current "--manifest-path")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --manifest-path requires a value")
+            (build-package-worker-parse-options
+              (+ idx 2)
+              count
+              (arg (+ idx 1))
+              true
+              target
+              mode
+              profile
+              opt-level
+              stdlib-roots))]
+        [(string-eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig "build: --target requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (match (source-tool-target value)
+                [(OkSourceToolTarget parsed-target)
+                  (build-package-worker-parse-options
+                    (+ idx 2)
+                    count
+                    manifest-path
+                    has-manifest
+                    parsed-target
+                    mode
+                    profile
+                    opt-level
+                    stdlib-roots)]
+                [(ErrSourceToolTarget _)
+                  (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (match (source-tool-backend-mode "build" value)
+                [(OkSourceToolBackendMode parsed-mode)
+                  (build-package-worker-parse-options
+                    (+ idx 2)
+                    count
+                    manifest-path
+                    has-manifest
+                    target
+                    parsed-mode
+                    profile
+                    opt-level
+                    stdlib-roots)]
+                [(ErrSourceToolBackendMode message)
+                  (ErrBuildPackageWorkerConfig message)])))]
+        [(string-eq current "--profile")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig "build: --profile requires a value")
+            (match (build-parse-profile (arg (+ idx 1)))
+              [(ErrBuildProfile message) (ErrBuildPackageWorkerConfig message)]
+              [(OkBuildProfile parsed-profile)
+                (build-package-worker-parse-options
+                  (+ idx 2)
+                  count
+                  manifest-path
+                  has-manifest
+                  target
+                  mode
+                  parsed-profile
+                  opt-level
+                  stdlib-roots)]))]
+        [(string-eq current "--release")
+          (build-package-worker-parse-options
+            (+ idx 1)
+            count
+            manifest-path
+            has-manifest
+            target
+            mode
+            (BuildProfileRelease)
+            opt-level
+            stdlib-roots)]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig "build: --opt-level requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (source-tool-opt-level-valid? value)
+                (build-package-worker-parse-options
+                  (+ idx 2)
+                  count
+                  manifest-path
+                  has-manifest
+                  target
+                  mode
+                  profile
+                  (string->int value)
+                  stdlib-roots)
+                (ErrBuildPackageWorkerConfig (build-unknown-opt-level value)))))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --stdlib-root requires a value")
+            (build-package-worker-parse-options
+              (+ idx 2)
+              count
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              (build-root-list-append stdlib-roots (arg (+ idx 1)))))]
+        [(host-plan-flag? current)
+          (ErrBuildPackageWorkerConfig
+            (string-append "build: unknown package worker flag " current))]
+        [else
+          (ErrBuildPackageWorkerConfig
+            (string-append "build: unexpected package worker argument " current))]))))
+
+(define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
+  (build-package-worker-parse-options
+    idx
+    count
+    ""
+    false
+    (source-tool-default-target)
+    (BackendModeScalar)
+    (build-default-profile)
+    build-default-opt-level
     CompilerLoadRootNil))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
@@ -971,7 +1174,395 @@
                       (print-string (string-append "Generated: " artifact-path))
                       0)])])])))))
 
-(define (build-package-emit-graph-nodes
+(define (build-package-worker-unified-cli?) : bool
+  (and (> (arg-count) 1) (string-eq (arg 1) "build")))
+
+(define (build-package-worker-command-prefix [args : ProcessStringList]) : ProcessStringList
+  (if (build-package-worker-unified-cli?)
+    (source-tool-args-append args "build")
+    args))
+
+(define (build-package-worker-append-option
+  [args : ProcessStringList]
+  [flag : String]
+  [value : String]) : ProcessStringList
+  (source-tool-args-append (source-tool-args-append args flag) value))
+
+(define (build-package-worker-append-stdlib-roots
+  [args : ProcessStringList]
+  [roots : CompilerLoadRootList]) : ProcessStringList
+  (match roots
+    [(CompilerLoadRootNil) args]
+    [(CompilerLoadRootCons root rest)
+      (build-package-worker-append-stdlib-roots
+        (build-package-worker-append-option args "--stdlib-root" root)
+        (box-get rest))]))
+
+(define (build-package-worker-args
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]) : ProcessStringList
+  (let
+    [args0 : ProcessStringList
+      (build-package-worker-command-prefix (process-args-empty))]
+    [args1 : ProcessStringList
+      (source-tool-args-append args0 "--package-worker")]
+    [args2 : ProcessStringList
+      (build-package-worker-append-option args1 "--manifest-path" manifest-path)]
+    [args3 : ProcessStringList
+      (build-package-worker-append-option
+        args2
+        "--target"
+        (source-tool-target-name target))]
+    [args4 : ProcessStringList
+      (build-package-worker-append-option
+        args3
+        "--backend-mode"
+        (build-backend-mode-name mode))]
+    [args5 : ProcessStringList
+      (build-package-worker-append-option
+        args4
+        "--profile"
+        (build-profile-name profile))]
+    [args6 : ProcessStringList
+      (build-package-worker-append-option
+        args5
+        "--opt-level"
+        (int->string opt-level))]
+    (build-package-worker-append-stdlib-roots args6 stdlib-roots)))
+
+(define (build-package-worker-command
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]) : ProcessCommand
+  (process-command
+    (arg 0)
+    (build-package-worker-args
+      manifest-path
+      target
+      opt-level
+      profile
+      mode
+      stdlib-roots)))
+
+(define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
+  (match (build-package-worker-config-from idx count)
+    [(ErrBuildPackageWorkerConfig message)
+      (begin
+        (print-error message)
+        1)]
+    [(OkBuildPackageWorkerConfig config)
+      (let
+        [manifest-path : String (struct-get config manifest-path)]
+        [normalized-path : String
+          (build-package-normalize-manifest-path manifest-path)]
+        (match (build-load-manifest normalized-path)
+          [(ErrBuildManifest message)
+            (begin
+              (print-error (string-append "Error: " message))
+              1)]
+          [(OkBuildManifest manifest)
+            (if (build-package-kind-lib? (struct-get manifest kind))
+              (build-package-emit-one
+                normalized-path
+                manifest
+                (struct-get config target)
+                (struct-get config opt-level)
+                (struct-get config profile)
+                (struct-get config mode)
+                (struct-get config stdlib-roots)
+                (process-args-empty))
+              (begin
+                (print-error
+                  "build: package worker can only build staticlib packages")
+                1))]))]))
+
+(define (build-package-async-process-supported?) : bool
+  (not (string-eq (env-path-list-separator) ";")))
+
+(define (build-package-deps-built?
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [built : StringI64Map]) : bool
+  (match deps
+    [(CompilerPkgDepNil) true]
+    [(CompilerPkgDepCons dep rest)
+      (let
+        [dep-manifest-path : String
+          (build-package-dep-manifest-path manifest-dir dep)]
+        (match (string-i64-map-get built dep-manifest-path)
+          [(StringI64MapFound _)
+            (build-package-deps-built? manifest-dir (box-get rest) built)]
+          [(StringI64MapMissing) false]))]))
+
+(define (build-package-node-ready?
+  [node : BuildPackageGraphNode]
+  [built : StringI64Map]) : bool
+  (let
+    [manifest-path : String (struct-get node manifest-path)]
+    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    [manifest : CompilerPkgManifest (struct-get node manifest)]
+    (build-package-deps-built? manifest-dir (struct-get manifest deps) built)))
+
+(define (build-package-node-scheduled?
+  [scheduled : StringI64Map]
+  [manifest-path : String]) : bool
+  (match (string-i64-map-get scheduled manifest-path)
+    [(StringI64MapFound _) true]
+    [(StringI64MapMissing) false]))
+
+(define (build-package-graph-worker-list-append-one
+  [items : BuildPackageGraphWorkerList]
+  [worker : BuildPackageGraphWorker]) : BuildPackageGraphWorkerList
+  (match items
+    [(BuildPackageGraphWorkerNil)
+      (BuildPackageGraphWorkerCons worker (box BuildPackageGraphWorkerNil))]
+    [(BuildPackageGraphWorkerCons head rest)
+      (BuildPackageGraphWorkerCons
+        head
+        (box (build-package-graph-worker-list-append-one (box-get rest) worker)))]))
+
+(define (build-package-graph-worker-list-empty?
+  [items : BuildPackageGraphWorkerList]) : bool
+  (match items
+    [(BuildPackageGraphWorkerNil) true]
+    [(BuildPackageGraphWorkerCons _ _) false]))
+
+(define (build-package-start-worker
+  [node : BuildPackageGraphNode]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]) : ResultBuildPackageGraphWorker
+  (let
+    [manifest-path : String (struct-get node manifest-path)]
+    [manifest : CompilerPkgManifest (struct-get node manifest)]
+    [name : String (struct-get manifest name)]
+    [command : ProcessCommand
+      (build-package-worker-command
+        manifest-path
+        target
+        opt-level
+        profile
+        mode
+        stdlib-roots)]
+    (match (process-start command)
+      [(OkProcessChild child)
+        (OkBuildPackageGraphWorker (BuildPackageGraphWorker node child))]
+      [(ErrProcessChild error)
+        (ErrBuildPackageGraphWorker
+          (string-append
+            "build: failed to start package dependency `"
+            (string-append
+              name
+              (string-append "`: " (process-error-message error)))))])))
+
+(define (build-package-schedule-pass
+  [nodes : BuildPackageGraphNodeList]
+  [scheduled : StringI64Map]
+  [built : StringI64Map]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]
+  [workers : BuildPackageGraphWorkerList]) : ResultBuildPackageSchedulePass
+  (match nodes
+    [(BuildPackageGraphNodeNil)
+      (OkBuildPackageSchedulePass (BuildPackageSchedulePass scheduled workers))]
+    [(BuildPackageGraphNodeCons node rest)
+      (let
+        [manifest-path : String (struct-get node manifest-path)]
+        (if (build-package-node-scheduled? scheduled manifest-path)
+          (build-package-schedule-pass
+            (box-get rest)
+            scheduled
+            built
+            target
+            opt-level
+            profile
+            mode
+            stdlib-roots
+            workers)
+          (if (build-package-node-ready? node built)
+            (match (build-package-start-worker
+              node
+              target
+              opt-level
+              profile
+              mode
+              stdlib-roots)
+              [(ErrBuildPackageGraphWorker message)
+                (ErrBuildPackageSchedulePass message)]
+              [(OkBuildPackageGraphWorker worker)
+                (build-package-schedule-pass
+                  (box-get rest)
+                  (string-i64-map-put scheduled manifest-path 1)
+                  built
+                  target
+                  opt-level
+                  profile
+                  mode
+                  stdlib-roots
+                  (build-package-graph-worker-list-append-one workers worker))])
+            (build-package-schedule-pass
+              (box-get rest)
+              scheduled
+              built
+              target
+              opt-level
+              profile
+              mode
+              stdlib-roots
+              workers))))]))
+
+(define (build-package-all-built?
+  [nodes : BuildPackageGraphNodeList]
+  [built : StringI64Map]) : bool
+  (match nodes
+    [(BuildPackageGraphNodeNil) true]
+    [(BuildPackageGraphNodeCons node rest)
+      (let
+        [manifest-path : String (struct-get node manifest-path)]
+        (match (string-i64-map-get built manifest-path)
+          [(StringI64MapFound _)
+            (build-package-all-built? (box-get rest) built)]
+          [(StringI64MapMissing) false]))]))
+
+(define (build-package-failure-status [failed-status : i64] [status : i64]) : i64
+  (if (= failed-status 0)
+    status
+    failed-status))
+
+(define (build-package-wait-workers-with
+  [workers : BuildPackageGraphWorkerList]
+  [built : StringI64Map]
+  [failed-status : i64]) : ResultBuildPackageWait
+  (match workers
+    [(BuildPackageGraphWorkerNil)
+      (if (= failed-status 0)
+        (OkBuildPackageWait built)
+        (ErrBuildPackageWait failed-status))]
+    [(BuildPackageGraphWorkerCons worker rest)
+      (let
+        [node : BuildPackageGraphNode (struct-get worker node)]
+        [manifest-path : String (struct-get node manifest-path)]
+        [manifest : CompilerPkgManifest (struct-get node manifest)]
+        [name : String (struct-get manifest name)]
+        [result : ResultProcessOutput (process-wait (struct-get worker child))]
+        (match result
+          [(OkProcessOutput output)
+            (begin
+              (source-tool-forward-output output)
+              (if (process-success? output)
+                (build-package-wait-workers-with
+                  (box-get rest)
+                  (string-i64-map-put built manifest-path 1)
+                  failed-status)
+                (let
+                  [status : i64 (process-output-status output)]
+                  (begin
+                    (print-error
+                      (string-append
+                        "build: package dependency `"
+                        (string-append
+                          name
+                          (string-append
+                            "` failed with status "
+                            (int->string status)))))
+                    (build-package-wait-workers-with
+                      (box-get rest)
+                      built
+                      (build-package-failure-status failed-status status))))))]
+          [(ErrProcessOutput error)
+            (begin
+              (print-error
+                (string-append
+                  "build: failed to wait for package dependency `"
+                  (string-append
+                    name
+                    (string-append "`: " (process-error-message error)))))
+              (build-package-wait-workers-with
+                (box-get rest)
+                built
+                (build-package-failure-status failed-status 1)))]))]))
+
+(define (build-package-wait-workers
+  [workers : BuildPackageGraphWorkerList]
+  [built : StringI64Map]) : ResultBuildPackageWait
+  (build-package-wait-workers-with workers built 0))
+
+(define (build-package-emit-graph-nodes-parallel-loop
+  [nodes : BuildPackageGraphNodeList]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]
+  [scheduled : StringI64Map]
+  [built : StringI64Map]) : i64
+  (if (build-package-all-built? nodes built)
+    0
+    (match (build-package-schedule-pass
+      nodes
+      scheduled
+      built
+      target
+      opt-level
+      profile
+      mode
+      stdlib-roots
+      BuildPackageGraphWorkerNil)
+      [(ErrBuildPackageSchedulePass message)
+        (begin
+          (print-error message)
+          1)]
+      [(OkBuildPackageSchedulePass pass)
+        (let
+          [workers : BuildPackageGraphWorkerList (struct-get pass workers)]
+          (if (build-package-graph-worker-list-empty? workers)
+            (begin
+              (print-error
+                "build: package dependency scheduler made no progress")
+              1)
+            (match (build-package-wait-workers workers built)
+              [(ErrBuildPackageWait status) status]
+              [(OkBuildPackageWait next-built)
+                (build-package-emit-graph-nodes-parallel-loop
+                  nodes
+                  target
+                  opt-level
+                  profile
+                  mode
+                  stdlib-roots
+                  (struct-get pass scheduled)
+                  next-built)])))])))
+
+(define (build-package-emit-graph-nodes-parallel
+  [nodes : BuildPackageGraphNodeList]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (build-package-emit-graph-nodes-parallel-loop
+    nodes
+    target
+    opt-level
+    profile
+    mode
+    stdlib-roots
+    (string-i64-map-with-capacity 32)
+    (string-i64-map-with-capacity 32)))
+
+(define (build-package-emit-graph-nodes-serial
   [nodes : BuildPackageGraphNodeList]
   [target : CompilerBackendTarget]
   [opt-level : i64]
@@ -995,14 +1586,44 @@
             stdlib-roots
             (process-args-empty))]
         (if (= status 0)
-          (build-package-emit-graph-nodes
+          (build-package-emit-graph-nodes-serial
             (box-get rest)
             target
             opt-level
             profile
             mode
             stdlib-roots)
-          status))]))
+          (begin
+            (print-error
+              (string-append
+                "build: package dependency `"
+                (string-append
+                  (struct-get manifest name)
+                  (string-append "` failed with status " (int->string status)))))
+            status)))]))
+
+(define (build-package-emit-graph-nodes
+  [nodes : BuildPackageGraphNodeList]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (if (build-package-async-process-supported?)
+    (build-package-emit-graph-nodes-parallel
+      nodes
+      target
+      opt-level
+      profile
+      mode
+      stdlib-roots)
+    (build-package-emit-graph-nodes-serial
+      nodes
+      target
+      opt-level
+      profile
+      mode
+      stdlib-roots)))
 
 (define (build-package-emit
   [manifest-path : String]
@@ -1505,6 +2126,9 @@
 ;; first argument after any subcommand name). `--direct` remains accepted as a
 ;; compatibility no-op; the bare form also builds in-process.
 (define (build-run-from [start : i64] [count : i64]) : i64
-  (if (and (> count start) (string-eq (arg start) "--direct"))
-    (build-direct-from (+ start 1) count)
-    (build-direct-from start count)))
+  (cond
+    [(and (> count start) (string-eq (arg start) "--package-worker"))
+      (build-package-worker-run-from (+ start 1) count)]
+    [(and (> count start) (string-eq (arg start) "--direct"))
+      (build-direct-from (+ start 1) count)]
+    [else (build-direct-from start count)]))

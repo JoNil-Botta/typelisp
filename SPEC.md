@@ -1879,11 +1879,13 @@ Example:
   absolute dependency paths are used as written. Remote entries are manifest
   syntax for git dependency fetch support; local path entries keep the existing
   build and `pkg:` resolution behavior.
-- Local dependency manifests are loaded into a normalized serial DAG keyed by
-  manifest path before build execution. Transitive dependency packages build
-  once per root build invocation, diamond graphs de-duplicate the common
-  archive, and dependency cycles fail before code generation with a diagnostic
-  that includes the manifest path chain.
+- Local dependency manifests are loaded into a normalized DAG keyed by manifest
+  path before build execution. Transitive dependency packages build once per
+  root build invocation, diamond graphs de-duplicate the common archive,
+  independent ready nodes are scheduled concurrently when async process handles
+  are available, and dependency cycles fail before code generation with a
+  diagnostic that includes the manifest path chain. Hosts without async child
+  handles use a serial fallback with the same graph ordering and diagnostics.
 - Dependency packages must be `staticlib`/`lib` packages; a `bin` dependency is
   rejected as a package graph diagnostic.
 - `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file

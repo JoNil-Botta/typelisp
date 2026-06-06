@@ -611,34 +611,6 @@
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
-(define (source-tool-print-string-runtime) : String
-  "
-    .globl _tl_print_string
-_tl_print_string:
-    movq 8(%rdi), %rdx
-    movq 0(%rdi), %rsi
-    movq $1, %rdi
-    movq $1, %rax
-    syscall
-    movq $0, %rax
-    ret
-")
-
-(define (source-tool-needs-print-string-runtime? [asm : String]) : bool
-  (let
-    [haystack : String asm]
-    [needle : String "call _tl_print_string"]
-    (and
-      (string-contains (& haystack) (& needle))
-      (let
-        [needle : String "_tl_print_string:"]
-        (not (string-contains (& haystack) (& needle)))))))
-
-(define (source-tool-augment-assembly [asm : String]) : String
-  (if (source-tool-needs-print-string-runtime? asm)
-    (string-append asm (source-tool-print-string-runtime))
-    asm))
-
 (define (source-tool-noexecstack-note) : String
   "
     .section .note.GNU-stack,\"\",@progbits
@@ -648,7 +620,7 @@ _tl_print_string:
   [asm : String]
   [target : CompilerBackendTarget]) : String
   (let
-    [haystack : String (source-tool-augment-assembly asm)]
+    [haystack : String asm]
     [needle : String ".note.GNU-stack"]
     (if (compiler-backend-target-linux? target)
       (if (string-contains (& haystack) (& needle))

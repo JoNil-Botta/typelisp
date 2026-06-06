@@ -560,6 +560,9 @@ check_stdlib_string_helpers_asm() {
     assert_not_contains "$_asm" ".globl tl_string_to_int" "$_label"
     assert_not_contains "$_asm" "call tl_string_to_int" "$_label"
     assert_not_contains "$_asm" ".extern tl_string_to_int" "$_label"
+    assert_not_contains "$_asm" ".globl tl_substring" "$_label"
+    assert_not_contains "$_asm" "call tl_substring" "$_label"
+    assert_not_contains "$_asm" ".extern tl_substring" "$_label"
 }
 
 assert_empty_file() {

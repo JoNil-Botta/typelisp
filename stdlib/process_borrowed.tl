@@ -10,6 +10,8 @@
 ;# at the owned `ProcessCommand` boundary before calling `process.tl`.
 (import "process.tl")
 
+(import "string.tl")
+
 ;: Borrowed process argument strings in argv order. All entries in one list
 ;: share one lifetime; use owned conversion to join independently scoped text.
 (defenum ProcessBorrowedStringList
@@ -70,7 +72,7 @@
 
 ;: Copy a borrowed string into active-arena owned storage.
 (define (process-borrowed-string-owned [value : (& value str)]) : String
-  (substring value 0 (string-length value)))
+  (substring-borrowed value 0 (string-length value)))
 
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (process-borrowed-args-owned [args : (ProcessBorrowedStringList text)]) : ProcessStringList

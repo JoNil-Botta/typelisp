@@ -1,7 +1,8 @@
 ;# String utility library for TypeLisp.
 ;#
-;# Provides string operations built on compiler primitives:
-;# `string-length`, `string-ref`, `substring`, and `string-append`.
+;# Provides string operations built on compiler/runtime primitives:
+;# `string-length`, `string-ref`, `string-data`, `array-data`, and
+;# `string-append`.
 ;#
 ;# Usage: `(import "stdlib/string.tl")`
 ;#
@@ -14,6 +15,64 @@
 ;#     [needle : String "ph"]
 ;#     (string-contains (& haystack) (& needle))))
 ;# ```
+;: Runtime bounds-check trap shared with array/string indexing.
+(extern tl_oob_abort : (-> never))
+
+;: Trap when the requested substring range is outside `text`.
+(define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit
+  (let
+    [n : i64 (string-length text)]
+    (cond
+      [(< start 0) (tl_oob_abort)]
+      [(< len 0) (tl_oob_abort)]
+      [(> start n) (tl_oob_abort)]
+      [else
+        (let
+          [remaining : i64 (- n start)]
+          (if (> len remaining)
+            (tl_oob_abort)
+            unit))])))
+
+;: Copy a checked borrowed byte range into a fresh active-arena String.
+(define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 len)]
+    [src : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [dst : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst i)
+              (ptr-read (ptr-offset src (+ start i)))))
+          (set! i (+ i 1))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+
+;: Return a fresh active-arena owned substring copied from borrowed text.
+(define (substring-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
+  (begin
+    (substring-bounds-check text start len)
+    (substring-copy-checked text start len)))
+
+;: Return a fresh active-arena owned substring copied from owned text.
+(define (substring [text : String] [start : i64] [len : i64]) : String
+  (substring-borrowed (& text) start len))
+
+;: Borrowed alias for `substring-borrowed`.
+(define (string-slice-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
+  (substring-borrowed text start len))
+
+;: Alias for `substring`.
+(define (string-slice [text : String] [start : i64] [len : i64]) : String
+  (substring text start len))
+
 ;: Return true if the character is ASCII whitespace.
 (define (is-char-whitespace [c : char]) : bool
   (or
@@ -85,7 +144,7 @@
         (if (is-char-whitespace (string-ref s i))
           (set! i (+ i 1))
           (set! done true)))
-      (substring s i (- n i)))))
+      (substring-borrowed s i (- n i)))))
 
 ;: Trim trailing whitespace from borrowed text.
 (define (string-trim-right [s : (& s str)]) : String
@@ -98,7 +157,7 @@
         (if (is-char-whitespace (string-ref s i))
           (set! i (- i 1))
           (set! done true)))
-      (substring s 0 (+ i 1)))))
+      (substring-borrowed s 0 (+ i 1)))))
 
 ;: Trim whitespace from both ends of borrowed text.
 (define (string-trim [s : (& s str)]) : String
@@ -117,7 +176,7 @@
         (if (is-char-whitespace (string-ref s end))
           (set! end (- end 1))
           (set! done-right true)))
-      (substring s start (- (+ end 1) start)))))
+      (substring-borrowed s start (- (+ end 1) start)))))
 
 ;: Return true if haystack contains needle at any position.
 (define (string-contains

@@ -8685,7 +8685,18 @@
   [state : OptReachState]
   [global : CompilerIrGlobal]) : OptReachState
   (match global
-    [(IrGlobal _ _ value) (opt-reach-value index state value)]))
+    [(IrGlobal name _ value)
+      ;; A global with a non-constant initializer is set up before main by a
+      ;; generated `__global_init_<name>` function (mirrors
+      ;; compiler-backend-global-init-name) that the backend calls from the
+      ;; startup sequence; it is NOT referenced from the global's IR value, so it
+      ;; must be added as a reachability root or the prune drops its definition
+      ;; (unresolved-symbol link failure). opt-reach-add-function no-ops when the
+      ;; function does not exist (constant-initialized globals).
+      (opt-reach-add-function
+        index
+        (opt-reach-value index state value)
+        (string-append "__global_init_" name))]))
 
 (define (opt-reach-globals
   [index : OptFunctionIndex]

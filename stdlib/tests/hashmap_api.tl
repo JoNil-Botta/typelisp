@@ -210,6 +210,15 @@
 
 (define (main) : i64
   (begin
+    ;; --- hashmap-family key descriptor contract (#2056) ---
+    (assert-owned-string-eq
+      (hashmap-string-key-descriptor-key)
+      "stdlib/hashmap/string-key-v1"
+      "String key descriptor identity")
+    (assert-owned-string-eq
+      (hashmap-i64-key-descriptor-key)
+      "stdlib/hashmap/i64-key-v1"
+      "i64 key descriptor identity")
     ;; --- bucket-index math + wraparound ---
     (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 % 4")
     (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 % 4")

@@ -522,6 +522,20 @@ Generated declaration identity is the tuple:
   arguments must use stable compiler-owned keys or explicit generator-defined
   string keys.
 
+For `stdlib/hashmap-family`, the argument key list must include the key
+`type-key`, value `type-key`, and an explicit key descriptor identity. The v1
+built-in descriptors are `stdlib/hashmap/string-key-v1` for owned `String`
+keys and `stdlib/hashmap/i64-key-v1` for scalar `i64` keys. A descriptor fixes
+the hash operation, equality operation, generated family/name prefix, and
+whether borrowed-key lookup wrappers are emitted. `String` uses `hash-string`,
+`hash-key-string-eq?`, and borrowed lookup/contains/remove wrappers; `i64` uses
+`hash-i64`, `hash-key-i64-eq?`, and no borrowed-key wrappers. Unsupported key
+types must produce a compile-time `hashmap-family` diagnostic naming the
+unsupported key descriptor instead of using source-level traits or implicit
+`Hash`/`Eq` bounds. Changing descriptor identity changes generated declaration
+identity even when the key/value types and public item names are otherwise the
+same.
+
 The payload declaration name must match `generated-item-name`. The compiler may
 derive display names from keys, but the generated identity, not the display
 spelling alone, is the stable reuse key. Generated identities use canonical

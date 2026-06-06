@@ -3818,6 +3818,12 @@
 (comptime-decl (:generated option-family Option_String \"String\")
   (defstruct Option_String (value String)))")
 
+(define (compiler-generated-hashmap-descriptor-distinct-source) : String
+  "(comptime-decl (:generated stdlib/hashmap-family HashMapSlot (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
+  (defenum HashMapSlot (HashMapEmpty)))
+(comptime-decl (:generated stdlib/hashmap-family HashMapSlot (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/custom-key-v1\")
+  (defenum HashMapSlot (HashMapEmpty)))")
+
 (define (compiler-generated-decl-visible-count
   [source : String]
   [name : String]) : i64
@@ -3979,6 +3985,13 @@
       "Option_String")
     2))
 
+(define (compiler-generated-hashmap-descriptor-distinct-ok?) : bool
+  (=
+    (compiler-generated-decl-visible-count
+      (compiler-generated-hashmap-descriptor-distinct-source)
+      "HashMapSlot")
+    2))
+
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
     [(OkAstProgram program)
@@ -4035,5 +4048,6 @@
     (unless (compiler-generated-option-result-family-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
+    (unless (compiler-generated-hashmap-descriptor-distinct-ok?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     1))

@@ -23,6 +23,15 @@
 ;# tables may keep using specialized maps when their value domain or lifecycle is
 ;# tighter than a public stdlib collection.
 ;#
+;# `stdlib/hashmap-family` generation keys include a key descriptor identity in
+;# addition to key and value `type-key` strings. The built-in descriptors are:
+;# - `stdlib/hashmap/string-key-v1`: owned `String` keys, `hash-string`,
+;#   `hash-key-string-eq?`, and borrowed lookup/contains/remove wrappers.
+;# - `stdlib/hashmap/i64-key-v1`: scalar `i64` keys, `hash-i64`,
+;#   `hash-key-i64-eq?`, and no borrowed-key wrappers.
+;# Unsupported key types are intentionally rejected by the generator request
+;# path instead of falling back to a trait or implicit `Hash`/`Eq` bound.
+;#
 ;# ```typelisp
 ;# (import "stdlib/hashmap.tl")
 ;# (define (main) : i64
@@ -32,6 +41,14 @@
 ;#     [(StringI64MapProbeFull) -1]))
 ;# ```
 (import "hash.tl")
+
+;: Stable descriptor identity for generated `String`-key hashmap families.
+(define (hashmap-string-key-descriptor-key) : String
+  "stdlib/hashmap/string-key-v1")
+
+;: Stable descriptor identity for generated `i64`-key hashmap families.
+(define (hashmap-i64-key-descriptor-key) : String
+  "stdlib/hashmap/i64-key-v1")
 
 ;: One open-addressing slot: empty, a deleted tombstone, or an occupied entry
 ;: carrying the owned key, its copied value, and the cached key hash (#824).
@@ -508,7 +525,7 @@
 ;: Generated `HashMap<String,String>` slot family.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMapSlot (type-key (type String)) (type-key
-    (type String)))
+    (type String)) "stdlib/hashmap/string-key-v1")
   (defenum StringStringMapSlot
     (StringStringMapEmpty)
     (StringStringMapTombstone)
@@ -517,7 +534,7 @@
 ;: Result of probing for a `StringStringMap` key.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMapProbe (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (defenum StringStringMapProbe
     (StringStringMapProbeFound i64)
     (StringStringMapProbeAbsent i64)
@@ -526,7 +543,7 @@
 ;: Normalize any generated `StringStringMap` hash into the public hash range.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-hash-normalize (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-hash-normalize [value : i64]) : i64
     (let
       [m : i64 2147483647]
@@ -538,7 +555,7 @@
 ;: Hash a borrowed `StringStringMap` key without relying on imported helpers.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-hash-key (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-hash-key [key : (& key str)]) : i64
     (let
       [n : i64 (string-length key)]
@@ -558,21 +575,21 @@
 ;: Return the start bucket for `hash` in a `StringStringMap`.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-bucket-index (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-bucket-index [hash : i64] [capacity : i64]) : i64
     (% (string-string-map-hash-normalize hash) capacity)))
 
 ;: Advance a `StringStringMap` bucket index by one slot, wrapping around.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-next-index (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-next-index [index : i64] [capacity : i64]) : i64
     (% (+ index 1) capacity)))
 
 ;: Pick the insertion slot for an absent `StringStringMap` key.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-insert-slot (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-insert-slot
     [first-tombstone : i64]
     [empty-index : i64]) : i64
@@ -583,7 +600,7 @@
 ;: Linear probe for a borrowed `StringStringMap` key.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-probe-borrowed-from (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-probe-borrowed-from
     [slots : (Array StringStringMapSlot)]
     [capacity : i64]
@@ -628,7 +645,7 @@
 ;: Probe `slots` for a borrowed `StringStringMap` key.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-probe-borrowed (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-probe-borrowed
     [slots : (Array StringStringMapSlot)]
     [capacity : i64]
@@ -648,7 +665,7 @@
 ;: Compatibility owned-key probe wrapper.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-probe (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-probe
     [slots : (Array StringStringMapSlot)]
     [capacity : i64]
@@ -659,7 +676,7 @@
 ;: Generated `HashMap<String,String>` map.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key
-    (type String)))
+    (type String)) "stdlib/hashmap/string-key-v1")
   (defstruct StringStringMap
     (slots (Array StringStringMapSlot))
     (len i64)
@@ -668,7 +685,7 @@
 ;: Result of a `StringStringMap` lookup.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMapLookup (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (defenum StringStringMapLookup
     (StringStringMapMissing)
     (StringStringMapFound String)))
@@ -676,7 +693,7 @@
 ;: Result of a fixed-capacity `StringStringMap` insert.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMapInsertResult (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (defenum StringStringMapInsertResult
     (StringStringMapInsertOk StringStringMap)
     (StringStringMapInsertFull StringStringMap)))
@@ -684,7 +701,7 @@
 ;: Result of a `StringStringMap` removal.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMapRemoveResult (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (defenum StringStringMapRemoveResult
     (StringStringMapRemoveOk StringStringMap)
     (StringStringMapRemoveMissing StringStringMap)))
@@ -692,7 +709,7 @@
 ;: The map's backing slot array.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-slots (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-slots [map : StringStringMap]) : (Array
     StringStringMapSlot)
     (struct-get map slots)))
@@ -700,28 +717,28 @@
 ;: Number of live entries.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-len (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-len [map : StringStringMap]) : i64
     (struct-get map len)))
 
 ;: Number of slots in the backing table.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-capacity (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-capacity [map : StringStringMap]) : i64
     (array-length (struct-get map slots))))
 
 ;: Number of tombstone slots awaiting reuse.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-deleted (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-deleted [map : StringStringMap]) : i64
     (struct-get map deleted)))
 
 ;: Set slots `[index, count)` to `StringStringMapEmpty`.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-fill-empty (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-fill-empty
     [slots : (Array StringStringMapSlot)]
     [index : i64]
@@ -735,7 +752,7 @@
 ;: Create an empty `StringStringMap` with `capacity` slots.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-with-capacity (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-with-capacity [capacity : i64]) : StringStringMap
     (let
       [slots : (Array StringStringMapSlot)
@@ -747,7 +764,7 @@
 ;: Look up borrowed `key`, returning its copied string value or `Missing`.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-get-borrowed (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-get-borrowed
     [map : StringStringMap]
     [key : (& key str)]) : StringStringMapLookup
@@ -769,14 +786,14 @@
 ;: Compatibility owned-key lookup wrapper.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-get (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-get [map : StringStringMap] [key : String]) : StringStringMapLookup
     (string-string-map-get-borrowed map (& key))))
 
 ;: True when borrowed `key` has a live value in `map`.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-contains-borrowed? (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-contains-borrowed?
     [map : StringStringMap]
     [key : (& key str)]) : bool
@@ -787,14 +804,14 @@
 ;: Compatibility owned-key containment wrapper.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-contains? (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-contains? [map : StringStringMap] [key : String]) : bool
     (string-string-map-contains-borrowed? map (& key))))
 
 ;: True when `slot` is a reusable tombstone.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-slot-tombstone? (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-slot-tombstone? [slot : StringStringMapSlot]) : bool
     (match slot
       [(StringStringMapTombstone) true]
@@ -804,7 +821,7 @@
 ;: Insert or update `key` -> `value`, mutating the backing slot array.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-insert (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-insert
     [map : StringStringMap]
     [key : String]
@@ -839,7 +856,7 @@
 ;: Remove borrowed `key`, replacing its live slot with a tombstone.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-remove-borrowed (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-remove-borrowed
     [map : StringStringMap]
     [key : (& key str)]) : StringStringMapRemoveResult
@@ -864,14 +881,14 @@
 ;: Compatibility owned-key remove wrapper.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-remove (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-remove [map : StringStringMap] [key : String]) : StringStringMapRemoveResult
     (string-string-map-remove-borrowed map (& key))))
 
 ;: Re-insert every live entry into a fresh `StringStringMap` table.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-rehash-from (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-rehash-from
     [src : (Array StringStringMapSlot)]
     [dst : (Array StringStringMapSlot)]
@@ -900,7 +917,7 @@
 ;: Rebuild `map` as a fresh `new-capacity` table holding only live entries.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-resized (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-resized
     [map : StringStringMap]
     [new-capacity : i64]) : StringStringMap
@@ -917,7 +934,7 @@
 ;: Next capacity when growing.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-grow-capacity (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-grow-capacity [capacity : i64]) : i64
     (if (< capacity 4)
       8
@@ -926,7 +943,7 @@
 ;: Grow `map` to the next capacity.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-grow (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-grow [map : StringStringMap]) : StringStringMap
     (string-string-map-resized
       map
@@ -935,7 +952,7 @@
 ;: True when the table has reached the 3/4 load threshold.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-needs-grow? (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-needs-grow? [map : StringStringMap]) : bool
     (let
       [capacity : i64 (string-string-map-capacity map)]
@@ -948,7 +965,7 @@
 ;: Insert or update `key` -> `value`, growing as needed.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-put (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-put
     [map : StringStringMap]
     [key : String]
@@ -971,7 +988,7 @@
 ;: A single `StringStringMap` iteration entry, or none.
 (comptime-decl
   (:generated stdlib/hashmap-family StringStringMapEntry (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (defenum StringStringMapEntry
     (StringStringMapEntryNone)
     (StringStringMapEntrySome String String)))
@@ -979,7 +996,7 @@
 ;: Scan `slots` from `index` for the first occupied slot.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-next-occupied-from (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-next-occupied-from
     [slots : (Array StringStringMapSlot)]
     [index : i64]
@@ -996,7 +1013,7 @@
 ;: Iteration cursor for `StringStringMap` in deterministic bucket order.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-next-occupied (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-next-occupied [map : StringStringMap] [from : i64]) : i64
     (string-string-map-next-occupied-from
       (string-string-map-slots map)
@@ -1008,7 +1025,7 @@
 ;: The live `StringStringMap` entry at `index`, or `None`.
 (comptime-decl
   (:generated stdlib/hashmap-family string-string-map-entry-at (type-key
-    (type String)) (type-key (type String)))
+    (type String)) (type-key (type String)) "stdlib/hashmap/string-key-v1")
   (define (string-string-map-entry-at [map : StringStringMap] [index : i64]) : StringStringMapEntry
     (if (if (< index 0)
       true
@@ -1023,7 +1040,7 @@
 ;: Generated `HashMap<i64,i64>` slot family.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64MapSlot (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defenum I64I64MapSlot
     (I64I64MapEmpty)
     (I64I64MapTombstone)
@@ -1032,7 +1049,7 @@
 ;: Result of probing for an `I64I64Map` key.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64MapProbe (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defenum I64I64MapProbe
     (I64I64MapProbeFound i64)
     (I64I64MapProbeAbsent i64)
@@ -1041,7 +1058,7 @@
 ;: Normalize any generated `I64I64Map` hash into the public hash range.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-hash-normalize (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-hash-normalize [value : i64]) : i64
     (let
       [m : i64 2147483647]
@@ -1053,28 +1070,28 @@
 ;: Hash an `I64I64Map` key without relying on imported helpers.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-hash-key (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-hash-key [key : i64]) : i64
     (i64-i64-map-hash-normalize key)))
 
 ;: Return the start bucket for `hash` in an `I64I64Map`.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-bucket-index (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
     (% (i64-i64-map-hash-normalize hash) capacity)))
 
 ;: Advance an `I64I64Map` bucket index by one slot, wrapping around.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-next-index (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-next-index [index : i64] [capacity : i64]) : i64
     (% (+ index 1) capacity)))
 
 ;: Pick the insertion slot for an absent `I64I64Map` key.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-insert-slot (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
     (if (>= first-tombstone 0)
       first-tombstone
@@ -1083,7 +1100,7 @@
 ;: Linear probe for an `I64I64Map` key.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-probe-from (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-probe-from
     [slots : (Array I64I64MapSlot)]
     [capacity : i64]
@@ -1127,7 +1144,7 @@
 ;: Probe `slots` for an `I64I64Map` key.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-probe (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-probe
     [slots : (Array I64I64MapSlot)]
     [capacity : i64]
@@ -1147,7 +1164,7 @@
 ;: Generated `HashMap<i64,i64>` map.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defstruct I64I64Map
     (slots (Array I64I64MapSlot))
     (len i64)
@@ -1156,7 +1173,7 @@
 ;: Result of an `I64I64Map` lookup.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64MapLookup (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defenum I64I64MapLookup
     (I64I64MapMissing)
     (I64I64MapFound i64)))
@@ -1164,7 +1181,7 @@
 ;: Result of a fixed-capacity `I64I64Map` insert.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64MapInsertResult (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defenum I64I64MapInsertResult
     (I64I64MapInsertOk I64I64Map)
     (I64I64MapInsertFull I64I64Map)))
@@ -1172,7 +1189,7 @@
 ;: Result of an `I64I64Map` removal.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64MapRemoveResult (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defenum I64I64MapRemoveResult
     (I64I64MapRemoveOk I64I64Map)
     (I64I64MapRemoveMissing I64I64Map)))
@@ -1180,35 +1197,35 @@
 ;: The map's backing slot array.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-slots (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-slots [map : I64I64Map]) : (Array I64I64MapSlot)
     (struct-get map slots)))
 
 ;: Number of live entries.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-len (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-len [map : I64I64Map]) : i64
     (struct-get map len)))
 
 ;: Number of slots in the backing table.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-capacity (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-capacity [map : I64I64Map]) : i64
     (array-length (struct-get map slots))))
 
 ;: Number of tombstone slots awaiting reuse.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-deleted (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-deleted [map : I64I64Map]) : i64
     (struct-get map deleted)))
 
 ;: Set slots `[index, count)` to `I64I64MapEmpty`.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-fill-empty (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-fill-empty
     [slots : (Array I64I64MapSlot)]
     [index : i64]
@@ -1222,7 +1239,7 @@
 ;: Create an empty `I64I64Map` with `capacity` slots.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-with-capacity (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-with-capacity [capacity : i64]) : I64I64Map
     (let
       [slots : (Array I64I64MapSlot) (make-array I64I64MapSlot capacity)]
@@ -1233,7 +1250,7 @@
 ;: Look up `key`, returning its copied value or `Missing`.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-get (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-get [map : I64I64Map] [key : i64]) : I64I64MapLookup
     (let
       [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -1253,7 +1270,7 @@
 ;: True when `key` has a live value in `map`.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-contains? (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-contains? [map : I64I64Map] [key : i64]) : bool
     (match (i64-i64-map-get map key)
       [(I64I64MapFound _) true]
@@ -1262,7 +1279,7 @@
 ;: True when `slot` is a reusable tombstone.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-slot-tombstone? (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-slot-tombstone? [slot : I64I64MapSlot]) : bool
     (match slot
       [(I64I64MapTombstone) true]
@@ -1272,7 +1289,7 @@
 ;: Insert or update `key` -> `value`, mutating the backing slot array.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-insert (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-insert [map : I64I64Map] [key : i64] [value : i64]) : I64I64MapInsertResult
     (let
       [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -1300,7 +1317,7 @@
 ;: Remove `key`, replacing its live slot with a tombstone.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-remove (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-remove [map : I64I64Map] [key : i64]) : I64I64MapRemoveResult
     (let
       [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -1323,7 +1340,7 @@
 ;: Re-insert every live entry into a fresh `I64I64Map` table.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-rehash-from (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-rehash-from
     [src : (Array I64I64MapSlot)]
     [dst : (Array I64I64MapSlot)]
@@ -1348,7 +1365,7 @@
 ;: Rebuild `map` as a fresh `new-capacity` table holding only live entries.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-resized (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-resized [map : I64I64Map] [new-capacity : i64]) : I64I64Map
     (let
       [src : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -1362,7 +1379,7 @@
 ;: Next capacity when growing.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-grow-capacity (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-grow-capacity [capacity : i64]) : i64
     (if (< capacity 4)
       8
@@ -1371,7 +1388,7 @@
 ;: Grow `map` to the next capacity.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-grow (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-grow [map : I64I64Map]) : I64I64Map
     (i64-i64-map-resized
       map
@@ -1380,7 +1397,7 @@
 ;: True when the table has reached the 3/4 load threshold.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-needs-grow? (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-needs-grow? [map : I64I64Map]) : bool
     (let
       [capacity : i64 (i64-i64-map-capacity map)]
@@ -1392,7 +1409,7 @@
 ;: Insert or update `key` -> `value`, growing as needed.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-put (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-put [map : I64I64Map] [key : i64] [value : i64]) : I64I64Map
     (let
       [grown : I64I64Map
@@ -1409,7 +1426,7 @@
 ;: A single `I64I64Map` iteration entry, or none.
 (comptime-decl
   (:generated stdlib/hashmap-family I64I64MapEntry (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (defenum I64I64MapEntry
     (I64I64MapEntryNone)
     (I64I64MapEntrySome i64 i64)))
@@ -1417,7 +1434,7 @@
 ;: Scan `slots` from `index` for the first occupied slot.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-next-occupied-from (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-next-occupied-from
     [slots : (Array I64I64MapSlot)]
     [index : i64]
@@ -1434,7 +1451,7 @@
 ;: Iteration cursor for `I64I64Map` in deterministic bucket order.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-next-occupied (type-key
-    (type i64)) (type-key (type i64)))
+    (type i64)) (type-key (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-next-occupied [map : I64I64Map] [from : i64]) : i64
     (i64-i64-map-next-occupied-from
       (i64-i64-map-slots map)
@@ -1446,7 +1463,7 @@
 ;: The live `I64I64Map` entry at `index`, or `None`.
 (comptime-decl
   (:generated stdlib/hashmap-family i64-i64-map-entry-at (type-key (type i64)) (type-key
-    (type i64)))
+    (type i64)) "stdlib/hashmap/i64-key-v1")
   (define (i64-i64-map-entry-at [map : I64I64Map] [index : i64]) : I64I64MapEntry
     (if (if (< index 0)
       true

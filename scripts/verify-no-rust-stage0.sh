@@ -462,7 +462,7 @@ fi
 SEED_STAGE1_WRAPPER=0
 if compiler_is_stage1_wrapper "$SEED_TYPELISP_BIN"; then
     SEED_STAGE1_WRAPPER=1
-    echo "[no-rust-stage0] seed is a stage1 wrapper; extended CLI parity gates remain in compatibility tiers"
+    echo "[no-rust-stage0] seed exposes the legacy stage1 wrapper help; extended CLI parity gates remain in compatibility tiers"
 fi
 
 FRONT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
@@ -472,19 +472,18 @@ if [ "$HOST_OS" = linux ] &&
     FRONT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
-# Repository doctests run `typelisp doc --test`, which the stage1 wrapper serves
-# through the freshly bootstrapped selfhost doc driver (the same path the stdlib
-# documentation gate already uses). On Linux, route them through the wrapper
-# whenever the host-action drivers are available; otherwise the gate runs on the
+# Repository doctests run `typelisp doc --test`. On Linux, route them through a
+# host-action compiler when one is available; otherwise the gate runs on the
 # fresh branch-built cli.tl.
 DOCTEST_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
 if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
     DOCTEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
-# Repository inline tests run `typelisp test`, which the stage1 wrapper can
-# serve through the prebuilt selfhost test driver when a fresh bundle carries
-# one (#1609). Otherwise the gate runs on the fresh branch-built cli.tl.
+# Repository inline tests run `typelisp test`, which a retained host-action
+# compiler can serve through the prebuilt selfhost test driver when a fresh
+# bundle carries one (#1609). Otherwise the gate runs on the fresh branch-built
+# cli.tl.
 INLINE_TEST_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
 if [ "$HOST_OS" = linux ] && [ -n "$STAGE1_TEST_BIN" ]; then
     INLINE_TEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
@@ -524,9 +523,9 @@ else
 fi
 if [ "$HOST_OS" = linux ]; then
     if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI host-action smoke" scripts/check-stage1-wrapper.sh
     else
-        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action smoke" scripts/check-stage1-wrapper.sh
     fi
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$SEED_TYPELISP_BIN" "comptime-type specialization smoke" \
@@ -583,9 +582,9 @@ TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 
 # The safety corpus is a build/run capability gate, but its fixtures are small
-# enough to run through the freshly bootstrapped stage1 wrapper when the Linux
-# host-action drivers and checked-trap helpers are available (#1267). Keep the
-# seed path only for older artifacts or hosts where the wrapper cannot execute
+# enough to run through the freshly bootstrapped stage1 compiler when the Linux
+# host-action commands and checked-trap helpers are available (#1267). Keep the
+# seed path only for older artifacts or hosts where that compiler cannot execute
 # native programs yet.
 SAFETY_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
 SAFETY_GATE_LABEL="safety corpus"

@@ -5,12 +5,11 @@ set -eu
 #
 # The public `typelisp doc` command currently runs the selfhost Markdown
 # generator through a native compile/run path, which is Linux-only until the doc
-# command grows target selection. The doctest subcommand runs through
-# `selfhost/doc.tl`; keep this script separate from public CLI smoke coverage
-# because it sweeps every canonical stdlib module. In the Linux no-Rust lane,
-# this script is run with TYPELISP_BIN pointing at the stage1 wrapper so future
-# stdlib borrowed-`str` signatures are parsed by the selfhost doc/check path
-# instead of the published seed compiler.
+# command grows target selection. Keep this script separate from public CLI
+# smoke coverage because it sweeps every canonical stdlib module. In the Linux
+# no-Rust lane, this script is run with TYPELISP_BIN pointing at the selected
+# host-action CLI compiler so future stdlib borrowed-`str` signatures are parsed
+# by the selfhost doc/check path instead of the published seed compiler.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

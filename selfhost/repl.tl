@@ -1,7 +1,9 @@
-;; repl.tl - Standalone wrapper for the selfhost REPL CLI core (#591/#798).
+;; repl.tl - Retained selfhost REPL compatibility/coverage driver (#591/#798).
 ;;
-;; The command logic lives in `repl_cli_core.tl` so the unified `cli.tl`
-;; dispatcher can share it without importing a duplicate `main`.
+;; The published entry point is `selfhost/cli.tl repl`. This thin wrapper stays
+;; as a focused REPL compile/run target for manifest and public-tool smoke
+;; coverage. The command logic lives in `repl_cli_core.tl`, shared with the
+;; unified dispatcher.
 (import "../stdlib/io.tl")
 
 (import "repl_cli_core.tl")

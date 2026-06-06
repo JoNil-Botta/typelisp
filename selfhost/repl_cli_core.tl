@@ -1,7 +1,7 @@
 ;; repl_cli_core.tl - Selfhost REPL session command logic (#591/#798/#1641).
 ;;
-;; Shared by the standalone `repl.tl` wrapper and the unified `cli.tl`
-;; dispatcher.
+;; Shared by the retained `repl.tl` compatibility/coverage wrapper and the
+;; unified `cli.tl` dispatcher.
 ;;
 ;; Owns the REPL line loop and the dot-command behavior of the Rust REPL
 ;; skeleton's in-process slices. It reads

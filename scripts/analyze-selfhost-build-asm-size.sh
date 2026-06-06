@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# analyze-selfhost-build-asm-size.sh - local assembly size report for
-# selfhost/build.tl. The default path compiles the source with TYPELISP_BIN
-# when set, otherwise with the published stage0 selected by scripts/lib-stage0.sh.
+# analyze-selfhost-build-asm-size.sh - local assembly size report for the
+# retained selfhost/build.tl compatibility wrapper. The default path compiles
+# the source with TYPELISP_BIN when set, otherwise with the published stage0
+# selected by scripts/lib-stage0.sh.
 
 usage() {
     cat >&2 <<'EOF'

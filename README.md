@@ -296,9 +296,10 @@ directory rename behavior as a failed, non-reusable staging attempt.
 The repository root is also a package. From a checkout, `typelisp build` builds
 the unified selfhost CLI from `selfhost/cli.tl` and writes
 `target/typelisp/typelisp/typelisp` (or
-`target/typelisp/typelisp/typelisp.exe` on Windows). Stage0 publication still
-uses `scripts/build-stage0.sh`, which compiles `selfhost/cli.tl` directly until
-the remaining standalone-driver cleanup tracked by #1574 lands.
+`target/typelisp/typelisp/typelisp.exe` on Windows). Stage0 publication uses
+`scripts/build-stage0.sh`, which compiles `selfhost/cli.tl` directly and links
+it with the host toolchain so a seed compiler does not depend on its own
+`build` command.
 
 Package builds load local dependency manifests into a normalized DAG keyed by
 manifest path before code generation. Transitive dependencies are built once per
@@ -326,8 +327,8 @@ Documentation comments can contain checked examples. `typelisp doc --test
 attached `;:` item docs, writes each example to a deterministic temporary
 source file, type-checks it, and removes the temporary directory before exiting.
 The self-hosted Markdown generator can render one source file through
-`typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal is
-separate follow-up work.
+`typelisp doc input.tl -o output.md`; import-graph traversal is separate
+follow-up work.
 
 ```lisp
 ;# ```typelisp
@@ -635,7 +636,7 @@ typelisp test           file.tl    # Run inline `(test ...)` items; --check type
 
 `check` is the public type-check command.
 
-The selfhost REPL driver provides a stdio command loop for `.help`,
+The `typelisp repl` command provides a stdio command loop for `.help`,
 `.type <expr>`, and `.exit`. Top-level declarations are remembered for later
 commands and bare expressions are evaluated by compiling a scratch program
 through the TypeLisp-owned build/run path.
@@ -669,8 +670,7 @@ compile/build. `test` defaults to the host target so the generated executable
 can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
 runtime helper policy, and the `clang` + `lld-link` toolchain.
 
-The selfhost source-file build/run tools (`selfhost/build.tl --direct`,
-`selfhost/run.tl --direct`) and package build (`typelisp build
+Source-file `typelisp build`/`typelisp run` and package build (`typelisp build
 [--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. Package builds
 also accept `--profile dev|release` and `--release`; the selected profile is
 visible in `target/typelisp/<profile>/<package-name>/`. When `--opt-level` is

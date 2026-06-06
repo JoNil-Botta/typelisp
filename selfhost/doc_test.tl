@@ -1077,21 +1077,46 @@
     "doctest example "
     (string-append (int->string index) " was expected to fail but passed")))
 
-(define (doc-test-diagnostic-code [diag : CompilerDiagnostic]) : String
-  (let
-    [message : String (compiler-diagnostic-message diag)]
-    (if (or
-      (doc-test-string-prefix? message "parse:")
-      (doc-test-string-prefix? message "reader:"))
-      "E0100"
-      "E0200")))
-
 (define (doc-test-public-diagnostic-render [diag : CompilerDiagnostic]) : String
-  (string-append
-    "error["
-    (string-append
-      (doc-test-diagnostic-code diag)
-      (string-append "]: " (compiler-diagnostic-render diag)))))
+  (match (compiler-diagnostic-code diag)
+    [(CompilerDiagnosticSomeString code)
+      (string-append
+        "error["
+        (string-append
+          code
+          (string-append "]: " (compiler-diagnostic-render diag))))]
+    [CompilerDiagnosticNoString
+      (string-append "error: " (compiler-diagnostic-render diag))]))
+
+(define (doc-test-public-diagnostic-render-smoke-ok?) : bool
+  (let
+    [parse-diag : CompilerDiagnostic
+      (compiler-diagnostic-with-code
+        (compiler-diagnostic-simple "docs/parse.tl" 1 2 "missing closing paren")
+        (compiler-diagnostic-code-parse))]
+    [typecheck-diag : CompilerDiagnostic
+      (compiler-diagnostic-with-code
+        (compiler-diagnostic-simple "docs/type.tl" 3 4 "return mismatch")
+        (compiler-diagnostic-code-typecheck))]
+    [uncoded : CompilerDiagnostic
+      (compiler-diagnostic-simple
+        "docs/plain.tl"
+        5
+        6
+        "typecheck: prefix text only")]
+    [parse-rendered : String (doc-test-public-diagnostic-render parse-diag)]
+    [typecheck-rendered : String
+      (doc-test-public-diagnostic-render typecheck-diag)]
+    [uncoded-rendered : String (doc-test-public-diagnostic-render uncoded)]
+    (and
+      (doc-test-string-contains? parse-rendered "error[E0100]:")
+      (and
+        (doc-test-string-contains? typecheck-rendered "error[E0200]:")
+        (and
+          (doc-test-string-contains?
+            uncoded-rendered
+            "error: docs/plain.tl:5:6:")
+          (not (doc-test-string-contains? uncoded-rendered "E0200")))))))
 
 (define (doc-test-unexpected-error-message
   [index : i64]
@@ -2364,6 +2389,12 @@ typecheck: return type mismatch"))]
       (return
         (begin
           (panic "doc-test-run: runnable execution mismatch")
+          0)))
+    (unless
+      (doc-test-public-diagnostic-render-smoke-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: public diagnostic render mismatch")
           0)))
     (unless
       (doc-test-run-smoke-render-ok?)

@@ -88,6 +88,17 @@
 (define (compiler-diagnostic-code [diag : CompilerDiagnostic]) : CompilerDiagnosticMaybeString
   (struct-get diag code))
 
+(define (compiler-diagnostic-code-parse) : String
+  "E0100")
+
+(define (compiler-diagnostic-code-typecheck) : String
+  "E0200")
+
+(define (compiler-diagnostic-code-or-empty [diag : CompilerDiagnostic]) : String
+  (match (compiler-diagnostic-code diag)
+    [(CompilerDiagnosticSomeString code) code]
+    [CompilerDiagnosticNoString ""]))
+
 (define (compiler-diagnostic-category [diag : CompilerDiagnostic]) : CompilerDiagnosticMaybeString
   (struct-get diag category))
 
@@ -654,6 +665,15 @@
           [CompilerDiagnosticNoteNil false])]
       [CompilerDiagnosticLabelNil false])))
 
+(define (compiler-diagnostic-code-or-empty-ok?) : bool
+  (let
+    [uncoded : CompilerDiagnostic
+      (compiler-diagnostic-simple "none.tl" 1 1 "none")]
+    [coded : CompilerDiagnostic (compiler-diagnostic-with-code uncoded "E1234")]
+    (and
+      (string-eq (compiler-diagnostic-code-or-empty uncoded) "")
+      (string-eq (compiler-diagnostic-code-or-empty coded) "E1234"))))
+
 (define (compiler-diagnostic-self-test) : i64
   (begin
     (unless (compiler-diagnostic-render-ok?) (return 1))
@@ -664,4 +684,5 @@
     (unless (compiler-diagnostic-note-render-ok?) (return 4))
     (unless (compiler-diagnostic-end-span-ok?) (return 4))
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
+    (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))
     42))

@@ -4832,6 +4832,11 @@
                 (ErrAstReplItem (source-error-message err))]))))]
     [(ErrSpannedTokens err) (ErrAstReplItem (source-error-message err))]))
 
+(define (parse-ast-canonical-diagnostic [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (compiler-diagnostic-with-category
+    (compiler-diagnostic-with-code diag (compiler-diagnostic-code-parse))
+    "parse"))
+
 (define (parse-ast-program-forms-diagnostic
   [path : String]
   [dispatch : SymI64Env]
@@ -4857,13 +4862,15 @@
             (parse-ast-program-forms-diagnostic path dispatch toks cur)]
           [(ErrAstMaybeDecl message)
             (ErrAstDeclListDiagnostic
-              (compiler-diagnostic-from-span
-                path
-                (spanned-sexpr-span spanned-form)
-                message))])]
+              (parse-ast-canonical-diagnostic
+                (compiler-diagnostic-from-span
+                  path
+                  (spanned-sexpr-span spanned-form)
+                  message)))])]
       [(ErrSpannedSexpr err)
         (ErrAstDeclListDiagnostic
-          (compiler-diagnostic-from-source-error path err))])))
+          (parse-ast-canonical-diagnostic
+            (compiler-diagnostic-from-source-error path err)))])))
 
 (define (parse-ast-program-diagnostic
   [path : String]
@@ -4895,7 +4902,9 @@
     [(OkSpannedTokens toks)
       (parse-ast-program-diagnostic-with-cfg path toks cfgs)]
     [(ErrSpannedTokens err)
-      (ErrAstProgramDiagnostic (compiler-diagnostic-from-source-error path err))]))
+      (ErrAstProgramDiagnostic
+        (parse-ast-canonical-diagnostic
+          (compiler-diagnostic-from-source-error path err)))]))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
   (match decls
@@ -5336,6 +5345,22 @@
   (match (parse-ast-source src)
     [(ErrAstProgram message) (string-eq message want)]
     [(OkAstProgram _) false]))
+
+(define (compiler-parse-diagnostic-code-ok?) : bool
+  (match (parse-ast-source-diagnostic
+    "parse-code.tl"
+    (compiler-parse-malformed-binary-source))
+    [(ErrAstProgramDiagnostic diag)
+      (match (compiler-diagnostic-code diag)
+        [(CompilerDiagnosticSomeString code)
+          (and
+            (string-eq code (compiler-diagnostic-code-parse))
+            (match (compiler-diagnostic-category diag)
+              [(CompilerDiagnosticSomeString category)
+                (string-eq category "parse")]
+              [CompilerDiagnosticNoString false]))]
+        [CompilerDiagnosticNoString false])]
+    [(OkAstProgramDiagnostic _) false]))
 
 ;; Minimal complete programs that lex cleanly but reach a specific parser
 ;; rejection, one per representative special form.
@@ -6894,6 +6919,7 @@
 
 (define (compiler-parse-error-tests-ok?) : bool
   (cond
+    [(not (compiler-parse-diagnostic-code-ok?)) false]
     [(not (compiler-parse-special-form-error-tests-ok?)) false]
     [(not (compiler-parse-comptime-decl-error-tests-ok?)) false]
     [(not (compiler-parse-comptime-decls-error-tests-ok?)) false]

@@ -319,7 +319,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key value slot-hash)
                 (if (if (= slot-hash hash)
-                  (string-eq slot-key key)
+                  (hash-key-string-eq? (& slot-key) key)
                   false)
                   (return (StringI64MapFound value))
                   (let
@@ -367,7 +367,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (string-eq slot-key key)
+                  (hash-key-string-eq? (& slot-key) key)
                   false)
                   (return true)
                   (let
@@ -446,7 +446,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (string-eq slot-key key)
+                  (hash-key-string-eq? (& slot-key) (& key))
                   false)
                   (begin
                     (array-set! slots cursor (StringI64MapOccupied key value hash))
@@ -507,7 +507,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (string-eq slot-key key)
+                  (hash-key-string-eq? (& slot-key) key)
                   false)
                   (begin
                     (array-set! slots cursor (StringI64MapTombstone))

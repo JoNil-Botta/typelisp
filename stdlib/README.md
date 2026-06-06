@@ -130,12 +130,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 ## Arena Allocation Policy
 
 The stdlib does not own an allocator API. Stdlib functions allocate only by
-calling compiler/runtime primitives such as `substring`, `string-append`,
-`read-file`, `int->string`, and aggregate constructors. Those allocations use
-the active arena: the default program-lifetime arena outside any scoped arena,
-or the innermost scoped arena inside `(with-arena ...)`. The arena model uses
-the term "scoped arena" for this behavior. Stdlib policy tests use
-`(with-arena ...)` as the executable witness for active-arena semantics.
+calling compiler/runtime primitives or stdlib wrappers such as `substring`,
+`string-append`, `read-file`, `int->string`, and aggregate constructors. Those
+allocations use the active arena: the default program-lifetime arena outside
+any scoped arena, or the innermost scoped arena inside `(with-arena ...)`. The
+arena model uses the term "scoped arena" for this behavior. Stdlib policy tests
+use `(with-arena ...)` as the executable witness for active-arena semantics.
 
 Use three standard scratch patterns:
 

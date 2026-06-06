@@ -52,7 +52,7 @@
   [result : (StringReplaceResult text old replacement)]) : String
   (if (string-replace-result-owned? result)
     (struct-get result owned)
-    (substring
+    (substring-borrowed
       (struct-get result borrowed)
       0
       (string-length (struct-get result borrowed)))))
@@ -91,8 +91,8 @@
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
     (string-append
-      (string-append (substring s 0 index) new)
-      (substring s (+ index olen) (- (- hlen index) olen)))))
+      (string-append (substring-borrowed s 0 index) new)
+      (substring-borrowed s (+ index olen) (- (- hlen index) olen)))))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
 ;: tied to `text` or fresh active-arena owned text when a replacement is made.

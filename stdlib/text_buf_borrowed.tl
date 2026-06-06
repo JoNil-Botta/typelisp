@@ -8,6 +8,8 @@
 ;# compatibility surface keeps owned chunk storage.
 (import "text_buf.tl")
 
+(import "string.tl")
+
 ;: Borrowed buffer chunk. Borrowed chunks are not copied until render; owned
 ;: chunks are available as explicit lifetime boundaries.
 (defenum TextBufBorrowedChunk
@@ -86,7 +88,9 @@
 (define (text-buf-borrowed-append-copy
   [buf : (TextBufBorrowed text)]
   [chunk : (& chunk str)]) : (TextBufBorrowed text)
-  (text-buf-borrowed-append-owned buf (substring chunk 0 (string-length chunk))))
+  (text-buf-borrowed-append-owned
+    buf
+    (substring-borrowed chunk 0 (string-length chunk))))
 
 ;: Append rendered `right` after `left`. This is an explicit owned-copy
 ;: boundary, so `right` may be assembled independently before being appended.
@@ -99,7 +103,7 @@
 (define (text-buf-borrowed-chunk-string [chunk : (TextBufBorrowedChunk text)]) : String
   (match chunk
     [(TextBufBorrowedChunkBorrowed text)
-      (substring text 0 (string-length text))]
+      (substring-borrowed text 0 (string-length text))]
     [(TextBufBorrowedChunkOwned text) text]))
 
 ;: Render reversed borrowed chunks into `out`.

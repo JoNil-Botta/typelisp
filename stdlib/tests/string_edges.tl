@@ -29,6 +29,15 @@
 (define (string-test-to-int-borrowed [text : String]) : i64
   (string->int-borrowed (& text)))
 
+(define (string-test-substring-borrowed
+  [text : String]
+  [start : i64]
+  [len : i64]) : String
+  (substring-borrowed (& text) start len))
+
+(define (string-test-slice-borrowed [text : String] [start : i64] [len : i64]) : String
+  (string-slice-borrowed (& text) start len))
+
 (define (string-test-prefix-at
   [haystack : String]
   [needle : String]
@@ -65,6 +74,29 @@
       (string-test-to-int-borrowed "12a")
       169
       "borrowed parser keeps legacy non-digit arithmetic")
+    (assert-owned-string-eq
+      (substring "abcdef" 2 3)
+      "cde"
+      "public substring copies middle slice")
+    (assert-owned-string-eq
+      (string-slice "abcdef" 6 0)
+      ""
+      "public string-slice copies empty boundary slice")
+    (assert-owned-string-eq
+      (string-test-substring-borrowed "abcdef" 0 6)
+      "abcdef"
+      "borrowed substring copies full slice")
+    (assert-owned-string-eq
+      (string-test-slice-borrowed "abcdef" 5 1)
+      "f"
+      "borrowed string-slice copies final byte")
+    (assert-owned-string-eq
+      (string-test-substring-borrowed
+        "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        10
+        40)
+      "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
+      "borrowed substring copies long slice")
     (assert-owned-string-eq
       (string-test-trim-left "  hello")
       "hello"

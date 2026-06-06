@@ -127,6 +127,54 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   environment) from a configured Developer Command Prompt. Import it with
   `(import "stdlib/msvc.tl")`.
 
+## Backend Runtime Helper Ownership
+
+The backend runtime plan is a compatibility boundary, not a place for new
+stdlib APIs by default. The checked inventory in
+`selfhost/compiler_backend.tl` (`compiler-backend-runtime-helper-owner`) is the
+authoritative ownership table for symbols accepted by
+`compiler-backend-plan-provides?`; that function rejects unclassified helper
+names so runtime-plan additions must be assigned an owner first.
+
+- **Core runtime:** allocator, traps, arena control, and ABI-level abort helpers:
+  `tl_alloc`, `tl_oob_abort`, `tl_div_abort`, `tl_shift_abort`, `.L_tl_abort`,
+  `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_current`,
+  `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`.
+- **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
+  wrappers around OS/process/profile surfaces: `tl_process_output`,
+  `tl_process_start`, `tl_process_wait`, `tl_profile_now_ms`,
+  `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
+  `tl_profile_alloc_reset_peak`, `.L_tl_fs_read_dir_status`,
+  `.L_tl_fs_read_dir`, `.L_tl_fs_file_kind_status`,
+  `.L_tl_fs_file_size_status`, `.L_tl_fs_file_size`. The fs read-dir and
+  metadata probes are tracked by #2047.
+- **Stdlib TypeLisp migration target:** compatibility runtime helpers whose
+  preferred long-term owner is TypeLisp stdlib code or a narrower stdlib FFI
+  boundary: `tl_substring`, `tl_string_concat`, `tl_string_concat3`,
+  `tl_string_concat4`, `tl_string_concat5`, `tl_string_eq`,
+  `tl_string_to_int`, `tl_int_to_string`, `tl_hash_string`, `.L_tl_read_file`,
+  `.L_tl_write_file`, `.L_tl_file_exists`, `.L_tl_read_file_status`,
+  `.L_tl_write_file_status`, `.L_tl_append_file_status`,
+  `.L_tl_file_exists_status`, `.L_tl_file_open_status`,
+  `.L_tl_file_close_status`, `.L_tl_file_read_chunk_status`,
+  `.L_tl_file_write_status`, `.L_tl_file_flush_status`,
+  `.L_tl_file_read_chunk_bytes`, `.L_tl_file_read_chunk_eof`,
+  `.L_tl_read_stdin_line`, `.L_tl_read_stdin_bytes`, `.L_tl_stdin_eof`,
+  `.L_tl_flush_stdout`, `tl_env_var_exists`, `tl_env_var_value`,
+  `env-path-separator`. String migrations are tracked by #2036/#2037; env
+  migration is tracked by #1729.
+- **Compatibility alias:** legacy public spellings that remain only so existing
+  extern callers link: `tl_print_err`, `tl_print_str`, `tl_print_string`,
+  `tl_print_char`, `tl_print_f64`, `.L_tl_arg_count`, `tl_arg_count`,
+  `.L_tl_arg`, `tl_arg`.
+- **Deprecated/delete candidate:** no current runtime-plan symbols are in this
+  category. Add symbols here only with a linked removal owner.
+
+The broader runtime-core boundary tracker is #1897. New stdlib features should
+prefer TypeLisp implementations or focused stdlib FFI wrappers; new backend
+helpers need an explicit ownership entry and a focused migration or retention
+issue when they are not core runtime.
+
 ## Arena Allocation Policy
 
 The stdlib does not own an allocator API. Stdlib functions allocate only by

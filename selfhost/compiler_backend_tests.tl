@@ -2561,6 +2561,281 @@
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-runtime-helper-full-plan) : CompilerBackendRuntimePlan
+  (BackendRuntimePlan
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    true
+    (CompilerBackendRuntimeTailPlan true true)))
+
+(define (compiler-backend-runtime-helper-inventory-symbol-ok?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (and
+    (compiler-backend-runtime-helper-known? name)
+    (compiler-backend-plan-provides? plan name)))
+
+(define (compiler-backend-runtime-helper-inventory-core-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_alloc")
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_oob_abort")
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_div_abort")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_shift_abort")
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan ".L_tl_abort")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_region_mark")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_region_reset")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_arena_make"))
+    (backend-and4
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_arena_current")
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_arena_set")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_arena_destroy")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_arena_poison_enable"))))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_process_output")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_process_start")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_process_wait")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_profile_now_ms")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_profile_alloc_total")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_profile_alloc_live")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_profile_alloc_peak")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_profile_alloc_reset_peak"))
+    (and
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_fs_read_dir_status")
+      (and
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          ".L_tl_fs_read_dir")
+        (and
+          (compiler-backend-runtime-helper-inventory-symbol-ok?
+            plan
+            ".L_tl_fs_file_kind_status")
+          (and
+            (compiler-backend-runtime-helper-inventory-symbol-ok?
+              plan
+              ".L_tl_fs_file_size_status")
+            (compiler-backend-runtime-helper-inventory-symbol-ok?
+              plan
+              ".L_tl_fs_file_size")))))))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-string-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_substring")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_string_concat")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_string_concat3")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_string_concat4")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_string_concat5")
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_string_eq")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_string_to_int")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        "tl_int_to_string"))
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_hash_string")))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-file-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_read_file")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_write_file")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_exists")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_read_file_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_write_file_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_append_file_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_exists_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_open_status"))
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_close_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_read_chunk_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_write_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_flush_status")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_read_chunk_bytes")
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_file_read_chunk_eof")
+      true
+      true)))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-io-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (backend-and8
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      ".L_tl_read_stdin_line")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      ".L_tl_read_stdin_bytes")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      ".L_tl_stdin_eof")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      ".L_tl_flush_stdout")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_env_var_exists")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_env_var_value")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "env-path-separator")
+    true))
+
+(define (compiler-backend-runtime-helper-inventory-compat-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (backend-and8
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_err")
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_str")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_print_string")
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_char")
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_print_f64")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      ".L_tl_arg_count")
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_arg_count")
+    (and
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan ".L_tl_arg")
+      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_arg"))))
+
+(define (compiler-backend-runtime-helper-inventory-negative-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (not (compiler-backend-runtime-helper-known? "tl_random_system_seed"))
+    (and
+      (not (compiler-backend-plan-provides? plan "tl_random_system_seed"))
+      (and
+        (not (compiler-backend-runtime-helper-known? "tl_cpuid_eax"))
+        (and
+          (not (compiler-backend-plan-provides? plan "tl_cpuid_eax"))
+          (and
+            (not
+              (compiler-backend-runtime-helper-known? ".L_tl_fs_mkdir_status"))
+            (not (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))))))
+
+(define (compiler-backend-runtime-helper-inventory-ok?) : bool
+  (let
+    [plan : CompilerBackendRuntimePlan
+      (compiler-backend-runtime-helper-full-plan)]
+    (and
+      (backend-and8
+        (compiler-backend-runtime-helper-inventory-core-ok? plan)
+        (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
+        (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
+        (compiler-backend-runtime-helper-inventory-stdlib-file-ok? plan)
+        (compiler-backend-runtime-helper-inventory-stdlib-io-ok? plan)
+        (compiler-backend-runtime-helper-inventory-compat-ok? plan)
+        (compiler-backend-runtime-helper-inventory-negative-ok? plan)
+        true)
+      true)))
+
 (define (compiler-backend-memory-op-ok?) : bool
   (and
     (compiler-backend-instr-contains?
@@ -4590,7 +4865,9 @@
         (backend-and8
           (compiler-backend-instr-diagnostics-ok?)
           (compiler-backend-optimizer-rewrite-diagnostic-ok?)
-          (compiler-backend-runtime-helper-asm-ok?)
+          (and
+            (compiler-backend-runtime-helper-asm-ok?)
+            (compiler-backend-runtime-helper-inventory-ok?))
           (compiler-backend-alloc-runtime-arena-ok?)
           (compiler-backend-region-ok?)
           (compiler-backend-process-output-ok?)

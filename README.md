@@ -261,6 +261,16 @@ package graph consumes them. A pre-existing fetched root with `typelisp.pkg` is
 used as-is unless it has a `.git` directory, in which case the checkout is
 refreshed. Lockfile and update-policy support remains future work.
 
+Remote package cache helpers use a deterministic v1 layout under the package
+root at `target/typelisp/cache/packages/v1`. Cache entries are keyed by the
+normalized remote URL plus an exact `rev` commit pin; `tag` and `branch` pins
+must be resolved before they can be reused as cache entries. Each complete entry
+stores full metadata beside a completion marker so missing markers, partial
+writes, and metadata mismatches are treated as non-reusable. This helper layer
+does not invoke git or change build behavior yet. Staging finalization delegates
+to the stdlib rename helper; callers must handle unsupported or target-defined
+directory rename behavior as a failed, non-reusable staging attempt.
+
 The repository root is also a package. From a checkout, `typelisp build` builds
 the unified selfhost CLI from `selfhost/cli.tl` and writes
 `target/typelisp/typelisp/typelisp` (or

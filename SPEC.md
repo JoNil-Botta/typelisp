@@ -1883,6 +1883,17 @@ Example:
   `typelisp.pkg` is used as-is unless it has a `.git` directory, in which case
   the checkout is refreshed. Lockfile and update-policy behavior is not yet
   specified.
+- Remote package cache helpers use a deterministic v1 root below the package
+  root at `target/typelisp/cache/packages/v1`. Entry paths are derived from the
+  normalized remote URL and an exact `rev` commit pin; `tag` and `branch` pins
+  must be resolved before key construction. A cache entry is reusable only when
+  its metadata file matches the URL/commit key and its completion marker is
+  present and valid. Missing markers, missing metadata, and metadata mismatches
+  are partial/corrupt hits, not reusable hits. The helper layer plans staging
+  and final rename paths but does not fetch remotes or update lockfiles.
+  Finalization delegates to the stdlib rename helper; unsupported or
+  target-defined directory rename behavior leaves the staging attempt
+  non-reusable.
 - Local dependency manifests are loaded into a normalized DAG keyed by manifest
   path before build execution. Transitive dependency packages build once per
   root build invocation, diamond graphs de-duplicate the common archive,

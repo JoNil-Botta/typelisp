@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-no-rust-stage0.sh - CI/local no-Rust compiler gate.
+# ci-verify.sh - CI/local no-Rust compiler gate.
 #
 # This script intentionally does not build the Rust compiler. It fetches the
 # published stage0 artifact when TYPELISP_BIN is unset, guards against
@@ -15,7 +15,7 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-no-rust-stage0.sh
+usage: scripts/ci-verify.sh
 
 Runs the repository's no-Rust verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
@@ -349,6 +349,11 @@ if [ "$HOST_OS" = windows ]; then
 fi
 run_gate "fresh selfhost cli build" scripts/build-stage0.sh "$SEED_TYPELISP_BIN" "$SELFHOST_CLI_BIN"
 ensure_executable "fresh selfhost cli" "$SELFHOST_CLI_BIN"
+
+# The freshly self-built compiler (and the programs it builds) must depend on
+# no C runtime: kernel32 only on Windows, nothing dynamic on Linux.
+run_with_compiler "$SELFHOST_CLI_BIN" "no-libc dependency guard" scripts/verify-no-libc.sh
+
 SELFHOST_CLI_REFRESHED_PATH_FILE="$ROOT/target/no-rust-stage0-cli/refreshed.path"
 rm -f "$SELFHOST_CLI_REFRESHED_PATH_FILE"
 TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE=$SELFHOST_CLI_REFRESHED_PATH_FILE

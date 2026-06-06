@@ -557,7 +557,7 @@ download the single host asset and install it as the command under
 `target/stage0/`.
 
 To run the same stage0 verification gate used by CI, run
-`scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
+`scripts/ci-verify.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset. On Linux, that gate uses the published compiler as the
 bootstrap seed, checks the stage0-to-stage1 bootstrap, then runs deterministic
 assembly and the toolchain capability gates through the freshly bootstrapped

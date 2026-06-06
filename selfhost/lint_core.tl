@@ -140,19 +140,77 @@
     [(LintRuleFound rule) (struct-get rule suggestion)]
     [(LintRuleNotFound) ""]))
 
-;: Immutable list of findings.
-(defenum LintFindingList
-  (LintFindingNil)
-  (LintFindingCons LintFinding (Box LintFindingList)))
+;: Growable findings buffer. The backing array stores findings in discovery
+;: order; the CLI renders from the end to preserve the historical output order.
+(defstruct LintFindings
+  (slots (Array LintFinding))
+  (len i64))
 
-(define (lint-finding-cons [finding : LintFinding] [rest : LintFindingList]) : LintFindingList
-  (LintFindingCons finding (box rest)))
+(defenum LintMaybeFinding
+  (LintNoFinding)
+  (LintSomeFinding LintFinding))
 
-;: Number of findings in `items`.
-(define (lint-finding-list-count [items : LintFindingList]) : i64
-  (match items
-    [(LintFindingNil) 0]
-    [(LintFindingCons _ rest) (+ 1 (lint-finding-list-count (box-get rest)))]))
+(define (lint-findings-slots [items : LintFindings]) : (Array LintFinding)
+  (struct-get items slots))
+
+;: Number of live findings in `items`.
+(define (lint-findings-count [items : LintFindings]) : i64
+  (struct-get items len))
+
+(define (lint-findings-capacity [items : LintFindings]) : i64
+  (array-length (lint-findings-slots items)))
+
+(define (lint-findings-with-capacity [capacity : i64]) : LintFindings
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (LintFindings (make-array LintFinding cap) 0)))
+
+(define (lint-findings-empty) : LintFindings
+  (lint-findings-with-capacity 4))
+
+(define (lint-findings-copy-range
+  [dst : (Array LintFinding)]
+  [src : (Array LintFinding)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (lint-findings-copy-range dst src (+ index 1) count))))
+
+(define (lint-findings-grow [items : LintFindings]) : LintFindings
+  (let
+    [n : i64 (lint-findings-count items)]
+    [bigger : (Array LintFinding)
+      (make-array LintFinding (* (lint-findings-capacity items) 2))]
+    (begin
+      (lint-findings-copy-range bigger (lint-findings-slots items) 0 n)
+      (LintFindings bigger n))))
+
+;: Append `finding` to the discoveries, growing the backing array as needed.
+(define (lint-findings-add [finding : LintFinding] [items : LintFindings]) : LintFindings
+  (if (< (lint-findings-count items) (lint-findings-capacity items))
+    (let
+      [slots : (Array LintFinding) (lint-findings-slots items)]
+      [n : i64 (lint-findings-count items)]
+      (begin
+        (array-set! slots n finding)
+        (LintFindings slots (+ n 1))))
+    (lint-findings-add finding (lint-findings-grow items))))
+
+(define (lint-findings-ref [items : LintFindings] [index : i64]) : LintFinding
+  (array-ref (lint-findings-slots items) index))
+
+(define (lint-findings-get [items : LintFindings] [index : i64]) : LintMaybeFinding
+  (if (if (>= index 0)
+    (< index (lint-findings-count items))
+    false)
+    (LintSomeFinding (lint-findings-ref items index))
+    (LintNoFinding)))
 
 ;: Default nested-`if`-ladder depth threshold (an else-chain of this many `if`s
 ;: or more is flagged).
@@ -316,7 +374,7 @@
 (define (lint-walk-expr-list
   [exprs : AstExprList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
@@ -329,7 +387,7 @@
 (define (lint-walk-let-bindings
   [bindings : AstLetBindingList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match bindings
     [(AstLetBindingNil) acc]
     [(AstLetBindingCons binding rest)
@@ -396,13 +454,13 @@
   [body : AstExpr]
   [span : AstSourceSpan]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (let
-    [next : LintFindingList
+    [next : LintFindings
       (if (and
         (lint-nested-let-body? body)
         (not (lint-nested-let-shadows? bindings body)))
-        (lint-finding-cons (lint-nested-let-finding span) acc)
+        (lint-findings-add (lint-nested-let-finding span) acc)
         acc)]
     (lint-walk-expr
       body
@@ -414,13 +472,13 @@
   [body : AstExpr]
   [span : AstSourceSpan]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (let
-    [next : LintFindingList
+    [next : LintFindings
       (if (and
         (lint-nested-let-body? body)
         (not (lint-nested-let-shadows? bindings body)))
-        (lint-finding-cons (lint-nested-let-finding span) acc)
+        (lint-findings-add (lint-nested-let-finding span) acc)
         acc)]
     (lint-walk-tail-expr
       body
@@ -431,7 +489,7 @@
 (define (lint-walk-resource-bindings
   [bindings : AstResourceBindingList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match bindings
     [(AstResourceBindingNil) acc]
     [(AstResourceBindingCons binding rest)
@@ -454,7 +512,7 @@
 (define (lint-walk-match-arms
   [arms : AstMatchArmList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match arms
     [(AstMatchArmNil) acc]
     [(AstMatchArmCons arm rest)
@@ -477,7 +535,7 @@
   [expr : AstExpr]
   [threshold : i64]
   [tail-return-path : bool]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match expr
     [(AstExprSpanned inner-box _)
       (let
@@ -509,7 +567,7 @@
 (define (lint-walk-return-path-chain
   [expr : AstExpr]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match expr
     [(AstExprSpanned inner-box _)
       (let
@@ -533,7 +591,7 @@
   [branch : AstExpr]
   [tail-return-path : bool]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (if tail-return-path
     (lint-walk-tail-expr branch threshold acc)
     (lint-walk-expr branch threshold acc)))
@@ -549,7 +607,7 @@
   [span : AstSourceSpan]
   [tail-return-path : bool]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (let
     [ladder : i64 (+ 1 (lint-ladder-length else-branch))]
     [return-chain : i64 (+ 1 (lint-return-path-chain-length then-branch))]
@@ -567,7 +625,7 @@
           else-branch
           tail-return-path
           threshold
-          (lint-finding-cons
+          (lint-findings-add
             (lint-unit-if-guard-finding true span)
             (lint-walk-expr cond threshold acc)))]
       [(and else-unit (and (not then-unit) then-return))
@@ -575,14 +633,14 @@
           then-branch
           tail-return-path
           threshold
-          (lint-finding-cons
+          (lint-findings-add
             (lint-unit-if-guard-finding false span)
             (lint-walk-expr cond threshold acc)))]
       [(and tail-return-path (>= return-chain threshold))
         (lint-walk-return-path-chain
           (ast-expr-if cond then-branch else-branch)
           threshold
-          (lint-finding-cons
+          (lint-findings-add
             (lint-return-path-chain-finding return-chain span)
             acc))]
       [(>= ladder threshold)
@@ -590,7 +648,7 @@
           (ast-expr-if cond then-branch else-branch)
           threshold
           tail-return-path
-          (lint-finding-cons (lint-ladder-finding ladder span) acc))]
+          (lint-findings-add (lint-ladder-finding ladder span) acc))]
       [tail-return-path
         (lint-walk-tail-expr
           else-branch
@@ -613,7 +671,7 @@
 (define (lint-walk-tail-expr-list
   [exprs : AstExprList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
@@ -632,7 +690,7 @@
 (define (lint-walk-tail-match-arms
   [arms : AstMatchArmList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match arms
     [(AstMatchArmNil) acc]
     [(AstMatchArmCons arm rest)
@@ -653,7 +711,7 @@
 (define (lint-walk-tail-expr
   [expr : AstExpr]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match expr
     [(AstExprSpanned inner-box span)
       (let
@@ -730,10 +788,7 @@
 ;: Walk `expr`, flagging each maximal nested-`if` ladder of length >=
 ;: `threshold` exactly once and recursing into all sub-expressions. A ladder
 ;: head's finding span comes from the enclosing `AstExprSpanned` wrapper.
-(define (lint-walk-expr
-  [expr : AstExpr]
-  [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+(define (lint-walk-expr [expr : AstExpr] [threshold : i64] [acc : LintFindings]) : LintFindings
   (match expr
     [(AstExprSpanned inner-box span)
       (let
@@ -1002,10 +1057,7 @@
         (lint-walk-expr index threshold acc))]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.
-(define (lint-walk-decl
-  [decl : AstDecl]
-  [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+(define (lint-walk-decl [decl : AstDecl] [threshold : i64] [acc : LintFindings]) : LintFindings
   (match decl
     [(AstDeclDef _ _ body-box)
       (let
@@ -1046,7 +1098,7 @@
 (define (lint-walk-decl-list
   [decls : AstDeclList]
   [threshold : i64]
-  [acc : LintFindingList]) : LintFindingList
+  [acc : LintFindings]) : LintFindings
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
@@ -1055,12 +1107,12 @@
         (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc)))]))
 
 ;: Run all lint rules over `program`, returning the collected findings.
-(define (lint-program [program : AstProgram] [threshold : i64]) : LintFindingList
+(define (lint-program [program : AstProgram] [threshold : i64]) : LintFindings
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (lint-walk-decl-list decls threshold (LintFindingNil)))]))
+        (lint-walk-decl-list decls threshold (lint-findings-empty)))]))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 (define (compiler-lint-self-test) : i64
@@ -1132,178 +1184,185 @@
         (panic "lint: non-if ladder length should be 0"))
       ;; a 3-deep ladder is flagged at the default threshold (3)
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             ladder3
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: 3-deep ladder should be flagged once"))
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             ladder2
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         0)
         unit
         (panic "lint: 2-deep ladder should not be flagged at threshold 3"))
       ;; ... but IS flagged at threshold 2
       (if (=
-        (lint-finding-list-count (lint-walk-expr ladder2 2 (LintFindingNil)))
+        (lint-findings-count (lint-walk-expr ladder2 2 (lint-findings-empty)))
         1)
         unit
         (panic "lint: 2-deep ladder should be flagged at threshold 2"))
       ;; return-path chains are only reported in tail contexts, where replacing
       ;; nested failure values with `(return ...)` preserves semantics.
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             return-chain3
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         0)
         unit
         (panic "lint: return-path chain should not flag in a value context"))
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-tail-expr
             return-chain3
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: return-path chain should be flagged once"))
-      (match (lint-walk-tail-expr
-        return-chain3
-        (lint-default-ladder-threshold)
-        (LintFindingNil))
-        [(LintFindingCons finding _)
+      (match (lint-findings-get
+        (lint-walk-tail-expr
+          return-chain3
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
           (if (string-eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))
             unit
             (panic "lint: return-path chain should report its rule id"))]
-        [(LintFindingNil)
+        [(LintNoFinding)
           (panic "lint: return-path chain should produce a finding")])
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             unit-then-guard
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: unit then-branch should be flagged once"))
-      (match (lint-walk-expr
-        unit-else-guard
-        (lint-default-ladder-threshold)
-        (LintFindingNil))
-        [(LintFindingCons finding _)
+      (match (lint-findings-get
+        (lint-walk-expr
+          unit-else-guard
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
           (if (string-eq
             (struct-get finding rule-id)
             (lint-rule-unit-if-guard-id))
             unit
             (panic "lint: unit-if guard should report its rule id"))]
-        [(LintFindingNil)
-          (panic "lint: unit-if guard should produce a finding")])
+        [(LintNoFinding) (panic "lint: unit-if guard should produce a finding")])
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             unit-value-guard
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         0)
         unit
         (panic "lint: unit-if guard should skip value branches"))
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             unit-not-set-guard
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: inverted unit set! guard should be flagged"))
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             nested
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: ladder nested in begin should be found"))
       ;; ... and into let-binding initializers
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             in-let
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: ladder in a let binding should be found"))
       ;; a ladder LONGER than the threshold is reported ONCE, not once per
       ;; over-threshold rung (maximal-ladder dedup, #1163).
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             ladder4
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: a 4-deep ladder at threshold 3 should be flagged once"))
       ;; a spanned ladder head carries its wrapper's source span in the finding
       ;; (real parsed `if`s are `AstExprSpanned`-wrapped; the driver reports it).
-      (match (lint-walk-expr
-        spanned
-        (lint-default-ladder-threshold)
-        (LintFindingNil))
-        [(LintFindingCons finding _)
+      (match (lint-findings-get
+        (lint-walk-expr
+          spanned
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (= (struct-get fspan start-line) 7)
               unit
               (panic
                 "lint: spanned ladder finding should carry its head start-line")))]
-        [(LintFindingNil)
+        [(LintNoFinding)
           (panic "lint: spanned ladder should produce a finding")])
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             nested-let
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         1)
         unit
         (panic "lint: body-only nested let should be flagged once"))
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             shadowing-nested-let
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         0)
         unit
         (panic "lint: shadowing nested let should not be flagged"))
       (if (=
-        (lint-finding-list-count
+        (lint-findings-count
           (lint-walk-expr
             begin-inner-let
             (lint-default-ladder-threshold)
-            (LintFindingNil)))
+            (lint-findings-empty)))
         0)
         unit
         (panic "lint: let with nontrivial begin body should not be flagged"))
-      (match (lint-walk-expr
-        spanned-nested-let
-        (lint-default-ladder-threshold)
-        (LintFindingNil))
-        [(LintFindingCons finding _)
+      (match (lint-findings-get
+        (lint-walk-expr
+          spanned-nested-let
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -1311,7 +1370,7 @@
               (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id)))
               unit
               (panic "lint: nested-let finding should carry rule id and span")))]
-        [(LintFindingNil)
+        [(LintNoFinding)
           (panic "lint: spanned nested let should produce a finding")])
       (if (string-eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))

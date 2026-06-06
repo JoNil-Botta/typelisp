@@ -12412,6 +12412,44 @@
     (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
     (tc-moved-path-key (string-append name "."))))
 
+(define (tc-moved-any-path-with-prefix-loop?
+  [map : StringI64Map]
+  [prefix : String]
+  [index : i64]) : bool
+  (if (>= index (string-i64-map-capacity map))
+    false
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key _)
+        (if (and
+          (tc-moved-path-key? key)
+          (tc-move-string-prefix-at? key prefix 0))
+          true
+          (tc-moved-any-path-with-prefix-loop?
+            map
+            prefix
+            (string-i64-map-next-occupied map (+ index 1))))]
+      [(StringI64MapEntryNone)
+        (tc-moved-any-path-with-prefix-loop?
+          map
+          prefix
+          (string-i64-map-next-occupied map (+ index 1)))])))
+
+(define (tc-moved-any-root-path? [set : TcMovedSet] [root : String]) : bool
+  (tc-moved-any-path-with-prefix-loop?
+    (tc-moved-map set)
+    (tc-moved-path-key (string-append root "."))
+    (string-i64-map-next-occupied (tc-moved-map set) 0)))
+
+(define (tc-moved-remove-exact-path
+  [set : TcMovedSet]
+  [root : String]
+  [path : String]) : TcMovedSet
+  (let
+    [without-path : TcMovedSet (tc-moved-remove set (tc-moved-path-key path))]
+    (if (tc-moved-any-root-path? without-path root)
+      without-path
+      (tc-moved-remove without-path (tc-moved-partial-key root)))))
+
 (define (tc-moved-union-loop
   [a : StringI64Map]
   [index : i64]
@@ -12667,14 +12705,32 @@
       (let
         [array : AstExpr (box-get array-box)]
         [index-expr : AstExpr (box-get index-box)]
-        (match (tc-move-direct-root-base-path array)
-          [(TcSomeString base)
-            (match (tc-move-literal-index index-expr)
-              [(TcMoveSomeIndex index)
-                (TcSomeString (tc-move-array-index-path base index))]
-              [(TcMoveNoIndex) (TcNoString)])]
-          [(TcNoString) (TcNoString)]))]
+        (tc-move-array-set-path array index-expr))]
     [_ (TcNoString)]))
+
+(define (tc-move-array-set-path [array : AstExpr] [index-expr : AstExpr]) : TcMaybeString
+  (match (tc-move-direct-root-base-path array)
+    [(TcSomeString base)
+      (match (tc-move-literal-index index-expr)
+        [(TcMoveSomeIndex index)
+          (TcSomeString (tc-move-array-index-path base index))]
+        [(TcMoveNoIndex) (TcNoString)])]
+    [(TcNoString) (TcNoString)]))
+
+(define (tc-move-reinitialize-array-set-path
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [array : AstExpr]
+  [index : AstExpr]) : TcMovedSet
+  (match (tc-move-array-set-path array index)
+    [(TcSomeString path)
+      (match (tc-move-root-projection-var array)
+        [(TcSomeString root)
+          (if (tc-moved-contains? locals root)
+            (tc-moved-remove-exact-path moved root path)
+            moved)]
+        [(TcNoString) moved])]
+    [(TcNoString) moved]))
 
 (define (tc-move-projection-path [expr : AstExpr]) : TcMaybeString
   (match (tc-move-struct-field-path expr)
@@ -13285,7 +13341,21 @@
           [(OkTcMove moved1)
             (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
               [(OkTcMove moved2)
-                (tc-move-check-expr ctx env locals loop-carried moved2 value)]
+                (match (tc-move-check-expr
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved2
+                  value)
+                  [(OkTcMove moved3)
+                    (OkTcMove
+                      (tc-move-reinitialize-array-set-path
+                        locals
+                        moved3
+                        array
+                        index))]
+                  [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArrayPush array-box value-box)

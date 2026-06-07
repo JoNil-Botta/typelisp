@@ -6269,6 +6269,14 @@
     (let [r : (& h FileHandle) (& h)] unit)
     (take-handle h)))"))
 
+(define (compiler-typecheck-live-borrow-shadowed-local-source) : String
+  "(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [n : i64 1]
+      (begin
+        (set! n 2)
+        n))))")
+
 (define (compiler-typecheck-live-borrow-whole-move-source) : String
   (string-append
     (compiler-typecheck-live-borrow-owner-prefix)
@@ -6362,6 +6370,10 @@
         (compiler-typecheck-live-borrow-owner-post-scope-source))
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-live-borrow-shadowed-local-source))
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-borrow-whole-move-source)
         "typecheck: cannot move borrowed place `h`")
@@ -6448,6 +6460,12 @@
         (tc-moved-contains? partial-clear (tc-moved-path-key "items.#array.1")))]
     [partial-clears-marker : bool
       (not (tc-moved-partial? partial-clear "items"))]
+    [root-path : TcMovedSet
+      (tc-moved-add (tc-moved-empty) (tc-moved-path-key "shadowed"))]
+    [root-path-clear : TcMovedSet
+      (tc-moved-remove-root-state root-path "shadowed")]
+    [root-path-clears : bool
+      (not (tc-moved-contains? root-path-clear (tc-moved-path-key "shadowed")))]
     (and
       (= (tc-moved-len (tc-moved-empty)) 0)
       (and
@@ -6462,7 +6480,9 @@
                 partial-keeps-sibling
                 (and
                   partial-keeps-marker
-                  (and partial-clears-sibling partial-clears-marker))))))))))
+                  (and
+                    partial-clears-sibling
+                    (and partial-clears-marker root-path-clears)))))))))))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary

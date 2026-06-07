@@ -12494,7 +12494,9 @@
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name : String]) : TcMovedSet
   (tc-moved-remove-prefix
-    (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
+    (tc-moved-remove
+      (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
+      (tc-moved-path-key name))
     (tc-moved-path-key (string-append name "."))))
 
 (define (tc-moved-any-path-with-prefix-loop?

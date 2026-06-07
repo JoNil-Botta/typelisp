@@ -5692,6 +5692,44 @@
         (match m [(SomeCount v) v] [NoCount 0])
         (+ (struct-get p count) (struct-get (struct-get w packet) count))))))")
 
+(define (compiler-typecheck-move-ordinary-enum-match-reuse-source) : String
+  "(defenum Flag (On) (Off))
+(define (ordinary-enum-match-reuse [flag : Flag]) : i64
+  (begin
+    (match flag [(On) 1] [(Off) 0])
+    (match flag [(On) 2] [(Off) 3])))")
+
+(define (compiler-typecheck-move-cleanup-enum-match-source) : String
+  "(defenum Ticket
+  (:cleanup cleanup-ticket)
+  (Open i64)
+  (Closed))
+(define (cleanup-enum-match [ticket : Ticket]) : i64
+  (match ticket [(Open code) code] [(Closed) 0]))")
+
+(define (compiler-typecheck-move-cleanup-enum-match-param-reuse-source) : String
+  "(defenum Ticket
+  (:cleanup cleanup-ticket)
+  (Open i64)
+  (Closed))
+(define (take-ticket [ticket : Ticket]) : unit unit)
+(define (bad-cleanup-enum-match-param-reuse [ticket : Ticket]) : unit
+  (begin
+    (match ticket [(Open code) unit] [(Closed) unit])
+    (take-ticket ticket)))")
+
+(define (compiler-typecheck-move-cleanup-enum-match-local-reuse-source) : String
+  "(defenum Ticket
+  (:cleanup cleanup-ticket)
+  (Open i64)
+  (Closed))
+(define (take-ticket [ticket : Ticket]) : unit unit)
+(define (bad-cleanup-enum-match-local-reuse [n : i64]) : unit
+  (let [ticket : Ticket (Open n)]
+    (begin
+      (match ticket [(Open code) unit] [(Closed) unit])
+      (take-ticket ticket))))")
+
 (define (compiler-typecheck-move-owner-call-ok-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -6680,6 +6718,24 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-ordinary-sharing-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-ordinary-enum-match-reuse-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-cleanup-enum-match-param-reuse-source)
+        "typecheck: use of moved value `ticket`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-cleanup-enum-match-local-reuse-source)
+        "typecheck: use of moved value `ticket`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

@@ -13112,12 +13112,12 @@
       [(AstTyStructArgs _ _) (tc-cleanup-owning-struct-type? ctx resolved)]
       [_ false])))
 
-;; Cleanup-owning enum metadata is not represented yet, so match scrutinees stay
-;; compatibility-non-consuming until that owner shape exists.
+;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary
+;; enums stay compatibility-non-consuming for existing AST/IR-style sharing.
 (define (tc-type-consuming-match-scrutinee-now?
   [ctx : TcContext]
   [ty : AstType]) : bool
-  false)
+  (tc-cleanup-owning-enum-type? ctx ty))
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.

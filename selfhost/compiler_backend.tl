@@ -5368,6 +5368,11 @@
             [symbol : String
               (compiler-backend-function-symbol-index index name)]
             (cond
+              [(and
+                  (string-eq name "main")
+                  (compiler-backend-index-extern-provided? index name))
+                (compiler-backend-symbol-validation-error
+                  "backend: main cannot use :export-symbol")]
               [(string-i64-map-contains? seen symbol)
                 (compiler-backend-symbol-validation-error
                   (string-append

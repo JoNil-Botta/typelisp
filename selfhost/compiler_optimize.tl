@@ -1960,14 +1960,25 @@
         head
         (opt-aggregate-instr-list-append (box-get rest) right))]))
 
+(define (opt-aggregate-instr-seq-append-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [right : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    right
+    (compiler-ir-instr-cons
+      (compiler-ir-instr-seq-ref instrs index)
+      (opt-aggregate-instr-seq-append-from instrs (+ index 1) right))))
+
 (define (opt-aggregate-flatten-blocks [blocks : CompilerIrBlockList]) : CompilerIrInstrList
   (match blocks
     [(IrBlockNil) (IrInstrNil)]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (opt-aggregate-instr-list-append
-            (compiler-ir-instr-seq-to-list instrs)
+          (opt-aggregate-instr-seq-append-from
+            instrs
+            0
             (opt-aggregate-flatten-blocks (box-get rest)))])]))
 
 (define (opt-aggregate-allocation-candidates-function
@@ -2124,16 +2135,38 @@
         (opt-aggregate-promote-rewrite-instr slots instr)
         (opt-aggregate-promote-instrs slots (box-get rest)))]))
 
+(define (opt-aggregate-promote-instr-seq-from
+  [slots : OptAggregatePromoteSlotList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    acc
+    (opt-aggregate-promote-instr-seq-from
+      slots
+      instrs
+      (- index 1)
+      (opt-aggregate-instr-list-append
+        (opt-aggregate-promote-rewrite-instr
+          slots
+          (compiler-ir-instr-seq-ref instrs index))
+        acc))))
+
+(define (opt-aggregate-promote-instr-seq
+  [slots : OptAggregatePromoteSlotList]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-aggregate-promote-instr-seq-from
+    slots
+    instrs
+    (- (compiler-ir-instr-seq-count instrs) 1)
+    IrInstrNil))
+
 (define (opt-aggregate-promote-block
   [slots : OptAggregatePromoteSlotList]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-aggregate-promote-instrs
-          slots
-          (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-aggregate-promote-instr-seq slots instrs))]))
 
 (define (opt-aggregate-promote-blocks
   [slots : OptAggregatePromoteSlotList]
@@ -2397,17 +2430,37 @@
             next-instr
             (opt-aggregate-sroa-instrs candidates next-facts (box-get rest)))])]))
 
+(define (opt-aggregate-sroa-instr-seq-from
+  [candidates : OptAggregateAllocCandidateList]
+  [facts : OptAggregateFieldFacts]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    IrInstrNil
+    (match (opt-aggregate-sroa-instr
+      candidates
+      facts
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptAggregateSroaResult next-facts next-instr)
+        (compiler-ir-instr-cons
+          next-instr
+          (opt-aggregate-sroa-instr-seq-from
+            candidates
+            next-facts
+            instrs
+            (+ index 1)))])))
+
+(define (opt-aggregate-sroa-instr-seq
+  [candidates : OptAggregateAllocCandidateList]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-aggregate-sroa-instr-seq-from candidates (OptAggregateFieldNil) instrs 0))
+
 (define (opt-aggregate-sroa-block
   [candidates : OptAggregateAllocCandidateList]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-aggregate-sroa-instrs
-          candidates
-          (OptAggregateFieldNil)
-          (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-aggregate-sroa-instr-seq candidates instrs))]))
 
 (define (opt-aggregate-sroa-blocks
   [candidates : OptAggregateAllocCandidateList]
@@ -6177,6 +6230,25 @@
           (opt-licm-collect-defs-instrs (box-get rest) (opt-used-add set var))]
         [(OptNoI64) (opt-licm-collect-defs-instrs (box-get rest) set)])]))
 
+(define (opt-licm-collect-defs-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [set : I64I64Map]) : I64I64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    set
+    (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+      [(OptSomeI64 var)
+        (opt-licm-collect-defs-instr-seq-from
+          instrs
+          (+ index 1)
+          (opt-used-add set var))]
+      [(OptNoI64) (opt-licm-collect-defs-instr-seq-from instrs (+ index 1) set)])))
+
+(define (opt-licm-collect-defs-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [set : I64I64Map]) : I64I64Map
+  (opt-licm-collect-defs-instr-seq-from instrs 0 set))
+
 (define (opt-licm-collect-defs-blocks
   [body : OptLabelSet]
   [blocks : CompilerIrBlockList]
@@ -6190,9 +6262,7 @@
             body
             (box-get rest)
             (if (opt-label-contains body label)
-              (opt-licm-collect-defs-instrs
-                (compiler-ir-instr-seq-to-list instrs)
-                set)
+              (opt-licm-collect-defs-instr-seq instrs set)
               set))])]))
 
 (define (opt-licm-value-invariant?
@@ -6253,6 +6323,45 @@
               next-hoisted
               changed)]))]))
 
+(define (opt-licm-filter-instr-seq-from
+  [loop-defs : I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [hoisted : I64I64Map]) : OptLicmInstrsResult
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (opt-licm-candidate? loop-defs hoisted instr)
+        (match (opt-licm-filter-instr-seq-from
+          loop-defs
+          instrs
+          (+ index 1)
+          (opt-licm-add-hoisted-def hoisted instr))
+          [(OptLicmInstrsResult kept moved next-hoisted _)
+            (OptLicmInstrsResult
+              kept
+              (compiler-ir-instr-cons instr moved)
+              next-hoisted
+              true)])
+        (match (opt-licm-filter-instr-seq-from
+          loop-defs
+          instrs
+          (+ index 1)
+          hoisted)
+          [(OptLicmInstrsResult kept moved next-hoisted changed)
+            (OptLicmInstrsResult
+              (compiler-ir-instr-cons instr kept)
+              moved
+              next-hoisted
+              changed)])))))
+
+(define (opt-licm-filter-instr-seq
+  [loop-defs : I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [hoisted : I64I64Map]) : OptLicmInstrsResult
+  (opt-licm-filter-instr-seq-from loop-defs instrs 0 hoisted))
+
 (define (opt-licm-filter-blocks
   [body : OptLabelSet]
   [loop-defs : I64I64Map]
@@ -6264,10 +6373,7 @@
       (match block
         [(IrBlock label instrs)
           (if (opt-label-contains body label)
-            (match (opt-licm-filter-instrs
-              loop-defs
-              (compiler-ir-instr-seq-to-list instrs)
-              hoisted)
+            (match (opt-licm-filter-instr-seq loop-defs instrs hoisted)
               [(OptLicmInstrsResult kept moved next-hoisted block-changed)
                 (match (opt-licm-filter-blocks
                   body
@@ -6313,6 +6419,33 @@
               instr
               (opt-licm-insert-before-terminator hoisted (box-get rest))))])]))
 
+(define (opt-licm-insert-before-terminator-seq-from
+  [hoisted : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (match hoisted
+    [(IrInstrNil) (opt-aggregate-instr-seq-append-from instrs index IrInstrNil)]
+    [_
+      (if (>= index (compiler-ir-instr-seq-count instrs))
+        hoisted
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+          (if (opt-cfg-terminator-instr? instr)
+            (opt-aggregate-instr-list-append
+              hoisted
+              (opt-aggregate-instr-seq-append-from instrs index IrInstrNil))
+            (compiler-ir-instr-cons
+              instr
+              (opt-licm-insert-before-terminator-seq-from
+                hoisted
+                instrs
+                (+ index 1))))))]))
+
+(define (opt-licm-insert-before-terminator-seq
+  [hoisted : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-licm-insert-before-terminator-seq-from hoisted instrs 0))
+
 (define (opt-licm-insert-preheader-blocks
   [preheader : String]
   [hoisted : CompilerIrInstrList]
@@ -6326,9 +6459,7 @@
             (if (string-eq label preheader)
               (compiler-ir-block
                 label
-                (opt-licm-insert-before-terminator
-                  hoisted
-                  (compiler-ir-instr-seq-to-list instrs)))
+                (opt-licm-insert-before-terminator-seq hoisted instrs))
               block)
             (opt-licm-insert-preheader-blocks preheader hoisted (box-get rest)))])]))
 
@@ -6558,6 +6689,41 @@
         [(OptNoI64)
           (opt-induction-find-update-instrs (box-get rest) phi-var next-var ty)])]))
 
+(define (opt-induction-find-update-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptNoI64)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 dst)
+          (if (= dst next-var)
+            (opt-induction-update-step-instr instr phi-var next-var ty)
+            (opt-induction-find-update-instr-seq-from
+              instrs
+              (+ index 1)
+              phi-var
+              next-var
+              ty))]
+        [(OptNoI64)
+          (opt-induction-find-update-instr-seq-from
+            instrs
+            (+ index 1)
+            phi-var
+            next-var
+            ty)]))))
+
+(define (opt-induction-find-update-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [phi-var : i64]
+  [next-var : i64]
+  [ty : AstType]) : OptMaybeI64
+  (opt-induction-find-update-instr-seq-from instrs 0 phi-var next-var ty))
+
 (define (opt-induction-find-update-blocks
   [body : OptLabelSet]
   [blocks : CompilerIrBlockList]
@@ -6570,8 +6736,8 @@
       (match block
         [(IrBlock label instrs)
           (if (opt-label-contains body label)
-            (match (opt-induction-find-update-instrs
-              (compiler-ir-instr-seq-to-list instrs)
+            (match (opt-induction-find-update-instr-seq
+              instrs
               phi-var
               next-var
               ty)
@@ -6630,6 +6796,35 @@
         [(OptNoInductionFact)
           (opt-induction-find-fact-instrs blocks loop preheader (box-get rest))])]))
 
+(define (opt-induction-find-fact-instr-seq-from
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptMaybeInductionFact
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptNoInductionFact)
+    (match (opt-induction-fact-from-phi
+      blocks
+      loop
+      preheader
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptSomeInductionFact fact) (OptSomeInductionFact fact)]
+      [(OptNoInductionFact)
+        (opt-induction-find-fact-instr-seq-from
+          blocks
+          loop
+          preheader
+          instrs
+          (+ index 1))])))
+
+(define (opt-induction-find-fact-instr-seq
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instrs : CompilerIrInstrSeq]) : OptMaybeInductionFact
+  (opt-induction-find-fact-instr-seq-from blocks loop preheader instrs 0))
+
 (define (opt-induction-find-fact
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
@@ -6638,11 +6833,7 @@
     [(OptSomeBlock block)
       (match block
         [(IrBlock _ instrs)
-          (opt-induction-find-fact-instrs
-            blocks
-            loop
-            preheader
-            (compiler-ir-instr-seq-to-list instrs))])]
+          (opt-induction-find-fact-instr-seq blocks loop preheader instrs)])]
     [(OptNoBlock) (OptNoInductionFact)]))
 
 (define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
@@ -6668,6 +6859,18 @@
         (opt-induction-blocker-instr? instr)
         (opt-induction-blocker-instrs? (box-get rest)))]))
 
+(define (opt-induction-blocker-instr-seq-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-induction-blocker-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-induction-blocker-instr-seq-from? instrs (+ index 1)))))
+
+(define (opt-induction-blocker-instr-seq? [instrs : CompilerIrInstrSeq]) : bool
+  (opt-induction-blocker-instr-seq-from? instrs 0))
+
 (define (opt-induction-loop-blocked?
   [body : OptLabelSet]
   [blocks : CompilerIrBlockList]) : bool
@@ -6678,8 +6881,7 @@
         [(IrBlock label instrs)
           (if (and
             (opt-label-contains body label)
-            (opt-induction-blocker-instrs?
-              (compiler-ir-instr-seq-to-list instrs)))
+            (opt-induction-blocker-instr-seq? instrs))
             true
             (opt-induction-loop-blocked? body (box-get rest)))])]))
 
@@ -6765,6 +6967,32 @@
         [(OptNoInductionLoopCandidate)
           (opt-induction-find-derived-instrs fact loop-defs (box-get rest))])]))
 
+(define (opt-induction-find-derived-instr-seq-from
+  [fact : OptInductionFact]
+  [loop-defs : I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptInductionLoopCandidate
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptNoInductionLoopCandidate)
+    (match (opt-induction-find-derived-instr
+      fact
+      loop-defs
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptSomeInductionLoopCandidate found-fact kind)
+        (OptSomeInductionLoopCandidate found-fact kind)]
+      [(OptNoInductionLoopCandidate)
+        (opt-induction-find-derived-instr-seq-from
+          fact
+          loop-defs
+          instrs
+          (+ index 1))])))
+
+(define (opt-induction-find-derived-instr-seq
+  [fact : OptInductionFact]
+  [loop-defs : I64I64Map]
+  [instrs : CompilerIrInstrSeq]) : OptInductionLoopCandidate
+  (opt-induction-find-derived-instr-seq-from fact loop-defs instrs 0))
+
 (define (opt-induction-find-derived-blocks
   [fact : OptInductionFact]
   [body : OptLabelSet]
@@ -6776,10 +7004,7 @@
       (match block
         [(IrBlock label instrs)
           (if (opt-label-contains body label)
-            (match (opt-induction-find-derived-instrs
-              fact
-              loop-defs
-              (compiler-ir-instr-seq-to-list instrs))
+            (match (opt-induction-find-derived-instr-seq fact loop-defs instrs)
               [(OptSomeInductionLoopCandidate found-fact kind)
                 (OptSomeInductionLoopCandidate found-fact kind)]
               [(OptNoInductionLoopCandidate)
@@ -6857,6 +7082,34 @@
         (opt-induction-rewrite-instr fact derived derived-phi instr)
         (opt-induction-rewrite-instrs fact derived derived-phi (box-get rest)))]))
 
+(define (opt-induction-rewrite-instr-seq-from
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    IrInstrNil
+    (compiler-ir-instr-cons
+      (opt-induction-rewrite-instr
+        fact
+        derived
+        derived-phi
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-induction-rewrite-instr-seq-from
+        fact
+        derived
+        derived-phi
+        instrs
+        (+ index 1)))))
+
+(define (opt-induction-rewrite-instr-seq
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [derived-phi : i64]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-induction-rewrite-instr-seq-from fact derived derived-phi instrs 0))
+
 (define (opt-induction-rewrite-blocks
   [body : OptLabelSet]
   [fact : OptInductionFact]
@@ -6872,11 +7125,11 @@
             (if (opt-label-contains body label)
               (compiler-ir-block
                 label
-                (opt-induction-rewrite-instrs
+                (opt-induction-rewrite-instr-seq
                   fact
                   derived
                   derived-phi
-                  (compiler-ir-instr-seq-to-list instrs)))
+                  instrs))
               block)
             (opt-induction-rewrite-blocks
               body
@@ -6950,7 +7203,7 @@
         [(IrBlock label instrs)
           (let
             [list-instrs : CompilerIrInstrList
-              (compiler-ir-instr-seq-to-list instrs)]
+              (opt-aggregate-instr-seq-append-from instrs 0 IrInstrNil)]
             [with-phi : CompilerIrInstrList
               (if (string-eq label header)
                 (compiler-ir-instr-cons phi-instr list-instrs)
@@ -7468,6 +7721,22 @@
         (opt-sccp-process-instr state instr)
         (box-get rest))]))
 
+(define (opt-sccp-process-instr-seq-from
+  [state : OptSccpState]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptSccpState
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    state
+    (opt-sccp-process-instr-seq-from
+      (opt-sccp-process-instr state (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (opt-sccp-process-instr-seq
+  [state : OptSccpState]
+  [instrs : CompilerIrInstrSeq]) : OptSccpState
+  (opt-sccp-process-instr-seq-from state instrs 0))
+
 (define (opt-sccp-process-block
   [state : OptSccpState]
   [block : CompilerIrBlock]) : OptSccpState
@@ -7476,9 +7745,7 @@
       (match block
         [(IrBlock label instrs)
           (if (opt-label-contains executable label)
-            (opt-sccp-process-instrs
-              state
-              (compiler-ir-instr-seq-to-list instrs))
+            (opt-sccp-process-instr-seq state instrs)
             state)])]))
 
 (define (opt-sccp-process-blocks
@@ -8396,6 +8663,52 @@
             base
             entry-label)))]))
 
+(define (opt-tailrec-rewrite-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [fname : String]
+  [params : CompilerIrParamList]
+  [n : i64]
+  [base : i64]
+  [entry-label : String]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    IrInstrNil
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (opt-tailrec-self-call? instr fname n)
+        (match instr
+          [(IrInstrTailCall _ args _)
+            (opt-tailrec-stage-movs
+              params
+              (opt-tailrec-args-to-list args)
+              base
+              0
+              (opt-tailrec-assign-movs
+                params
+                base
+                0
+                (compiler-ir-instr-cons (IrInstrJump entry-label) IrInstrNil)))]
+          [_ IrInstrNil])
+        (compiler-ir-instr-cons
+          instr
+          (opt-tailrec-rewrite-instr-seq-from
+            instrs
+            (+ index 1)
+            fname
+            params
+            n
+            base
+            entry-label))))))
+
+(define (opt-tailrec-rewrite-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [fname : String]
+  [params : CompilerIrParamList]
+  [n : i64]
+  [base : i64]
+  [entry-label : String]) : CompilerIrInstrList
+  (opt-tailrec-rewrite-instr-seq-from instrs 0 fname params n base entry-label))
+
 (define (opt-tailrec-rewrite-blocks
   [blocks : CompilerIrBlockList]
   [fname : String]
@@ -8411,8 +8724,8 @@
           (compiler-ir-block-cons
             (compiler-ir-block
               label
-              (opt-tailrec-rewrite-instrs
-                (compiler-ir-instr-seq-to-list instrs)
+              (opt-tailrec-rewrite-instr-seq
+                instrs
                 fname
                 params
                 n
@@ -8437,6 +8750,26 @@
         true
         (opt-tailrec-instrs-have-convertible? (box-get rest) fname n))]))
 
+(define (opt-tailrec-instr-seq-has-convertible-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [fname : String]
+  [n : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-tailrec-self-call?
+      (compiler-ir-instr-seq-ref instrs index)
+      fname
+      n)
+      true
+      (opt-tailrec-instr-seq-has-convertible-from? instrs (+ index 1) fname n))))
+
+(define (opt-tailrec-instr-seq-has-convertible?
+  [instrs : CompilerIrInstrSeq]
+  [fname : String]
+  [n : i64]) : bool
+  (opt-tailrec-instr-seq-has-convertible-from? instrs 0 fname n))
+
 (define (opt-tailrec-blocks-have-convertible?
   [blocks : CompilerIrBlockList]
   [fname : String]
@@ -8446,10 +8779,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (opt-tailrec-instrs-have-convertible?
-            (compiler-ir-instr-seq-to-list instrs)
-            fname
-            n)
+          (if (opt-tailrec-instr-seq-has-convertible? instrs fname n)
             true
             (opt-tailrec-blocks-have-convertible? (box-get rest) fname n))])]))
 
@@ -8798,13 +9128,22 @@
         (opt-devirt-known-function-instr instr)
         (opt-devirt-known-function-instrs (box-get rest)))]))
 
+(define (opt-devirt-known-function-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    IrInstrNil
+    (compiler-ir-instr-cons
+      (opt-devirt-known-function-instr (compiler-ir-instr-seq-ref instrs index))
+      (opt-devirt-known-function-instr-seq-from instrs (+ index 1)))))
+
+(define (opt-devirt-known-function-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-devirt-known-function-instr-seq-from instrs 0))
+
 (define (opt-devirt-known-function-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block
-        label
-        (opt-devirt-known-function-instrs
-          (compiler-ir-instr-seq-to-list instrs)))]))
+      (compiler-ir-block label (opt-devirt-known-function-instr-seq instrs))]))
 
 (define (opt-devirt-known-function-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -8911,6 +9250,28 @@
             (opt-inline-seq-ok? (box-get rest) np)
             false)])]))
 
+(define (opt-inline-instr-seq-ok-from?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]
+  [index : i64]
+  [last : i64]) : bool
+  (if (> index last)
+    false
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (= index last)
+        (opt-inline-is-return? instr)
+        (if (opt-inline-body-instr-ok? instr np)
+          (opt-inline-instr-seq-ok-from? instrs np (+ index 1) last)
+          false)))))
+
+(define (opt-inline-instr-seq-ok? [instrs : CompilerIrInstrSeq] [np : i64]) : bool
+  (opt-inline-instr-seq-ok-from?
+    instrs
+    np
+    0
+    (- (compiler-ir-instr-seq-count instrs) 1)))
+
 (define (opt-inline-single-block-ok? [blocks : CompilerIrBlockList] [np : i64]) : bool
   (match blocks
     [(IrBlockCons block rest)
@@ -8924,7 +9285,7 @@
                   false
                   (if (> (- n 1) (opt-inline-max-body))
                     false
-                    (opt-inline-seq-ok? (compiler-ir-instr-seq-to-list seq) np))))])]
+                    (opt-inline-instr-seq-ok? seq np))))])]
         [_ false])]
     [_ false]))
 
@@ -9201,7 +9562,7 @@
   (match blocks
     [(IrBlockCons block _)
       (match block
-        [(IrBlock _ seq) (compiler-ir-instr-seq-to-list seq)])]
+        [(IrBlock _ seq) (opt-aggregate-instr-seq-append-from seq 0 IrInstrNil)])]
     [_ IrInstrNil]))
 
 (define (opt-inline-append [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : CompilerIrInstrList
@@ -9323,6 +9684,36 @@
             [(OptInlineState rest-list vars3)
               (OptInlineState (opt-inline-append expanded rest-list) vars3)])])]))
 
+(define (opt-inline-walk-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineState
+  (if (>= pos (compiler-ir-instr-seq-count instrs))
+    (OptInlineState IrInstrNil vars)
+    (match (opt-inline-try
+      (compiler-ir-instr-seq-ref instrs pos)
+      index
+      func-name
+      vars)
+      [(OptInlineState expanded vars2)
+        (match (opt-inline-walk-instr-seq-from
+          instrs
+          (+ pos 1)
+          index
+          func-name
+          vars2)
+          [(OptInlineState rest-list vars3)
+            (OptInlineState (opt-inline-append expanded rest-list) vars3)])])))
+
+(define (opt-inline-walk-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]) : OptInlineState
+  (opt-inline-walk-instr-seq-from instrs 0 index func-name vars))
+
 (define (opt-inline-walk-instrs-with-spans
   [instrs : CompilerIrInstrList]
   [index : OptFunctionIndex]
@@ -9354,6 +9745,54 @@
                 vars3
                 spans3)])])]))
 
+(define (opt-inline-walk-instr-seq-with-spans-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanState
+  (if (>= pos (compiler-ir-instr-seq-count instrs))
+    (OptInlineSpanState IrInstrNil vars out-spans)
+    (match (opt-inline-try-with-spans
+      (compiler-ir-instr-seq-ref instrs pos)
+      index
+      func-name
+      vars
+      source-spans
+      out-spans)
+      [(OptInlineSpanState expanded vars2 spans2)
+        (match (opt-inline-walk-instr-seq-with-spans-from
+          instrs
+          (+ pos 1)
+          index
+          func-name
+          vars2
+          source-spans
+          spans2)
+          [(OptInlineSpanState rest-list vars3 spans3)
+            (OptInlineSpanState
+              (opt-inline-append expanded rest-list)
+              vars3
+              spans3)])])))
+
+(define (opt-inline-walk-instr-seq-with-spans
+  [instrs : CompilerIrInstrSeq]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanState
+  (opt-inline-walk-instr-seq-with-spans-from
+    instrs
+    0
+    index
+    func-name
+    vars
+    source-spans
+    out-spans))
+
 (define (opt-inline-blocks
   [blocks : CompilerIrBlockList]
   [index : OptFunctionIndex]
@@ -9364,11 +9803,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label seq)
-          (match (opt-inline-walk-instrs
-            (compiler-ir-instr-seq-to-list seq)
-            index
-            func-name
-            vars)
+          (match (opt-inline-walk-instr-seq seq index func-name vars)
             [(OptInlineState new-instrs vars2)
               (match (opt-inline-blocks (box-get rest) index func-name vars2)
                 [(OptInlineBlocks rest-blocks vars3)
@@ -9390,8 +9825,8 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label seq)
-          (match (opt-inline-walk-instrs-with-spans
-            (compiler-ir-instr-seq-to-list seq)
+          (match (opt-inline-walk-instr-seq-with-spans
+            seq
             index
             func-name
             vars
@@ -10085,6 +10520,32 @@
         function
         (box-get rest))]))
 
+(define (opt-remap-spans-instr-seq-from
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [function : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerSourceSpans
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    out
+    (opt-remap-spans-instr-seq-from
+      source-spans
+      (opt-remap-spans-instr
+        source-spans
+        out
+        function
+        (compiler-ir-instr-seq-ref instrs index))
+      function
+      instrs
+      (+ index 1))))
+
+(define (opt-remap-spans-instr-seq
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [function : String]
+  [instrs : CompilerIrInstrSeq]) : CompilerSourceSpans
+  (opt-remap-spans-instr-seq-from source-spans out function instrs 0))
+
 (define (opt-remap-spans-blocks
   [source-spans : CompilerSourceSpans]
   [out : CompilerSourceSpans]
@@ -10097,11 +10558,7 @@
         [(IrBlock _ instrs)
           (opt-remap-spans-blocks
             source-spans
-            (opt-remap-spans-instrs
-              source-spans
-              out
-              function
-              (compiler-ir-instr-seq-to-list instrs))
+            (opt-remap-spans-instr-seq source-spans out function instrs)
             function
             (box-get rest))])]))
 

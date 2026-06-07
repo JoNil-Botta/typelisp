@@ -12668,45 +12668,25 @@ tl_region_mark:
 ")
 
 ;; Freestanding Linux runtime support (#no-libc). The stdlib issues OS calls
-;; through raw `syscall`s and TypeLisp bodies (io.tl/fs.tl/env.tl/runtime.tl), so
-;; the only libc-ABI symbol the entry object still has to define is
-;; `__errno_location`: the stdlib reads/writes its single private errno slot
-;; through that accessor (`tl_errno`). The former `strlen`/`getenv`/`fflush`
-;; shims were removed once env.tl walked the stack environment directly, the env
-;; value copy used an in-TypeLisp NUL scan, and stdout flushing became a no-op
-;; (the freestanding runtime is unbuffered). With this present the final link
-;; needs no `-lc` and no dynamic loader.
+;; through raw `syscall`s and TypeLisp bodies (io.tl/fs.tl/env.tl/runtime.tl).
+;; The former `strlen`/`getenv`/`fflush` shims and private errno accessor have
+;; moved into TypeLisp stdlib code, so the final link needs no `-lc` and no
+;; dynamic loader.
 (define (compiler-backend-runtime-linux-libc-shim-functions) : String
-  "    .globl __errno_location
-__errno_location:
-    leaq tl_errno(%rip), %rax
-    ret
-
-    .data
-    .balign 4
-tl_errno:
-    .long 0
-    .text
-
-")
+  "")
 
 ;; Windows freestanding runtime support (kernel32-only). Like the Linux side, the
 ;; OS-calling primitives now live in TypeLisp (io.tl/fs.tl/env.tl/runtime.tl via
 ;; direct kernel32 bindings), so this block only retains the genuinely
-;; backend-level pieces: `_errno` (the private errno-slot accessor over
-;; `tl_errno`), `__chkstk` (required by the MSVC ABI for large stack frames), and
-;; the program entry (`tl_setup_argv` builds argv from GetCommandLineA, `_tl_start`
-;; is the entry thunk). The former `strlen`/`getenv`/`fflush` shims and the
-;; `.L_tl_win_write_abort` OOM helper were removed (env.tl walks
-;; GetEnvironmentStringsA itself; tl_setup_argv now inlines its NUL scan; the OOM
-;; abort moved to the `tl_oom_abort` prelude handler).
+;; backend-level pieces: `__chkstk` (required by the MSVC ABI for large stack
+;; frames), and the program entry (`tl_setup_argv` builds argv from
+;; GetCommandLineA, `_tl_start` is the entry thunk). The former `_errno`,
+;; `strlen`/`getenv`/`fflush` shims and the `.L_tl_win_write_abort` OOM helper
+;; were removed (stdlib owns errno, env.tl walks GetEnvironmentStringsA itself;
+;; tl_setup_argv now inlines its NUL scan; the OOM abort moved to the
+;; `tl_oom_abort` prelude handler).
 (define (compiler-backend-runtime-windows-libc-shim-functions) : String
-  "    .globl _errno
-_errno:
-    leaq tl_errno(%rip), %rax
-    ret
-
-    .globl __chkstk
+  "    .globl __chkstk
 __chkstk:
     pushq %rcx
     pushq %rax
@@ -12838,9 +12818,6 @@ _tl_start:
     call ExitProcess
 
     .bss
-    .balign 8
-tl_errno:
-    .long 0
     .balign 8
 tl_boot_off:
     .quad 0
@@ -15893,7 +15870,12 @@ tl_string_concat5:
                 (compiler-backend-string-contains?
                   asm
                   ".extern tl_random_system_seed\n")))
-            (compiler-backend-no-stdlib-forwarding-labels? asm))))]
+            (backend-and4
+              (not
+                (compiler-backend-string-contains? asm "__errno_location:\n"))
+              (not (compiler-backend-string-contains? asm "_errno:\n"))
+              (not (compiler-backend-string-contains? asm "tl_errno:\n"))
+              (compiler-backend-no-stdlib-forwarding-labels? asm)))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

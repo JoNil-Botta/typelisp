@@ -35,8 +35,16 @@
 ;# ```
 (import "string.tl")
 
-;: Linux errno-location binding used to recover host error codes.
-(extern io-linux-errno-location (:symbol "__errno_location") : (-> (MutPtr i32)))
+;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
+;: libc errno; it preserves the previous backend-owned slot semantics in TL.
+(define io-private-error-code : i64
+  0)
+
+;: Store the current private errno-style status code.
+(define (io-set-error-code [code : i64]) : unit
+  (begin
+    (set! io-private-error-code code)
+    unit))
 
 ;: Windows kernel32 bindings backing the file-IO primitives (#2142 slice 1).
 ;: These replace the former backend-emitted `_open`/`_read`/`_write`/`_close`/
@@ -208,8 +216,7 @@
       [handle : i64 (io-win-create-file path access 0x3 0 disp 0x80 0)]
       (if (= handle -1)
         (begin
-          (unsafe
-            (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+          (io-set-error-code 2)
           (cast -1 : i32))
         (cast handle : i32)))))
 
@@ -221,13 +228,9 @@
       [ignore-mode : i32 mode]
       (if (= (io-win-get-file-attributes path) (cast -1 : i32))
         (begin
-          (unsafe
-            (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+          (io-set-error-code 2)
           (cast -1 : i32))
         (cast 0 : i32)))))
-
-;: Windows CRT errno-location binding used to recover host error codes.
-(extern io-windows-errno-location (:symbol "_errno") : (-> (MutPtr i32)))
 
 ;: Windows process exit via kernel32 ExitProcess; never returns. Replaces the
 ;: former backend `exit` CRT-ABI shim (#2142 slice 1).
@@ -477,24 +480,19 @@
           (set! n (+ n 1))))
       n)))
 
-;: Return the current host errno value as an i64.
+;: Return the current private errno-style status value as an i64.
 (define (io-last-error-code) : i64
-  (cast
-    (unsafe
-      (ptr-read
-        (cfg windows (io-windows-errno-location) (io-linux-errno-location))))
-    :
-    i64))
+  io-private-error-code)
 
 ;: Translate a raw Linux syscall return into libc `-1` + `errno` semantics.
 ;: Syscalls report errors as a small negative `-errno` in `[-4095, -1]`; the
-;: stdlib reads the host error code through `io-last-error-code`, so failures are
-;: surfaced by storing `errno` and returning `-1`, matching the former asm shim.
+;: stdlib reads the private error slot through `io-last-error-code`, so failures
+;: are surfaced by storing `errno` and returning `-1`, matching the former asm
+;: shim.
 (define (io-linux-syscall-status [result : i64]) : i64
   (if (and (>= result -4095) (< result 0))
     (begin
-      (unsafe
-        (ptr-write! (io-linux-errno-location) (cast (- 0 result) : i32)))
+      (io-set-error-code (- 0 result))
       -1)
     result))
 

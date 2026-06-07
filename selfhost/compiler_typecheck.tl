@@ -670,29 +670,75 @@
   [arg : String]) : String
   (gen-full-key "" generator item (string-append (spec-string-key arg) "_none")))
 
-(define (compiler-typecheck-generated-note-ok?) : bool
+(define (compiler-typecheck-generated-notes-ok?
+  [notes : CompilerDiagnosticNoteList]
+  [want-key : String]
+  [want-context : String]) : bool
+  (match notes
+    [(CompilerDiagnosticNoteCons identity-note rest)
+      (and
+        (string-eq
+          identity-note
+          (string-append "generated identity: " want-key))
+        (match (box-get rest)
+          [(CompilerDiagnosticNoteCons context-note _)
+            (string-eq context-note want-context)]
+          [(CompilerDiagnosticNoteNil) false]))]
+    [(CompilerDiagnosticNoteNil) false]))
+
+(define (compiler-typecheck-generated-diagnostic-ok?) : bool
   (match (typecheck-compiler-source
     (compiler-typecheck-generated-decl-bad-source))
     [(OkCompilerTypecheck _) false]
     [(ErrCompilerTypecheck diag)
-      (match (compiler-diagnostic-notes diag)
-        [(CompilerDiagnosticNoteCons identity-note rest)
-          (and
-            (string-eq
-              identity-note
-              (string-append
-                "generated identity: "
-                (compiler-typecheck-generated-key
-                  "bad-family"
-                  "bad-generated"
-                  "i64")))
-            (match (box-get rest)
-              [(CompilerDiagnosticNoteCons context-note _)
-                (string-eq
-                  context-note
-                  "generated declaration: bad-generated from bad-family")]
-              [(CompilerDiagnosticNoteNil) false]))]
-        [(CompilerDiagnosticNoteNil) false])]))
+      (let
+        [message-ok : bool
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "typecheck: return type mismatch")]
+        [path-ok : bool (string-eq (compiler-diagnostic-path diag) "")]
+        [line-ok : bool (= (compiler-diagnostic-line diag) 2)]
+        [col-ok : bool (= (compiler-diagnostic-col diag) 33)]
+        [notes-ok : bool
+          (compiler-typecheck-generated-notes-ok?
+            (compiler-diagnostic-notes diag)
+            (compiler-typecheck-generated-key
+              "bad-family"
+              "bad-generated"
+              "i64")
+            "generated declaration: bad-generated from bad-family")]
+        (and message-ok (and path-ok (and line-ok (and col-ok notes-ok)))))]))
+
+(define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
+  (let
+    [meta : AstGeneratedDeclMeta
+      (AstSomeGeneratedDeclMeta
+        "policy-family"
+        "GeneratedStruct"
+        AstExprNil
+        "policy-key")]
+    [decl : AstDecl
+      (ast-decl-comptime-decl-with-meta
+        meta
+        (AstDeclDefStruct
+          "GeneratedStruct"
+          (AstStructReprDefault)
+          (AstStructNoCleanup)
+          AstFieldDefNil))]
+    [diag : CompilerDiagnostic (tc-decl-diag decl "typecheck: policy fallback")]
+    [message-ok : bool
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "typecheck: policy fallback")]
+    [path-ok : bool (string-eq (compiler-diagnostic-path diag) "")]
+    [line-ok : bool (= (compiler-diagnostic-line diag) 1)]
+    [col-ok : bool (= (compiler-diagnostic-col diag) 1)]
+    [notes-ok : bool
+      (compiler-typecheck-generated-notes-ok?
+        (compiler-diagnostic-notes diag)
+        "policy-key"
+        "generated declaration: GeneratedStruct from policy-family")]
+    (and message-ok (and path-ok (and line-ok (and col-ok notes-ok))))))
 
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
@@ -1700,7 +1746,10 @@
             ")")))
         unit
         (set! ok false))
-      (if (compiler-typecheck-generated-note-ok?)
+      (if (compiler-typecheck-generated-diagnostic-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-fallback-diagnostic-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

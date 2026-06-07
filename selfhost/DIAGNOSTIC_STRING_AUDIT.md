@@ -44,6 +44,34 @@ one change.
   public parse/typecheck/load entry point plus the tests that prove path/span
   metadata survives through that boundary.
 
+## Generated and comptime declaration origin policy
+
+Generated/comptime diagnostics follow the structured-diagnostic model from
+[#1580](https://github.com/JoNil-Botta/typelisp/issues/1580) while respecting
+the staged string-result audit from
+[#1582](https://github.com/JoNil-Botta/typelisp/issues/1582).
+
+- Primary location: use the nearest concrete source span on the generated
+  declaration payload when one exists. For example, a generated `define` body
+  type error points at that payload expression. The typechecker itself keeps
+  the diagnostic path empty; CLI/load callers that know the source file stamp
+  the path before rendering.
+- Generated context: attach generated origin as diagnostic notes, not by
+  rewriting the primary message. Emit `generated identity: <key>` when the
+  identity key is available, and emit `generated declaration: <item> from
+  <generator>` for the generator/item context.
+- Fallback location: if a generated/comptime payload has no concrete source
+  expression span, preserve the same generated notes and use the phase fallback
+  span at line 1, column 1. Do not invent virtual generated filenames or source
+  maps in this compatibility layer.
+- Plain `comptime-decl` payloads without `:generated` metadata use the same
+  primary-location rules but do not receive generated-origin notes.
+- `compiler_symbols.tl` still reports `ErrCompilerSymbols String`, so duplicate
+  symbol diagnostics currently retain the generated context as a suffix. This
+  is a documented compatibility bridge until that public symbols boundary is
+  migrated to `CompilerDiagnostic`; tests should keep the suffix stable while
+  it exists.
+
 ## Audit status
 
 This audit is intentionally a checked-in policy note. It classifies the current

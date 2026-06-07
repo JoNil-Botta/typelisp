@@ -6643,11 +6643,24 @@
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
       [param-count : i64 (+ 1 (lower-param-count params))]
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+      ;; #1867 sret ABI for closures: hidden result-slot pointer at var
+      ;; `param-count` (just past env + real params).
+      [sret-needed : bool
+        (and
+          (lower-mode-inline-aggregates? mode)
+          (lower-type-contains-inline-aggregate? ctx ret-ty))]
+      [sret-var : i64
+        (if sret-needed
+          param-count
+          (- 0 1))]
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
       [state : LowerState
         (LowerState
-          param-count
+          (if sret-needed
+            (+ param-count 1)
+            param-count)
           0
           0
           "entry"
@@ -6659,7 +6672,6 @@
           names
           type-cache
           mode)]
-      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       (match (lower-load-captures
         state
         (IrValueVar 0)
@@ -6683,13 +6695,18 @@
                   abi-env
                   abi-type-env
                   body
-                  ret-ty)
+                  ret-ty
+                  sret-var)
                   [(OkLowerState final-state)
                     (OkLowerFunction
                       (compiler-ir-function-cons
                         (IrFunction
                           logical-name
-                          (lower-captured-param-list ctx params)
+                          (if (>= sret-var 0)
+                            (lower-param-list-append-sret
+                              (lower-captured-param-list ctx params)
+                              sret-var)
+                            (lower-captured-param-list ctx params))
                           ret-ty
                           (lower-state-next-var final-state)
                           (lower-state-build-blocks final-state))
@@ -7406,25 +7423,40 @@
 ;; dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl) so
 ;; recursive enum/struct values recurse at runtime instead of lower time; and
 ;; scalar values are returned as-is.
+;; #1867 sret ABI: the synthesized `clone$<Name>` helper returns an aggregate,
+;; so it carries the hidden sret param; append the result-slot pointer here to
+;; match (the same gate as the helper's definition, so a non-aggregate clone$
+;; target -- e.g. a type variable -- passes only the value).
 (define (lower-clone-named
+  [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [name : String]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc allocated var-id)
-      (OkLowerExpr
-        (LowerExpr
-          (lower-state-emit
-            allocated
-            (IrInstrCall
-              var-id
-              (lower-resolve-call-name allocated env (clone-helper-name name))
-              (IrCallArgsOne value)
-              ty))
-          (IrValueVar var-id)
-          ty))]))
+  (match (lower-call-append-sret-arg
+    ctx
+    state
+    (compiler-ir-value-cons value IrValueNil)
+    ty)
+    [(OkLowerArgs sret-state sret-values)
+      (match (lower-state-alloc-var sret-state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit
+                allocated
+                (IrInstrCall
+                  var-id
+                  (lower-resolve-call-name
+                    allocated
+                    env
+                    (clone-helper-name name))
+                  (compiler-ir-call-args-from-list sret-values)
+                  ty))
+              (IrValueVar var-id)
+              ty))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-clone-scalar-type? [ty : AstType]) : bool
   (match ty
@@ -7981,9 +8013,9 @@
           value
           (tc-type-without-regions (box-get elem-ty))
           clone-ty)]
-      [(AstTyEnum name) (lower-clone-named state env name value clone-ty)]
-      [(AstTyStruct name) (lower-clone-named state env name value clone-ty)]
-      [(AstTyVar name) (lower-clone-named state env name value clone-ty)]
+      [(AstTyEnum name) (lower-clone-named ctx state env name value clone-ty)]
+      [(AstTyStruct name) (lower-clone-named ctx state env name value clone-ty)]
+      [(AstTyVar name) (lower-clone-named ctx state env name value clone-ty)]
       [_
         (if (lower-clone-scalar-type? clone-ty)
           (OkLowerExpr (LowerExpr state value clone-ty))
@@ -11061,29 +11093,67 @@
                   origin))])])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
+;; #1867 sret ABI caller side: append the sret pointer as the trailing arg to a
+;; value list (matching the callee's `__sret` param).
+(define (lower-value-list-append-one
+  [values : CompilerIrValueList]
+  [extra : CompilerIrValue]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) (compiler-ir-value-cons extra IrValueNil)]
+    [(IrValueCons head rest)
+      (compiler-ir-value-cons
+        head
+        (lower-value-list-append-one (box-get rest) extra))]))
+
+;; For a call whose result is an inline aggregate, allocate the result slot on
+;; the caller's stack and append its pointer as the hidden trailing arg. Uses
+;; the same gate/size as the callee's sret return, so the call's return value is
+;; that pointer and callers consume the result exactly as before. Non-aggregate
+;; results pass through unchanged.
+(define (lower-call-append-sret-arg
+  [ctx : TcContext]
+  [state : LowerState]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]) : ResultLowerArgs
+  (if (lower-inline-aggregate-abi-copy-needed? ctx state result-ty)
+    (match (lower-inline-aggregate-copy-size ctx result-ty)
+      [(OkLowerSize size)
+        (match (lower-reserve-inline-storage state size result-ty)
+          [(LowerExpr slot-state slot-ptr _)
+            (OkLowerArgs
+              slot-state
+              (lower-value-list-append-one values slot-ptr))])]
+      [(ErrLowerSize message) (ErrLowerArgs (lower-diagnostic message))])
+    (OkLowerArgs state values)))
+
 (define (lower-direct-call-values
+  [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [name : String]
   [values : CompilerIrValueList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc allocated var-id)
-      (let
-        [instr : CompilerIrInstr
-          (IrInstrCall
-            var-id
-            (lower-resolve-call-name allocated env name)
-            (compiler-ir-call-args-from-list values)
-            result-ty)]
-        (OkLowerExpr
-          (LowerExpr
-            (lower-state-emit-at-expr allocated instr origin)
-            (IrValueVar var-id)
-            result-ty)))]))
+  (match (lower-call-append-sret-arg ctx state values result-ty)
+    [(OkLowerArgs sret-state sret-values)
+      (match (lower-state-alloc-var sret-state)
+        [(LowerAlloc allocated var-id)
+          (let
+            [instr : CompilerIrInstr
+              (IrInstrCall
+                var-id
+                (lower-resolve-call-name allocated env name)
+                (compiler-ir-call-args-from-list sret-values)
+                result-ty)]
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit-at-expr allocated instr origin)
+                (IrValueVar var-id)
+                result-ty)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call-from-args
+  [ctx : TcContext]
   [args-result : ResultLowerArgs]
   [env : SymI64Env]
   [name : String]
@@ -11091,7 +11161,7 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args-result
     [(OkLowerArgs args-state values)
-      (lower-direct-call-values args-state env name values result-ty origin)]
+      (lower-direct-call-values ctx args-state env name values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call-param-types
@@ -11139,6 +11209,7 @@
                   result-ty
                   origin)
                 (lower-direct-call-from-args
+                  ctx
                   (lower-args-as ctx state env type-env args call-param-types)
                   env
                   name
@@ -11148,6 +11219,7 @@
               (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
         [_
           (lower-direct-call-from-args
+            ctx
             (lower-args ctx state env type-env args)
             env
             name
@@ -11155,6 +11227,7 @@
             origin)])]
     [(ErrTcType _)
       (lower-direct-call-from-args
+        ctx
         (lower-args ctx state env type-env args)
         env
         name
@@ -11162,25 +11235,29 @@
         origin)]))
 
 (define (lower-indirect-call-values
+  [ctx : TcContext]
   [state : LowerState]
   [func-value : CompilerIrValue]
   [values : CompilerIrValueList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc allocated var-id)
-      (let
-        [instr : CompilerIrInstr
-          (IrInstrCallIndirect
-            var-id
-            func-value
-            (compiler-ir-call-args-from-list values)
-            result-ty)]
-        (OkLowerExpr
-          (LowerExpr
-            (lower-state-emit-at-expr allocated instr origin)
-            (IrValueVar var-id)
-            result-ty)))]))
+  (match (lower-call-append-sret-arg ctx state values result-ty)
+    [(OkLowerArgs sret-state sret-values)
+      (match (lower-state-alloc-var sret-state)
+        [(LowerAlloc allocated var-id)
+          (let
+            [instr : CompilerIrInstr
+              (IrInstrCallIndirect
+                var-id
+                func-value
+                (compiler-ir-call-args-from-list sret-values)
+                result-ty)]
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit-at-expr allocated instr origin)
+                (IrValueVar var-id)
+                result-ty)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-indirect-call
   [ctx : TcContext]
@@ -11193,7 +11270,13 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (lower-args ctx state env type-env args)
     [(OkLowerArgs args-state values)
-      (lower-indirect-call-values args-state func-value values result-ty origin)]
+      (lower-indirect-call-values
+        ctx
+        args-state
+        func-value
+        values
+        result-ty
+        origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call
@@ -17025,28 +17108,52 @@
     [(AstExprMatch _ arms) (lower-tail-match-arms-candidate? state env arms)]
     [_ false]))
 
+;; #1867 sret return ABI (Phase 1): when `sret-var` >= 0 the caller passed a
+;; hidden result-slot pointer (bound to that var). Copy the result aggregate
+;; into the caller's slot and return the slot pointer -- no per-return arena
+;; alloc + escape copy. `sret-var` < 0 keeps the arena escape-copy path, which
+;; is always correct (every call site uses the call's return value), so a
+;; non-threaded return path simply stays unoptimized rather than incorrect.
+(define (lower-return-expr-to-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
+  (match (lower-inline-aggregate-copy-size ctx ret-ty)
+    [(OkLowerSize size)
+      (OkLowerState
+        (lower-state-emit
+          (lower-copy-bytes state (IrValueVar sret-var) 0 value 0 size)
+          (IrInstrReturn (lower-return-maybe (IrValueVar sret-var) ret-ty))))]
+    [(ErrLowerSize message) (ErrLowerState (lower-diagnostic message))]))
+
 (define (lower-return-expr
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match (lower-expr-expected ctx state env type-env expr ret-ty expr)
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr body-state value expr-ty)
           (if (tc-never-type? expr-ty)
             (OkLowerState body-state)
-            (match (lower-return-abi-value ctx body-state value ret-ty)
-              [(OkLowerExpr return-copy)
-                (match return-copy
-                  [(LowerExpr return-state return-value _)
-                    (OkLowerState
-                      (lower-state-emit
-                        return-state
-                        (IrInstrReturn (lower-return-maybe return-value ret-ty))))])]
-              [(ErrLowerExpr message) (ErrLowerState message)]))])]
+            (if (>= sret-var 0)
+              (lower-return-expr-to-sret ctx body-state value ret-ty sret-var)
+              (match (lower-return-abi-value ctx body-state value ret-ty)
+                [(OkLowerExpr return-copy)
+                  (match return-copy
+                    [(LowerExpr return-state return-value _)
+                      (OkLowerState
+                        (lower-state-emit
+                          return-state
+                          (IrInstrReturn
+                            (lower-return-maybe return-value ret-ty))))])]
+                [(ErrLowerExpr message) (ErrLowerState message)])))])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
 (define (lower-expr-list-contains-inline-aggregate?
@@ -17084,6 +17191,7 @@
   [callee : AstExpr]
   [args : AstExprList]
   [ret-ty : AstType]
+  [sret-var : i64]
   [origin : AstExpr]) : ResultLowerState
   (if (and
     (lower-tail-call-target? state env callee)
@@ -17099,7 +17207,7 @@
               ret-ty)
             origin))]
       [(ErrLowerArgs message) (ErrLowerState message)])
-    (lower-return-expr ctx state env type-env origin ret-ty)))
+    (lower-return-expr ctx state env type-env origin ret-ty sret-var)))
 
 (define (lower-tail-begin
   [ctx : TcContext]
@@ -17107,7 +17215,8 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match exprs
     [(AstExprNil)
       (OkLowerState
@@ -17119,7 +17228,8 @@
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
-          [(AstExprNil) (lower-tail-expr ctx state env type-env expr ret-ty)]
+          [(AstExprNil)
+            (lower-tail-expr ctx state env type-env expr ret-ty sret-var)]
           [_
             (match (lower-expr ctx state env type-env expr)
               [(OkLowerExpr lowered)
@@ -17127,7 +17237,14 @@
                   [(LowerExpr next-state _ expr-ty)
                     (if (tc-never-type? expr-ty)
                       (OkLowerState next-state)
-                      (lower-tail-begin ctx next-state env type-env rest ret-ty))])]
+                      (lower-tail-begin
+                        ctx
+                        next-state
+                        env
+                        type-env
+                        rest
+                        ret-ty
+                        sret-var))])]
               [(ErrLowerExpr message) (ErrLowerState message)])]))]))
 
 (define (lower-tail-if
@@ -17138,7 +17255,8 @@
   [cond : AstExpr]
   [then-branch : AstExpr]
   [else-branch : AstExpr]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match (lower-expr ctx state env type-env cond)
     [(OkLowerExpr cond-lowered)
       (match cond-lowered
@@ -17158,7 +17276,8 @@
                       env
                       type-env
                       then-branch
-                      ret-ty)
+                      ret-ty
+                      sret-var)
                       [(OkLowerState then-state)
                         (lower-tail-expr
                           ctx
@@ -17166,7 +17285,8 @@
                           env
                           type-env
                           else-branch
-                          ret-ty)]
+                          ret-ty
+                          sret-var)]
                       [(ErrLowerState message) (ErrLowerState message)]))])])])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
@@ -17178,7 +17298,8 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match arms
     [(AstMatchArmNil)
       (ErrLowerState (lower-diagnostic "lower: match with no arms"))]
@@ -17195,7 +17316,8 @@
               scrut-var
               scrut-ty
               arm
-              ret-ty)]
+              ret-ty
+              sret-var)]
           [_
             (match arm
               [(AstMatchArm pat body-box)
@@ -17213,7 +17335,8 @@
                         lit
                         body
                         rest
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [(AstPatBinding _)
                       (lower-tail-match-catch-all
                         ctx
@@ -17223,7 +17346,8 @@
                         scrut-var
                         scrut-ty
                         arm
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [(AstPatWildcard)
                       (lower-tail-match-catch-all
                         ctx
@@ -17233,7 +17357,8 @@
                         scrut-var
                         scrut-ty
                         arm
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [_
                       (ErrLowerState
                         (lower-diagnostic "lower: unsupported match pattern"))]))])]))]))
@@ -17248,7 +17373,8 @@
   [lit : AstLiteral]
   [body : AstExpr]
   [rest : AstMatchArmList]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc eq-alloc eq-var)
       (let
@@ -17281,7 +17407,8 @@
                     env
                     type-env
                     body
-                    ret-ty)
+                    ret-ty
+                    sret-var)
                     [(OkLowerState body-state)
                       (lower-tail-match-arms
                         ctx
@@ -17291,7 +17418,8 @@
                         scrut-var
                         scrut-ty
                         rest
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [(ErrLowerState message) (ErrLowerState message)]))])]))]))
 
 (define (lower-tail-match-catch-all
@@ -17302,7 +17430,8 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arm : AstMatchArm]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match arm
     [(AstMatchArm pat body-box)
       (let
@@ -17315,7 +17444,7 @@
           (match pat
             [(AstPatBinding name) (tc-bind type-env name scrut-ty)]
             [_ type-env])]
-        (lower-tail-expr ctx state body-env body-type-env body ret-ty))]))
+        (lower-tail-expr ctx state body-env body-type-env body ret-ty sret-var))]))
 
 (define (lower-tail-match
   [ctx : TcContext]
@@ -17325,6 +17454,7 @@
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]
   [ret-ty : AstType]
+  [sret-var : i64]
   [origin : AstExpr]) : ResultLowerState
   (match (lower-expr ctx state env type-env scrutinee)
     [(OkLowerExpr scrut-lowered)
@@ -17332,11 +17462,11 @@
         [(LowerExpr scrut-state scrut-value scrut-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
             [(AstTyEnum _)
-              (lower-return-expr ctx state env type-env origin ret-ty)]
+              (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
             [(AstTyEnumArgs _ _)
-              (lower-return-expr ctx state env type-env origin ret-ty)]
+              (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
             [(AstTyVarArgs _ _)
-              (lower-return-expr ctx state env type-env origin ret-ty)]
+              (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
             [_
               (match (lower-state-alloc-var scrut-state)
                 [(LowerAlloc scrut-alloc scrut-var)
@@ -17350,7 +17480,8 @@
                     scrut-var
                     scrut-ty
                     arms
-                    ret-ty)])])])]
+                    ret-ty
+                    sret-var)])])])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
 (define (lower-tail-expr
@@ -17359,31 +17490,41 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (if (lower-tail-expr-candidate? state env expr)
     (match expr
       [(AstExprSpanned inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty))]
+          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExprAnn inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty))]
+          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExprCast inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (tc-expr ctx type-env inner)
             [(OkTcType inner-ty)
               (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
-                (lower-tail-expr ctx state env type-env inner ret-ty)
-                (lower-return-expr ctx state env type-env expr ret-ty))]
+                (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
+                (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
             [(ErrTcType message)
               (ErrLowerState (lower-diagnostic-at-expr inner message))]))]
       [(AstExprCall callee-box args)
         (let
           [callee : AstExpr (ast-node-get callee-box)]
-          (lower-tail-call ctx state env type-env callee args ret-ty expr))]
+          (lower-tail-call
+            ctx
+            state
+            env
+            type-env
+            callee
+            args
+            ret-ty
+            sret-var
+            expr))]
       [(AstExprLet bindings body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
@@ -17395,12 +17536,20 @@
                 body-env
                 body-type-env
                 body
-                ret-ty)]
+                ret-ty
+                sret-var)]
             [(ErrLowerEnv message) (ErrLowerState message)]))]
       [(AstExprBegin exprs)
-        (lower-tail-begin ctx state env type-env exprs ret-ty)]
+        (lower-tail-begin ctx state env type-env exprs ret-ty sret-var)]
       [(AstExprUnsafe exprs)
-        (lower-tail-begin ctx state env (tc-enter-unsafe type-env) exprs ret-ty)]
+        (lower-tail-begin
+          ctx
+          state
+          env
+          (tc-enter-unsafe type-env)
+          exprs
+          ret-ty
+          sret-var)]
       [(AstExprIf cond-box then-branch-box else-branch-box)
         (let
           [cond : AstExpr (ast-node-get cond-box)]
@@ -17414,13 +17563,23 @@
             cond
             then-branch
             else-branch
-            ret-ty))]
+            ret-ty
+            sret-var))]
       [(AstExprMatch scrutinee-box arms)
         (let
           [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-          (lower-tail-match ctx state env type-env scrutinee arms ret-ty expr))]
-      [_ (lower-return-expr ctx state env type-env expr ret-ty)])
-    (lower-return-expr ctx state env type-env expr ret-ty)))
+          (lower-tail-match
+            ctx
+            state
+            env
+            type-env
+            scrutinee
+            arms
+            ret-ty
+            sret-var
+            expr))]
+      [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)])
+    (lower-return-expr ctx state env type-env expr ret-ty sret-var)))
 
 (define (lower-param-count [params : AstParamList]) : i64
   (match params
@@ -17458,42 +17617,34 @@
                 idx)
               (lower-param-list ctx rest (+ idx 1)))]))]))
 
+;; #1867 sret ABI: append the hidden result-slot pointer param at index
+;; `sret-var` (the var id reserved just past the real params). Internal calling
+;; convention only -- C-ABI externs keep their own ABI on a separate path.
+(define (lower-param-list-append-sret
+  [params : CompilerIrParamList]
+  [sret-var : i64]) : CompilerIrParamList
+  (match params
+    [(IrParamNil)
+      (compiler-ir-param-cons (IrParam "__sret" (AstTyU64) sret-var) IrParamNil)]
+    [(IrParamCons head rest)
+      (compiler-ir-param-cons
+        head
+        (lower-param-list-append-sret (box-get rest) sret-var))]))
+
 (define (lower-copy-inline-aggregate-param
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
-  [ty : AstType]) : ResultLowerEnv
-  (let
-    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    (if (lower-inline-aggregate-abi-copy-needed? ctx state resolved)
-      (match (sym-i64-lookup env name)
-        [(SomeI64 var-id)
-          (match (lower-copy-inline-aggregate-to-inline
-            ctx
-            state
-            (IrValueVar var-id)
-            resolved)
-            [(OkLowerExpr copied)
-              (match copied
-                [(LowerExpr copy-state copy-value _)
-                  (match copy-value
-                    [(IrValueVar copy-var)
-                      (OkLowerEnv
-                        copy-state
-                        (sym-i64-bind env name copy-var)
-                        type-env)]
-                    [_
-                      (ErrLowerEnv
-                        (lower-diagnostic
-                          "lower: aggregate ABI param copy expected local value"))])])]
-            [(ErrLowerExpr message) (ErrLowerEnv message)])]
-        [(NoneI64)
-          (ErrLowerEnv
-            (lower-diagnostic
-              (string-append "lower: missing aggregate ABI param " name)))])
-      (OkLowerEnv state env type-env))))
+  [ty : AstType])
+  :
+  ResultLowerEnv
+  ;; #1867 Phase 4: the defensive per-param entry copy is redundant -- inline
+  ;; struct/enum are value types with no in-place mutation, and copies already
+  ;; happen at every escape site (construction, store, and the sret/arena
+  ;; return). So a read-only param can use the caller's storage directly.
+  (OkLowerEnv state env type-env))
 
 (define (lower-copy-inline-aggregate-params
   [ctx : TcContext]
@@ -17598,6 +17749,23 @@
       (string-eq
         (substring logical-name (- name-len suffix-len) suffix-len)
         suffix))))
+
+(define (lower-logical-name-has-prefix?
+  [logical-name : String]
+  [prefix : String]) : bool
+  (let
+    [name-len : i64 (string-length logical-name)]
+    [prefix-len : i64 (string-length prefix)]
+    (and
+      (>= name-len prefix-len)
+      (string-eq (substring logical-name 0 prefix-len) prefix))))
+
+;; #1867 sret ABI: a `__global_init_<name>` initializer's result is stored into
+;; a forever-lived global by the backend's startup sequence (not a normal call
+;; site), so it must return stable arena storage -- never a caller stack sret
+;; slot. Keep these on the arena return path.
+(define (lower-global-init-function? [logical-name : String]) : bool
+  (lower-logical-name-has-prefix? logical-name "__global_init_"))
 
 (define (lower-stdlib-hash-string-param? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -17747,16 +17915,32 @@
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
       [param-count : i64 (lower-param-count params)]
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+      ;; #1867 sret ABI: an aggregate-returning function takes a hidden
+      ;; result-slot pointer at var `param-count` (just past the real params);
+      ;; the body writes the result through it instead of arena-copying.
+      [sret-needed : bool
+        (and
+          (lower-mode-inline-aggregates? mode)
+          (and
+            (not (lower-global-init-function? logical-name))
+            (lower-type-contains-inline-aggregate? ctx ret-ty)))]
+      [sret-var : i64
+        (if sret-needed
+          param-count
+          (- 0 1))]
       [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
       [type-env : TcTypeEnv
         (tc-bind-return-type
           (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
-          (tc-type-without-regions (tc-resolve-type ctx ret)))]
+          ret-ty)]
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
       [state : LowerState
         (LowerState
-          param-count
+          (if sret-needed
+            (+ param-count 1)
+            param-count)
           0
           0
           "entry"
@@ -17768,7 +17952,6 @@
           names
           type-cache
           mode)]
-      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       (if (lower-supported-function-return-type? ctx ret-ty)
         (if (lower-stdlib-hash-string-signature? ctx logical-name params ret-ty)
           (lower-stdlib-hash-string-function
@@ -17801,13 +17984,18 @@
                   abi-env
                   abi-type-env
                   body
-                  ret-ty)
+                  ret-ty
+                  sret-var)
                   [(OkLowerState final-state)
                     (OkLowerFunction
                       (compiler-ir-function-cons
                         (IrFunction
                           logical-name
-                          (lower-param-list ctx params 0)
+                          (if (>= sret-var 0)
+                            (lower-param-list-append-sret
+                              (lower-param-list ctx params 0)
+                              sret-var)
+                            (lower-param-list ctx params 0))
                           ret-ty
                           (lower-state-next-var final-state)
                           (lower-state-build-blocks final-state))

@@ -965,7 +965,9 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains-alloc-size? asm 16)
+          ;; #1867 sret ABI: aggregate returns write the caller's sret slot
+          ;; instead of arena-allocating a 16-byte object.
+          (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler-backend-string-contains?
             asm
             ".globl _tl___enum_obj_Shape_Nothing\n")
@@ -997,16 +999,18 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (> (compiler-backend-alloc-call-count asm) 0)
-          (compiler-backend-string-contains? asm "tl_alloc:")
-          (compiler-backend-string-contains-alloc-size? asm 16)
+          ;; #1867 sret ABI: struct/enum returns write the result through the
+          ;; caller-provided sret slot -- no per-return arena allocation.
+          (= (compiler-backend-alloc-call-count asm) 0)
+          (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler-backend-string-contains? asm "movq $7,")
           (compiler-backend-string-contains? asm "movq $1,")
           (compiler-backend-string-contains? asm "movq $2,")
           (compiler-backend-string-contains?
             asm
             ".L_tl_str_data_l2_13861_13991:")
-          (compiler-backend-string-contains? asm "    .quad 2\n"))
+          (compiler-backend-string-contains? asm "    .quad 2\n")
+          true)
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -1216,7 +1220,9 @@
           (and
             (backend-and4
               (compiler-backend-string-contains? asm "tl_alloc:\n")
-              (>= (compiler-backend-alloc-call-count asm) 4)
+              ;; #1867 sret ABI: only the heap-backed (Array) closure return
+              ;; still allocates; Box/Pair/String returns use sret/static data.
+              (>= (compiler-backend-alloc-call-count asm) 1)
               (>= (compiler-backend-string-count asm "    call *%rax\n") 4)
               (not
                 (compiler-backend-string-contains?
@@ -5047,7 +5053,9 @@
       (backend-and4
         (compiler-backend-string-contains? asm "main:\n")
         (>= (compiler-backend-string-count asm "    call ") 6)
-        (> (compiler-backend-alloc-call-count asm) 0)
+        ;; #1867 sret ABI: aggregate args/returns pass by caller slot pointer
+        ;; and inline construction is stack storage -- no arena allocation.
+        (= (compiler-backend-alloc-call-count asm) 0)
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))

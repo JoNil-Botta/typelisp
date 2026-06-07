@@ -2207,10 +2207,63 @@
           (compiler-backend-asm-safe-symbol-flush-run name start n buf))
         name))))
 
+(define (compiler-backend-user-symbol-separator? [c : char]) : bool
+  (or (= c #/') (or (= c #\\') (or (= c #:') (= c #.')))))
+
+(define (compiler-backend-user-symbol-tl-extension-at?
+  [name : String]
+  [idx : i64]) : bool
+  (let
+    [n : i64 (string-length name)]
+    [after : i64 (+ idx 3)]
+    (and
+      (<= after n)
+      (and
+        (= (string-ref name idx) #.')
+        (and
+          (= (string-ref name (+ idx 1)) #t')
+          (and
+            (= (string-ref name (+ idx 2)) #l')
+            (or
+              (= after n)
+              (compiler-backend-user-symbol-separator? (string-ref name after)))))))))
+
+(define (compiler-backend-user-symbol-body [name : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [buf : TextBuf (text-buf-empty)]
+    [emitted : bool false]
+    [pending-separator : bool false]
+    (begin
+      (while (< i n)
+        (if (compiler-backend-user-symbol-tl-extension-at? name i)
+          (set! i (+ i 3))
+          (let
+            [c : char (string-ref name i)]
+            (if (compiler-backend-user-symbol-separator? c)
+              (begin
+                (if emitted
+                  (set! pending-separator true)
+                  unit)
+                (set! i (+ i 1)))
+              (begin
+                (if pending-separator
+                  (begin
+                    (set! buf (text-buf-append buf "_"))
+                    (set! pending-separator false))
+                  unit)
+                (set!
+                  buf
+                  (text-buf-append buf (compiler-backend-symbol-char name i c)))
+                (set! emitted true)
+                (set! i (+ i 1)))))))
+      (text-buf-render buf))))
+
 (define (compiler-backend-user-symbol [name : String]) : String
   (if (string-eq name "main")
     "main"
-    (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
+    (string-append "_tl_" (compiler-backend-user-symbol-body name))))
 
 (define (compiler-backend-symbol-leaf [name : String]) : String
   (let
@@ -15755,16 +15808,14 @@ tl_string_concat5:
     (compiler-backend-module-symbol-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains?
-          asm
-          ".globl _tl_lib_u2etl_colon_colonhelper")
+        (compiler-backend-string-contains? asm ".globl _tl_lib_helper")
         (and
-          (compiler-backend-string-contains?
-            asm
-            "_tl_lib_u2etl_colon_colonhelper")
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_lib_u2etl_colon_colonhelper")))]
+          (compiler-backend-string-contains? asm "    call _tl_lib_helper")
+          (and
+            (not (compiler-backend-string-contains? asm "_u2e"))
+            (and
+              (not (compiler-backend-string-contains? asm "_colon"))
+              (not (compiler-backend-string-contains? asm "_slash"))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String

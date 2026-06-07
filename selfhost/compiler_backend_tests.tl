@@ -4755,6 +4755,47 @@
       (compiler-backend-export-symbol-fixed-fault-ok?)
       (compiler-backend-export-symbol-diagnostics-ok?))))
 
+(define (compiler-backend-clean-module-symbol-collision-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "pkg/a.tl::helper"
+        IrParamNil
+        (AstTyI64)
+        0
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+              IrInstrNil))
+          IrBlockNil))
+      (compiler-ir-function-cons
+        (IrFunction
+          "pkg_a.tl::helper"
+          IrParamNil
+          (AstTyI64)
+          0
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+                IrInstrNil))
+            IrBlockNil))
+        IrFunctionNil))
+    IrExternNil))
+
+(define (compiler-backend-clean-module-symbol-collision-ok?) : bool
+  (match (compiler-backend-emit-program
+    (compiler-backend-clean-module-symbol-collision-program))
+    [(ErrCompilerBackend diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "backend: duplicate emitted function symbol _tl_pkg_a_helper")]
+    [(OkCompilerBackend _) false]))
+
 (define (compiler-backend-raw-pointer-fixture-shape-ok?) : bool
   (match (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))
     [(OkCompilerBackend asm)
@@ -5093,8 +5134,10 @@
                       (and
                         (compiler-backend-module-symbol-ok?)
                         (and
-                          (compiler-backend-program-argv-entry-capture-ok?)
-                          (compiler-backend-arg-runtime-abort-ok?))))
+                          (compiler-backend-clean-module-symbol-collision-ok?)
+                          (and
+                            (compiler-backend-program-argv-entry-capture-ok?)
+                            (compiler-backend-arg-runtime-abort-ok?)))))
                     (and
                       (and
                         (compiler-backend-windows-env-runtime-ok?)

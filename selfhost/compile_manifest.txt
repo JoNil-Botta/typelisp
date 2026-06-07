@@ -83,7 +83,7 @@ contains|_tl_eval_sexpr:
 contains|_tl_sexpr_head:
 contains|_tl_sexpr_tail:
 contains|match_nested
-contains|_colon_colonstring_eq
+contains|string_eq
 contains|call _tl_eval_sexpr
 contains|call _tl_panic
 end
@@ -101,7 +101,7 @@ copy|selfhost/sym_i64_env.tl|sym_i64_env_core.tl
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:
 contains|_tl_sym_i64_lookup:
-contains|_colon_colonstring_eq
+contains|string_eq
 contains|substring_copy_checked
 contains|string_append_borrowed
 count-at-least|call _tl_sym_i64_lookup|2
@@ -196,7 +196,7 @@ contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
 contains|_tl_source_tool_augment_assembly_for_target:
 not-contains|.globl _tl_print_string
-contains|_tl__u2e_u2e_slashstdlib_slashprocess_runtime_u2etl_colon_colontl_process_output:
+contains|tl_process_output:
 contains|_tl_fs_mkdir_status:
 end
 
@@ -204,7 +204,7 @@ case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
 contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
-contains|_tl_check_cli_core_u2etl_colon_colonselfhost_check_package:
+contains|selfhost_check_package:
 contains|_tl_compiler_check_file_with_roots:
 contains|compiler_check_package_file_with_roots
 contains|package_source_discover
@@ -410,7 +410,7 @@ contains|_tl_compiler_live_analyze_function:
 end
 
 case|selfhost_compiler_embedded_stdlib|selfhost/compiler_embedded_stdlib.tl|assembly|skip|direct
-contains|_tl_compiler_embedded_stdlib_u2etl_colon_coloncompiler_embedded_stdlib_lookup:
+contains|compiler_embedded_stdlib_lookup:
 end
 
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
@@ -752,7 +752,7 @@ contains|_tl_print_value:
 contains|_tl_print_list_tail:
 contains|_tl_eval_list_result:
 contains|_tl_eval_seq_result:
-contains|_colon_colonstring_eq
+contains|string_eq
 contains|string_append_borrowed
 contains|substring_copy_checked
 not-contains|call tl_int_to_string
@@ -789,10 +789,10 @@ count-at-least|call _tl_print_value|2
 end
 
 case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
-contains|_tl_format_cli_core_u2etl_colon_colonfmt_format_file:
-contains|_tl_format_cli_core_u2etl_colon_colonfmt_files:
-contains|_tl_format_cli_core_u2etl_colon_colonfmt_package:
-contains|_tl_package_source_core_u2etl_colon_colonpackage_source_discover_for
+contains|fmt_format_file:
+contains|fmt_files:
+contains|fmt_package:
+contains|package_source_discover_for
 contains|fmt: would reformat 
 contains|fmt: cannot combine input paths with --manifest-path
 end
@@ -997,10 +997,10 @@ end
 decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by the retained selfhost/lint.tl wrapper and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
 
 case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
-contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_file:
-contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_render_finding:
-contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_package:
-contains|_tl_package_source_core_u2etl_colon_colonpackage_source_discover_for
+contains|selfhost_lint_file:
+contains|selfhost_lint_render_finding:
+contains|selfhost_lint_package:
+contains|package_source_discover_for
 contains|selfhost-lint: cannot combine input paths with --manifest-path
 end
 

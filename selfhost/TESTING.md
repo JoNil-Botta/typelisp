@@ -83,8 +83,8 @@ By default those markers are checked in `stage0` mode (the published seed's
 symbol coverage). The Linux capability tier also runs the same manifest through
 the freshly bootstrapped stage1 compiler with
 `TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode `_tl_foo`
-symbol markers also accept the selfhost compiler's module-qualified
-`_tl_<module>_u2etl_colon_colonfoo` labels without changing the manifest list.
+symbol markers also accept the selfhost compiler's module/path-qualified
+`_tl_<module>_<path>_foo` labels without changing the manifest list.
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 

@@ -117,13 +117,23 @@
   (TcSpmdOuter)
   (TcSpmdLocal))
 
+(defenum TcSpmdRole
+  (TcSpmdValue)
+  (TcSpmdForeachIndex))
+
 (defenum TcSpmdEnv
   (TcSpmdEnvNil)
-  (TcSpmdEnvBind String AstType TcSpmdClass TcSpmdScope (Box TcSpmdEnv)))
+  (TcSpmdEnvBind
+    String
+    AstType
+    TcSpmdClass
+    TcSpmdScope
+    TcSpmdRole
+    (Box TcSpmdEnv)))
 
 (defenum TcSpmdLookup
   (TcSpmdMissing)
-  (TcSpmdFound AstType TcSpmdClass TcSpmdScope))
+  (TcSpmdFound AstType TcSpmdClass TcSpmdScope TcSpmdRole))
 
 (defenum TcSpmdExprInfo
   (TcSpmdExprInfo AstType TcSpmdClass TcSpmdEnv))
@@ -3859,6 +3869,7 @@
         ty
         TcSpmdUniform
         TcSpmdOuter
+        TcSpmdValue
         (box (tc-spmd-env-from-type-env (box-get rest))))]))
 
 (define (tc-spmd-env-bind
@@ -3867,20 +3878,29 @@
   [ty : AstType]
   [class : TcSpmdClass]
   [scope : TcSpmdScope]) : TcSpmdEnv
-  (TcSpmdEnvBind name ty class scope (box env)))
+  (TcSpmdEnvBind name ty class scope TcSpmdValue (box env)))
+
+(define (tc-spmd-env-bind-role
+  [env : TcSpmdEnv]
+  [name : String]
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [scope : TcSpmdScope]
+  [role : TcSpmdRole]) : TcSpmdEnv
+  (TcSpmdEnvBind name ty class scope role (box env)))
 
 (define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
   (match env
     [(TcSpmdEnvNil) TcSpmdMissing]
-    [(TcSpmdEnvBind key ty class scope rest)
+    [(TcSpmdEnvBind key ty class scope role rest)
       (if (string-eq key name)
-        (TcSpmdFound ty class scope)
+        (TcSpmdFound ty class scope role)
         (tc-spmd-env-lookup (box-get rest) name))]))
 
 (define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
   (match env
     [(TcSpmdEnvNil) false]
-    [(TcSpmdEnvBind key _ _ scope rest)
+    [(TcSpmdEnvBind key _ _ scope _ rest)
       (if (string-eq key name)
         (match scope
           [(TcSpmdLocal) true]
@@ -3890,7 +3910,7 @@
 (define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
   (match env
     [(TcSpmdEnvNil) false]
-    [(TcSpmdEnvBind key _ _ scope rest)
+    [(TcSpmdEnvBind key _ _ scope _ rest)
       (if (string-eq key name)
         (match scope
           [(TcSpmdOuter) true]
@@ -3903,22 +3923,24 @@
   [class : TcSpmdClass]) : TcSpmdEnv
   (match env
     [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind key ty old-class scope rest)
+    [(TcSpmdEnvBind key ty old-class scope role rest)
       (if (string-eq key name)
         (match scope
-          [(TcSpmdLocal) (TcSpmdEnvBind key ty class scope rest)]
+          [(TcSpmdLocal) (TcSpmdEnvBind key ty class scope role rest)]
           [(TcSpmdOuter)
             (TcSpmdEnvBind
               key
               ty
               old-class
               scope
+              role
               (box (tc-spmd-env-set-local-class (box-get rest) name class)))])
         (TcSpmdEnvBind
           key
           ty
           old-class
           scope
+          role
           (box (tc-spmd-env-set-local-class (box-get rest) name class))))]))
 
 (define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
@@ -3926,32 +3948,34 @@
     env
     (match env
       [(TcSpmdEnvNil) TcSpmdEnvNil]
-      [(TcSpmdEnvBind _ _ _ _ rest)
+      [(TcSpmdEnvBind _ _ _ _ _ rest)
         (tc-spmd-env-pop (box-get rest) (- count 1))])))
 
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
   (match env
     [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind name ty class _ rest)
+    [(TcSpmdEnvBind name ty class _ role rest)
       (TcSpmdEnvBind
         name
         ty
         class
         TcSpmdOuter
+        role
         (box (tc-spmd-env-mark-outer (box-get rest))))]))
 
 (define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
   (match left
     [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind name ty class scope left-rest)
+    [(TcSpmdEnvBind name ty class scope role left-rest)
       (match right
         [(TcSpmdEnvNil) left]
-        [(TcSpmdEnvBind _ _ right-class _ right-rest)
+        [(TcSpmdEnvBind _ _ right-class _ _ right-rest)
           (TcSpmdEnvBind
             name
             ty
             (tc-spmd-merge-class class right-class)
             scope
+            role
             (box
               (tc-spmd-env-merge-classes
                 (box-get left-rest)
@@ -3994,7 +4018,8 @@
       (tc-spmd-env-set-local-class local "lane" TcSpmdUniform)]
     (and
       (match (tc-spmd-env-lookup updated "lane")
-        [(TcSpmdFound (AstTyI64) (TcSpmdUniform) (TcSpmdLocal)) true]
+        [(TcSpmdFound (AstTyI64) (TcSpmdUniform) (TcSpmdLocal) (TcSpmdValue))
+          true]
         [_ false])
       (and
         (tc-spmd-env-has-local? updated "lane")
@@ -6702,6 +6727,319 @@
     (ErrTcUnit message)
     OkTcUnit))
 
+(define (tc-spmd-masked-if-unimplemented-message) : String
+  "typecheck: SPMD masked if is recognized but lowering is not implemented")
+
+(define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
+  (ErrTcUnit
+    (string-append "typecheck: SPMD masked if does not support " detail)))
+
+(define (tc-spmd-masked-if-result-type-supported? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyUnit) true]
+    [_ (tc-spmd-varying-value-type-supported? ty)]))
+
+(define (tc-spmd-masked-if-result-type-ok [ty : AstType]) : ResultTcUnit
+  (if (tc-spmd-masked-if-result-type-supported? ty)
+    OkTcUnit
+    (ErrTcUnit
+      (string-append
+        "typecheck: SPMD masked if result type is not supported: "
+        (tc-type-render (tc-type-strip-region ty))))))
+
+(define (tc-spmd-masked-if-index-var? [spmd-env : TcSpmdEnv] [name : String]) : bool
+  (match (tc-spmd-env-lookup spmd-env name)
+    [(TcSpmdFound _ (TcSpmdVarying) (TcSpmdLocal) (TcSpmdForeachIndex)) true]
+    [_ false]))
+
+(define (tc-spmd-masked-if-uniform-offset
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (match (tc-spmd-expr ctx env spmd-env expr)
+    [(OkTcSpmdExprInfo info)
+      (match info
+        [(TcSpmdExprInfo _ class _)
+          (if (tc-spmd-varying? class)
+            (tc-spmd-masked-if-unsupported
+              "gather/scatter-like array indexes; use the foreach index plus a uniform offset")
+            OkTcUnit)])]
+    [(ErrTcSpmdExprInfo message) (ErrTcUnit message)]))
+
+(define (tc-spmd-masked-if-direct-index [spmd-env : TcSpmdEnv] [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-direct-index spmd-env inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-direct-index spmd-env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-direct-index spmd-env inner))]
+    [(AstExprVar name)
+      (if (tc-spmd-masked-if-index-var? spmd-env name)
+        OkTcUnit
+        (tc-spmd-masked-if-unsupported
+          "gather/scatter-like array indexes; use the foreach index plus a uniform offset"))]
+    [_
+      (tc-spmd-masked-if-unsupported
+        "gather/scatter-like array indexes; use the foreach index plus a uniform offset")]))
+
+(define (tc-spmd-masked-if-index
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-index ctx env spmd-env inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-index ctx env spmd-env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-index ctx env spmd-env inner))]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match op
+          [(AstBinAdd)
+            (match (tc-spmd-masked-if-direct-index spmd-env left)
+              [(OkTcUnit)
+                (tc-spmd-masked-if-uniform-offset ctx env spmd-env right)]
+              [(ErrTcUnit _)
+                (match (tc-spmd-masked-if-direct-index spmd-env right)
+                  [(OkTcUnit)
+                    (tc-spmd-masked-if-uniform-offset ctx env spmd-env left)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])])]
+          [(AstBinSub)
+            (match (tc-spmd-masked-if-direct-index spmd-env left)
+              [(OkTcUnit)
+                (tc-spmd-masked-if-uniform-offset ctx env spmd-env right)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [_
+            (tc-spmd-masked-if-unsupported
+              "gather/scatter-like array indexes; use the foreach index plus a uniform offset")]))]
+    [_ (tc-spmd-masked-if-direct-index spmd-env expr)]))
+
+(define (tc-spmd-masked-if-lane-type-ok [ty : AstType]) : ResultTcUnit
+  (if (tc-spmd-lane-type-supported? ty)
+    OkTcUnit
+    (ErrTcUnit
+      (string-append
+        "typecheck: SPMD masked if lane type is not supported: "
+        (tc-type-render (tc-type-strip-region ty))))))
+
+(define (tc-spmd-masked-if-expr-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : AstExprList]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (box-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env expr)
+          [(OkTcUnit) (tc-spmd-masked-if-expr-list ctx env spmd-env rest)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]))
+
+(define (tc-spmd-masked-if-let-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bindings : AstLetBindingList]
+  [count : i64]) : ResultTcSpmdLetState
+  (match bindings
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-spmd-masked-if-expr ctx env spmd-env init)
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env spmd-env init)
+                    [(OkTcSpmdExprInfo info)
+                      (match info
+                        [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                          (let
+                            [bound-ty : AstType
+                              (match maybe-ty
+                                [(AstSomeType want)
+                                  (if (tc-type-contains-any-region init-ty)
+                                    init-ty
+                                    (tc-resolve-type ctx want))]
+                                [(AstNoType) init-ty])]
+                            (tc-spmd-masked-if-let-bindings
+                              ctx
+                              (tc-bind env name bound-ty)
+                              (tc-spmd-env-bind
+                                next-spmd-env
+                                name
+                                bound-ty
+                                init-class
+                                TcSpmdLocal)
+                              rest
+                              (+ count 1)))])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)])]
+                [(ErrTcUnit message) (ErrTcSpmdLetState message)]))]))]))
+
+(define (tc-spmd-masked-if-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+    [(AstExprLiteral _) OkTcUnit]
+    [(AstExprVar _) OkTcUnit]
+    [(AstExprTypeLiteral _) OkTcUnit]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env left)
+          [(OkTcUnit) (tc-spmd-masked-if-expr ctx env spmd-env right)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-spmd-masked-if-let-bindings ctx env spmd-env bindings 0)
+          [(OkTcSpmdLetState state)
+            (match state
+              [(TcSpmdLetState body-env body-spmd-env _)
+                (tc-spmd-masked-if-expr ctx body-env body-spmd-env body)])]
+          [(ErrTcSpmdLetState message) (ErrTcUnit message)]))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-box)]
+        [else-branch : AstExpr (box-get else-box)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
+          [(OkTcUnit)
+            (match (tc-spmd-masked-if-expr ctx env spmd-env then-branch)
+              [(OkTcUnit) (tc-spmd-masked-if-expr ctx env spmd-env else-branch)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprBegin exprs) (tc-spmd-masked-if-expr-list ctx env spmd-env exprs)]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env array)
+          [(OkTcUnit)
+            (match (tc-spmd-masked-if-index ctx env spmd-env index)
+              [(OkTcUnit)
+                (match (tc-expr ctx env expr)
+                  [(OkTcType ty) (tc-spmd-masked-if-lane-type-ok ty)]
+                  [(ErrTcType message) (ErrTcUnit message)])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env array)
+          [(OkTcUnit)
+            (match (tc-spmd-masked-if-index ctx env spmd-env index)
+              [(OkTcUnit)
+                (match (tc-spmd-masked-if-expr ctx env spmd-env value)
+                  [(OkTcUnit)
+                    (match (tc-expr ctx env value)
+                      [(OkTcType ty) (tc-spmd-masked-if-lane-type-ok ty)]
+                      [(ErrTcType message) (ErrTcUnit message)])]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprCall _ _)
+      (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
+    [(AstExprSyscall _)
+      (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
+    [(AstExprWhile _ _)
+      (tc-spmd-masked-if-unsupported "varying while inside masked branches")]
+    [(AstExprMatch _ _)
+      (tc-spmd-masked-if-unsupported "varying match inside masked branches")]
+    [(AstExprForeach _ _ _ _ _)
+      (tc-spmd-masked-if-unsupported "nested foreach inside masked branches")]
+    [(AstExprSpmdReduce _ _ _ _ _ _ _)
+      (tc-spmd-masked-if-unsupported
+        "nested spmd-reduce inside masked branches")]
+    [(AstExprSet _ _)
+      (tc-spmd-masked-if-unsupported
+        "side effects other than contiguous array writes inside masked branches")]
+    [(AstExprArrayPush _ _)
+      (tc-spmd-masked-if-unsupported
+        "side effects other than contiguous array writes inside masked branches")]
+    [(AstExprPtrWrite _ _)
+      (tc-spmd-masked-if-unsupported
+        "side effects other than contiguous array writes inside masked branches")]
+    [(AstExprMakeArray _ _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
+    [(AstExprArray _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
+    [(AstExprBox _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
+    [(AstExprWithRegion _ _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
+    [(AstExprWithEscape _ _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
+    [_
+      (tc-spmd-masked-if-unsupported
+        "this branch shape in the masked-control-flow subset")]))
+
+(define (tc-spmd-masked-if
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-masked-if-result-type-ok expr-ty)
+    [(OkTcUnit)
+      (match (tc-spmd-masked-if-expr ctx env spmd-env then-branch)
+        [(OkTcUnit)
+          (match (tc-spmd-masked-if-expr ctx env spmd-env else-branch)
+            [(OkTcUnit)
+              (ErrTcSpmdExprInfo (tc-spmd-masked-if-unimplemented-message))]
+            [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])]
+        [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])]
+    [(ErrTcUnit message) (ErrTcSpmdExprInfo message)]))
+
 (define (tc-spmd-let-bindings
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -6847,12 +7185,13 @@
   (let
     [body-env : TcTypeEnv (tc-bind env index index-ty)]
     [body-spmd-env : TcSpmdEnv
-      (tc-spmd-env-bind
+      (tc-spmd-env-bind-role
         (tc-spmd-env-mark-outer spmd-env)
         index
         index-ty
         TcSpmdVarying
-        TcSpmdLocal)]
+        TcSpmdLocal
+        TcSpmdForeachIndex)]
     (match (tc-spmd-expr ctx body-env body-spmd-env body)
       [(OkTcSpmdExprInfo _) OkTcUnit]
       [(ErrTcSpmdExprInfo message) (ErrTcUnit message)])))
@@ -6894,7 +7233,7 @@
     [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprVar name)
       (match (tc-spmd-env-lookup spmd-env name)
-        [(TcSpmdFound _ class _) (tc-spmd-finish expr-ty class spmd-env)]
+        [(TcSpmdFound _ class _ _) (tc-spmd-finish expr-ty class spmd-env)]
         [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
     [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprAnn inner-box _)
@@ -6970,30 +7309,31 @@
           [(OkTcSpmdExprInfo cond-info)
             (match cond-info
               [(TcSpmdExprInfo _ cond-class cond-env)
-                (match (tc-spmd-require-uniform
-                  cond-class
-                  "typecheck: foreach if condition must be uniform")
-                  [(OkTcUnit)
-                    (match (tc-spmd-expr ctx env cond-env then-branch)
-                      [(OkTcSpmdExprInfo then-info)
-                        (match then-info
-                          [(TcSpmdExprInfo _ then-class then-env)
-                            (match (tc-spmd-expr ctx env cond-env else-branch)
-                              [(OkTcSpmdExprInfo else-info)
-                                (match else-info
-                                  [(TcSpmdExprInfo _ else-class else-env)
-                                    (tc-spmd-finish
-                                      expr-ty
-                                      (tc-spmd-merge-class
-                                        then-class
-                                        else-class)
-                                      (tc-spmd-env-merge-classes
-                                        then-env
-                                        else-env))])]
-                              [(ErrTcSpmdExprInfo message)
-                                (ErrTcSpmdExprInfo message)])])]
-                      [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                (if (tc-spmd-varying? cond-class)
+                  (tc-spmd-masked-if
+                    ctx
+                    env
+                    cond-env
+                    expr-ty
+                    then-branch
+                    else-branch)
+                  (match (tc-spmd-expr ctx env cond-env then-branch)
+                    [(OkTcSpmdExprInfo then-info)
+                      (match then-info
+                        [(TcSpmdExprInfo _ then-class then-env)
+                          (match (tc-spmd-expr ctx env cond-env else-branch)
+                            [(OkTcSpmdExprInfo else-info)
+                              (match else-info
+                                [(TcSpmdExprInfo _ else-class else-env)
+                                  (tc-spmd-finish
+                                    expr-ty
+                                    (tc-spmd-merge-class then-class else-class)
+                                    (tc-spmd-env-merge-classes
+                                      then-env
+                                      else-env))])]
+                            [(ErrTcSpmdExprInfo message)
+                              (ErrTcSpmdExprInfo message)])])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprLet bindings body-box)
       (let

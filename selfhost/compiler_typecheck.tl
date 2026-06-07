@@ -535,7 +535,7 @@
       (and
         (compiler-typecheck-error-ok?
           (compiler-typecheck-foreach-varying-if-source)
-          "typecheck: foreach if condition must be uniform")
+          "typecheck: SPMD masked if is recognized but lowering is not implemented")
         (and
           (compiler-typecheck-error-ok?
             (compiler-typecheck-foreach-varying-while-source)

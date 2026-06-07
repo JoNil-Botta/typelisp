@@ -3234,6 +3234,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprPtrAddrOf _) OkTcUnit]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -3754,6 +3755,31 @@
   (match (tc-type-strip-region ty)
     [(AstTyMutPtr elem) (OkTcType (box-get elem))]
     [_ (ErrTcType message)]))
+
+(define (tc-ptr-addr-of-cell-type-ok? [ty : AstType]) : bool
+  (if (tc-integer-type? ty)
+    true
+    (match (tc-type-strip-region ty)
+      [(AstTyF64) true]
+      [(AstTyF32) true]
+      [(AstTyBool) true]
+      [(AstTyChar) true]
+      [(AstTyPtr _) true]
+      [(AstTyMutPtr _) true]
+      [_ false])))
+
+(define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
+  (match env
+    [(TcTypeNil)
+      (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")]
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-ptr-addr-of-local-lookup (box-get rest) name)]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key (tc-hygiene-global-boundary-name))
+        (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")
+        (if (string-eq key name)
+          (OkTcType ty)
+          (tc-ptr-addr-of-local-lookup (box-get rest) name)))]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
@@ -7706,6 +7732,7 @@
               [(TcSpmdExprInfo _ class next-spmd-env)
                 (tc-spmd-finish expr-ty class next-spmd-env)])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrAddrOf _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -8228,6 +8255,8 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprPtrAddrOf var-name)
+      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -8608,6 +8637,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprPtrAddrOf _) false]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -11394,6 +11424,23 @@
                 [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
                 [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
+(define (tc-ptr-addr-of-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (tc-require-unsafe env "ptr-addr-of")
+    [(OkTcUnit)
+      (match (tc-ptr-addr-of-local-lookup env name)
+        [(OkTcType ty)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (if (tc-ptr-addr-of-cell-type-ok? resolved)
+              (OkTcType (ast-ty-mut-ptr resolved))
+              (ErrTcType
+                "typecheck: ptr-addr-of supports local scalar cells only")))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
 (define (tc-ptr-read-expr [ctx : TcContext] [env : TcTypeEnv] [ptr : AstExpr]) : ResultTcType
   (match (tc-require-unsafe env "ptr-read")
     [(OkTcUnit)
@@ -12622,6 +12669,7 @@
                 (ErrTcType
                   "typecheck: ptr-null? requires a raw pointer operand")])]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprPtrAddrOf name) (tc-ptr-addr-of-expr ctx env name)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -14335,6 +14383,10 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
+    [(AstExprPtrAddrOf name)
+      (if (tc-moved-contains? moved name)
+        (ErrTcMove (tc-move-use-message name))
+        (OkTcMove moved))]
     [(AstExprPtrRead inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -15226,6 +15278,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprPtrAddrOf _) (OkTcBorrowCheck borrowed)]
     [(AstExprPtrRead inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -15858,6 +15911,8 @@
       (let
         [ptr : AstExpr (box-get ptr-box)]
         (ast-expr-ptr-null-check (macro-hygiene-expr ptr env macro-name depth)))]
+    [(AstExprPtrAddrOf name)
+      (ast-expr-ptr-addr-of (macro-hygiene-rename-var env macro-name name))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]

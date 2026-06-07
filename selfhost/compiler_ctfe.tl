@@ -537,6 +537,7 @@
     [(AstExprReturn _) "return"]
     [(AstExprPtrNull _) "ptr-null"]
     [(AstExprPtrNullCheck _) "ptr-null?"]
+    [(AstExprPtrAddrOf _) "ptr-addr-of"]
     [(AstExprPtrRead _) "ptr-read"]
     [(AstExprPtrWrite _ _) "ptr-write!"]
     [(AstExprPtrOffset _ _) "ptr-offset"]
@@ -3563,6 +3564,8 @@
               (AstTyExpr)
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprPtrAddrOf name)
+      (OkCtfeQuoteExpr (ast-expr-ptr-addr-of name) (AstTyExpr) fuel)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -4368,6 +4371,10 @@
               [b-ptr : AstExpr (box-get b-ptr-box)]
               (ctfe-expr-eq a-ptr b-ptr))]
           [_ false]))]
+    [(AstExprPtrAddrOf a-name)
+      (match b
+        [(AstExprPtrAddrOf b-name) (string-eq a-name b-name)]
+        [_ false])]
     [(AstExprPtrWrite a-ptr-box a-value-box)
       (let
         [a-ptr : AstExpr (box-get a-ptr-box)]

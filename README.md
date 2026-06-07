@@ -710,8 +710,9 @@ map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. S
 reference captures, tail calls, tuple/fixed-array by-value returns,
 general GC/free, ownership/borrowing, masked varying SPMD control flow, and
 later public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
-operations are
-implemented, while C-string/address-of ergonomics remain follow-up FFI work.
+operations are implemented, including local scalar address-of scratch pointers
+for FFI out-params. Broader C-string and address-of ergonomics remain follow-up
+FFI work.
 
 ## Contributing
 

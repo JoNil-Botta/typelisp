@@ -2633,9 +2633,15 @@
   "(extern raw-make : (-> (MutPtr i64)))
 (define (main [n : u64]) : u64
   (unsafe
-    (ptr-write! (raw-make) 41)
-    (ptr-read (raw-make))
-    (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 1))))")
+    (let
+      [cell : i64 0]
+      [local : (MutPtr i64) (ptr-addr-of cell)]
+      (begin
+        (ptr-write! local 41)
+        (ptr-read local)
+        (ptr-write! (raw-make) 41)
+        (ptr-read (raw-make))
+        (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 1))))))")
 
 (define (compiler-typecheck-raw-pointer-cast-source) : String
   "(define (main [n : u64]) : (Ptr u8)
@@ -2643,6 +2649,9 @@
 
 (define (compiler-typecheck-raw-pointer-safe-read-source) : String
   "(define (main [p : (Ptr i64)]) : i64 (ptr-read p))")
+
+(define (compiler-typecheck-raw-pointer-safe-addr-of-source) : String
+  "(define (main [x : i64]) : (MutPtr i64) (ptr-addr-of x))")
 
 (define (compiler-typecheck-raw-pointer-safe-marker-shadow-source) : String
   "(define (main [p : (Ptr i64)]) : i64
@@ -2663,6 +2672,14 @@
 (define (compiler-typecheck-raw-pointer-int-to-ptr-bad-source) : String
   "(define (main [b : bool]) : (Ptr i64) (unsafe (int->ptr b : (Ptr i64))))")
 
+(define (compiler-typecheck-raw-pointer-addr-of-global-source) : String
+  "(define x : i64 1)
+(define (main) : (MutPtr i64) (unsafe (ptr-addr-of x)))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-aggregate-source) : String
+  "(define (main [text : String]) : (MutPtr String)
+  (unsafe (ptr-addr-of text)))")
+
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
@@ -2674,27 +2691,39 @@
           "typecheck: ptr-read requires unsafe context")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
-            "typecheck: ptr-read requires unsafe context")
+            (compiler-typecheck-raw-pointer-safe-addr-of-source)
+            "typecheck: ptr-addr-of requires unsafe context")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-raw-pointer-write-const-source)
-              "typecheck: ptr-write! requires a MutPtr pointer operand")
+              (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
+              "typecheck: ptr-read requires unsafe context")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-raw-pointer-write-mismatch-source)
-                "typecheck: ptr-write! value type mismatch")
+                (compiler-typecheck-raw-pointer-write-const-source)
+                "typecheck: ptr-write! requires a MutPtr pointer operand")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-raw-pointer-offset-bad-source)
-                  "typecheck: ptr-offset requires an integer offset")
+                  (compiler-typecheck-raw-pointer-write-mismatch-source)
+                  "typecheck: ptr-write! value type mismatch")
                 (and
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-raw-pointer-cast-bad-target-source)
-                    "typecheck: ptr-cast target must be a raw pointer type")
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
-                    "typecheck: int->ptr requires an integer operand"))))))))))
+                    (compiler-typecheck-raw-pointer-offset-bad-source)
+                    "typecheck: ptr-offset requires an integer offset")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-raw-pointer-cast-bad-target-source)
+                      "typecheck: ptr-cast target must be a raw pointer type")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
+                        "typecheck: int->ptr requires an integer operand")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-raw-pointer-addr-of-global-source)
+                          "typecheck: ptr-addr-of requires a local or parameter name")
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-raw-pointer-addr-of-aggregate-source)
+                          "typecheck: ptr-addr-of supports local scalar cells only")))))))))))))
 
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and

@@ -622,6 +622,9 @@
 (define (compiler-parse-tag-expr-int-to-ptr) : i64
   261)
 
+(define (compiler-parse-tag-expr-ptr-addr-of) : i64
+  289)
+
 (define (compiler-parse-tag-expr-box) : i64
   263)
 
@@ -867,6 +870,9 @@
       (set!
         out
         (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-addr-of" (compiler-parse-tag-expr-ptr-addr-of)))
       (set! out (sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
       (set! out (sym-i64-bind out "box-get" (compiler-parse-tag-expr-box-get)))
       (set!
@@ -1105,6 +1111,7 @@
           [(string-eq name "spmd-reduce") (compiler-parse-tag-expr-spmd-reduce)]
           [(string-eq name "with-escape") (compiler-parse-tag-expr-with-escape)]
           [(string-eq name "string-data") (compiler-parse-tag-expr-string-data)]
+          [(string-eq name "ptr-addr-of") (compiler-parse-tag-expr-ptr-addr-of)]
           [(string-eq name "include-str") (compiler-parse-tag-decl-include-str)]
           [(string-eq name "defdispatch") (compiler-parse-tag-decl-defdispatch)]
           [else (compiler-parse-tag-unknown)])]
@@ -3260,6 +3267,17 @@
         [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")])]
     [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")]))
 
+(define (parse-ast-ptr-addr-of [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons name end _)
+      (match (box-get end)
+        [(SpSNil _)
+          (match (spanned-sexpr-form (box-get name))
+            [(SSym local) (OkAstExpr (ast-expr-ptr-addr-of local))]
+            [_ (ErrAstExpr "parse: ptr-addr-of expects a local name")])]
+        [_ (ErrAstExpr "parse: ptr-addr-of expects exactly one local name")])]
+    [_ (ErrAstExpr "parse: ptr-addr-of expects exactly one local name")]))
+
 (define (parse-ast-ptr-write [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons ptr value-tail _)
@@ -3909,6 +3927,8 @@
         (let
           [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
           (cond
+            [(= tag (compiler-parse-tag-expr-ptr-addr-of))
+              (parse-ast-ptr-addr-of rest)]
             [(= tag (compiler-parse-tag-expr-ptr-read))
               (parse-ast-ptr-read dispatch rest)]
             [(= tag (compiler-parse-tag-expr-ptr-write))
@@ -7240,9 +7260,17 @@
             (compiler-parse-error-ok?
               "(define (main [p : (MutPtr i64)]) : unit (ptr-write! p))"
               "parse: ptr-write! expects exactly two expressions")
-            (compiler-parse-error-ok?
-              "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
-              "parse: pointer cast expects (form expr : pointer-type)")))))))
+            (and
+              (compiler-parse-error-ok?
+                "(define (main) : (MutPtr i64) (unsafe (ptr-addr-of)))"
+                "parse: ptr-addr-of expects exactly one local name")
+              (and
+                (compiler-parse-error-ok?
+                  "(define (main [x : i64]) : (MutPtr i64) (unsafe (ptr-addr-of (+ x 1))))"
+                  "parse: ptr-addr-of expects a local name")
+                (compiler-parse-error-ok?
+                  "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
+                  "parse: pointer cast expects (form expr : pointer-type)")))))))))
 
 (define (compiler-parse-box-error-tests-ok?) : bool
   (let

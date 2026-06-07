@@ -192,6 +192,71 @@
 (define (string-concat [left : String] [right : String]) : String
   (string-append left right))
 
+;: Return a fresh active-arena String by concatenating five owned strings.
+(define (string-concat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (let
+    [a-len : i64 (string-length a)]
+    [b-len : i64 (string-length b)]
+    [c-len : i64 (string-length c)]
+    [d-len : i64 (string-length d)]
+    [e-len : i64 (string-length e)]
+    [total-len : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
+    [buf : (Array u8) (make-array u8 total-len)]
+    [dst : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
+    [off : i64 0]
+    (begin
+      (str-copy-bytes-into
+        (unsafe
+          (string-data (& a)))
+        dst
+        off
+        a-len)
+      (set! off (+ off a-len))
+      (str-copy-bytes-into
+        (unsafe
+          (string-data (& b)))
+        dst
+        off
+        b-len)
+      (set! off (+ off b-len))
+      (str-copy-bytes-into
+        (unsafe
+          (string-data (& c)))
+        dst
+        off
+        c-len)
+      (set! off (+ off c-len))
+      (str-copy-bytes-into
+        (unsafe
+          (string-data (& d)))
+        dst
+        off
+        d-len)
+      (set! off (+ off d-len))
+      (str-copy-bytes-into
+        (unsafe
+          (string-data (& e)))
+        dst
+        off
+        e-len)
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
+
+;: Return a fresh active-arena String by concatenating three owned strings.
+(define (string-concat3 [a : String] [b : String] [c : String]) : String
+  (string-concat5 a b c "" ""))
+
+;: Return a fresh active-arena String by concatenating four owned strings.
+(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string-concat5 a b c d ""))
+
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
   (begin

@@ -94,6 +94,18 @@
       "concat"
       "string-concat aliases string-append")
     (assert-owned-string-eq
+      (string-concat3 "a" "b" "c")
+      "abc"
+      "string-concat3 concatenates three strings")
+    (assert-owned-string-eq
+      (string-concat4 "a" "b" "c" "d")
+      "abcd"
+      "string-concat4 concatenates four strings")
+    (assert-owned-string-eq
+      (string-concat5 "a" "b" "c" "d" "e")
+      "abcde"
+      "string-concat5 concatenates five strings")
+    (assert-owned-string-eq
       (string-test-copy-borrowed "borrow-copy")
       "borrow-copy"
       "string-copy-borrowed copies borrowed text")

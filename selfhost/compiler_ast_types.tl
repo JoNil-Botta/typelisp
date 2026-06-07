@@ -8,6 +8,10 @@
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
 ;; but later parser work decides when they are populated.
+(import "stdlib/hashmap.tl")
+
+(import "stdlib/hash.tl")
+
 (defstruct AstSourceSpan
   (start-line i64)
   (start-col i64)
@@ -448,6 +452,70 @@
 
 (define (ty-node-pool-reset!) : unit
   (ty-node-pool-truncate! 0))
+
+;; --- String interning table (identifier ids) ---
+;; Every programmer-written identifier (variable/type/field/function name) is
+;; interned to a stable i64 id, so the AST stores ids instead of copied Strings,
+;; name comparisons become i64 `=`, and id-keyed lookups replace string hashing.
+;; The table is PERSISTENT for a compile (ids must stay valid across the loader's
+;; per-file parse-arena destroy -- ids are integers, so they survive); it resets
+;; between compiles (REPL/LSP) via intern-reset!. It mirrors the node pools: two
+;; plain mutable globals (id->String array + count) plus a fixed open-addressing
+;; dedup table, all PRE-SIZED so neither ever grows -- a grow! reassigns a global
+;; in the inlined hot path, which trips an opt2 miscompile (see the node pools).
+;; The dedup table uses the stdlib probe primitive directly on a fixed slot array
+;; rather than a StringI64Map struct, whose `put` reassigns the struct global on
+;; grow (the same hazard).
+(define intern-pool-slots : (Array String)
+  (make-array String 262144))
+
+(define intern-pool-count : i64
+  0)
+
+(define intern-map-slots : (Array StringI64MapSlot)
+  (make-array StringI64MapSlot 262144))
+
+(define intern-map-ready : bool
+  false)
+
+;: Reset the intern table for a fresh compile and (re)initialize the dedup slots
+;: to Empty. `make-array` does not produce valid `Empty` enum slots, so the fill
+;: is mandatory before the first probe; this runs it once (idempotent).
+(define (intern-reset!) : unit
+  (begin
+    (set! intern-pool-count 0)
+    (string-i64-map-fill-empty intern-map-slots 0 (array-length intern-map-slots))
+    (set! intern-map-ready true)))
+
+;: Intern `name`, returning its stable i64 id. Equal strings map to equal ids.
+;: Lazily initializes the dedup table so callers need not order intern-reset!.
+(define (intern [name : String]) : i64
+  (begin
+    (if intern-map-ready
+      unit
+      (intern-reset!))
+    (let
+      [capacity : i64 (array-length intern-map-slots)]
+      [hash : i64 (hash-string (& name))]
+      (match (string-i64-map-probe-borrowed intern-map-slots capacity (& name) hash)
+        [(StringI64MapProbeFound idx)
+          (match (array-ref intern-map-slots idx)
+            [(StringI64MapOccupied _ id _) id]
+            [(StringI64MapEmpty) -1]
+            [(StringI64MapTombstone) -1])]
+        [(StringI64MapProbeAbsent idx)
+          (let
+            [id : i64 intern-pool-count]
+            (begin
+              (array-set! intern-pool-slots id name)
+              (array-set! intern-map-slots idx (StringI64MapOccupied name id hash))
+              (set! intern-pool-count (+ id 1))
+              id))]
+        [(StringI64MapProbeFull) -1]))))
+
+;: Recover the original String for an interned id.
+(define (intern-str [id : i64]) : String
+  (array-ref intern-pool-slots id))
 
 (defenum AstExprList
   (AstExprNil)

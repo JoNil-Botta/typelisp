@@ -399,6 +399,11 @@ assert_active_cli_surface_command() {
             run_cli_capture "$label" "$COMPILER" fmt --check "$CLI_SURFACE_SRC"
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
+            large_label="${label}-large-backend"
+            run_cli_capture "$large_label" "$COMPILER" fmt --check selfhost/compiler_backend.tl --stdlib-root stdlib
+            assert_status "$large_label" "$status" 0
+            assert_empty "$large_label" "$WORKDIR/$large_label.out"
+            assert_empty "$large_label" "$WORKDIR/$large_label.err"
             package_label="${label}-package-check"
             run_cli_capture "$package_label" "$COMPILER" fmt --manifest-path "$CLI_SURFACE_FMTLINT_PKG/typelisp.pkg" --check
             assert_status "$package_label" "$status" 1

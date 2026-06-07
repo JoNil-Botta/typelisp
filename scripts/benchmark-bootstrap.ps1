@@ -95,7 +95,7 @@ function Invoke-AssembleAndLink {
                 "/ENTRY:_tl_start",
                 "/NODEFAULTLIB",
                 "/DYNAMICBASE:NO",
-                "/STACK:16777216",
+                "/STACK:268435456",
                 "kernel32.lib"
             ) `
             (Join-Path $RunDir "link.stdout") `

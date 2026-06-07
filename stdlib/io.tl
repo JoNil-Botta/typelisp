@@ -229,9 +229,6 @@
 ;: Windows CRT errno-location binding used to recover host error codes.
 (extern io-windows-errno-location (:symbol "_errno") : (-> (MutPtr i32)))
 
-;: C library `fflush` binding retained for stdio compatibility.
-(extern io-ffi-fflush (:symbol "fflush") : (-> (Ptr u8) i32))
-
 ;: Windows process exit via kernel32 ExitProcess; never returns. Replaces the
 ;: former backend `exit` CRT-ABI shim (#2142 slice 1).
 (cfg
@@ -1395,13 +1392,12 @@
 (define (stdin-eof?) : bool
   io-stdin-eof-state)
 
-;: Flush stdout.
+;: Flush stdout. The freestanding runtime writes stdout through direct,
+;: unbuffered OS calls (the Linux `write` syscall, Windows `WriteFile`), so there
+;: is no userspace buffer to flush — this is a genuine no-op. (Replaces the former
+;: `fflush` libc shim, which was itself a no-op stub.)
 (define (flush-stdout) : unit
-  (let
-    [status : i32 (io-ffi-fflush (ptr-null : (Ptr u8)))]
-    (if (= status (cast 0 : i32))
-      unit
-      (panic "tl: flush-stdout failed\n"))))
+  unit)
 
 ;: Structured file I/O failures.
 ;:

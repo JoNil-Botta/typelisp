@@ -173,11 +173,17 @@
     (runtime-abort-write "tl: invalid region mark\n")
     (runtime-os-exit 134)))
 
-;; NOTE: strlen / fflush are deliberately NOT moved here. They live in the
-;; backend libc-shim block, which the published stage0 emits UNCONDITIONALLY
-;; (unlike the gated abort handlers), and `strlen` is also called by
-;; backend-emitted asm (tl_setup_argv). A TypeLisp export of `strlen`/`fflush`
-;; therefore collides with the seed's shim during the no-Rust bootstrap. Moving
-;; them needs a publish-first sequence (the new backend must ship as stage0
-;; before the stdlib export lands) — tracked alongside the OOM-abort port
-;; (#2221).
+;: Out-of-memory abort, exported as `tl_oom_abort` (#2221). Reached from the
+;: allocator (`tl_alloc`) when it cannot obtain more memory, so it MUST NOT
+;: allocate: `runtime-abort-write` only takes the address/length of a static
+;: string literal, and `runtime-os-write` passes a NULL `lpNumberOfBytesWritten`
+;: to WriteFile on Windows (no out-param buffer) — both are allocation-free.
+;: Replaces the former hand-written `.L_tl_alloc_abort` asm (and its Windows
+;: `.L_tl_win_write_abort` helper) on both targets.
+(define (tl-runtime-oom-abort)
+  (:export-symbol "tl_oom_abort")
+  :
+  never
+  (begin
+    (runtime-abort-write "tl: allocation failed\n")
+    (runtime-os-exit 134)))

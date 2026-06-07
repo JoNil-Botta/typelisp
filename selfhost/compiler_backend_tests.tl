@@ -1927,11 +1927,18 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (let
-        [kernel-io : bool
+        [kernel-io
+          :
+          bool
+          ;; tl_alloc obtains memory via VirtualAlloc and, on exhaustion,
+          ;; tail-jumps to the `tl_oom_abort` runtime-prelude handler (#2221) —
+          ;; it no longer inlines a kernel32 WriteFile for the OOM message.
           (backend-and4
             (compiler-backend-string-contains? asm ".globl tl_alloc\n")
             (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
-            (compiler-backend-string-contains? asm "    call WriteFile\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_alloc_abort:\n    jmp tl_oom_abort\n")
             (not (compiler-backend-string-contains? asm "    call _write\n")))]
         [no-process-runtime : bool
           (backend-and4
@@ -2014,17 +2021,19 @@
             (compiler-backend-string-contains?
               asm
               "    sub $32, %rsp\n    call tl_region_abort\n"))
+          ;; The out-of-memory abort moved to the `tl_oom_abort` runtime-prelude
+          ;; handler (#2221): the allocator's abort path now tail-jumps to it
+          ;; instead of inlining the kernel32 GetStdHandle/WriteFile/ExitProcess
+          ;; write (the former `.L_tl_win_write_abort` helper is gone).
           (backend-and4
-            (compiler-backend-string-contains? asm "    call GetStdHandle\n")
             (compiler-backend-string-contains?
               asm
-              "    call WriteFile\n    movq $134, %rcx\n    call ExitProcess\n")
-            (compiler-backend-string-contains? asm "    .extern GetStdHandle\n")
-            (and
-              (compiler-backend-string-contains? asm "    .extern WriteFile\n")
-              (compiler-backend-string-contains?
-                asm
-                "    .extern ExitProcess\n")))
+              ".L_tl_alloc_abort:\n    jmp tl_oom_abort\n")
+            (not
+              (compiler-backend-string-contains? asm ".L_tl_win_write_abort"))
+            (not (compiler-backend-string-contains? asm "    call WriteFile\n"))
+            (not
+              (compiler-backend-string-contains? asm "    call GetStdHandle\n")))
           (compiler-backend-string-contains?
             asm
             "    push %r14\n    movq %rcx, %r12\n")
@@ -3338,21 +3347,24 @@
     (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
     (string-length (env-path-separator))))")
 
+;; Environment helpers are no longer emitted as backend asm — `stdlib/env.tl`
+;; implements them in TypeLisp (#2142 follow-up). A program that externs the
+;; legacy `tl_env_var_exists` / `tl_env_var_value` / `_tl_env_path_separator`
+;; symbols therefore sees them as plain undefined externs (`.extern …`), with no
+;; backend-emitted definition and no `getenv`/`strlen` shim calls.
 (define (compiler-backend-env-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-env-runtime-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
+        (not (compiler-backend-string-contains? asm "\ntl_env_var_exists:\n"))
         (and
-          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
+          (not (compiler-backend-string-contains? asm "\ntl_env_var_value:\n"))
           (and
             (compiler-backend-string-contains? asm "tl_alloc:\n")
-            (and
-              (compiler-backend-string-contains? asm "tl_env_path_separator:\n")
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_env_var_value\n"))))))]
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "_tl_env_path_separator:\n")))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-env-runtime-ok?) : bool
@@ -3361,17 +3373,12 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
+        (not (compiler-backend-string-contains? asm "\ntl_env_var_exists:\n"))
         (and
-          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
+          (not (compiler-backend-string-contains? asm "\ntl_env_var_value:\n"))
           (and
-            (compiler-backend-string-contains? asm "    call getenv\n")
-            (and
-              (compiler-backend-string-contains? asm "    call strlen\n")
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_env_var_exists\n"))))))]
+            (not (compiler-backend-string-contains? asm "    call getenv\n"))
+            (not (compiler-backend-string-contains? asm "    call strlen\n")))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-stdlib-env-runtime-source) : String

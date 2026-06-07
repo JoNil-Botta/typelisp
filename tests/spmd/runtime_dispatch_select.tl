@@ -43,7 +43,7 @@
         ([i : i64 0 n])
         (array-set! out i (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
-      (if (= (bit-and acc 255) 247)
+      (if (= (bit-and acc 0xff) 247)
         42
         5))))
 
@@ -59,7 +59,7 @@
         ([i : i64 0 n])
         (array-set! out i (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
-      (if (= (bit-and acc 255) 247)
+      (if (= (bit-and acc 0xff) 247)
         106
         6))))
 
@@ -75,7 +75,7 @@
         ([i : i64 0 n])
         (array-set! out i (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
-      (if (= (bit-and acc 255) 247)
+      (if (= (bit-and acc 0xff) 247)
         170
         7))))
 

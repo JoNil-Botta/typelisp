@@ -1002,7 +1002,7 @@
     [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]))
 
 (define (compiler-backend-avx512-lane-mask [lanes : i64]) : i64
-  (cond [(= lanes 8) 255] [(= lanes 16) 65535] [else 0]))
+  (cond [(= lanes 8) 0xff] [(= lanes 16) 0xffff] [else 0]))
 
 (define (compiler-backend-avx512-mask-label
   [function : String]
@@ -2409,12 +2409,12 @@
             (+
               (+ (* hash 131) (compiler-backend-char-code (string-ref text i)))
               1)]
-          [reduced : i64 (+ (bit-and next 2147483647) (shr next 31))]
+          [reduced : i64 (+ (bit-and next 0x7fffffff) (shr next 31))]
           (begin
             (set!
               hash
-              (if (>= reduced 2147483647)
-                (- reduced 2147483647)
+              (if (>= reduced 0x7fffffff)
+                (- reduced 0x7fffffff)
                 reduced))
             (set! i (- i 1)))))
       hash)))

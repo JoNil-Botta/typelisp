@@ -735,27 +735,27 @@
     [value : i64 bits]
     [offset : i64 0]
     (begin
-      (if (= (bit-and value 65535) 0)
+      (if (= (bit-and value 0xffff) 0)
         (begin
           (set! value (shr value 16))
           (set! offset (+ offset 16)))
         unit)
-      (if (= (bit-and value 255) 0)
+      (if (= (bit-and value 0xff) 0)
         (begin
           (set! value (shr value 8))
           (set! offset (+ offset 8)))
         unit)
-      (if (= (bit-and value 15) 0)
+      (if (= (bit-and value 0xf) 0)
         (begin
           (set! value (shr value 4))
           (set! offset (+ offset 4)))
         unit)
-      (if (= (bit-and value 3) 0)
+      (if (= (bit-and value 0x3) 0)
         (begin
           (set! value (shr value 2))
           (set! offset (+ offset 2)))
         unit)
-      (if (= (bit-and value 1) 0)
+      (if (= (bit-and value 0x1) 0)
         (+ offset 1)
         offset))))
 

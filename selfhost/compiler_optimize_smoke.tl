@@ -17,8 +17,8 @@
 ;; pipeline to a fixed point, and removes dominated repeated scalar expressions
 ;; across blocks, hoists safe scalar loop invariants into preheaders, and
 ;; reduces simple induction-derived loop offsets/addresses, and validates unused
-;; call-graph infrastructure for the next inliner phases; returns 42 only when
-;; every self-test passes.
+;; call-graph/SCC infrastructure for the next inliner phases; returns 42 only
+;; when every self-test passes.
 (import "compiler_optimize.tl")
 
 (define (main) : i64
@@ -40,6 +40,7 @@
     (unless (= (compiler-optimize-ssa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-level-self-test) 42) (return 1))
     (unless (= (compiler-optimize-callgraph-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-scc-self-test) 42) (return 1))
     (unless (= (compiler-optimize-inline-self-test) 42) (return 1))
     (unless (= (compiler-optimize-fixed-point-self-test) 42) (return 1))
     (unless (= (compiler-optimize-tailrec-self-test) 42) (return 1))

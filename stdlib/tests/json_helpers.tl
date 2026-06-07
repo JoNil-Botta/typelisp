@@ -1,5 +1,9 @@
 (import "stdlib/json.tl")
 
+(import "stdlib/str_cat.tl")
+
+(import "stdlib/string.tl")
+
 (import "stdlib/test.tl")
 
 (define (assert-owned-string-eq
@@ -195,8 +199,8 @@
 
 (define (main) : i64
   (begin
-    (assert-owned-string-eq (json-cat3 "a" "b" "c") "abc" "json-cat3")
-    (assert-owned-string-eq (json-cat4 "a" "b" "c" "d") "abcd" "json-cat4")
+    (assert-owned-string-eq (str-cat "a" "b" "c") "abc" "json-cat3")
+    (assert-owned-string-eq (str-cat "a" "b" "c" "d") "abcd" "json-cat4")
     (assert-i64-eq (json-char-code #A') 65 "json-char-code")
     (assert-i64-eq (json-test-char-code-at "AZ" 1) 90 "json-char-code-at")
     (assert-true

@@ -6,10 +6,9 @@
 ;# files that use them.
 ;#
 ;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The expansion
-;# references `str-copy-bytes-into` and the string primitives from
-;# `stdlib/string.tl`, so import that module at the call site too. Lifting that
-;# requirement (naming a fully-qualified path from this package's dependencies)
-;# is tracked by #2223.
+;# references the fixed-arity concat helpers from `stdlib/string.tl`, so import
+;# that module at the call site too. Lifting that requirement (naming a
+;# fully-qualified path from this package's dependencies) is tracked by #2223.
 ;#
 ;# ```typelisp
 ;# (import "stdlib/str_cat.tl")
@@ -20,58 +19,43 @@
 ;# ```
 (module stdlib.str-cat)
 
-;: Concatenate any number of `String` operands into one fresh active-arena
-;: String.
+;: Concatenate any number of `String` operands into a fresh active-arena String.
 ;:
-;: Regardless of arity the expansion allocates the result buffer exactly once
-;: (sized from the total operand length) and copies each operand in with one
-;: linear `str-copy-bytes-into` pass, avoiding the quadratic copy amplification
-;: of a right-nested `string-append` chain. With no operands it expands to `""`.
+;: The macro expands common fixed arities to helper calls, so each helper is
+;: compiled once while preserving a single allocation for two to five operands.
+;: Longer arities are chunked through `string-concat5`. With no operands it
+;: expands to `""`.
 (defmacro
   (str-cat [args : String ...])
   :
   String
   (if (expr-list-empty? args)
     `""
-    `(let
-      [str-cat-parts (array ,@args)]
-      [str-cat-n : i64 ,(expr-int (expr-list-length args))]
-      [str-cat-total : i64 0]
-      [str-cat-i : i64 0]
-      (begin
-        (while (< str-cat-i str-cat-n)
-          (begin
-            (set!
-              str-cat-total
-              (+
-                str-cat-total
-                (string-length (& (array-ref str-cat-parts str-cat-i)))))
-            (set! str-cat-i (+ str-cat-i 1))))
+    (let
+      [a : Expr (expr-list-head args)]
+      [rest1 : ExprList (expr-list-tail args)]
+      (if (expr-list-empty? rest1)
+        a
         (let
-          [str-cat-out : (Array u8) (make-array u8 str-cat-total)]
-          [str-cat-dst : (MutPtr u8)
-            (unsafe
-              (array-data str-cat-out))]
-          [str-cat-off : i64 0]
-          (begin
-            (set! str-cat-i 0)
-            (while (< str-cat-i str-cat-n)
-              (begin
-                (str-copy-bytes-into
-                  (unsafe
-                    (string-data (& (array-ref str-cat-parts str-cat-i))))
-                  str-cat-dst
-                  str-cat-off
-                  (string-length (& (array-ref str-cat-parts str-cat-i))))
-                (set!
-                  str-cat-off
-                  (+
-                    str-cat-off
-                    (string-length (& (array-ref str-cat-parts str-cat-i)))))
-                (set! str-cat-i (+ str-cat-i 1))))
-            (unsafe
-              (string-from-bytes
-                (ptr-cast str-cat-dst : (Ptr u8))
-                str-cat-total))))))))
+          [b : Expr (expr-list-head rest1)]
+          [rest2 : ExprList (expr-list-tail rest1)]
+          (if (expr-list-empty? rest2)
+            `(string-append ,a ,b)
+            (let
+              [c : Expr (expr-list-head rest2)]
+              [rest3 : ExprList (expr-list-tail rest2)]
+              (if (expr-list-empty? rest3)
+                `(string-concat3 ,a ,b ,c)
+                (let
+                  [d : Expr (expr-list-head rest3)]
+                  [rest4 : ExprList (expr-list-tail rest3)]
+                  (if (expr-list-empty? rest4)
+                    `(string-concat4 ,a ,b ,c ,d)
+                    (let
+                      [e : Expr (expr-list-head rest4)]
+                      [rest5 : ExprList (expr-list-tail rest4)]
+                      (if (expr-list-empty? rest5)
+                        `(string-concat5 ,a ,b ,c ,d ,e)
+                        `(string-concat5 ,a ,b ,c ,d (str-cat ,e ,@rest5))))))))))))))
 
 (export (macro str-cat))

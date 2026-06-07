@@ -486,6 +486,7 @@ verify_compiler_driver_stdlib_json() {
     mkdir -p "$_dir/stdlib"
     cp stdlib/json.tl "$_dir/stdlib/json.tl"
     cp stdlib/io.tl "$_dir/stdlib/io.tl"
+    cp stdlib/str_cat.tl "$_dir/stdlib/str_cat.tl"
     cp stdlib/string.tl "$_dir/stdlib/string.tl"
     cp stdlib/text_buf.tl "$_dir/stdlib/text_buf.tl"
     _src="$_dir/input.tl"

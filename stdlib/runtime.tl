@@ -143,6 +143,24 @@
     (runtime-abort-write message)
     (runtime-os-exit 134)))
 
+;: Fill `len` pointer-sized array slots with `value`.
+(define (tl-runtime-array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
+  (:export-symbol "tl_array_fill8")
+  :
+  unit
+  (let
+    [slots : (MutPtr u64)
+      (unsafe
+        (ptr-cast buf : (MutPtr u64)))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset slots i) value))
+          (set! i (+ i 1))))
+      unit)))
+
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
 ;: Reached from the allocator's region-reset validation (not the out-of-memory
 ;: path), so the allocating write is safe here.

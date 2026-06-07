@@ -12577,6 +12577,34 @@
                   body-label
                   exit-label)])])])))
 
+(define (lower-make-array-fill8
+  [state : LowerState]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [init-value : CompilerIrValue]) : ResultLowerState
+  (match (lower-runtime-call-values
+    state
+    "tl_array_fill8"
+    (compiler-ir-value-cons
+      buf-value
+      (compiler-ir-value-cons
+        len-i64
+        (compiler-ir-value-cons init-value IrValueNil)))
+    (AstTyUnit))
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr done-state _ _) (OkLowerState done-state)])]
+    [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-make-array-fill8-supported? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (and
+      (= (lower-type-size ctx resolved) 8)
+      (and
+        (not (tc-type-eq resolved (AstTyF64)))
+        (lower-init-default-share-safe? ctx resolved)))))
+
 (define (lower-make-array-init-loop-nonzero
   [ctx : TcContext]
   [state : LowerState]
@@ -12594,13 +12622,15 @@
         [(OkLowerExpr lowered-init)
           (match lowered-init
             [(LowerExpr init-state init-value _)
-              (lower-make-array-store-init-loop-runtime
-                init-state
-                buf-value
-                len-i64
-                elem-ty
-                elem-size
-                init-value)])]
+              (if (lower-make-array-fill8-supported? ctx elem-ty)
+                (lower-make-array-fill8 init-state buf-value len-i64 init-value)
+                (lower-make-array-store-init-loop-runtime
+                  init-state
+                  buf-value
+                  len-i64
+                  elem-ty
+                  elem-size
+                  init-value))])]
         [(ErrLowerExpr message) (ErrLowerState message)])
       (lower-make-array-init-loop-runtime
         ctx
@@ -23262,8 +23292,12 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (>= (lower-test-function-store-ptr-count functions "main") 3)
-            (>= (lower-test-function-branch-count functions "main") 3))])]
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_fill8")
+              1)
+            (and
+              (>= (lower-test-function-store-ptr-count functions "main") 2)
+              (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool

@@ -2146,7 +2146,9 @@
 (define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
   (or
     (string-eq name "tl_oob_abort")
-    (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort"))))
+    (or
+      (string-eq name "tl_div_abort")
+      (or (string-eq name "tl_shift_abort") (string-eq name "tl_array_fill8")))))
 
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
@@ -5516,6 +5518,10 @@
   (cond
     [(string-eq name "tl_print_char") (ast-type-cons (AstTyChar) AstTypeNil)]
     [(string-eq name "tl_print_f64") (ast-type-cons (AstTyF64) AstTypeNil)]
+    [(string-eq name "tl_array_fill8")
+      (ast-type-cons
+        (ast-ty-mut-ptr (AstTyU8))
+        (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))]
     [else AstTypeNil]))
 
 (define (compiler-backend-call-param-types

@@ -72,6 +72,18 @@
   (OkAstStructCleanup AstStructCleanup)
   (ErrAstStructCleanup String))
 
+(defenum ResultAstEnumCleanup
+  (OkAstEnumCleanup AstEnumCleanup)
+  (ErrAstEnumCleanup String))
+
+(defenum ResultAstVariantPayloadCleanup
+  (OkAstVariantPayloadCleanup AstVariantPayloadCleanup)
+  (ErrAstVariantPayloadCleanup String))
+
+(defenum ResultAstVariantPayloadParts
+  (OkAstVariantPayloadParts AstTypeList AstVariantPayloadCleanupList)
+  (ErrAstVariantPayloadParts String))
+
 (defenum ResultAstStructDefParts
   (OkAstStructDefParts
     AstLifetimeList
@@ -81,7 +93,7 @@
   (ErrAstStructDefParts String))
 
 (defenum ResultAstEnumDefParts
-  (OkAstEnumDefParts AstLifetimeList AstVariantDefList)
+  (OkAstEnumDefParts AstLifetimeList AstEnumCleanup AstVariantDefList)
   (ErrAstEnumDefParts String))
 
 (defenum ResultAstExternAbi
@@ -1611,6 +1623,50 @@
         [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
     [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")]))
 
+(define (parse-ast-variant-payload-cleanup [s : Sexpr]) : ResultAstVariantPayloadCleanup
+  (match s
+    [(SCons key-node tail)
+      (match (box-get key-node)
+        [(SSym key)
+          (cond
+            [(string-eq key ":cleanup")
+              (match (box-get tail)
+                [(SCons cleanup-node end)
+                  (match (box-get end)
+                    [(SNil)
+                      (match (box-get cleanup-node)
+                        [(SSym cleanup-fn)
+                          (OkAstVariantPayloadCleanup
+                            (AstVariantPayloadCleanupFn cleanup-fn))]
+                        [_
+                          (ErrAstVariantPayloadCleanup
+                            "parse: malformed enum payload :cleanup metadata")])]
+                    [_
+                      (ErrAstVariantPayloadCleanup
+                        "parse: malformed enum payload :cleanup metadata")])]
+                [_
+                  (ErrAstVariantPayloadCleanup
+                    "parse: malformed enum payload :cleanup metadata")])]
+            [(string-eq key ":owned")
+              (match (box-get tail)
+                [(SNil)
+                  (OkAstVariantPayloadCleanup (AstVariantPayloadOwnedCleanup))]
+                [_
+                  (ErrAstVariantPayloadCleanup
+                    "parse: malformed enum payload :owned metadata")])]
+            [(compiler-parse-metadata-key? key)
+              (ErrAstVariantPayloadCleanup
+                (string-append "parse: unknown enum payload metadata " key))]
+            [else
+              (ErrAstVariantPayloadCleanup
+                "parse: malformed enum payload cleanup metadata")])]
+        [_
+          (ErrAstVariantPayloadCleanup
+            "parse: malformed enum payload cleanup metadata")])]
+    [_
+      (ErrAstVariantPayloadCleanup
+        "parse: malformed enum payload cleanup metadata")]))
+
 (define (parse-ast-field-def
   [dispatch : SymI64Env]
   [s : Sexpr]
@@ -1709,6 +1765,17 @@
                 "parse: malformed defstruct :cleanup metadata")])]
         [_ (ErrAstStructCleanup "parse: malformed defstruct :cleanup metadata")])]
     [_ (ErrAstStructCleanup "parse: malformed defstruct :cleanup metadata")]))
+
+(define (parse-ast-defenum-cleanup-tail [tail : Sexpr]) : ResultAstEnumCleanup
+  (match tail
+    [(SCons cleanup-node end)
+      (match (box-get end)
+        [(SNil)
+          (match (box-get cleanup-node)
+            [(SSym cleanup-fn) (OkAstEnumCleanup (AstEnumCleanupFn cleanup-fn))]
+            [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")])]
+        [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")])]
+    [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")]))
 
 (define (parse-ast-defstruct-field-item
   [dispatch : SymI64Env]
@@ -1897,33 +1964,117 @@
         [_ (compiler-parse-type-list-has-metadata? (box-get rest))])]
     [_ false]))
 
-(define (parse-ast-variant-def [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDef
+(define (compiler-parse-metadata-sexpr? [s : Sexpr]) : bool
+  (match s
+    [(SCons key-node _)
+      (match (box-get key-node)
+        [(SSym key) (compiler-parse-metadata-key? key)]
+        [_ false])]
+    [_ false]))
+
+(define (parse-ast-variant-payload-parts
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [allow-cleanup : bool]) : ResultAstVariantPayloadParts
+  (match s
+    [(SNil) (OkAstVariantPayloadParts AstTypeNil AstVariantPayloadCleanupNil)]
+    [(SCons ty-node rest)
+      (let
+        [ty-form : Sexpr (box-get ty-node)]
+        [rest-form : Sexpr (box-get rest)]
+        (if (compiler-parse-metadata-sexpr? ty-form)
+          (ErrAstVariantPayloadParts
+            "parse: enum payload cleanup metadata must follow a payload type")
+          (match (parse-ast-type dispatch ty-form)
+            [(OkAstType parsed-ty)
+              (match rest-form
+                [(SNil)
+                  (OkAstVariantPayloadParts
+                    (ast-type-cons parsed-ty AstTypeNil)
+                    (ast-variant-payload-cleanup-cons
+                      (AstVariantPayloadNoCleanup)
+                      AstVariantPayloadCleanupNil))]
+                [(SCons cleanup-node after-cleanup)
+                  (let
+                    [cleanup-form : Sexpr (box-get cleanup-node)]
+                    (if (compiler-parse-metadata-sexpr? cleanup-form)
+                      (if allow-cleanup
+                        (match (parse-ast-variant-payload-cleanup cleanup-form)
+                          [(OkAstVariantPayloadCleanup parsed-cleanup)
+                            (match (parse-ast-variant-payload-parts
+                              dispatch
+                              (box-get after-cleanup)
+                              allow-cleanup)
+                              [(OkAstVariantPayloadParts
+                                  parsed-rest
+                                  cleanup-rest)
+                                (OkAstVariantPayloadParts
+                                  (ast-type-cons parsed-ty parsed-rest)
+                                  (ast-variant-payload-cleanup-cons
+                                    parsed-cleanup
+                                    cleanup-rest))]
+                              [(ErrAstVariantPayloadParts message)
+                                (ErrAstVariantPayloadParts message)])]
+                          [(ErrAstVariantPayloadCleanup message)
+                            (ErrAstVariantPayloadParts message)])
+                        (ErrAstVariantPayloadParts
+                          "parse: enum payload cleanup metadata requires enum :cleanup metadata"))
+                      (match (parse-ast-variant-payload-parts
+                        dispatch
+                        rest-form
+                        allow-cleanup)
+                        [(OkAstVariantPayloadParts parsed-rest cleanup-rest)
+                          (OkAstVariantPayloadParts
+                            (ast-type-cons parsed-ty parsed-rest)
+                            (ast-variant-payload-cleanup-cons
+                              (AstVariantPayloadNoCleanup)
+                              cleanup-rest))]
+                        [(ErrAstVariantPayloadParts message)
+                          (ErrAstVariantPayloadParts message)])))]
+                [_
+                  (ErrAstVariantPayloadParts
+                    "parse: malformed enum payload list")])]
+            [(ErrAstType message) (ErrAstVariantPayloadParts message)])))]
+    [_ (ErrAstVariantPayloadParts "parse: malformed enum payload list")]))
+
+(define (parse-ast-variant-def
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [allow-cleanup : bool]) : ResultAstVariantDef
   (match s
     [(SCons name-node fields)
       (match (box-get name-node)
         [(SSym name)
           (if (compiler-parse-metadata-key? name)
             (if (string-eq name ":cleanup")
-              (ErrAstVariantDef "parse: defenum cleanup metadata is reserved")
+              (ErrAstVariantDef
+                "parse: defenum metadata must appear before variants")
               (ErrAstVariantDef
                 (string-append "parse: unknown defenum metadata " name)))
-            (if (compiler-parse-type-list-has-metadata? (box-get fields))
-              (ErrAstVariantDef
-                "parse: enum payload cleanup metadata is reserved")
-              (match (parse-ast-type-list dispatch (box-get fields))
-                [(OkAstTypeList parsed-fields)
-                  (OkAstVariantDef (AstVariantDef name parsed-fields))]
-                [(ErrAstTypeList message) (ErrAstVariantDef message)])))]
+            (match (parse-ast-variant-payload-parts
+              dispatch
+              (box-get fields)
+              allow-cleanup)
+              [(OkAstVariantPayloadParts parsed-fields parsed-cleanups)
+                (OkAstVariantDef
+                  (AstVariantDef name parsed-fields parsed-cleanups))]
+              [(ErrAstVariantPayloadParts message) (ErrAstVariantDef message)]))]
         [_ (ErrAstVariantDef "parse: malformed variant definition")])]
     [_ (ErrAstVariantDef "parse: malformed variant definition")]))
 
-(define (parse-ast-variant-def-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDefList
+(define (parse-ast-variant-def-list
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [allow-cleanup : bool]) : ResultAstVariantDefList
   (match s
     [(SNil) (OkAstVariantDefList AstVariantDefNil)]
     [(SCons head tail)
-      (match (parse-ast-variant-def dispatch (box-get head))
+      (match (parse-ast-variant-def dispatch (box-get head) allow-cleanup)
         [(OkAstVariantDef parsed-head)
-          (match (parse-ast-variant-def-list dispatch (box-get tail))
+          (match (parse-ast-variant-def-list
+            dispatch
+            (box-get tail)
+            allow-cleanup)
             [(OkAstVariantDefList parsed-tail)
               (OkAstVariantDefList
                 (ast-variant-def-cons parsed-head parsed-tail))]
@@ -1985,18 +2136,26 @@
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
   [lifetimes : AstLifetimeList]
-  [seen-lifetimes : bool]) : ResultAstEnumDefParts
-  (match (parse-ast-variant-def dispatch (spanned-sexpr-form head))
+  [cleanup : AstEnumCleanup]
+  [seen-lifetimes : bool]
+  [seen-cleanup : bool]) : ResultAstEnumDefParts
+  (match (parse-ast-variant-def
+    dispatch
+    (spanned-sexpr-form head)
+    (ast-enum-cleanup? cleanup))
     [(OkAstVariantDef parsed-variant)
       (match (parse-ast-defenum-items
         dispatch
         tail
         lifetimes
+        cleanup
         seen-lifetimes
+        seen-cleanup
         true)
-        [(OkAstEnumDefParts parsed-lifetimes parsed-rest)
+        [(OkAstEnumDefParts parsed-lifetimes parsed-cleanup parsed-rest)
           (OkAstEnumDefParts
             parsed-lifetimes
+            parsed-cleanup
             (ast-variant-def-cons parsed-variant parsed-rest))]
         [(ErrAstEnumDefParts message) (ErrAstEnumDefParts message)])]
     [(ErrAstVariantDef message) (ErrAstEnumDefParts message)]))
@@ -2005,10 +2164,12 @@
   [dispatch : SymI64Env]
   [items : SpannedSexpr]
   [lifetimes : AstLifetimeList]
+  [cleanup : AstEnumCleanup]
   [seen-lifetimes : bool]
+  [seen-cleanup : bool]
   [seen-variant : bool]) : ResultAstEnumDefParts
   (match items
-    [(SpSNil _) (OkAstEnumDefParts lifetimes AstVariantDefNil)]
+    [(SpSNil _) (OkAstEnumDefParts lifetimes cleanup AstVariantDefNil)]
     [(SpSCons head tail _)
       (match (spanned-sexpr-form (box-get head))
         [(SCons key-node after-key)
@@ -2021,44 +2182,65 @@
                     (box-get head)
                     (box-get tail)
                     lifetimes
-                    seen-lifetimes)]
-                [(not (string-eq key ":lifetimes"))
-                  (if (string-eq key ":cleanup")
-                    (ErrAstEnumDefParts
-                      "parse: defenum cleanup metadata is reserved")
-                    (ErrAstEnumDefParts
-                      (string-append "parse: unknown defenum metadata " key)))]
+                    cleanup
+                    seen-lifetimes
+                    seen-cleanup)]
                 [seen-variant
                   (ErrAstEnumDefParts
                     "parse: defenum metadata must appear before variants")]
-                [seen-lifetimes
-                  (ErrAstEnumDefParts
-                    "parse: duplicate defenum :lifetimes metadata")]
+                [(string-eq key ":lifetimes")
+                  (if seen-lifetimes
+                    (ErrAstEnumDefParts
+                      "parse: duplicate defenum :lifetimes metadata")
+                    (match (parse-ast-aggregate-lifetimes-tail
+                      (box-get after-key))
+                      [(OkAstLifetimeList next-lifetimes)
+                        (parse-ast-defenum-items
+                          dispatch
+                          (box-get tail)
+                          next-lifetimes
+                          cleanup
+                          true
+                          seen-cleanup
+                          false)]
+                      [(ErrAstLifetimeList message)
+                        (ErrAstEnumDefParts message)]))]
+                [(string-eq key ":cleanup")
+                  (if seen-cleanup
+                    (ErrAstEnumDefParts
+                      "parse: duplicate defenum :cleanup metadata")
+                    (match (parse-ast-defenum-cleanup-tail (box-get after-key))
+                      [(OkAstEnumCleanup next-cleanup)
+                        (parse-ast-defenum-items
+                          dispatch
+                          (box-get tail)
+                          lifetimes
+                          next-cleanup
+                          seen-lifetimes
+                          true
+                          false)]
+                      [(ErrAstEnumCleanup message) (ErrAstEnumDefParts message)]))]
                 [else
-                  (match (parse-ast-aggregate-lifetimes-tail
-                    (box-get after-key))
-                    [(OkAstLifetimeList next-lifetimes)
-                      (parse-ast-defenum-items
-                        dispatch
-                        (box-get tail)
-                        next-lifetimes
-                        true
-                        false)]
-                    [(ErrAstLifetimeList message) (ErrAstEnumDefParts message)])])]
+                  (ErrAstEnumDefParts
+                    (string-append "parse: unknown defenum metadata " key))])]
             [_
               (parse-ast-defenum-variant-item
                 dispatch
                 (box-get head)
                 (box-get tail)
                 lifetimes
-                seen-lifetimes)])]
+                cleanup
+                seen-lifetimes
+                seen-cleanup)])]
         [_
           (parse-ast-defenum-variant-item
             dispatch
             (box-get head)
             (box-get tail)
             lifetimes
-            seen-lifetimes)])]
+            cleanup
+            seen-lifetimes
+            seen-cleanup)])]
     [_ (ErrAstEnumDefParts "parse: malformed variant list")]))
 
 (define (parse-ast-pattern-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstPatternList
@@ -4190,19 +4372,25 @@
             dispatch
             (box-get variants)
             AstLifetimeNil
+            (AstEnumNoCleanup)
+            false
             false
             false)
-            [(OkAstEnumDefParts lifetimes parsed-variants)
+            [(OkAstEnumDefParts lifetimes cleanup parsed-variants)
               (match parsed-variants
                 [(AstVariantDefNil)
                   (ErrAstDecl "parse: defenum needs at least one variant")]
                 [_
                   (match lifetimes
                     [(AstLifetimeNil)
-                      (OkAstDecl (AstDeclDefEnum name parsed-variants))]
+                      (OkAstDecl (AstDeclDefEnum name cleanup parsed-variants))]
                     [_
                       (OkAstDecl
-                        (AstDeclDefEnumLifetimes name lifetimes parsed-variants))])])]
+                        (AstDeclDefEnumLifetimes
+                          name
+                          lifetimes
+                          cleanup
+                          parsed-variants))])])]
             [(ErrAstEnumDefParts message) (ErrAstDecl message)])]
         [_ (ErrAstDecl "parse: malformed defenum")])]
     [_ (ErrAstDecl "parse: malformed defenum")]))
@@ -4655,8 +4843,8 @@
   (match decl
     [(AstDeclDef name _ _) (OkAstDeclName name)]
     [(AstDeclDefFn name _ _ _ _) (OkAstDeclName name)]
-    [(AstDeclDefEnum name _) (OkAstDeclName name)]
-    [(AstDeclDefEnumLifetimes name _ _) (OkAstDeclName name)]
+    [(AstDeclDefEnum name _ _) (OkAstDeclName name)]
+    [(AstDeclDefEnumLifetimes name _ _ _) (OkAstDeclName name)]
     [(AstDeclDefStruct name _ _ _) (OkAstDeclName name)]
     [(AstDeclDefStructLifetimes name _ _ _ _) (OkAstDeclName name)]
     [_
@@ -6182,7 +6370,7 @@
         (and
           (compiler-parse-no-generated-meta-ok? meta)
           (match template
-            [(AstDeclDefEnum name _) (string-eq name "Maybe")]
+            [(AstDeclDefEnum name _ _) (string-eq name "Maybe")]
             [_ false])))]
     [_ false]))
 
@@ -6300,7 +6488,7 @@
           "BundleChoice"
           2)
         (match (box-get template-box)
-          [(AstDeclDefEnum name _) (string-eq name "BundleChoice")]
+          [(AstDeclDefEnum name _ _) (string-eq name "BundleChoice")]
           [_ false]))]
     [_ false]))
 
@@ -6424,6 +6612,37 @@
               (compiler-parse-field-cleanup-score cleanup)
               (compiler-parse-field-cleanup-list-score rest))]))]))
 
+(define (compiler-parse-variant-payload-cleanup-score
+  [cleanup : AstVariantPayloadCleanup]) : i64
+  (match cleanup
+    [(AstVariantPayloadNoCleanup) 0]
+    [(AstVariantPayloadCleanupFn _) 10]
+    [(AstVariantPayloadOwnedCleanup) 100]))
+
+(define (compiler-parse-variant-payload-cleanup-list-score
+  [cleanups : AstVariantPayloadCleanupList]) : i64
+  (match cleanups
+    [(AstVariantPayloadCleanupNil) 0]
+    [(AstVariantPayloadCleanupCons cleanup rest)
+      (let
+        [rest : AstVariantPayloadCleanupList (box-get rest)]
+        (+
+          (compiler-parse-variant-payload-cleanup-score cleanup)
+          (compiler-parse-variant-payload-cleanup-list-score rest)))]))
+
+(define (compiler-parse-variant-list-cleanup-score
+  [variants : AstVariantDefList]) : i64
+  (match variants
+    [(AstVariantDefNil) 0]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ _ cleanups)
+            (+
+              (compiler-parse-variant-payload-cleanup-list-score cleanups)
+              (compiler-parse-variant-list-cleanup-score rest))]))]))
+
 (define (compiler-parse-struct-cleanup-source) : String
   "(defstruct Resource
   (:cleanup close-resource)
@@ -6458,6 +6677,36 @@
                           (=
                             (compiler-parse-field-cleanup-list-score fields)
                             110)))))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-enum-cleanup-source) : String
+  "(defenum Resource
+  (:cleanup close-resource)
+  (File i64 (:cleanup close-fd) Child (:owned) i64))")
+
+(define (compiler-parse-enum-cleanup-ok?) : bool
+  (match (parse-ast-source (compiler-parse-enum-cleanup-source))
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons (AstDeclDefEnum name cleanup variants) rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq name "Resource")
+                    (and
+                      (match cleanup
+                        [(AstEnumCleanupFn cleanup-name)
+                          (string-eq cleanup-name "close-resource")]
+                        [_ false])
+                      (=
+                        (compiler-parse-variant-list-cleanup-score variants)
+                        110)))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6499,7 +6748,9 @@
 (define (compiler-parse-cleanup-metadata-ok?) : bool
   (and
     (compiler-parse-struct-cleanup-ok?)
-    (compiler-parse-comptime-struct-cleanup-ok?)))
+    (and
+      (compiler-parse-enum-cleanup-ok?)
+      (compiler-parse-comptime-struct-cleanup-ok?))))
 
 (define (compiler-parse-repr-c-source) : String
   "(defstruct Stat
@@ -6732,11 +6983,19 @@
                   "parse: duplicate field cleanup metadata")
                 (and
                   (compiler-parse-error-ok?
-                    "(defenum Bad (:cleanup close) (A))"
-                    "parse: defenum cleanup metadata is reserved")
-                  (compiler-parse-error-ok?
-                    "(defenum Bad (A i64 (:cleanup close)))"
-                    "parse: enum payload cleanup metadata is reserved"))))))))))
+                    "(defenum Bad (:cleanup close) (:cleanup close2) (A))"
+                    "parse: duplicate defenum :cleanup metadata")
+                  (and
+                    (compiler-parse-error-ok?
+                      "(defenum Bad (:cleanup) (A))"
+                      "parse: malformed defenum :cleanup metadata")
+                    (and
+                      (compiler-parse-error-ok?
+                        "(defenum Bad (A) (:cleanup close))"
+                        "parse: defenum metadata must appear before variants")
+                      (compiler-parse-error-ok?
+                        "(defenum Bad (A i64 (:cleanup close)))"
+                        "parse: enum payload cleanup metadata requires enum :cleanup metadata"))))))))))))
 
 (define (compiler-parse-comptime-decl-error-tests-ok?) : bool
   (and

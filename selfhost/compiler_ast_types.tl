@@ -163,8 +163,23 @@
   (AstStructNoCleanup)
   (AstStructCleanupFn String))
 
+(defenum AstEnumCleanup
+  (AstEnumNoCleanup)
+  (AstEnumCleanupFn String))
+
+(defenum AstVariantPayloadCleanup
+  (AstVariantPayloadNoCleanup)
+  (AstVariantPayloadCleanupFn String)
+  (AstVariantPayloadOwnedCleanup))
+
+(defenum AstVariantPayloadCleanupList
+  (AstVariantPayloadCleanupNil)
+  (AstVariantPayloadCleanupCons
+    AstVariantPayloadCleanup
+    (Box AstVariantPayloadCleanupList)))
+
 (defenum AstVariantDef
-  (AstVariantDef String AstTypeList))
+  (AstVariantDef String AstTypeList AstVariantPayloadCleanupList))
 
 (defenum AstVariantDefList
   (AstVariantDefNil)
@@ -351,8 +366,12 @@
   (AstDeclDefFn String AstParamList AstType (Box AstExpr) AstFnExport)
   (AstDeclDefMacro String AstMacroParamList AstType (Box AstExpr))
   (AstDeclExtern String AstExternMetadata AstType)
-  (AstDeclDefEnum String AstVariantDefList)
-  (AstDeclDefEnumLifetimes String AstLifetimeList AstVariantDefList)
+  (AstDeclDefEnum String AstEnumCleanup AstVariantDefList)
+  (AstDeclDefEnumLifetimes
+    String
+    AstLifetimeList
+    AstEnumCleanup
+    AstVariantDefList)
   (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
   (AstDeclDefStructLifetimes
     String
@@ -432,6 +451,11 @@
 
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
   (AstVariantDefCons head (box rest)))
+
+(define (ast-variant-payload-cleanup-cons
+  [head : AstVariantPayloadCleanup]
+  [rest : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
+  (AstVariantPayloadCleanupCons head (box rest)))
 
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
   (AstPatternCons (box head) (box rest)))
@@ -820,7 +844,7 @@
     [(AstDeclDefFn _ _ _ _ _) 2]
     [(AstDeclDefMacro _ _ _ _) 10]
     [(AstDeclExtern _ _ _) 3]
-    [(AstDeclDefEnum _ _) 4]
+    [(AstDeclDefEnum _ _ _) 4]
     [(AstDeclDefStruct _ _ _ _) 5]
     [(AstDeclImport _) 6]
     [(AstDeclTest _ _ _) 7]
@@ -829,7 +853,7 @@
     [(AstDeclExport _) 11]
     [(AstDeclIncludeStr _ _) 12]
     [(AstDeclUnsafe _) 13]
-    [(AstDeclDefEnumLifetimes _ _ _) 14]
+    [(AstDeclDefEnumLifetimes _ _ _ _) 14]
     [(AstDeclDefStructLifetimes _ _ _ _ _) 15]
     [(AstDeclDefDispatch _ _) 16]))
 
@@ -938,11 +962,22 @@
     [(AstStructCleanupFn _) true]
     [(AstStructNoCleanup) false]))
 
+(define (ast-enum-cleanup? [cleanup : AstEnumCleanup]) : bool
+  (match cleanup
+    [(AstEnumCleanupFn _) true]
+    [(AstEnumNoCleanup) false]))
+
 (define (ast-field-cleanup? [cleanup : AstFieldCleanup]) : bool
   (match cleanup
     [(AstFieldCleanupFn _) true]
     [(AstFieldOwnedCleanup) true]
     [(AstFieldNoCleanup) false]))
+
+(define (ast-variant-payload-cleanup? [cleanup : AstVariantPayloadCleanup]) : bool
+  (match cleanup
+    [(AstVariantPayloadCleanupFn _) true]
+    [(AstVariantPayloadOwnedCleanup) true]
+    [(AstVariantPayloadNoCleanup) false]))
 
 (define (compiler-ast-begin-expr? [expr : AstExpr]) : bool
   (match expr

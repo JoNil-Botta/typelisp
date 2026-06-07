@@ -32,6 +32,16 @@ manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsa
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
 spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
+spmd_masked_if_supported_deferred|check-fail|tests/safety/spmd_masked_if_supported_deferred.tl|-|SPMD masked if is recognized but lowering is not implemented
+spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
+spmd_masked_if_match_reject|check-fail|tests/safety/spmd_masked_if_match_reject.tl|-|SPMD masked if does not support varying match
+spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls
+spmd_masked_if_gather_index_reject|check-fail|tests/safety/spmd_masked_if_gather_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_masked_if_nested_foreach_reject|check-fail|tests/safety/spmd_masked_if_nested_foreach_reject.tl|-|SPMD masked if does not support nested foreach
+spmd_masked_if_nested_reduce_reject|check-fail|tests/safety/spmd_masked_if_nested_reduce_reject.tl|-|SPMD masked if does not support nested spmd-reduce
+spmd_masked_if_side_effect_reject|check-fail|tests/safety/spmd_masked_if_side_effect_reject.tl|-|SPMD masked if does not support side effects other than contiguous array writes
+spmd_masked_if_lane_type_reject|check-fail|tests/safety/spmd_masked_if_lane_type_reject.tl|-|SPMD masked if lane type is not supported: String
+spmd_masked_if_allocation_reject|check-fail|tests/safety/spmd_masked_if_allocation_reject.tl|-|SPMD masked if does not support allocations that can escape masked branches
 invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only

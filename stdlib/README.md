@@ -26,11 +26,15 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `io.tl` while the compatibility wrapper keeps the owned `String` API.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
-  target-cfg-derived `env-path-separator` wrappers. Environment names are
-  marshalled through a local C-string helper before calling the C `getenv` and
-  `strlen` FFI boundary; the local helper is kept here because the compiler
-  loader imports `env.tl` while stdlib roots are still being discovered. Import
-  it with `(import "stdlib/env.tl")`.
+  target-cfg-derived `env-path-separator` wrappers. Lookups are implemented
+  entirely in TypeLisp (#2142 follow-up): the Linux side walks the SysV
+  stack-captured environment through the `program-argv`/`program-argc` builtins
+  (`envp = &argv[argc+1]`), and the Windows side scans the
+  `GetEnvironmentStringsA` block (case-insensitively) via a direct kernel32
+  binding, replacing the former backend `getenv`/`strlen` libc shims. The module
+  depends on no other stdlib module because the compiler loader imports `env.tl`
+  while stdlib roots are still being discovered. Import it with
+  `(import "stdlib/env.tl")`.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
   wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
   `cpu-runs-avx512f?` report an ISA as runnable only
@@ -184,9 +188,10 @@ names so runtime-plan additions must be assigned an owner first.
 - **Compatibility alias:** legacy public spellings that remain only so existing
   extern callers link: `tl_print_err`, `tl_print_str`, `tl_print_string`,
   `tl_print_char`, `tl_print_f64`, `.L_tl_arg_count`, `tl_arg_count`,
-  `.L_tl_arg`, `tl_arg`, `tl_env_var_exists`, `tl_env_var_value`,
-  `env-path-separator`. Normal source builds should import `stdlib/env.tl`
-  instead; these env symbols are retained for explicit legacy extern callers.
+  `.L_tl_arg`, `tl_arg`. The former backend-emitted `tl_env_var_exists` /
+  `tl_env_var_value` / `_tl_env_path_separator` env helpers were removed once
+  `stdlib/env.tl` implemented environment lookup in TypeLisp (#2142 follow-up);
+  source builds use the `env.tl` wrappers directly.
 - **Deprecated/delete candidate:** no current runtime-plan symbols are in this
   category. Add symbols here only with a linked removal owner.
 

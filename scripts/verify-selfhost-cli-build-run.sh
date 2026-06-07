@@ -278,14 +278,20 @@ prepare_cli_surface_files() {
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
 (import "stdlib/io.tl")
 
-(extern fixture-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
+(define (fixture-cstr-len [p : (Ptr u8)]) : i64
+  (let
+    [n : i64 0]
+    (begin
+      (while (not (= (unsafe (ptr-read (ptr-offset p n))) (cast 0 : u8)))
+        (set! n (+ n 1)))
+      n)))
 (define (fixture-stdout-write [text : String]) : unit
   (stdout-write (& text)))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
     [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
-    (unsafe (string-from-bytes raw (fixture-strlen raw)))))
+    (unsafe (string-from-bytes raw (fixture-cstr-len raw)))))
 (define (main) : i64
   (begin
     (fixture-stdout-write (fixture-arg 1))
@@ -1435,14 +1441,20 @@ RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'
 (import "stdlib/io.tl")
 
-(extern fixture-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
+(define (fixture-cstr-len [p : (Ptr u8)]) : i64
+  (let
+    [n : i64 0]
+    (begin
+      (while (not (= (unsafe (ptr-read (ptr-offset p n))) (cast 0 : u8)))
+        (set! n (+ n 1)))
+      n)))
 (define (fixture-stdout-write [text : String]) : unit
   (stdout-write (& text)))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
     [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
-    (unsafe (string-from-bytes raw (fixture-strlen raw)))))
+    (unsafe (string-from-bytes raw (fixture-cstr-len raw)))))
 (define (main) : i64
   (begin
     (fixture-stdout-write (fixture-arg 1))

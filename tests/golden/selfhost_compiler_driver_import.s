@@ -27,6 +27,12 @@ _tl_shared_u2etl_colon_colonshared:
 .L_tl_str_l24_1300740986_1050262163:
     .quad .L_tl_str_data_l24_1300740986_1050262163
     .quad 24
+.L_tl_str_data_l22_1063972566_1775948496:
+    .string "tl: allocation failed\n"
+    .balign 8
+.L_tl_str_l22_1063972566_1775948496:
+    .quad .L_tl_str_data_l22_1063972566_1775948496
+    .quad 22
 
     .globl tl_current_arena
     .section .bss
@@ -210,12 +216,27 @@ tl_region_abort:
     call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
     movq %rax, -32(%rbp)
 
+.globl tl_oom_abort
+tl_oom_abort:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $32, %rsp
+.Lf9_entry:
+    leaq .L_tl_str_l22_1063972566_1775948496(%rip), %rax
+    movq %rax, -8(%rbp)
+    movq -8(%rbp), %rdi
+    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    movq %rax, -16(%rbp)
+    movq $134, %rdi
+    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    movq %rax, -32(%rbp)
+
 .globl _tl_helper_u2etl_colon_colonhelper
 _tl_helper_u2etl_colon_colonhelper:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf9_entry:
+.Lf10_entry:
     movq $38, %rax
     movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
     addq %r8, %rax
@@ -229,7 +250,7 @@ main:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf10_entry:
+.Lf11_entry:
     call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax
@@ -313,53 +334,6 @@ tl_arena_destroy:
     .globl __errno_location
 __errno_location:
     leaq tl_errno(%rip), %rax
-    ret
-
-    .globl fflush
-fflush:
-    xorq %rax, %rax
-    ret
-
-    .globl strlen
-strlen:
-    movq %rdi, %rax
-.L_tl_strlen_loop:
-    cmpb $0, (%rax)
-    je .L_tl_strlen_done
-    incq %rax
-    jmp .L_tl_strlen_loop
-.L_tl_strlen_done:
-    subq %rdi, %rax
-    ret
-
-    .globl getenv
-getenv:
-    movq .L_tl_envp(%rip), %r8
-.L_tl_getenv_loop:
-    movq (%r8), %rsi
-    testq %rsi, %rsi
-    jz .L_tl_getenv_nf
-    movq %rdi, %rax
-.L_tl_getenv_cmp:
-    movb (%rax), %cl
-    testb %cl, %cl
-    jz .L_tl_getenv_namedone
-    movb (%rsi), %dl
-    cmpb %cl, %dl
-    jne .L_tl_getenv_next
-    incq %rax
-    incq %rsi
-    jmp .L_tl_getenv_cmp
-.L_tl_getenv_namedone:
-    cmpb $61, (%rsi)
-    jne .L_tl_getenv_next
-    leaq 1(%rsi), %rax
-    ret
-.L_tl_getenv_next:
-    addq $8, %r8
-    jmp .L_tl_getenv_loop
-.L_tl_getenv_nf:
-    xorq %rax, %rax
     ret
 
     .data

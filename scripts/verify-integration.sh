@@ -711,8 +711,23 @@ run_linux_backend_fixtures() {
     do
         assert_not_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
+    # tl_alloc's out-of-memory path tail-jumps to the tl_oom_abort runtime-
+    # prelude handler (#2221), which this direct backend fixture does not link.
+    # Provide a freestanding link-only target; the happy-path fixture allocates
+    # successfully, so it must not execute it.
+    _runtime_abort_asm="$_runtime_dir/runtime_abort.s"
+    _runtime_abort_obj="$_runtime_dir/runtime_abort.o"
+    cat > "$_runtime_abort_asm" <<'EOF'
+    .text
+    .globl tl_oom_abort
+tl_oom_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+EOF
     as "$_runtime_asm" -o "$_runtime_obj"
-    ld "$_runtime_obj" -o "$_runtime_bin"
+    as "$_runtime_abort_asm" -o "$_runtime_abort_obj"
+    ld "$_runtime_obj" "$_runtime_abort_obj" -o "$_runtime_bin"
     set +e
     "$_runtime_bin" < /dev/null > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
     _got=$?
@@ -783,12 +798,19 @@ run_linux_backend_fixtures() {
     done
     assert_not_contains "$_raw_ptr_asm" "# TODO" backend-raw-pointer
     # This direct backend fixture bypasses the driver-owned runtime prelude.
-    # Provide freestanding support for the runtime calls this fixture can emit.
-    # The abort path must not execute in the happy-path fixture.
+    # Provide freestanding support for runtime calls this fixture can emit:
+    # bounds-check abort, tl_alloc's out-of-memory tail-jump (tl_oom_abort,
+    # #2221), and array initialization helpers.
     cat > "$_raw_ptr_abort_asm" <<'EOF'
     .text
     .globl tl_oob_abort
 tl_oob_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_oom_abort
+tl_oom_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
@@ -976,6 +998,16 @@ run_windows_backend_fixtures() {
     do
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
+    # tl_alloc's out-of-memory path tail-jumps to the tl_oom_abort runtime-
+    # prelude handler (#2221), which this direct backend fixture does not link.
+    # Append a freestanding link-only target; the happy-path fixture allocates
+    # successfully, so it must not execute it.
+    cat >> "$_runtime_asm" <<'EOF'
+    .globl tl_oom_abort
+tl_oom_abort:
+    movl $134, %ecx
+    call ExitProcess
+EOF
     assemble_link_windows "$_runtime_asm" "$_runtime_obj" "$_runtime_bin" windows-backend-runtime
     run_windows_program "$_runtime_bin" "$_runtime_stdout" "$_runtime_stderr" "$_runtime_code" 42
     if [ "$got" -ne 42 ]; then

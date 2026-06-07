@@ -165,9 +165,9 @@ stdlib-macro migration of parser-owned core forms remains separate.
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
 (defstruct Pair (fst i64) (snd i64))
-(extern foreign-add : (-> i64 i64 i64))
-(extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
-(extern (printf [fmt : (Ptr u8)] ...) (:symbol "printf") : i32)
+(extern (foreign-add [a : i64] [b : i64]) : i64)
+(extern (local-add [a : i64] [b : i64]) : i64 (:symbol "foreign_add_exact"))
+(extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 

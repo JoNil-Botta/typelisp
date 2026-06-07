@@ -4626,6 +4626,141 @@
           [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
     [_ (ErrAstExternParts "parse: malformed extern")]))
 
+(define (parse-ast-extern-head-finish
+  [abi : AstExternAbi]
+  [symbol : String]
+  [link-inputs : AstExternLinkInputList]
+  [seen-abi : bool]
+  [param-types : AstTypeList]
+  [ret : AstType]) : ResultAstExternParts
+  (OkAstExternParts
+    (AstExternMetadata abi symbol link-inputs seen-abi)
+    (ast-ty-func param-types ret)))
+
+(define (parse-ast-extern-head-post-ret
+  [dispatch : SymI64Env]
+  [items : SpannedSexpr]
+  [abi : AstExternAbi]
+  [symbol : String]
+  [link-inputs : AstExternLinkInputList]
+  [seen-abi : bool]
+  [seen-symbol : bool]
+  [param-types : AstTypeList]
+  [ret : AstType]) : ResultAstExternParts
+  (match items
+    [(SpSNil _)
+      (parse-ast-extern-head-finish
+        abi
+        symbol
+        link-inputs
+        seen-abi
+        param-types
+        ret)]
+    [(SpSCons head tail _)
+      (match (spanned-sexpr-form (sp-node-get head))
+        [(SCons key-node after-key)
+          (match (box-get key-node)
+            [(SSym key)
+              (cond
+                [(string-eq key ":abi")
+                  (if seen-abi
+                    (ErrAstExternParts "parse: duplicate extern :abi metadata")
+                    (match (parse-ast-extern-abi-tail (box-get after-key))
+                      [(OkAstExternAbi parsed-abi)
+                        (match (parse-ast-extern-abi-combine abi parsed-abi)
+                          [(OkAstExternAbi combined-abi)
+                            (parse-ast-extern-head-post-ret
+                              dispatch
+                              (sp-node-get tail)
+                              combined-abi
+                              symbol
+                              link-inputs
+                              true
+                              seen-symbol
+                              param-types
+                              ret)]
+                          [(ErrAstExternAbi message)
+                            (ErrAstExternParts message)])]
+                      [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
+                [(string-eq key ":symbol")
+                  (if seen-symbol
+                    (ErrAstExternParts
+                      "parse: duplicate extern :symbol metadata")
+                    (match (parse-ast-extern-symbol-tail (box-get after-key))
+                      [(OkAstExternSymbol parsed-symbol)
+                        (parse-ast-extern-head-post-ret
+                          dispatch
+                          (sp-node-get tail)
+                          abi
+                          parsed-symbol
+                          link-inputs
+                          seen-abi
+                          true
+                          param-types
+                          ret)]
+                      [(ErrAstExternSymbol message) (ErrAstExternParts message)]))]
+                [(string-eq key ":link-lib")
+                  (match (parse-ast-extern-string-tail
+                    ":link-lib"
+                    (box-get after-key))
+                    [(OkAstExternSymbol value)
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        (sp-node-get tail)
+                        abi
+                        symbol
+                        (ast-extern-link-input-list-append
+                          link-inputs
+                          (AstExternLinkLib value))
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                [(string-eq key ":link-search")
+                  (match (parse-ast-extern-string-tail
+                    ":link-search"
+                    (box-get after-key))
+                    [(OkAstExternSymbol value)
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        (sp-node-get tail)
+                        abi
+                        symbol
+                        (ast-extern-link-input-list-append
+                          link-inputs
+                          (AstExternLinkSearch value))
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                [(string-eq key ":link-arg")
+                  (match (parse-ast-extern-string-tail
+                    ":link-arg"
+                    (box-get after-key))
+                    [(OkAstExternSymbol value)
+                      (parse-ast-extern-head-post-ret
+                        dispatch
+                        (sp-node-get tail)
+                        abi
+                        symbol
+                        (ast-extern-link-input-list-append
+                          link-inputs
+                          (AstExternLinkArg value))
+                        seen-abi
+                        seen-symbol
+                        param-types
+                        ret)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+                [(compiler-parse-metadata-key? key)
+                  (ErrAstExternParts
+                    (string-append "parse: unknown extern metadata " key))]
+                [else (ErrAstExternParts "parse: malformed extern")])]
+            [_ (ErrAstExternParts "parse: malformed extern")])]
+        [_ (ErrAstExternParts "parse: malformed extern")])]
+    [_ (ErrAstExternParts "parse: malformed extern")]))
+
 (define (parse-ast-extern-head-rest
   [dispatch : SymI64Env]
   [items : SpannedSexpr]
@@ -4646,11 +4781,30 @@
                   dispatch
                   (spanned-sexpr-form (sp-node-get ret)))
                   [(OkAstType parsed-ret)
-                    (OkAstExternParts
-                      (AstExternMetadata abi symbol link-inputs seen-abi)
-                      (ast-ty-func param-types parsed-ret))]
+                    (parse-ast-extern-head-finish
+                      abi
+                      symbol
+                      link-inputs
+                      seen-abi
+                      param-types
+                      parsed-ret)]
                   [(ErrAstType message) (ErrAstExternParts message)])]
-              [_ (ErrAstExternParts "parse: malformed extern")])]
+              [_
+                (match (parse-ast-type
+                  dispatch
+                  (spanned-sexpr-form (sp-node-get ret)))
+                  [(OkAstType parsed-ret)
+                    (parse-ast-extern-head-post-ret
+                      dispatch
+                      (sp-node-get end)
+                      abi
+                      symbol
+                      link-inputs
+                      seen-abi
+                      seen-symbol
+                      param-types
+                      parsed-ret)]
+                  [(ErrAstType message) (ErrAstExternParts message)])])]
           [_ (ErrAstExternParts "parse: malformed extern")])
         (match (spanned-sexpr-form (sp-node-get head))
           [(SCons key-node after-key)
@@ -6227,8 +6381,9 @@
   "(extern snprintf (:abi c-varargs 3) (:symbol \"snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))")
 
 (define (compiler-parse-extern-function-head-varargs-source) : String
-  "(extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [arg : ...f64]) (:symbol \"snprintf\") : i32)
-(extern (printf [fmt : (Ptr u8)] ...) (:symbol \"printf\") : i32)")
+  "(extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [arg : ...f64]) : i32 (:symbol \"snprintf\"))
+(extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol \"printf\"))
+(extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))")
 
 (define (compiler-parse-define-export-symbol-source) : String
   "(define (_write [fd : i32] [buf : (Ptr u8)] [n : i32]) (:export-symbol \"_write\") : i32
@@ -6519,6 +6674,49 @@
             [_ false])))]
     [_ false]))
 
+(define (compiler-parse-i64-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [_ false]))
+
+(define (compiler-parse-two-i64-types? [args : AstTypeList]) : bool
+  (match args
+    [(AstTypeCons first rest0)
+      (let
+        [first : AstType (box-get first)]
+        [rest0 : AstTypeList (box-get rest0)]
+        (and
+          (compiler-parse-i64-type? first)
+          (match rest0
+            [(AstTypeCons second rest1)
+              (let
+                [second : AstType (box-get second)]
+                [rest1 : AstTypeList (box-get rest1)]
+                (and
+                  (compiler-parse-i64-type? second)
+                  (match rest1
+                    [(AstTypeNil) true]
+                    [_ false])))]
+            [_ false])))]
+    [_ false]))
+
+(define (compiler-parse-extern-head-fixed-decl-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclExtern name metadata ty)
+      (and
+        (string-eq name "local-add")
+        (and
+          (string-eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
+          (match ty
+            [(AstTyFunc args ret)
+              (and
+                (= (compiler-parse-type-list-count args) 2)
+                (and
+                  (compiler-parse-i64-type? (box-get ret))
+                  (compiler-parse-two-i64-types? args)))]
+            [_ false])))]
+    [_ false]))
+
 (define (compiler-parse-extern-function-head-varargs-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-function-head-varargs-source))
     [(OkAstProgram (AstProgram decls-box))
@@ -6531,12 +6729,20 @@
                 (let
                   [rest1 : AstDeclList (box-get rest1)]
                   (match rest1
-                    [(AstDeclNil)
-                      (and
-                        (compiler-parse-extern-head-typed-varargs-decl-ok?
-                          first)
-                        (compiler-parse-extern-head-open-varargs-decl-ok?
-                          second))]
+                    [(AstDeclCons third rest2)
+                      (let
+                        [rest2 : AstDeclList (box-get rest2)]
+                        (match rest2
+                          [(AstDeclNil)
+                            (and
+                              (compiler-parse-extern-head-typed-varargs-decl-ok?
+                                first)
+                              (and
+                                (compiler-parse-extern-head-open-varargs-decl-ok?
+                                  second)
+                                (compiler-parse-extern-head-fixed-decl-ok?
+                                  third)))]
+                          [_ false]))]
                     [_ false]))]
               [_ false]))]
         [_ false])]

@@ -4310,6 +4310,23 @@
             (+ src-offset chunk)
             (- size chunk))]))))
 
+;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) only
+;; when it is a struct or enum (incl. their generic …Args forms). Tuples,
+;; arrays, boxes, dyn-arrays, strings, closures, and scalars all occupy a
+;; register-width slot (a pointer/handle or a scalar) under the #1867 flip:
+;; lower-type-size returns 8 for them, so they must use the scalar load/store.
+;; This is the precise gate for choosing inline byte-copy / pointer-return vs.
+;; scalar load/store, distinct from the broad lower-type-contains-inline-
+;; aggregate? (which is true for a tuple/array that merely contains an aggregate
+;; and is used for the conservative tail-call risk check).
+(define (lower-type-inline-struct-or-enum? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ false]))
+
 (define (lower-store-inline-value-at-offset
   [ctx : TcContext]
   [state : LowerState]
@@ -4318,7 +4335,7 @@
   [value : CompilerIrValue]
   [ty : AstType]
   [size : i64]) : LowerState
-  (if (lower-type-contains-inline-aggregate? ctx ty)
+  (if (lower-type-inline-struct-or-enum? ctx ty)
     (lower-copy-bytes state base offset value 0 size)
     (lower-store-at-offset state base offset value ty)))
 
@@ -4331,7 +4348,7 @@
   [mode : CompilerLowerMode]) : LowerExpr
   (if (and
     (lower-mode-inline-aggregates? mode)
-    (lower-type-contains-inline-aggregate? ctx ty))
+    (lower-type-inline-struct-or-enum? ctx ty))
     (match (lower-gep-byte state base offset)
       [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
     (lower-load-at-offset state base offset ty)))
@@ -7043,7 +7060,16 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyUnit) (LowerExpr state IrValueUnit resolved)]
-      [_ (lower-load-at-offset state base 8 resolved)])))
+      ;; #1867: a Result/Option payload (offset 8 past the i64 tag) can be an
+      ;; inline struct/enum; materialize it via the inline-aware load.
+      [_
+        (lower-load-inline-value-at-offset
+          ctx
+          state
+          base
+          8
+          resolved
+          (lower-state-mode state))])))
 
 (define (lower-return-result-err
   [ctx : TcContext]
@@ -7075,8 +7101,17 @@
                   [payload-state : LowerState
                     (match err-ty
                       [(AstTyUnit) tag-state]
+                      ;; #1867: an inline struct/enum err payload must be
+                      ;; byte-copied into the err slot, not scalar-stored.
                       [_
-                        (lower-store-at-offset tag-state base 8 payload err-ty)])]
+                        (lower-store-inline-value-at-offset
+                          ctx
+                          tag-state
+                          base
+                          8
+                          payload
+                          err-ty
+                          (lower-type-size ctx err-ty))])]
                   (OkLowerState
                     (lower-state-emit
                       payload-state
@@ -7788,8 +7823,19 @@
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [inner-ty : AstType]
-  [result-ty : AstType]) : ResultLowerExpr
-  (match (lower-load-at-offset state value 0 inner-ty)
+  [result-ty : AstType])
+  :
+  ResultLowerExpr
+  ;; #1867: a (Box T) with inline struct/enum T addresses the T storage at the
+  ;; box pointer; load it as a value (pointer) rather than scalar-loading the
+  ;; leading word, mirroring lower-box-get.
+  (match (lower-load-inline-value-at-offset
+    ctx
+    state
+    value
+    0
+    inner-ty
+    (lower-state-mode state))
     [(LowerExpr load-state inner-value _)
       (match (lower-clone-dispatch
         ctx
@@ -7808,12 +7854,14 @@
                 [(LowerExpr box-state box-value _)
                   (OkLowerExpr
                     (LowerExpr
-                      (lower-store-at-offset
+                      (lower-store-inline-value-at-offset
+                        ctx
                         box-state
                         box-value
                         0
                         clone-value
-                        inner-ty)
+                        inner-ty
+                        (lower-type-size ctx inner-ty))
                       box-value
                       result-ty))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]))
@@ -10022,7 +10070,7 @@
                   (lower-repr-c-inline-field? ctx field-ty))
                 (and
                   (lower-mode-inline-aggregates? (lower-state-mode ptr-state))
-                  (lower-type-contains-inline-aggregate? ctx field-ty)))
+                  (lower-type-inline-struct-or-enum? ctx field-ty)))
                 (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
                 (match (lower-state-alloc-var ptr-state)
                   [(LowerAlloc allocated var-id)
@@ -10090,7 +10138,7 @@
             (lower-type-size ctx inner-ty)
             result-ty)
             [(LowerExpr base-state base _)
-              (if (lower-type-contains-inline-aggregate? ctx inner-ty)
+              (if (lower-type-inline-struct-or-enum? ctx inner-ty)
                 (match (lower-inline-aggregate-copy-size ctx inner-ty)
                   [(OkLowerSize size)
                     (OkLowerExpr
@@ -10206,12 +10254,14 @@
                       (lower-tuple-store-elems
                         ctx
                         (if (> size 0)
-                          (lower-store-at-offset
+                          (lower-store-inline-value-at-offset
+                            ctx
                             elem-state
                             base
                             offset
                             elem-value
-                            resolved)
+                            resolved
+                            size)
                           elem-state)
                         env
                         type-env
@@ -10283,12 +10333,14 @@
                 (lower-array-literal-store-elems
                   ctx
                   (if (> elem-size 0)
-                    (lower-store-at-offset
+                    (lower-store-inline-value-at-offset
+                      ctx
                       elem-state
                       base
                       offset
                       elem-value
-                      elem-ty)
+                      elem-ty
+                      elem-size)
                     elem-state)
                   env
                   type-env
@@ -10366,11 +10418,13 @@
                   (match info
                     [(LowerFieldInfo offset elem-ty)
                       (if (> (lower-type-size ctx elem-ty) 0)
-                        (match (lower-load-at-offset
+                        (match (lower-load-inline-value-at-offset
+                          ctx
                           tuple-state
                           tuple-value
                           offset
-                          elem-ty)
+                          elem-ty
+                          (lower-state-mode tuple-state))
                           [(LowerExpr load-state load-value _)
                             (OkLowerExpr
                               (LowerExpr load-state load-value result-ty))])
@@ -13125,6 +13179,24 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
+;; #1867: read an array element given its address. For an inline struct/enum
+;; element the address IS the value (pointer representation); for scalars and
+;; pointer-slot types (tuple/array/box/dynarray/string handles) load the
+;; register-width value. Mirrors lower-load-inline-value-at-offset at offset 0
+;; but preserves the exact lower-emit-load scalar path.
+(define (lower-array-elem-ref-result
+  [ctx : TcContext]
+  [addr-state : LowerState]
+  [elem-ptr : CompilerIrValue]
+  [elem-ir-ty : AstType]) : ResultLowerExpr
+  (if (and
+    (lower-mode-inline-aggregates? (lower-state-mode addr-state))
+    (lower-type-inline-struct-or-enum? ctx elem-ir-ty))
+    (OkLowerExpr (LowerExpr addr-state elem-ptr elem-ir-ty))
+    (match (lower-emit-load addr-state elem-ptr elem-ir-ty)
+      [(LowerExpr load-state load-value _)
+        (OkLowerExpr (LowerExpr load-state load-value elem-ir-ty))])))
+
 (define (lower-array-ref
   [ctx : TcContext]
   [state : LowerState]
@@ -13170,19 +13242,11 @@
                                           idx-ty
                                           elem-ir-ty)
                                           [(LowerExpr addr-state elem-ptr _)
-                                            (match (lower-emit-load
+                                            (lower-array-elem-ref-result
+                                              ctx
                                               addr-state
                                               elem-ptr
-                                              elem-ir-ty)
-                                              [(LowerExpr
-                                                  load-state
-                                                  load-value
-                                                  _)
-                                                (OkLowerExpr
-                                                  (LowerExpr
-                                                    load-state
-                                                    load-value
-                                                    elem-ir-ty))])])]
+                                              elem-ir-ty)])]
                                       [(AstTyArray _ elem-count)
                                         (match (lower-fixed-array-element-addr
                                           idx-state
@@ -13200,19 +13264,11 @@
                                                   addr-state
                                                   IrValueUnit
                                                   elem-ir-ty))
-                                              (match (lower-emit-load
+                                              (lower-array-elem-ref-result
+                                                ctx
                                                 addr-state
                                                 elem-ptr
-                                                elem-ir-ty)
-                                                [(LowerExpr
-                                                    load-state
-                                                    load-value
-                                                    _)
-                                                  (OkLowerExpr
-                                                    (LowerExpr
-                                                      load-state
-                                                      load-value
-                                                      elem-ir-ty))]))])]
+                                                elem-ir-ty))])]
                                       [_
                                         (ErrLowerExpr
                                           (lower-diagnostic-at-expr
@@ -13228,6 +13284,27 @@
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
+;; #1867: store a value into an array element slot. An inline struct/enum value
+;; is byte-copied into the full-size element slot; scalars and pointer-slot
+;; handles use a register-width store.
+(define (lower-array-elem-store-state
+  [ctx : TcContext]
+  [addr-state : LowerState]
+  [elem-ptr : CompilerIrValue]
+  [value-ir : CompilerIrValue]
+  [elem-ir-ty : AstType]) : LowerState
+  (if (and
+    (lower-mode-inline-aggregates? (lower-state-mode addr-state))
+    (lower-type-inline-struct-or-enum? ctx elem-ir-ty))
+    (lower-copy-bytes
+      addr-state
+      elem-ptr
+      0
+      value-ir
+      0
+      (lower-type-size ctx elem-ir-ty))
+    (lower-state-emit addr-state (IrInstrStorePtr elem-ptr value-ir elem-ir-ty))))
+
 (define (lower-array-set
   [ctx : TcContext]
   [state : LowerState]
@@ -13288,12 +13365,12 @@
                                                       _)
                                                     (OkLowerExpr
                                                       (LowerExpr
-                                                        (lower-state-emit
+                                                        (lower-array-elem-store-state
+                                                          ctx
                                                           addr-state
-                                                          (IrInstrStorePtr
-                                                            elem-ptr
-                                                            value-ir
-                                                            elem-ir-ty))
+                                                          elem-ptr
+                                                          value-ir
+                                                          elem-ir-ty)
                                                         IrValueUnit
                                                         (AstTyUnit)))])]
                                               [(AstTyArray _ elem-count)
@@ -13320,12 +13397,12 @@
                                                           (AstTyUnit)))
                                                       (OkLowerExpr
                                                         (LowerExpr
-                                                          (lower-state-emit
+                                                          (lower-array-elem-store-state
+                                                            ctx
                                                             addr-state
-                                                            (IrInstrStorePtr
-                                                              elem-ptr
-                                                              value-ir
-                                                              elem-ir-ty))
+                                                            elem-ptr
+                                                            value-ir
+                                                            elem-ir-ty)
                                                           IrValueUnit
                                                           (AstTyUnit))))])]
                                               [_

@@ -10492,6 +10492,7 @@
     [(AstTyI64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyU64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyF64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyF32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
     [(AstTyI32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
     [(AstTyU32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
     [(AstTyI16) (OkTcLayoutInfo (TcLayoutInfo 2 2))]

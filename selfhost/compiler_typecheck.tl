@@ -1047,6 +1047,17 @@
   (inner Inner)
   (tail u16))")
 
+(define (compiler-typecheck-repr-c-f32-source) : String
+  "(defstruct Vec2
+  (:repr c)
+  (x f32)
+  (y f32)
+  (tag i64))
+(define (main) : f32
+  (let
+    [v : Vec2 (Vec2 1.5 2.5 7)]
+    (struct-get v x)))")
+
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
     [(OkAstProgram program)
@@ -1103,6 +1114,43 @@
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-repr-c-f32-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                (match (tc-repr-c-struct-layout ctx "Vec2")
+                  [(OkTcReprCLayout layout)
+                    (and
+                      (= (tc-repr-c-layout-size layout) 16)
+                      (and
+                        (= (tc-repr-c-layout-align layout) 8)
+                        (and
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields layout)
+                              "x")
+                            0)
+                          (and
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields layout)
+                                "y")
+                              4)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields layout)
+                                "tag")
+                              8)))))]
+                  [(ErrTcReprCLayout _) false]))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-repr-c-string-source) : String
   "(defstruct Bad
   (:repr c)
@@ -1125,11 +1173,16 @@
     (and
       (compiler-typecheck-repr-c-layout-ok?)
       (and
-        (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
+        (compiler-typecheck-ok? (compiler-typecheck-repr-c-f32-source))
         (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-repr-c-default-nested-source))
-          (compiler-typecheck-ok? (compiler-typecheck-repr-c-recursive-source)))))))
+          (compiler-typecheck-repr-c-f32-layout-ok?)
+          (and
+            (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-repr-c-default-nested-source))
+              (compiler-typecheck-ok?
+                (compiler-typecheck-repr-c-recursive-source)))))))))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
   (match (parse-ast-source src)

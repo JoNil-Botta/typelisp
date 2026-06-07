@@ -4521,7 +4521,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 |------|------|-----------|
 | `i8`/`u8`/`bool`/`char` | 1 | 1 |
 | `i16`/`u16` | 2 | 2 |
-| `i32`/`u32` | 4 | 4 |
+| `i32`/`u32`/`f32` | 4 | 4 |
 | `i64`/`u64`/`f64`/func ptr | 8 | 8 |
 | `(Ptr T)` / `(MutPtr T)` | 8 | 8 |
 | `String`/`DynArray`/`Box`/reference-like handles | 8 | 8 |

@@ -10950,7 +10950,9 @@
         [(AstProgram decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            (tc-ctfe-layouts-from-decls ctx decls "" CtfeLayoutInfoNil))])]))
+            (begin
+              (ctfe-build-seen-reset!)
+              (tc-ctfe-layouts-from-decls ctx decls "" CtfeLayoutInfoNil)))])]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8

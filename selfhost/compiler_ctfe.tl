@@ -12,6 +12,8 @@
 ;; results so the evaluator stays deterministic without a mutable counter.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/hashmap.tl")
+
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")
@@ -125,12 +127,32 @@
         true
         (ctfe-layout-info-list-contains (box-get rest) name))]))
 
+;; Per-build dedup set of keys already added to the metadata list. The reflection
+;; and layout builds each register every type under its key (and module alias);
+;; checking membership against the linked list was O(types^2). This hashset makes
+;; each `add-if-missing` O(1), so the whole build is O(types). Reset at the start
+;; of each build (layouts then reflections run sequentially in tc-ctfe-env).
+(define ctfe-build-seen-keys : StringI64Map
+  (string-i64-map-with-capacity 1))
+
+(define (ctfe-build-seen-reset!) : unit
+  (set! ctfe-build-seen-keys (string-i64-map-with-capacity 256)))
+
+(define (ctfe-build-seen-add? [key : String]) : bool
+  (if (string-i64-map-contains? ctfe-build-seen-keys key)
+    false
+    (begin
+      (set!
+        ctfe-build-seen-keys
+        (string-i64-map-put ctfe-build-seen-keys key 1))
+      true)))
+
 (define (ctfe-layout-info-list-add-if-missing
   [layouts : CtfeLayoutInfoList]
   [info : CtfeLayoutInfo]) : CtfeLayoutInfoList
-  (if (ctfe-layout-info-list-contains layouts (ctfe-layout-info-name info))
-    layouts
-    (CtfeLayoutInfoCons info (box layouts))))
+  (if (ctfe-build-seen-add? (ctfe-layout-info-name info))
+    (CtfeLayoutInfoCons info (box layouts))
+    layouts))
 
 (define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
   (match layouts
@@ -225,9 +247,9 @@
 (define (ctfe-reflect-info-list-add-if-missing
   [infos : CtfeReflectInfoList]
   [info : CtfeReflectInfo]) : CtfeReflectInfoList
-  (if (ctfe-reflect-info-list-contains infos (ctfe-reflect-info-key info))
-    infos
-    (CtfeReflectInfoCons info (box infos))))
+  (if (ctfe-build-seen-add? (ctfe-reflect-info-key info))
+    (CtfeReflectInfoCons info (box infos))
+    infos))
 
 (define (ctfe-reflect-info-lookup [infos : CtfeReflectInfoList] [key : String]) : CtfeMaybeReflectInfo
   (match infos
@@ -439,7 +461,9 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil))]))
+        (begin
+          (ctfe-build-seen-reset!)
+          (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil)))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a

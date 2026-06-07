@@ -6146,6 +6146,189 @@
       (take-handle (struct-get h handle))
       0)))")
 
+(define (compiler-typecheck-live-borrow-owner-prefix) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+")
+
+(define (compiler-typecheck-live-borrow-holder-prefix) : String
+  (string-append
+    (compiler-typecheck-live-borrow-owner-prefix)
+    "(defstruct Holder
+  (:cleanup cleanup-holder)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (take-holder [h : Holder]) : unit unit)
+"))
+
+(define (compiler-typecheck-live-borrow-many-post-scope-source) : String
+  "(define (main [n : i64]) : i64
+  (begin
+    (let [r1 : (& n i64) (& n)]
+      (let [r2 : (& n i64) (& n)] n))
+    (set! n 7)
+    n))")
+
+(define (compiler-typecheck-live-borrow-owner-post-scope-source) : String
+  (string-append
+    (compiler-typecheck-live-borrow-owner-prefix)
+    "(define (main [h : FileHandle]) : unit
+  (begin
+    (let [r : (& h FileHandle) (& h)] unit)
+    (take-handle h)))"))
+
+(define (compiler-typecheck-live-borrow-whole-move-source) : String
+  (string-append
+    (compiler-typecheck-live-borrow-owner-prefix)
+    "(define (bad [h : FileHandle]) : unit
+  (let [r : (& h FileHandle) (& h)]
+    (take-handle h)))"))
+
+(define (compiler-typecheck-live-borrow-whole-assign-source) : String
+  "(define (bad [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (begin
+      (set! n 2)
+      n)))")
+
+(define (compiler-typecheck-live-borrow-aggregate-root-move-source) : String
+  (string-append
+    (compiler-typecheck-live-borrow-holder-prefix)
+    "(define (bad [p : Holder]) : unit
+  (let [r : (& p FileHandle) (& (struct-get p handle))]
+    (take-holder p)))"))
+
+(define (compiler-typecheck-live-borrow-aggregate-child-move-source) : String
+  (string-append
+    (compiler-typecheck-live-borrow-holder-prefix)
+    "(define (bad [p : Holder]) : unit
+  (let [r : (& p Holder) (& p)]
+    (take-handle (struct-get p handle))))"))
+
+(define (compiler-typecheck-live-borrow-nested-scope-source) : String
+  "(define (bad [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [m : i64 1]
+      (begin
+        (set! n m)
+        n))))")
+
+(define (compiler-typecheck-live-borrow-begin-source) : String
+  "(define (bad [n : i64]) : i64
+  (begin
+    (& n)
+    (set! n 2)
+    n))")
+
+(define (compiler-typecheck-live-borrow-match-arm-source) : String
+  "(defenum Flag (On) (Off))
+(define (bad [flag : Flag] [n : i64]) : i64
+  (match flag
+    [On (let [r : (& n i64) (& n)] (begin (set! n 2) n))]
+    [Off n]))")
+
+(define (compiler-typecheck-live-borrow-with-arena-ok-source) : String
+  "(define (main [n : i64]) : i64
+  (begin
+    (with-arena r
+      (let [borrowed : (& n i64) (& n)] unit))
+    (set! n 3)
+    n))")
+
+(define (compiler-typecheck-live-borrow-with-arena-conflict-source) : String
+  "(define (bad [n : i64]) : i64
+  (with-arena r
+    (let [borrowed : (& n i64) (& n)]
+      (begin
+        (set! n 3)
+        n))))")
+
+(define (compiler-typecheck-live-borrow-resource-conflict-source) : String
+  (string-append
+    (compiler-typecheck-live-borrow-owner-prefix)
+    "(define (bad [fd : i64]) : i64
+  (with ([h (FileHandle fd) cleanup-file-handle])
+    (let [borrowed : (& h FileHandle) (& h)]
+      (begin
+        (set! h (FileHandle 2))
+        0))))"))
+
+(define (compiler-typecheck-live-borrow-array-set-source) : String
+  "(define (bad [items : (Array i64)]) : unit
+  (let [borrowed : (& items i64) (& (array-ref items 0))]
+    (array-set! items 0 7)))")
+
+(define (compiler-typecheck-live-borrow-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-live-borrow-many-post-scope-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-live-borrow-owner-post-scope-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-whole-move-source)
+        "typecheck: cannot move borrowed place `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-whole-assign-source)
+        "typecheck: cannot assign to borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-aggregate-root-move-source)
+        "typecheck: cannot move borrowed place `p`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-aggregate-child-move-source)
+        "typecheck: cannot move borrowed place `p.handle`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-nested-scope-source)
+        "typecheck: cannot assign to borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-begin-source)
+        "typecheck: cannot assign to borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-match-arm-source)
+        "typecheck: cannot assign to borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-live-borrow-with-arena-ok-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-with-arena-conflict-source)
+        "typecheck: cannot assign to borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-resource-conflict-source)
+        "typecheck: cannot assign to borrowed place `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-borrow-array-set-source)
+        "typecheck: cannot assign to borrowed place `items.#array.0`")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
     [empty : TcMovedSet (tc-moved-empty)]
@@ -6689,6 +6872,9 @@
     (if (compiler-typecheck-move-tests-ok?)
       unit
       (panic "typecheck: move checker tests failed"))
+    (if (compiler-typecheck-live-borrow-tests-ok?)
+      unit
+      (panic "typecheck: live borrow checker tests failed"))
     (if (compiler-typecheck-diagnostic-code-tests-ok?)
       unit
       (panic "typecheck: diagnostic code tests failed"))

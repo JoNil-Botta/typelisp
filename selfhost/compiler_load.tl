@@ -1511,7 +1511,7 @@
           "compiler-load: dependency package manifest not found for "
           source-path))]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest-diagnostic
+      (match (compiler-load-parse-manifest-diagnostic-infer-kind
         manifest-path
         (read-file manifest-path))
         [(ErrCompilerPkgManifestDiagnostic diag)
@@ -3022,6 +3022,16 @@
     [(CompilerPkgKindBin) "src/main.tl"]
     [(CompilerPkgKindLib) "src/lib.tl"]))
 
+(define (compiler-load-manifest-with-kind
+  [manifest : CompilerPkgManifest]
+  [kind : CompilerPkgKind]) : CompilerPkgManifest
+  (CompilerPkgManifest
+    (struct-get manifest name)
+    (struct-get manifest version)
+    kind
+    (compiler-load-manifest-default-entry kind)
+    (struct-get manifest deps)))
+
 ;: Walk the package fields, accumulating name/version/kind/entry/deps, then
 ;: check required fields and synthesize convention defaults for omitted kind
 ;: and entry.
@@ -3210,6 +3220,62 @@
         [_ (ErrCompilerPkgManifest "manifest must start with `package`")])]
     [_ (ErrCompilerPkgManifest "manifest must be a `(package ...)` form")]))
 
+(define (compiler-load-manifest-fields-have? [fields : Sexpr] [target : String]) : bool
+  (match fields
+    [(SNil) false]
+    [(SCons field rest)
+      (let
+        [tail-has : bool
+          (compiler-load-manifest-fields-have? (box-get rest) target)]
+        (match (box-get field)
+          [(SCons fhead _)
+            (match (box-get fhead)
+              [(SSym name) (or (string-eq name target) tail-has)]
+              [_ tail-has])]
+          [_ tail-has]))]
+    [_ false]))
+
+(define (compiler-load-manifest-form-has-field?
+  [form : Sexpr]
+  [target : String]) : bool
+  (match form
+    [(SCons head rest)
+      (match (box-get head)
+        [(SSym s)
+          (if (string-eq s "package")
+            (compiler-load-manifest-fields-have? (box-get rest) target)
+            false)]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-load-manifest-needs-kind-inference? [form : Sexpr]) : bool
+  (and
+    (not (compiler-load-manifest-form-has-field? form "kind"))
+    (not (compiler-load-manifest-form-has-field? form "entry"))))
+
+(define (compiler-load-manifest-convention-path
+  [manifest-path : String]
+  [relative : String]) : String
+  (compiler-load-join-root-path (compiler-load-dirname manifest-path) relative))
+
+(define (compiler-load-manifest-infer-kind-from-files [manifest-path : String]) : ResultCompilerPkgKind
+  (let
+    [has-main : bool
+      (file-exists?
+        (compiler-load-manifest-convention-path manifest-path "src/main.tl"))]
+    [has-lib : bool
+      (file-exists?
+        (compiler-load-manifest-convention-path manifest-path "src/lib.tl"))]
+    (cond
+      [(and has-main (not has-lib)) (OkCompilerPkgKind (CompilerPkgKindBin))]
+      [(and has-lib (not has-main)) (OkCompilerPkgKind (CompilerPkgKindLib))]
+      [(and has-main has-lib)
+        (ErrCompilerPkgKind
+          "manifest omits `kind` and `entry`, but both `src/main.tl` and `src/lib.tl` exist; add explicit `kind` or `entry`")]
+      [else
+        (ErrCompilerPkgKind
+          "manifest omits `kind` and `entry`, but neither `src/main.tl` nor `src/lib.tl` exists; add `kind` and `entry` or create a conventional entry file")])))
+
 ;: Preserve the legacy `manifest: ...` syntax-error message while attaching the
 ;: reader span to the source-facing diagnostic result.
 (define (compiler-load-manifest-source-error-diagnostic
@@ -3225,6 +3291,42 @@
   [form : SpannedSexpr]
   [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-from-span path (spanned-sexpr-span form) message))
+
+(define (compiler-load-manifest-apply-kind-inference
+  [path : String]
+  [form : SpannedSexpr]
+  [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
+  (let
+    [raw-form : Sexpr (spanned-sexpr-form form)]
+    (if (compiler-load-manifest-needs-kind-inference? raw-form)
+      (match (compiler-load-manifest-infer-kind-from-files path)
+        [(OkCompilerPkgKind kind)
+          (OkCompilerPkgManifestDiagnostic
+            (compiler-load-manifest-with-kind manifest kind))]
+        [(ErrCompilerPkgKind message)
+          (ErrCompilerPkgManifestDiagnostic
+            (compiler-load-manifest-validation-diagnostic path form message))])
+      (OkCompilerPkgManifestDiagnostic manifest))))
+
+(define (compiler-load-parse-manifest-form-diagnostic
+  [path : String]
+  [form : SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
+  (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
+    [(OkCompilerPkgManifest manifest)
+      (OkCompilerPkgManifestDiagnostic manifest)]
+    [(ErrCompilerPkgManifest message)
+      (ErrCompilerPkgManifestDiagnostic
+        (compiler-load-manifest-validation-diagnostic path form message))]))
+
+(define (compiler-load-parse-manifest-form-diagnostic-infer-kind
+  [path : String]
+  [form : SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
+  (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
+    [(OkCompilerPkgManifest manifest)
+      (compiler-load-manifest-apply-kind-inference path form manifest)]
+    [(ErrCompilerPkgManifest message)
+      (ErrCompilerPkgManifestDiagnostic
+        (compiler-load-manifest-validation-diagnostic path form message))]))
 
 ;: Parse a `typelisp.pkg` manifest source string into a structured manifest,
 ;: preserving manifest path/span identity for source-facing errors.
@@ -3243,15 +3345,24 @@
             (ErrCompilerPkgManifestDiagnostic
               (compiler-load-manifest-source-error-diagnostic path err))]
           [(OkSpannedSexpr form)
-            (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
-              [(OkCompilerPkgManifest manifest)
-                (OkCompilerPkgManifestDiagnostic manifest)]
-              [(ErrCompilerPkgManifest message)
-                (ErrCompilerPkgManifestDiagnostic
-                  (compiler-load-manifest-validation-diagnostic
-                    path
-                    form
-                    message))])])])))
+            (compiler-load-parse-manifest-form-diagnostic path form)])])))
+
+(define (compiler-load-parse-manifest-diagnostic-infer-kind
+  [path : String]
+  [source : String]) : ResultCompilerPkgManifestDiagnostic
+  (begin
+    (sp-node-pool-reset!)
+    (match (lex-spanned-result source)
+      [(ErrSpannedTokens err)
+        (ErrCompilerPkgManifestDiagnostic
+          (compiler-load-manifest-source-error-diagnostic path err))]
+      [(OkSpannedTokens toks)
+        (match (read-spanned-result toks)
+          [(ErrSpannedSexpr err)
+            (ErrCompilerPkgManifestDiagnostic
+              (compiler-load-manifest-source-error-diagnostic path err))]
+          [(OkSpannedSexpr form)
+            (compiler-load-parse-manifest-form-diagnostic-infer-kind path form)])])))
 
 ;: Parse a manifest source string into a structured manifest. This compatibility
 ;: wrapper keeps existing in-memory parser callers and message-only tests stable.
@@ -3417,6 +3528,216 @@
       "expected `package` form, got `module`"
       1
       1)))
+
+(define (compiler-load-manifest-test-mkdir [path : String]) : bool
+  (match (try-mkdir-if-missing (& path))
+    [(OkIoUnit) true]
+    [(ErrIoUnit _) false]))
+
+(define (compiler-load-manifest-test-write [path : String] [contents : String]) : bool
+  (match (try-write-file (& path) (& contents))
+    [(OkIoUnit) true]
+    [(ErrIoUnit _) false]))
+
+(define (compiler-load-manifest-test-root [name : String]) : String
+  (compiler-load-join-root-path "target" name))
+
+(define (compiler-load-manifest-test-src [root : String]) : String
+  (compiler-load-join-root-path root "src"))
+
+(define (compiler-load-manifest-test-path [root : String] [relative : String]) : String
+  (compiler-load-join-root-path root relative))
+
+(define (compiler-load-manifest-write-convention-fixture
+  [root : String]
+  [manifest : String]
+  [has-main : bool]
+  [has-lib : bool]) : bool
+  (let
+    [src : String (compiler-load-manifest-test-src root)]
+    [ok-target : bool (compiler-load-manifest-test-mkdir "target")]
+    [ok-root : bool (compiler-load-manifest-test-mkdir root)]
+    [ok-src : bool (compiler-load-manifest-test-mkdir src)]
+    [ok-manifest : bool
+      (compiler-load-manifest-test-write
+        (compiler-load-manifest-test-path root "typelisp.pkg")
+        manifest)]
+    [ok-main : bool
+      (if has-main
+        (compiler-load-manifest-test-write
+          (compiler-load-manifest-test-path root "src/main.tl")
+          "(define (main) : i64 42)")
+        true)]
+    [ok-lib : bool
+      (if has-lib
+        (compiler-load-manifest-test-write
+          (compiler-load-manifest-test-path root "src/lib.tl")
+          "(define lib-value : i64 42)")
+        true)]
+    (and
+      ok-target
+      (and ok-root (and ok-src (and ok-manifest (and ok-main ok-lib)))))))
+
+(define (compiler-load-manifest-path-kind-entry-is?
+  [path : String]
+  [expected-kind : CompilerPkgKind]
+  [expected-entry : String]) : bool
+  (match (compiler-load-parse-manifest-diagnostic-infer-kind
+    path
+    (read-file path))
+    [(OkCompilerPkgManifestDiagnostic manifest)
+      (and
+        (string-eq (struct-get manifest entry) expected-entry)
+        (match (struct-get manifest kind)
+          [(CompilerPkgKindBin)
+            (match expected-kind
+              [(CompilerPkgKindBin) true]
+              [(CompilerPkgKindLib) false])]
+          [(CompilerPkgKindLib)
+            (match expected-kind
+              [(CompilerPkgKindLib) true]
+              [(CompilerPkgKindBin) false])]))]
+    [(ErrCompilerPkgManifestDiagnostic _) false]))
+
+(define (compiler-load-manifest-path-rejects?
+  [path : String]
+  [expected : String]) : bool
+  (match (compiler-load-parse-manifest-diagnostic-infer-kind
+    path
+    (read-file path))
+    [(ErrCompilerPkgManifestDiagnostic diag)
+      (string-eq (compiler-diagnostic-message diag) expected)]
+    [(OkCompilerPkgManifestDiagnostic _) false]))
+
+(define (compiler-load-manifest-infer-bin-only-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_bin_only")]
+    [manifest-path : String
+      (compiler-load-manifest-test-path root "typelisp.pkg")]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"bin_only\") (version \"1\"))"
+        true
+        false)
+      (compiler-load-manifest-path-kind-entry-is?
+        manifest-path
+        (CompilerPkgKindBin)
+        "src/main.tl"))))
+
+(define (compiler-load-manifest-infer-lib-only-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_lib_only")]
+    [manifest-path : String
+      (compiler-load-manifest-test-path root "typelisp.pkg")]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"lib_only\") (version \"1\"))"
+        false
+        true)
+      (compiler-load-manifest-path-kind-entry-is?
+        manifest-path
+        (CompilerPkgKindLib)
+        "src/lib.tl"))))
+
+(define (compiler-load-manifest-infer-ambiguous-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_ambiguous")]
+    [manifest-path : String
+      (compiler-load-manifest-test-path root "typelisp.pkg")]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"ambiguous\") (version \"1\"))"
+        true
+        true)
+      (compiler-load-manifest-path-rejects?
+        manifest-path
+        "manifest omits `kind` and `entry`, but both `src/main.tl` and `src/lib.tl` exist; add explicit `kind` or `entry`"))))
+
+(define (compiler-load-manifest-infer-missing-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_missing")]
+    [manifest-path : String
+      (compiler-load-manifest-test-path root "typelisp.pkg")]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"missing\") (version \"1\"))"
+        false
+        false)
+      (compiler-load-manifest-path-rejects?
+        manifest-path
+        "manifest omits `kind` and `entry`, but neither `src/main.tl` nor `src/lib.tl` exists; add `kind` and `entry` or create a conventional entry file"))))
+
+(define (compiler-load-manifest-infer-explicit-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_explicit")]
+    [manifest-path : String
+      (compiler-load-manifest-test-path root "typelisp.pkg")]
+    [explicit-entry-root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_explicit_entry")]
+    [explicit-entry-path : String
+      (compiler-load-manifest-test-path explicit-entry-root "typelisp.pkg")]
+    (and
+      (and
+        (compiler-load-manifest-write-convention-fixture
+          root
+          "(package (name \"explicit\") (version \"1\") (kind staticlib))"
+          true
+          true)
+        (compiler-load-manifest-path-kind-entry-is?
+          manifest-path
+          (CompilerPkgKindLib)
+          "src/lib.tl"))
+      (and
+        (compiler-load-manifest-write-convention-fixture
+          explicit-entry-root
+          "(package (name \"explicit_entry\") (version \"1\") (entry \"custom.tl\"))"
+          false
+          true)
+        (compiler-load-manifest-path-kind-entry-is?
+          explicit-entry-path
+          (CompilerPkgKindBin)
+          "custom.tl")))))
+
+(define (compiler-load-manifest-infer-package-entry-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_entry_lib_only")]
+    [source-path : String (compiler-load-manifest-test-path root "src/lib.tl")]
+    [expected-entry : String (compiler-load-normalize-path source-path)]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"entry_dep\") (version \"1\"))"
+        false
+        true)
+      (match (compiler-load-package-entry-for-source source-path)
+        [(OkCompilerLoadPackageEntry entry)
+          (and
+            (string-eq (struct-get entry owner) "entry_dep")
+            (string-eq (struct-get entry entry-path) expected-entry))]
+        [(ErrCompilerLoadPackageEntry _) false]))))
+
+(define (compiler-load-manifest-path-inference-ok?) : bool
+  (and
+    (compiler-load-manifest-infer-bin-only-ok?)
+    (and
+      (compiler-load-manifest-infer-lib-only-ok?)
+      (and
+        (compiler-load-manifest-infer-ambiguous-ok?)
+        (and
+          (compiler-load-manifest-infer-missing-ok?)
+          (and
+            (compiler-load-manifest-infer-explicit-ok?)
+            (compiler-load-manifest-infer-package-entry-ok?)))))))
 
 (define (compiler-load-pkg-manifest-github-validation-ok?) : bool
   (and
@@ -4091,6 +4412,12 @@
       (return
         (begin
           (panic "compiler-load: pkg manifest smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-manifest-path-inference-ok?)
+      (return
+        (begin
+          (panic "compiler-load: manifest path inference smoke mismatch")
           0)))
     (unless
       (compiler-load-pkg-resolve-ok?)

@@ -1047,6 +1047,17 @@
   (inner Inner)
   (tail u16))")
 
+(define (compiler-typecheck-repr-c-f32-source) : String
+  "(defstruct Vec2
+  (:repr c)
+  (x f32)
+  (y f32)
+  (tag i64))
+(define (main) : f32
+  (let
+    [v : Vec2 (Vec2 1.5 2.5 7)]
+    (struct-get v x)))")
+
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
     [(OkAstProgram program)
@@ -1103,6 +1114,43 @@
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-repr-c-f32-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                (match (tc-repr-c-struct-layout ctx "Vec2")
+                  [(OkTcReprCLayout layout)
+                    (and
+                      (= (tc-repr-c-layout-size layout) 16)
+                      (and
+                        (= (tc-repr-c-layout-align layout) 8)
+                        (and
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields layout)
+                              "x")
+                            0)
+                          (and
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields layout)
+                                "y")
+                              4)
+                            (=
+                              (tc-repr-c-layout-field-offset
+                                (tc-repr-c-layout-fields layout)
+                                "tag")
+                              8)))))]
+                  [(ErrTcReprCLayout _) false]))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-repr-c-string-source) : String
   "(defstruct Bad
   (:repr c)
@@ -1125,11 +1173,16 @@
     (and
       (compiler-typecheck-repr-c-layout-ok?)
       (and
-        (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
+        (compiler-typecheck-ok? (compiler-typecheck-repr-c-f32-source))
         (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-repr-c-default-nested-source))
-          (compiler-typecheck-ok? (compiler-typecheck-repr-c-recursive-source)))))))
+          (compiler-typecheck-repr-c-f32-layout-ok?)
+          (and
+            (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-repr-c-default-nested-source))
+              (compiler-typecheck-ok?
+                (compiler-typecheck-repr-c-recursive-source)))))))))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
   (match (parse-ast-source src)
@@ -2942,6 +2995,22 @@
 (define (main [n : i64]) : unit
   (take (&mut n)))")
 
+(define (compiler-typecheck-reference-mut-array-set-source) : String
+  "(define (put [items : (&mut items (Array i64))] [v : i64]) : unit
+  (array-set! items 0 v))
+(define (main [items : (Array i64)]) : unit
+  (put (&mut items) 7))")
+
+(define (compiler-typecheck-reference-mut-array-push-source) : String
+  "(define (grow [items : (&mut items (Array i64))] [v : i64]) : unit
+  (array-push! items v))
+(define (main [items : (Array i64)]) : unit
+  (grow (&mut items) 7))")
+
+(define (compiler-typecheck-reference-immut-array-set-source) : String
+  "(define (bad [items : (& items (Array i64))]) : unit
+  (array-set! items 0 7))")
+
 (define (compiler-typecheck-reference-str-source) : String
   "(define (take [s : (& text str)]) : unit unit)
 (define (main [text : String]) : unit
@@ -3203,6 +3272,16 @@
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-source))]
     [mut-borrow-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-borrow-source))]
+    [mut-array-set-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-mut-array-set-source))]
+    [mut-array-push-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-mut-array-push-source))]
+    [immut-array-set-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-immut-array-set-source)
+        "typecheck: array-set! requires mutable array access")]
     [str-value-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-str-value-source)
@@ -3327,6 +3406,15 @@
         unit
         (set! ok false))
       (if mut-borrow-ok
+        unit
+        (set! ok false))
+      (if mut-array-set-ok
+        unit
+        (set! ok false))
+      (if mut-array-push-ok
+        unit
+        (set! ok false))
+      (if immut-array-set-error-ok
         unit
         (set! ok false))
       (if str-value-error-ok
@@ -5797,6 +5885,60 @@
       (match ticket [(Open code) unit] [(Closed) unit])
       (take-ticket ticket))))")
 
+(define (compiler-typecheck-move-cleanup-enum-payload-prefix) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(define (close-code [code : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defenum MaybeHandle
+  (:cleanup cleanup-maybe-handle)
+  (Some FileHandle (:owned))
+  (Code i64 (:cleanup close-code))
+  (None))
+(define (take-handle [h : FileHandle]) : unit unit)
+")
+
+(define (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (cleanup-enum-owner-payload-one-shot [m : MaybeHandle]) : unit
+  (match m
+    [(Some h) (take-handle h)]
+    [(Code code) unit]
+    [(None) unit]))"))
+
+(define (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (bad-cleanup-enum-owner-payload-repeat [m : MaybeHandle]) : unit
+  (match m
+    [(Some h) (begin (take-handle h) (take-handle h))]
+    [(Code code) unit]
+    [(None) unit]))"))
+
+(define (compiler-typecheck-move-cleanup-enum-payload-copyable-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (cleanup-enum-payload-copyable [m : MaybeHandle]) : i64
+  (match m
+    [(Some h) 0]
+    [(Code code) (+ code code)]
+    [(None) 0]))"))
+
+(define (compiler-typecheck-move-cleanup-enum-payload-shadow-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (cleanup-enum-payload-shadow
+  [h : FileHandle]
+  [m : MaybeHandle]) : unit
+  (begin
+    (match m
+      [(Some h) (take-handle h)]
+      [(Code code) unit]
+      [(None) unit])
+    (take-handle h)))"))
+
 (define (compiler-typecheck-move-owner-call-ok-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -6803,6 +6945,23 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-cleanup-enum-match-local-reuse-source)
         "typecheck: use of moved value `ticket`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source)
+        "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-payload-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-payload-shadow-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

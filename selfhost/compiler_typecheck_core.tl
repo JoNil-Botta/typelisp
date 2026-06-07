@@ -45,6 +45,13 @@
   (OkTcBorrowPlace TcBorrowPlace)
   (ErrTcBorrowPlace String))
 
+(defenum TcArrayReceiver
+  (TcArrayReceiver AstType AstType))
+
+(defenum ResultTcArrayReceiver
+  (OkTcArrayReceiver TcArrayReceiver)
+  (ErrTcArrayReceiver String))
+
 (defenum ResultTcString
   (OkTcString String)
   (ErrTcString String))
@@ -10485,6 +10492,7 @@
     [(AstTyI64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyU64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyF64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyF32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
     [(AstTyI32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
     [(AstTyU32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
     [(AstTyI16) (OkTcLayoutInfo (TcLayoutInfo 2 2))]
@@ -12753,6 +12761,77 @@
   [body : AstExpr]) : ResultTcType
   (tc-lambda-expr-with-capture-check ctx env params maybe-ret body true))
 
+(define (tc-array-readable-receiver [ctx : TcContext] [receiver-ty : AstType]) : ResultTcArrayReceiver
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyArray elem-ty _)
+      (OkTcArrayReceiver (TcArrayReceiver receiver-ty (box-get elem-ty)))]
+    [(AstTyDynArray elem-ty)
+      (OkTcArrayReceiver (TcArrayReceiver receiver-ty (box-get elem-ty)))]
+    [(AstTyRef _ referent-ty)
+      (tc-array-readable-receiver ctx (box-get referent-ty))]
+    [(AstTyMutRef _ referent-ty)
+      (tc-array-readable-receiver ctx (box-get referent-ty))]
+    [_ (ErrTcArrayReceiver "typecheck: array-ref requires array type")]))
+
+(define (tc-array-set-receiver [ctx : TcContext] [receiver-ty : AstType]) : ResultTcArrayReceiver
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyArray elem-ty _)
+      (OkTcArrayReceiver (TcArrayReceiver receiver-ty (box-get elem-ty)))]
+    [(AstTyDynArray elem-ty)
+      (OkTcArrayReceiver (TcArrayReceiver receiver-ty (box-get elem-ty)))]
+    [(AstTyMutRef _ referent-ty)
+      (tc-array-set-receiver ctx (box-get referent-ty))]
+    [(AstTyRef _ _)
+      (ErrTcArrayReceiver "typecheck: array-set! requires mutable array access")]
+    [_ (ErrTcArrayReceiver "typecheck: array-set! requires array type")]))
+
+(define (tc-array-push-receiver [ctx : TcContext] [receiver-ty : AstType]) : ResultTcArrayReceiver
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyDynArray elem-ty)
+      (OkTcArrayReceiver (TcArrayReceiver receiver-ty (box-get elem-ty)))]
+    [(AstTyArray _ _)
+      (ErrTcArrayReceiver "typecheck: array-push! requires dynamic array type")]
+    [(AstTyMutRef _ referent-ty)
+      (tc-array-push-receiver ctx (box-get referent-ty))]
+    [(AstTyRef _ _)
+      (ErrTcArrayReceiver
+        "typecheck: array-push! requires mutable dynamic array access")]
+    [_
+      (ErrTcArrayReceiver "typecheck: array-push! requires dynamic array type")]))
+
+(define (tc-array-mutation-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array : AstExpr]
+  [array-ty : AstType]
+  [elem-ty : AstType]
+  [value : AstExpr]
+  [mismatch-message : String]) : ResultTcType
+  (match (tc-expr-with-expected-or-actual ctx env value elem-ty)
+    [(OkTcType value-ty)
+      (match (tc-expect value-ty elem-ty mismatch-message)
+        [(OkTcUnit)
+          (match (tc-ensure-cleanup-resource-not-stored-expr env value)
+            [(OkTcUnit)
+              (match (tc-ensure-region-value-can-flow-into
+                env
+                array-ty
+                value-ty
+                "array")
+                [(OkTcUnit)
+                  (match (tc-ensure-reference-value-can-store-in-place
+                    ctx
+                    env
+                    array
+                    value-ty
+                    "array")
+                    [(OkTcUnit) (OkTcType (AstTyUnit))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner-box _)
@@ -12894,18 +12973,15 @@
             (match (tc-expr ctx env index)
               [(OkTcType index-ty)
                 (if (tc-integer-type? index-ty)
-                  (match (tc-type-strip-region array-ty)
-                    [(AstTyArray elem-ty _)
-                      (OkTcType
-                        (tc-project-from-region-container
-                          array-ty
-                          (box-get elem-ty)))]
-                    [(AstTyDynArray elem-ty)
-                      (OkTcType
-                        (tc-project-from-region-container
-                          array-ty
-                          (box-get elem-ty)))]
-                    [_ (ErrTcType "typecheck: array-ref requires array type")])
+                  (match (tc-array-readable-receiver ctx array-ty)
+                    [(OkTcArrayReceiver receiver)
+                      (match receiver
+                        [(TcArrayReceiver container-ty elem-ty)
+                          (OkTcType
+                            (tc-project-from-region-container
+                              container-ty
+                              elem-ty))])]
+                    [(ErrTcArrayReceiver message) (ErrTcType message)])
                   (ErrTcType "typecheck: array index must be integer"))]
               [(ErrTcType message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
@@ -12919,78 +12995,19 @@
             (match (tc-expr ctx env index)
               [(OkTcType index-ty)
                 (if (tc-integer-type? index-ty)
-                  (match (tc-type-strip-region array-ty)
-                    [(AstTyArray elem-ty _)
-                      (match (tc-expr-with-expected-or-actual
-                        ctx
-                        env
-                        value
-                        (box-get elem-ty))
-                        [(OkTcType value-ty)
-                          (match (tc-expect
-                            value-ty
-                            (box-get elem-ty)
-                            "typecheck: array-set! value type mismatch")
-                            [(OkTcUnit)
-                              (match (tc-ensure-cleanup-resource-not-stored-expr
-                                env
-                                value)
-                                [(OkTcUnit)
-                                  (match (tc-ensure-region-value-can-flow-into
-                                    env
-                                    array-ty
-                                    value-ty
-                                    "array")
-                                    [(OkTcUnit)
-                                      (match (tc-ensure-reference-value-can-store-in-place
-                                        ctx
-                                        env
-                                        array
-                                        value-ty
-                                        "array")
-                                        [(OkTcUnit) (OkTcType (AstTyUnit))]
-                                        [(ErrTcUnit message)
-                                          (ErrTcType message)])]
-                                    [(ErrTcUnit message) (ErrTcType message)])]
-                                [(ErrTcUnit message) (ErrTcType message)])]
-                            [(ErrTcUnit message) (ErrTcType message)])]
-                        [(ErrTcType message) (ErrTcType message)])]
-                    [(AstTyDynArray elem-ty)
-                      (match (tc-expr-with-expected-or-actual
-                        ctx
-                        env
-                        value
-                        (box-get elem-ty))
-                        [(OkTcType value-ty)
-                          (match (tc-expect
-                            value-ty
-                            (box-get elem-ty)
-                            "typecheck: array-set! value type mismatch")
-                            [(OkTcUnit)
-                              (match (tc-ensure-cleanup-resource-not-stored-expr
-                                env
-                                value)
-                                [(OkTcUnit)
-                                  (match (tc-ensure-region-value-can-flow-into
-                                    env
-                                    array-ty
-                                    value-ty
-                                    "array")
-                                    [(OkTcUnit)
-                                      (match (tc-ensure-reference-value-can-store-in-place
-                                        ctx
-                                        env
-                                        array
-                                        value-ty
-                                        "array")
-                                        [(OkTcUnit) (OkTcType (AstTyUnit))]
-                                        [(ErrTcUnit message)
-                                          (ErrTcType message)])]
-                                    [(ErrTcUnit message) (ErrTcType message)])]
-                                [(ErrTcUnit message) (ErrTcType message)])]
-                            [(ErrTcUnit message) (ErrTcType message)])]
-                        [(ErrTcType message) (ErrTcType message)])]
-                    [_ (ErrTcType "typecheck: array-set! requires array type")])
+                  (match (tc-array-set-receiver ctx array-ty)
+                    [(OkTcArrayReceiver receiver)
+                      (match receiver
+                        [(TcArrayReceiver container-ty elem-ty)
+                          (tc-array-mutation-value
+                            ctx
+                            env
+                            array
+                            container-ty
+                            elem-ty
+                            value
+                            "typecheck: array-set! value type mismatch")])]
+                    [(ErrTcArrayReceiver message) (ErrTcType message)])
                   (ErrTcType "typecheck: array index must be integer"))]
               [(ErrTcType message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
@@ -13000,43 +13017,19 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-expr ctx env array)
           [(OkTcType array-ty)
-            (match (tc-type-strip-region array-ty)
-              [(AstTyDynArray elem-ty)
-                (match (tc-expr-with-expected-or-actual
-                  ctx
-                  env
-                  value
-                  (box-get elem-ty))
-                  [(OkTcType value-ty)
-                    (match (tc-expect
-                      value-ty
-                      (box-get elem-ty)
-                      "typecheck: array-push! value type mismatch")
-                      [(OkTcUnit)
-                        (match (tc-ensure-cleanup-resource-not-stored-expr
-                          env
-                          value)
-                          [(OkTcUnit)
-                            (match (tc-ensure-region-value-can-flow-into
-                              env
-                              array-ty
-                              value-ty
-                              "array")
-                              [(OkTcUnit)
-                                (match (tc-ensure-reference-value-can-store-in-place
-                                  ctx
-                                  env
-                                  array
-                                  value-ty
-                                  "array")
-                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
-                                  [(ErrTcUnit message) (ErrTcType message)])]
-                              [(ErrTcUnit message) (ErrTcType message)])]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcUnit message) (ErrTcType message)])]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [_
-                (ErrTcType "typecheck: array-push! requires dynamic array type")])]
+            (match (tc-array-push-receiver ctx array-ty)
+              [(OkTcArrayReceiver receiver)
+                (match receiver
+                  [(TcArrayReceiver container-ty elem-ty)
+                    (tc-array-mutation-value
+                      ctx
+                      env
+                      array
+                      container-ty
+                      elem-ty
+                      value
+                      "typecheck: array-push! value type mismatch")])]
+              [(ErrTcArrayReceiver message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprStringRef str-box index-box)
       (let
@@ -14668,6 +14661,43 @@
         (ErrTcMove (tc-move-cleanup-owner-exit-message name))
         (tc-move-check-cleanup-owner-exit moved (box-get rest)))]))
 
+(define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
+  (match names
+    [(TcStringNil) locals]
+    [(TcStringCons name rest)
+      (tc-move-add-bound-names (tc-moved-add locals name) (box-get rest))]))
+
+(define (tc-move-remove-bound-root-states
+  [moved : TcMovedSet]
+  [names : TcStringList]) : TcMovedSet
+  (match names
+    [(TcStringNil) moved]
+    [(TcStringCons name rest)
+      (tc-move-remove-bound-root-states
+        (tc-moved-remove-root-state moved name)
+        (box-get rest))]))
+
+(define (tc-move-pattern-bound-names
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : TcStringList
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyEnum _)
+      (match pattern
+        [(AstPatVariant _ patterns-box)
+          (let
+            [patterns : AstPatternList (box-get patterns-box)]
+            (tc-pattern-list-add-bound-names patterns TcStringNil))]
+        [_ TcStringNil])]
+    [(AstTyEnumArgs _ _)
+      (match pattern
+        [(AstPatVariant _ patterns-box)
+          (let
+            [patterns : AstPatternList (box-get patterns-box)]
+            (tc-pattern-list-add-bound-names patterns TcStringNil))]
+        [_ TcStringNil])]
+    [_ (tc-pattern-add-bound-names pattern TcStringNil)]))
+
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
 ;; a place moved on any arm is considered moved after the match.
 (define (tc-move-check-arms
@@ -14676,6 +14706,7 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
+  [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcMoveResult
   (match arms
     [(AstMatchArmNil) (OkTcMove moved)]
@@ -14683,28 +14714,44 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body-box)
+          [(AstMatchArm pattern body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (match (tc-move-check-expr
-                ctx
-                env
-                (tc-moved-clone locals)
-                (tc-moved-clone loop-carried)
-                (tc-moved-clone moved)
-                body)
-                [(OkTcMove arm-moved)
-                  (match (tc-move-check-arms
+              [bound : TcStringList
+                (tc-move-pattern-bound-names ctx scrut-ty pattern)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (tc-move-check-expr
                     ctx
-                    env
-                    (tc-moved-clone locals)
-                    (tc-moved-clone loop-carried)
-                    (tc-moved-clone moved)
-                    rest)
-                    [(OkTcMove rest-moved)
-                      (OkTcMove (tc-moved-union arm-moved rest-moved))]
+                    arm-env
+                    (tc-move-add-bound-names (tc-moved-clone locals) bound)
+                    (tc-move-remove-bound-root-states
+                      (tc-moved-clone loop-carried)
+                      bound)
+                    (tc-move-remove-bound-root-states
+                      (tc-moved-clone moved)
+                      bound)
+                    body)
+                    [(OkTcMove arm-moved)
+                      (let
+                        [visible-arm-moved : TcMovedSet
+                          (tc-moved-union
+                            moved
+                            (tc-move-remove-bound-root-states arm-moved bound))]
+                        (match (tc-move-check-arms
+                          ctx
+                          env
+                          (tc-moved-clone locals)
+                          (tc-moved-clone loop-carried)
+                          (tc-moved-clone moved)
+                          scrut-ty
+                          rest)
+                          [(OkTcMove rest-moved)
+                            (OkTcMove
+                              (tc-moved-union visible-arm-moved rest-moved))]
+                          [(ErrTcMove message) (ErrTcMove message)]))]
                     [(ErrTcMove message) (ErrTcMove message)])]
-                [(ErrTcMove message) (ErrTcMove message)]))]))]))
+                [(ErrTcEnv message) (ErrTcMove message)]))]))]))
 
 (define (tc-move-check-expr
   [ctx : TcContext]
@@ -14975,9 +15022,17 @@
                     moveds
                     scrut
                     scrut-ty)
+                  scrut-ty
                   arms)]
               [(ErrTcType _)
-                (tc-move-check-arms ctx env locals loop-carried moveds arms)])]
+                (tc-move-check-arms
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moveds
+                  (AstTyUnit)
+                  arms)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let

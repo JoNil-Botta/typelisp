@@ -24,6 +24,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum CompileCliConfig
   (CompileCliConfig
     String
@@ -53,9 +55,6 @@
 (defenum ResultCompileCliTarget
   (OkCompileCliTarget CompilerBackendTarget)
   (ErrCompileCliTarget String))
-
-(define (compile-cli-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (compile-cli-path-separator? [c : char]) : bool
   (or (= c #/') (= c #\\')))
@@ -100,7 +99,7 @@
   (compile-cli-default-output-with-extension input-path ".ir"))
 
 (define (compile-cli-unknown-target [value : String]) : String
-  (compile-cli-cat3
+  (str-cat
     "Error: unknown target '"
     value
     "'. Expected linux-x86_64 or windows-x86_64"))
@@ -115,10 +114,7 @@
       (ErrCompileCliTarget (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
-  (compile-cli-cat3
-    "compile: invalid --opt-level "
-    value
-    "; expected 0, 1, 2, or 3"))
+  (str-cat "compile: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
 
 ;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
 (defenum ResultCompileCliBackendMode
@@ -132,7 +128,7 @@
     [(string-eq value "avx512") (OkCompileCliBackendMode (BackendModeAvx512))]
     [else
       (ErrCompileCliBackendMode
-        (compile-cli-cat3
+        (str-cat
           "Error: unknown backend mode '"
           value
           "'. Expected scalar, avx2, or avx512"))]))

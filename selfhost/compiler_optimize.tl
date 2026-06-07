@@ -25,6 +25,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "../stdlib/hash.tl")
+
 (import "../stdlib/hashmap.tl")
 
 (import "../stdlib/string.tl")
@@ -2811,6 +2813,100 @@
             (string-eq a-name b-name)
             (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
+
+(define (opt-value-hash [value : CompilerIrValue]) : i64
+  (match value
+    [(IrValueVar id) (hash-combine 1 (hash-i64 id))]
+    [(IrValueGlobal name) (hash-combine 2 (hash-string (& name)))]
+    [(IrValueGlobalAddr name) (hash-combine 3 (hash-string (& name)))]
+    [(IrValueFunction name) (hash-combine 4 (hash-string (& name)))]
+    [(IrValueI64 value) (hash-combine 5 (hash-i64 value))]
+    [(IrValueF64 value) (hash-combine 6 (hash-string (& value)))]
+    [(IrValueBool value) (hash-combine 7 (hash-bool value))]
+    [(IrValueChar value) (hash-combine 8 (hash-char value))]
+    [(IrValueString value) (hash-combine 9 (hash-string (& value)))]
+    [(IrValueUnit) (hash-i64 10)]))
+
+(define (opt-type-list-hash [types : AstTypeList]) : i64
+  (match types
+    [(AstTypeNil) (hash-i64 0)]
+    [(AstTypeCons head rest)
+      (hash-combine
+        1
+        (hash-combine
+          (opt-type-hash (box-get head))
+          (opt-type-list-hash (box-get rest))))]))
+
+(define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
+  (match lifetimes
+    [(AstLifetimeNil) (hash-i64 0)]
+    [(AstLifetimeCons head rest)
+      (hash-combine
+        1
+        (hash-combine
+          (hash-string (& head))
+          (opt-lifetime-list-hash (box-get rest))))]))
+
+(define (opt-type-hash [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (hash-i64 1)]
+    [(AstTyI32) (hash-i64 2)]
+    [(AstTyI16) (hash-i64 3)]
+    [(AstTyI8) (hash-i64 4)]
+    [(AstTyU64) (hash-i64 5)]
+    [(AstTyU32) (hash-i64 6)]
+    [(AstTyU16) (hash-i64 7)]
+    [(AstTyU8) (hash-i64 8)]
+    [(AstTyF64) (hash-i64 9)]
+    [(AstTyF32) (hash-i64 10)]
+    [(AstTyBool) (hash-i64 11)]
+    [(AstTyChar) (hash-i64 12)]
+    [(AstTyString) (hash-i64 13)]
+    [(AstTyStr) (hash-i64 14)]
+    [(AstTyUnit) (hash-i64 15)]
+    [(AstTyNever) (hash-i64 16)]
+    [(AstTyExpr) (hash-i64 17)]
+    [(AstTyExprList) (hash-i64 18)]
+    [(AstTyFunc params ret)
+      (hash-combine
+        19
+        (hash-combine (opt-type-list-hash params) (opt-type-hash (box-get ret))))]
+    [(AstTyTuple items) (hash-combine 20 (opt-type-list-hash items))]
+    [(AstTyArray item len)
+      (hash-combine
+        21
+        (hash-combine (opt-type-hash (box-get item)) (hash-i64 len)))]
+    [(AstTyDynArray item) (hash-combine 22 (opt-type-hash (box-get item)))]
+    [(AstTyBox item) (hash-combine 23 (opt-type-hash (box-get item)))]
+    [(AstTyPtr item) (hash-combine 24 (opt-type-hash (box-get item)))]
+    [(AstTyMutPtr item) (hash-combine 25 (opt-type-hash (box-get item)))]
+    [(AstTyRef region inner)
+      (hash-combine
+        26
+        (hash-combine (hash-string (& region)) (opt-type-hash (box-get inner))))]
+    [(AstTyMutRef region inner)
+      (hash-combine
+        27
+        (hash-combine (hash-string (& region)) (opt-type-hash (box-get inner))))]
+    [(AstTyRegion region inner)
+      (hash-combine
+        28
+        (hash-combine (hash-string (& region)) (opt-type-hash (box-get inner))))]
+    [(AstTyEnum name) (hash-combine 29 (hash-string (& name)))]
+    [(AstTyEnumArgs name lifetimes)
+      (hash-combine
+        30
+        (hash-combine (hash-string (& name)) (opt-lifetime-list-hash lifetimes)))]
+    [(AstTyStruct name) (hash-combine 31 (hash-string (& name)))]
+    [(AstTyStructArgs name lifetimes)
+      (hash-combine
+        32
+        (hash-combine (hash-string (& name)) (opt-lifetime-list-hash lifetimes)))]
+    [(AstTyVar name) (hash-combine 33 (hash-string (& name)))]
+    [(AstTyVarArgs name lifetimes)
+      (hash-combine
+        34
+        (hash-combine (hash-string (& name)) (opt-lifetime-list-hash lifetimes)))]))
 
 (define (opt-maybe-value-eq
   [a : CompilerIrMaybeValue]
@@ -7264,18 +7360,24 @@
   (OptSomeGlobalExprKey OptGlobalExprKey))
 
 (defenum OptGlobalExprFact
-  (OptGlobalExprFact OptGlobalExprKey i64 String i64))
+  (OptGlobalExprFact OptGlobalExprKey i64 i64 i64))
 
 (defenum OptGlobalExprFacts
   (OptGlobalExprNil)
   (OptGlobalExprCons OptGlobalExprFact (Box OptGlobalExprFacts)))
 
+(defstruct OptGlobalExprFactTable
+  (buckets (Array OptGlobalExprFacts)))
+
 (defenum OptGlobalCopyFact
-  (OptGlobalCopyFact i64 CompilerIrValue String i64))
+  (OptGlobalCopyFact i64 CompilerIrValue i64 i64))
 
 (defenum OptGlobalCopyFacts
   (OptGlobalCopyNil)
   (OptGlobalCopyCons OptGlobalCopyFact (Box OptGlobalCopyFacts)))
+
+(defstruct OptGlobalCopyFactTable
+  (buckets (Array OptGlobalCopyFacts)))
 
 (define (opt-global-expr-key-eq [a : OptGlobalExprKey] [b : OptGlobalExprKey]) : bool
   (match a
@@ -7315,6 +7417,37 @@
             (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
         [_ false])]))
 
+(define (opt-global-expr-key-hash [key : OptGlobalExprKey]) : i64
+  (match key
+    [(OptGlobalMovKey value ty)
+      (hash-combine 1 (hash-combine (opt-value-hash value) (opt-type-hash ty)))]
+    [(OptGlobalGepKey base offset ty)
+      (hash-combine
+        2
+        (hash-combine
+          (opt-value-hash base)
+          (hash-combine (opt-value-hash offset) (opt-type-hash ty))))]
+    [(OptGlobalCastKey value from-ty to-ty)
+      (hash-combine
+        3
+        (hash-combine
+          (opt-value-hash value)
+          (hash-combine (opt-type-hash from-ty) (opt-type-hash to-ty))))]
+    [(OptGlobalBinKey op lhs rhs ty)
+      (hash-combine
+        4
+        (hash-combine
+          (hash-i64 (opt-binop-tag op))
+          (hash-combine
+            (opt-value-hash lhs)
+            (hash-combine (opt-value-hash rhs) (opt-type-hash ty)))))]
+    [(OptGlobalUnKey op value ty)
+      (hash-combine
+        5
+        (hash-combine
+          (hash-i64 (opt-unop-tag op))
+          (hash-combine (opt-value-hash value) (opt-type-hash ty))))]))
+
 (define (opt-global-key-for-instr [instr : CompilerIrInstr]) : OptMaybeGlobalExprKey
   (match instr
     [(IrInstrMov _ src ty)
@@ -7332,17 +7465,22 @@
     [_ (OptNoGlobalExprKey)]))
 
 (define (opt-global-fact-available?
-  [def-block : String]
+  [def-block-id : i64]
   [def-pos : i64]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]
   [doms : OptDomInfo]) : bool
-  (if (string-eq def-block use-block)
+  (if (= def-block-id use-block-id)
     (< def-pos use-pos)
-    (opt-dom-dominates? doms def-block use-block)))
+    (opt-dom-info-dominates-id? doms def-block-id use-block-id)))
+
+(define (opt-global-block-id [doms : OptDomInfo] [label : String]) : i64
+  (match (opt-cfg-index-id (struct-get doms index) label)
+    [(OptSomeI64 id) id]
+    [(OptNoI64) (- 0 1)]))
 
 (define (opt-global-copy-facts-from-instrs
-  [block-label : String]
+  [block-id : i64]
   [pos : i64]
   [instrs : CompilerIrInstrList]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
@@ -7352,7 +7490,7 @@
       (let
         [rest-facts : OptGlobalCopyFacts
           (opt-global-copy-facts-from-instrs
-            block-label
+            block-id
             (+ pos 1)
             (box-get rest)
             tail)]
@@ -7362,13 +7500,13 @@
               (opt-copy-safe-source? src)
               (not (opt-value-is-var? src dst)))
               (OptGlobalCopyCons
-                (OptGlobalCopyFact dst src block-label pos)
+                (OptGlobalCopyFact dst src block-id pos)
                 (box rest-facts))
               rest-facts)]
           [_ rest-facts]))]))
 
 (define (opt-global-copy-facts-from-instr-seq-from
-  [block-label : String]
+  [block-id : i64]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
@@ -7384,27 +7522,28 @@
               (opt-copy-safe-source? src)
               (not (opt-value-is-var? src dst)))
               (OptGlobalCopyCons
-                (OptGlobalCopyFact dst src block-label (+ index 1))
+                (OptGlobalCopyFact dst src block-id (+ index 1))
                 (box rest-facts))
               rest-facts)]
           [_ rest-facts])]
       (opt-global-copy-facts-from-instr-seq-from
-        block-label
+        block-id
         slots
         (- index 1)
         next-tail))))
 
 (define (opt-global-copy-facts-from-instr-seq
-  [block-label : String]
+  [block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
   (opt-global-copy-facts-from-instr-seq-from
-    block-label
+    block-id
     (struct-get instrs slots)
     (- (struct-get instrs len) 1)
     tail))
 
 (define (opt-global-copy-facts-from-blocks
+  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
   (match blocks
@@ -7412,37 +7551,124 @@
     [(IrBlockCons block rest)
       (let
         [rest-facts : OptGlobalCopyFacts
-          (opt-global-copy-facts-from-blocks (box-get rest) tail)]
+          (opt-global-copy-facts-from-blocks doms (box-get rest) tail)]
         (match block
           [(IrBlock label instrs)
-            (opt-global-copy-facts-from-instr-seq label instrs rest-facts)]))]))
+            (opt-global-copy-facts-from-instr-seq
+              (opt-global-block-id doms label)
+              instrs
+              rest-facts)]))]))
 
-(define (opt-global-copy-lookup
+(define (opt-global-copy-facts-max-dst
+  [facts : OptGlobalCopyFacts]
+  [max-dst : i64]) : i64
+  (match facts
+    [(OptGlobalCopyNil) max-dst]
+    [(OptGlobalCopyCons fact rest)
+      (match fact
+        [(OptGlobalCopyFact dst _ _ _)
+          (opt-global-copy-facts-max-dst
+            (box-get rest)
+            (if (> dst max-dst)
+              dst
+              max-dst))])]))
+
+(define (opt-global-copy-buckets-fill-empty!
+  [buckets : (Array OptGlobalCopyFacts)]
+  [index : i64]) : unit
+  (if (>= index (array-length buckets))
+    unit
+    (begin
+      (array-set! buckets index (OptGlobalCopyNil))
+      (opt-global-copy-buckets-fill-empty! buckets (+ index 1)))))
+
+(define (opt-global-copy-table-insert!
+  [table : OptGlobalCopyFactTable]
+  [fact : OptGlobalCopyFact]) : unit
+  (match fact
+    [(OptGlobalCopyFact dst _ _ _)
+      (let
+        [buckets : (Array OptGlobalCopyFacts) (struct-get table buckets)]
+        (if (and (>= dst 0) (< dst (array-length buckets)))
+          (array-set!
+            buckets
+            dst
+            (OptGlobalCopyCons fact (box (array-ref buckets dst))))
+          unit))]))
+
+(define (opt-global-copy-table-insert-reversed!
+  [table : OptGlobalCopyFactTable]
+  [facts : OptGlobalCopyFacts]) : unit
+  (match facts
+    [(OptGlobalCopyNil) unit]
+    [(OptGlobalCopyCons fact rest)
+      (begin
+        (opt-global-copy-table-insert-reversed! table (box-get rest))
+        (opt-global-copy-table-insert! table fact))]))
+
+(define (opt-global-copy-table-from-facts [facts : OptGlobalCopyFacts]) : OptGlobalCopyFactTable
+  (let
+    [max-dst : i64 (opt-global-copy-facts-max-dst facts (- 0 1))]
+    [capacity : i64
+      (if (< max-dst 0)
+        1
+        (+ max-dst 1))]
+    [buckets : (Array OptGlobalCopyFacts)
+      (make-array OptGlobalCopyFacts capacity)]
+    [table : OptGlobalCopyFactTable (OptGlobalCopyFactTable buckets)]
+    (begin
+      (opt-global-copy-buckets-fill-empty! buckets 0)
+      (opt-global-copy-table-insert-reversed! table facts)
+      table)))
+
+(define (opt-global-copy-lookup-list
   [facts : OptGlobalCopyFacts]
   [var : i64]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
   (match facts
     [(OptGlobalCopyNil) (IrNoValue)]
     [(OptGlobalCopyCons fact rest)
       (match fact
-        [(OptGlobalCopyFact dst src def-block def-pos)
+        [(OptGlobalCopyFact dst src def-block-id def-pos)
           (if (and
             (= dst var)
             (opt-global-fact-available?
-              def-block
+              def-block-id
               def-pos
-              use-block
+              use-block-id
               use-pos
               doms))
             (IrSomeValue src)
-            (opt-global-copy-lookup (box-get rest) var doms use-block use-pos))])]))
+            (opt-global-copy-lookup-list
+              (box-get rest)
+              var
+              doms
+              use-block-id
+              use-pos))])]))
+
+(define (opt-global-copy-lookup
+  [table : OptGlobalCopyFactTable]
+  [var : i64]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]) : CompilerIrMaybeValue
+  (let
+    [buckets : (Array OptGlobalCopyFacts) (struct-get table buckets)]
+    (if (and (>= var 0) (< var (array-length buckets)))
+      (opt-global-copy-lookup-list
+        (array-ref buckets var)
+        var
+        doms
+        use-block-id
+        use-pos)
+      (IrNoValue))))
 
 (define (opt-global-copy-resolve-depth
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]
   [value : CompilerIrValue]
   [remaining : i64]) : CompilerIrValue
@@ -7450,12 +7676,12 @@
     value
     (match value
       [(IrValueVar id)
-        (match (opt-global-copy-lookup facts id doms use-block use-pos)
+        (match (opt-global-copy-lookup facts id doms use-block-id use-pos)
           [(IrSomeValue replacement)
             (opt-global-copy-resolve-depth
               facts
               doms
-              use-block
+              use-block-id
               use-pos
               replacement
               (- remaining 1))]
@@ -7463,35 +7689,35 @@
       [_ value])))
 
 (define (opt-global-copy-resolve
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]
   [value : CompilerIrValue]) : CompilerIrValue
-  (opt-global-copy-resolve-depth facts doms use-block use-pos value 8))
+  (opt-global-copy-resolve-depth facts doms use-block-id use-pos value 8))
 
 (define (opt-global-copy-subst-value-list
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(IrValueNil) (IrValueNil)]
     [(IrValueCons value rest)
       (compiler-ir-value-cons
-        (opt-global-copy-resolve facts doms use-block use-pos value)
+        (opt-global-copy-resolve facts doms use-block-id use-pos value)
         (opt-global-copy-subst-value-list
           facts
           doms
-          use-block
+          use-block-id
           use-pos
           (box-get rest)))]))
 
 (define (opt-global-copy-subst-call-args-array
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]
   [src : (Array CompilerIrValue)]
   [dst : (Array CompilerIrValue)]
@@ -7505,33 +7731,33 @@
         (opt-global-copy-resolve
           facts
           doms
-          use-block
+          use-block-id
           use-pos
           (array-ref src index)))
       (opt-global-copy-subst-call-args-array
         facts
         doms
-        use-block
+        use-block-id
         use-pos
         src
         dst
         (+ index 1)))))
 
 (define (opt-global-copy-subst-call-args
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]
   [args : CompilerIrCallArgs]) : CompilerIrCallArgs
   (match args
     [(IrCallArgsNil) (IrCallArgsNil)]
     [(IrCallArgsOne value)
       (IrCallArgsOne
-        (opt-global-copy-resolve facts doms use-block use-pos value))]
+        (opt-global-copy-resolve facts doms use-block-id use-pos value))]
     [(IrCallArgsTwo a b)
       (IrCallArgsTwo
-        (opt-global-copy-resolve facts doms use-block use-pos a)
-        (opt-global-copy-resolve facts doms use-block use-pos b))]
+        (opt-global-copy-resolve facts doms use-block-id use-pos a)
+        (opt-global-copy-resolve facts doms use-block-id use-pos b))]
     [(IrCallArgsArray values)
       (let
         [out : (Array CompilerIrValue)
@@ -7540,7 +7766,7 @@
           (opt-global-copy-subst-call-args-array
             facts
             doms
-            use-block
+            use-block-id
             use-pos
             values
             out
@@ -7548,88 +7774,82 @@
           (IrCallArgsArray out)))]))
 
 (define (opt-global-copy-subst-instr
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-id : i64]
   [pos : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(IrInstrMov dst src ty)
-      (IrInstrMov
-        dst
-        (opt-global-copy-resolve facts doms block-label pos src)
-        ty)]
+      (IrInstrMov dst (opt-global-copy-resolve facts doms block-id pos src) ty)]
     [(IrInstrGep dst base offset ty)
       (IrInstrGep
         dst
-        (opt-global-copy-resolve facts doms block-label pos base)
-        (opt-global-copy-resolve facts doms block-label pos offset)
+        (opt-global-copy-resolve facts doms block-id pos base)
+        (opt-global-copy-resolve facts doms block-id pos offset)
         ty)]
     [(IrInstrLoad dst src ty)
-      (IrInstrLoad
-        dst
-        (opt-global-copy-resolve facts doms block-label pos src)
-        ty)]
+      (IrInstrLoad dst (opt-global-copy-resolve facts doms block-id pos src) ty)]
     [(IrInstrStorePtr ptr value ty)
       (IrInstrStorePtr
-        (opt-global-copy-resolve facts doms block-label pos ptr)
-        (opt-global-copy-resolve facts doms block-label pos value)
+        (opt-global-copy-resolve facts doms block-id pos ptr)
+        (opt-global-copy-resolve facts doms block-id pos value)
         ty)]
     [(IrInstrBoundsCheck index length ok-label)
       (IrInstrBoundsCheck
-        (opt-global-copy-resolve facts doms block-label pos index)
-        (opt-global-copy-resolve facts doms block-label pos length)
+        (opt-global-copy-resolve facts doms block-id pos index)
+        (opt-global-copy-resolve facts doms block-id pos length)
         ok-label)]
     [(IrInstrCast dst src from-ty to-ty)
       (IrInstrCast
         dst
-        (opt-global-copy-resolve facts doms block-label pos src)
+        (opt-global-copy-resolve facts doms block-id pos src)
         from-ty
         to-ty)]
     [(IrInstrBinOp dst op lhs rhs ty)
       (IrInstrBinOp
         dst
         op
-        (opt-global-copy-resolve facts doms block-label pos lhs)
-        (opt-global-copy-resolve facts doms block-label pos rhs)
+        (opt-global-copy-resolve facts doms block-id pos lhs)
+        (opt-global-copy-resolve facts doms block-id pos rhs)
         ty)]
     [(IrInstrUnOp dst op src ty)
       (IrInstrUnOp
         dst
         op
-        (opt-global-copy-resolve facts doms block-label pos src)
+        (opt-global-copy-resolve facts doms block-id pos src)
         ty)]
     [(IrInstrSplat dst src lanes ty)
       (IrInstrSplat
         dst
-        (opt-global-copy-resolve facts doms block-label pos src)
+        (opt-global-copy-resolve facts doms block-id pos src)
         lanes
         ty)]
     [(IrInstrCall dst name args ty)
       (IrInstrCall
         dst
         name
-        (opt-global-copy-subst-call-args facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
         ty)]
     [(IrInstrCallIndirect dst func args ty)
       (IrInstrCallIndirect
         dst
-        (opt-global-copy-resolve facts doms block-label pos func)
-        (opt-global-copy-subst-call-args facts doms block-label pos args)
+        (opt-global-copy-resolve facts doms block-id pos func)
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
         ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         name
-        (opt-global-copy-subst-call-args facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
         ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore
         name
-        (opt-global-copy-resolve facts doms block-label pos value)
+        (opt-global-copy-resolve facts doms block-id pos value)
         ty)]
     [(IrInstrBranch cond true-label false-label)
       (IrInstrBranch
-        (opt-global-copy-resolve facts doms block-label pos cond)
+        (opt-global-copy-resolve facts doms block-id pos cond)
         true-label
         false-label)]
     [(IrInstrReturn maybe)
@@ -7637,7 +7857,7 @@
         [(IrSomeValue value)
           (IrInstrReturn
             (IrSomeValue
-              (opt-global-copy-resolve facts doms block-label pos value)))]
+              (opt-global-copy-resolve facts doms block-id pos value)))]
         [(IrNoValue) instr])]
     [(IrInstrEntryArgc _) instr]
     [(IrInstrEntryArgv _) instr]
@@ -7645,17 +7865,17 @@
     [(IrInstrCpuId dst leaf subleaf reg-index)
       (IrInstrCpuId
         dst
-        (opt-global-copy-resolve facts doms block-label pos leaf)
-        (opt-global-copy-resolve facts doms block-label pos subleaf)
+        (opt-global-copy-resolve facts doms block-id pos leaf)
+        (opt-global-copy-resolve facts doms block-id pos subleaf)
         reg-index)]
     [(IrInstrXgetbv dst index)
       (IrInstrXgetbv
         dst
-        (opt-global-copy-resolve facts doms block-label pos index))]
+        (opt-global-copy-resolve facts doms block-id pos index))]
     [(IrInstrSyscall dst args)
       (IrInstrSyscall
         dst
-        (opt-global-copy-subst-call-args facts doms block-label pos args))]
+        (opt-global-copy-subst-call-args facts doms block-id pos args))]
     [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
     [(IrInstrVectorReduce _ _ _ _ _) instr]
     [(IrInstrVectorCompare _ _ _ _ _ _) instr]
@@ -7675,26 +7895,27 @@
     [(IrInstrPhi _ _ _) instr]))
 
 (define (opt-global-copy-instrs
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-id : i64]
   [pos : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (compiler-ir-instr-cons
-        (opt-global-copy-subst-instr facts doms block-label pos instr)
-        (opt-global-copy-instrs facts doms block-label (+ pos 1) (box-get rest)))]))
+        (opt-global-copy-subst-instr facts doms block-id pos instr)
+        (opt-global-copy-instrs facts doms block-id (+ pos 1) (box-get rest)))]))
 
 (define (opt-global-copy-instr-seq
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
+    [block-id : i64 (opt-global-block-id doms block-label)]
     [out : CompilerIrInstrList (IrInstrNil)]
     (begin
       (while (>= index 0)
@@ -7705,7 +7926,7 @@
               (opt-global-copy-subst-instr
                 facts
                 doms
-                block-label
+                block-id
                 (+ index 1)
                 (array-ref slots index))
               out))
@@ -7713,7 +7934,7 @@
       out)))
 
 (define (opt-global-copy-blocks
-  [facts : OptGlobalCopyFacts]
+  [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -7728,7 +7949,7 @@
             (opt-global-copy-blocks facts doms (box-get rest)))])]))
 
 (define (opt-global-expr-facts-from-instrs
-  [block-label : String]
+  [block-id : i64]
   [pos : i64]
   [instrs : CompilerIrInstrList]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
@@ -7738,7 +7959,7 @@
       (let
         [rest-facts : OptGlobalExprFacts
           (opt-global-expr-facts-from-instrs
-            block-label
+            block-id
             (+ pos 1)
             (box-get rest)
             tail)]
@@ -7747,13 +7968,13 @@
             (match (opt-instr-def-var instr)
               [(OptSomeI64 dst)
                 (OptGlobalExprCons
-                  (OptGlobalExprFact key dst block-label pos)
+                  (OptGlobalExprFact key dst block-id pos)
                   (box rest-facts))]
               [(OptNoI64) rest-facts])]
           [(OptNoGlobalExprKey) rest-facts]))]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
-  [block-label : String]
+  [block-id : i64]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
@@ -7768,27 +7989,28 @@
             (match (opt-instr-def-var instr)
               [(OptSomeI64 dst)
                 (OptGlobalExprCons
-                  (OptGlobalExprFact key dst block-label (+ index 1))
+                  (OptGlobalExprFact key dst block-id (+ index 1))
                   (box rest-facts))]
               [(OptNoI64) rest-facts])]
           [(OptNoGlobalExprKey) rest-facts])]
       (opt-global-expr-facts-from-instr-seq-from
-        block-label
+        block-id
         slots
         (- index 1)
         next-tail))))
 
 (define (opt-global-expr-facts-from-instr-seq
-  [block-label : String]
+  [block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
   (opt-global-expr-facts-from-instr-seq-from
-    block-label
+    block-id
     (struct-get instrs slots)
     (- (struct-get instrs len) 1)
     tail))
 
 (define (opt-global-expr-facts-from-blocks
+  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
   (match blocks
@@ -7796,53 +8018,140 @@
     [(IrBlockCons block rest)
       (let
         [rest-facts : OptGlobalExprFacts
-          (opt-global-expr-facts-from-blocks (box-get rest) tail)]
+          (opt-global-expr-facts-from-blocks doms (box-get rest) tail)]
         (match block
           [(IrBlock label instrs)
-            (opt-global-expr-facts-from-instr-seq label instrs rest-facts)]))]))
+            (opt-global-expr-facts-from-instr-seq
+              (opt-global-block-id doms label)
+              instrs
+              rest-facts)]))]))
 
-(define (opt-global-expr-lookup
+(define (opt-global-fact-bucket-capacity [count : i64]) : i64
+  (let
+    [target : i64
+      (if (< count 1)
+        1
+        (* count 2))]
+    [capacity : i64 1]
+    (begin
+      (while (< capacity target)
+        (set! capacity (* capacity 2)))
+      capacity)))
+
+(define (opt-global-expr-facts-count [facts : OptGlobalExprFacts]) : i64
+  (match facts
+    [(OptGlobalExprNil) 0]
+    [(OptGlobalExprCons _ rest)
+      (+ 1 (opt-global-expr-facts-count (box-get rest)))]))
+
+(define (opt-global-expr-buckets-fill-empty!
+  [buckets : (Array OptGlobalExprFacts)]
+  [index : i64]) : unit
+  (if (>= index (array-length buckets))
+    unit
+    (begin
+      (array-set! buckets index (OptGlobalExprNil))
+      (opt-global-expr-buckets-fill-empty! buckets (+ index 1)))))
+
+(define (opt-global-expr-bucket-index
+  [buckets : (Array OptGlobalExprFacts)]
+  [key : OptGlobalExprKey]) : i64
+  (bit-and (opt-global-expr-key-hash key) (- (array-length buckets) 1)))
+
+(define (opt-global-expr-table-insert!
+  [table : OptGlobalExprFactTable]
+  [fact : OptGlobalExprFact]) : unit
+  (match fact
+    [(OptGlobalExprFact key _ _ _)
+      (let
+        [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
+        [bucket : i64 (opt-global-expr-bucket-index buckets key)]
+        (array-set!
+          buckets
+          bucket
+          (OptGlobalExprCons fact (box (array-ref buckets bucket)))))]))
+
+(define (opt-global-expr-table-insert-reversed!
+  [table : OptGlobalExprFactTable]
+  [facts : OptGlobalExprFacts]) : unit
+  (match facts
+    [(OptGlobalExprNil) unit]
+    [(OptGlobalExprCons fact rest)
+      (begin
+        (opt-global-expr-table-insert-reversed! table (box-get rest))
+        (opt-global-expr-table-insert! table fact))]))
+
+(define (opt-global-expr-table-from-facts [facts : OptGlobalExprFacts]) : OptGlobalExprFactTable
+  (let
+    [capacity : i64
+      (opt-global-fact-bucket-capacity (opt-global-expr-facts-count facts))]
+    [buckets : (Array OptGlobalExprFacts)
+      (make-array OptGlobalExprFacts capacity)]
+    [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
+    (begin
+      (opt-global-expr-buckets-fill-empty! buckets 0)
+      (opt-global-expr-table-insert-reversed! table facts)
+      table)))
+
+(define (opt-global-expr-lookup-list
   [facts : OptGlobalExprFacts]
   [key : OptGlobalExprKey]
   [dst : i64]
   [doms : OptDomInfo]
-  [use-block : String]
+  [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
   (match facts
     [(OptGlobalExprNil) (IrNoValue)]
     [(OptGlobalExprCons fact rest)
       (match fact
-        [(OptGlobalExprFact fact-key fact-dst def-block def-pos)
+        [(OptGlobalExprFact fact-key fact-dst def-block-id def-pos)
           (if (and
             (not (= fact-dst dst))
             (and
               (opt-global-expr-key-eq fact-key key)
               (opt-global-fact-available?
-                def-block
+                def-block-id
                 def-pos
-                use-block
+                use-block-id
                 use-pos
                 doms)))
             (IrSomeValue (IrValueVar fact-dst))
-            (opt-global-expr-lookup
+            (opt-global-expr-lookup-list
               (box-get rest)
               key
               dst
               doms
-              use-block
+              use-block-id
               use-pos))])]))
 
-(define (opt-global-cse-instr
-  [facts : OptGlobalExprFacts]
+(define (opt-global-expr-lookup
+  [table : OptGlobalExprFactTable]
+  [key : OptGlobalExprKey]
+  [dst : i64]
   [doms : OptDomInfo]
-  [block-label : String]
+  [use-block-id : i64]
+  [use-pos : i64]) : CompilerIrMaybeValue
+  (let
+    [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
+    (opt-global-expr-lookup-list
+      (array-ref buckets (opt-global-expr-bucket-index buckets key))
+      key
+      dst
+      doms
+      use-block-id
+      use-pos)))
+
+(define (opt-global-cse-instr
+  [facts : OptGlobalExprFactTable]
+  [doms : OptDomInfo]
+  [block-id : i64]
   [pos : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match (opt-global-key-for-instr instr)
     [(OptSomeGlobalExprKey key)
       (match (opt-instr-def-var instr)
         [(OptSomeI64 dst)
-          (match (opt-global-expr-lookup facts key dst doms block-label pos)
+          (match (opt-global-expr-lookup facts key dst doms block-id pos)
             [(IrSomeValue earlier)
               (match instr
                 [(IrInstrMov _ _ ty) (IrInstrMov dst earlier ty)]
@@ -7856,26 +8165,27 @@
     [(OptNoGlobalExprKey) instr]))
 
 (define (opt-global-cse-instrs
-  [facts : OptGlobalExprFacts]
+  [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-id : i64]
   [pos : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (compiler-ir-instr-cons
-        (opt-global-cse-instr facts doms block-label pos instr)
-        (opt-global-cse-instrs facts doms block-label (+ pos 1) (box-get rest)))]))
+        (opt-global-cse-instr facts doms block-id pos instr)
+        (opt-global-cse-instrs facts doms block-id (+ pos 1) (box-get rest)))]))
 
 (define (opt-global-cse-instr-seq
-  [facts : OptGlobalExprFacts]
+  [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
+    [block-id : i64 (opt-global-block-id doms block-label)]
     [out : CompilerIrInstrList (IrInstrNil)]
     (begin
       (while (>= index 0)
@@ -7886,7 +8196,7 @@
               (opt-global-cse-instr
                 facts
                 doms
-                block-label
+                block-id
                 (+ index 1)
                 (array-ref slots index))
               out))
@@ -7894,7 +8204,7 @@
       out)))
 
 (define (opt-global-cse-blocks
-  [facts : OptGlobalExprFacts]
+  [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -7913,15 +8223,21 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [doms : OptDomInfo (struct-get context doms)]
-    [copy-facts : OptGlobalCopyFacts
-      (opt-global-copy-facts-from-blocks blocks (OptGlobalCopyNil))]
+    [copy-fact-list : OptGlobalCopyFacts
+      (opt-global-copy-facts-from-blocks doms blocks (OptGlobalCopyNil))]
+    [copy-facts : OptGlobalCopyFactTable
+      (opt-global-copy-table-from-facts copy-fact-list)]
     [copied : CompilerIrBlockList
       (opt-global-copy-blocks copy-facts doms blocks)]
-    [expr-facts : OptGlobalExprFacts
-      (opt-global-expr-facts-from-blocks copied (OptGlobalExprNil))]
+    [expr-fact-list : OptGlobalExprFacts
+      (opt-global-expr-facts-from-blocks doms copied (OptGlobalExprNil))]
+    [expr-facts : OptGlobalExprFactTable
+      (opt-global-expr-table-from-facts expr-fact-list)]
     [cse : CompilerIrBlockList (opt-global-cse-blocks expr-facts doms copied)]
-    [cse-copy-facts : OptGlobalCopyFacts
-      (opt-global-copy-facts-from-blocks cse (OptGlobalCopyNil))]
+    [cse-copy-fact-list : OptGlobalCopyFacts
+      (opt-global-copy-facts-from-blocks doms cse (OptGlobalCopyNil))]
+    [cse-copy-facts : OptGlobalCopyFactTable
+      (opt-global-copy-table-from-facts cse-copy-fact-list)]
     (opt-global-copy-blocks cse-copy-facts doms cse)))
 
 (define (opt-global-value-number-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -16539,6 +16855,37 @@
             (IrInstrNil))))
       (IrBlockNil))))
 
+(define (opt-global-expr-hash-collision-guard-ok?) : bool
+  (let
+    [key : OptGlobalExprKey
+      (OptGlobalBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
+    [other-key : OptGlobalExprKey
+      (OptGlobalBinKey (IrBinSub) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
+    [buckets : (Array OptGlobalExprFacts) (make-array OptGlobalExprFacts 1)]
+    [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
+    [doms : OptDomInfo
+      (opt-cfg-dominators
+        (compiler-ir-block-cons
+          (compiler-ir-block "entry" (IrInstrNil))
+          (IrBlockNil)))]
+    (begin
+      (array-set!
+        buckets
+        0
+        (OptGlobalExprCons
+          (OptGlobalExprFact key 7 0 1)
+          (box (OptGlobalExprNil))))
+      (and
+        (match (opt-global-expr-lookup table key 8 doms 0 2)
+          [(IrSomeValue value)
+            (match value
+              [(IrValueVar id) (= id 7)]
+              [_ false])]
+          [(IrNoValue) false])
+        (match (opt-global-expr-lookup table other-key 8 doms 0 2)
+          [(IrNoValue) true]
+          [(IrSomeValue _) false])))))
+
 (define (compiler-optimize-global-value-number-self-test) : i64
   (let
     [dominated : CompilerIrBlockList
@@ -16611,6 +16958,7 @@
       [(not (= (opt-count-mov-dst-blocks cast 4) 0)) 11]
       [(not (= (opt-count-gep-blocks gep) 1)) 12]
       [(not (= (opt-count-mov-dst-blocks gep 4) 0)) 13]
+      [(not (opt-global-expr-hash-collision-guard-ok?)) 14]
       [else 42])))
 
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList

@@ -1511,7 +1511,7 @@
           "compiler-load: dependency package manifest not found for "
           source-path))]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest-diagnostic
+      (match (compiler-load-parse-manifest-diagnostic-infer-kind
         manifest-path
         (read-file manifest-path))
         [(ErrCompilerPkgManifestDiagnostic diag)
@@ -3703,6 +3703,25 @@
           (CompilerPkgKindBin)
           "custom.tl")))))
 
+(define (compiler-load-manifest-infer-package-entry-ok?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_entry_lib_only")]
+    [source-path : String (compiler-load-manifest-test-path root "src/lib.tl")]
+    [expected-entry : String (compiler-load-normalize-path source-path)]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"entry_dep\") (version \"1\"))"
+        false
+        true)
+      (match (compiler-load-package-entry-for-source source-path)
+        [(OkCompilerLoadPackageEntry entry)
+          (and
+            (string-eq (struct-get entry owner) "entry_dep")
+            (string-eq (struct-get entry entry-path) expected-entry))]
+        [(ErrCompilerLoadPackageEntry _) false]))))
+
 (define (compiler-load-manifest-path-inference-ok?) : bool
   (and
     (compiler-load-manifest-infer-bin-only-ok?)
@@ -3712,7 +3731,9 @@
         (compiler-load-manifest-infer-ambiguous-ok?)
         (and
           (compiler-load-manifest-infer-missing-ok?)
-          (compiler-load-manifest-infer-explicit-ok?))))))
+          (and
+            (compiler-load-manifest-infer-explicit-ok?)
+            (compiler-load-manifest-infer-package-entry-ok?)))))))
 
 (define (compiler-load-pkg-manifest-github-validation-ok?) : bool
   (and

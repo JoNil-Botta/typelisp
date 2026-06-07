@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-selfhost-native.sh - Linux no-Rust native checks for selfhost drivers.
+# verify-native-link-linux.sh - Linux no-Rust native checks for selfhost drivers.
 #
 # This covers integration.rs cases where a selfhost TypeLisp driver emits
 # assembly, and the emitted assembly must then assemble, link, and run.

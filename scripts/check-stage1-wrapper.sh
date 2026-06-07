@@ -48,7 +48,7 @@ fail() {
 assert_contains() {
     file=$1
     needle=$2
-    if ! grep -qF "$needle" "$file"; then
+    if ! grep -qF -- "$needle" "$file"; then
         echo "expected '$needle' in $file" >&2
         sed 's/^/  /' "$file" >&2 || true
         exit 1
@@ -58,7 +58,7 @@ assert_contains() {
 assert_not_contains() {
     file=$1
     needle=$2
-    if grep -qF "$needle" "$file"; then
+    if grep -qF -- "$needle" "$file"; then
         echo "did not expect '$needle' in $file" >&2
         sed 's/^/  /' "$file" >&2 || true
         exit 1
@@ -922,6 +922,19 @@ assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint_ladder.tl:"
 assert_contains "$WORKDIR/lint-nested-if-check.stdout" "nested if-ladder"
 assert_contains "$WORKDIR/lint-nested-if-check.stdout" "lint: 1 finding(s)"
 
+run_capture lint-multi "$COMPILER" lint "$SRC" "$LINT_SRC"
+assert_empty "$WORKDIR/lint-multi.stderr"
+assert_contains "$WORKDIR/lint-multi.stdout" "--- $SRC"
+assert_contains "$WORKDIR/lint-multi.stdout" "--- $LINT_SRC"
+assert_contains "$WORKDIR/lint-multi.stdout" "lint_ladder.tl:"
+assert_contains "$WORKDIR/lint-multi.stdout" "lint: 0 finding(s)"
+assert_contains "$WORKDIR/lint-multi.stdout" "lint: 1 finding(s)"
+lint_multi_clean_line=$(grep -nF -- "--- $SRC" "$WORKDIR/lint-multi.stdout" | head -n 1 | cut -d: -f1)
+lint_multi_ladder_line=$(grep -nF -- "--- $LINT_SRC" "$WORKDIR/lint-multi.stdout" | head -n 1 | cut -d: -f1)
+if [ "$lint_multi_clean_line" -ge "$lint_multi_ladder_line" ]; then
+    fail "lint multi-file output did not preserve input path order"
+fi
+
 run_expect_failure lint-package-check "$COMPILER" lint --manifest-path "$FMTLINT_PKG/typelisp.pkg" --check
 assert_empty "$WORKDIR/lint-package-check.stderr"
 assert_contains "$WORKDIR/lint-package-check.stdout" "lint_bad.tl:"
@@ -932,6 +945,9 @@ assert_contains "$WORKDIR/lint-package-discover.stdout" "lint_bad.tl:"
 run_expect_failure lint-file-manifest "$COMPILER" lint "$SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
 assert_empty "$WORKDIR/lint-file-manifest.stdout"
 assert_contains "$WORKDIR/lint-file-manifest.stderr" "cannot combine input paths with --manifest-path"
+run_expect_failure lint-files-manifest "$COMPILER" lint "$SRC" "$LINT_SRC" --manifest-path "$FMTLINT_PKG/typelisp.pkg"
+assert_empty "$WORKDIR/lint-files-manifest.stdout"
+assert_contains "$WORKDIR/lint-files-manifest.stderr" "cannot combine input paths with --manifest-path"
 
 run_expect_failure lint-missing-file "$COMPILER" lint "$WORKDIR/missing-lint.tl"
 assert_empty "$WORKDIR/lint-missing-file.stdout"

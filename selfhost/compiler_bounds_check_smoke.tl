@@ -1,7 +1,9 @@
 ;; compiler_bounds_check_smoke.tl - Optimizer/backend smoke for explicit bounds checks.
 ;;
 ;; Builds an IR program with two identical bounds checks in one block, runs the
-;; optimizer, emits assembly, and requires exactly one OOB trap call.
+;; optimizer, emits assembly, and requires exactly one OOB trap reference. The
+;; backend no longer owns the `tl_oob_abort` body; executable driver paths link
+;; it from the runtime prelude.
 (import "compiler_backend.tl")
 
 (import "compiler_optimize.tl")
@@ -12,29 +14,21 @@
     (compiler-ir-function-cons
       (IrFunction
         "main"
-        IrParamNil
+        (compiler-ir-param-cons
+          (IrParam "index" (AstTyI64) 0)
+          (compiler-ir-param-cons (IrParam "length" (AstTyI64) 1) IrParamNil))
         (AstTyI64)
         4
         (compiler-ir-block-cons
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrMov 0 (IrValueI64 0) (AstTyU64))
+              (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
               (compiler-ir-instr-cons
-                (IrInstrMov 1 (IrValueI64 1) (AstTyU64))
+                (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
                 (compiler-ir-instr-cons
-                  (IrInstrBoundsCheck
-                    (IrValueVar 0)
-                    (IrValueVar 1)
-                    "bounds_ok.0")
-                  (compiler-ir-instr-cons
-                    (IrInstrBoundsCheck
-                      (IrValueVar 0)
-                      (IrValueVar 1)
-                      "bounds_ok.1")
-                    (compiler-ir-instr-cons
-                      (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                      (IrInstrNil)))))))
+                  (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                  (IrInstrNil)))))
           (IrBlockNil)))
       (IrFunctionNil))
     IrExternNil))
@@ -43,9 +37,9 @@
   (match (compiler-backend-emit-program
     (optimize-program-with-level (bounds-check-smoke-program) 2))
     [(OkCompilerBackend asm)
-      (if (and
-        (= (compiler-backend-string-count asm "    call tl_oob_abort\n") 1)
-        (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
-        42
-        1)]
+      (let
+        [symbol-count : i64 (compiler-backend-string-count asm "tl_oob_abort")]
+        [defines-abort : bool
+          (compiler-backend-string-contains? asm "tl_oob_abort:\n")]
+        (cond [(not (= symbol-count 1)) 1] [defines-abort 2] [else 42]))]
     [(ErrCompilerBackend _) 2]))

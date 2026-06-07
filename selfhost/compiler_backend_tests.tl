@@ -942,7 +942,7 @@
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
           (compiler-backend-string-contains? asm "    jb .Lf0_str_bounds_ok")
           (compiler-backend-string-contains? asm "    call tl_oob_abort")
-          (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
+          (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
         (and
           (backend-and4
             (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
@@ -2710,11 +2710,9 @@
   (and
     (backend-and8
       (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_alloc")
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_oob_abort")
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_div_abort")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_shift_abort")
+      (not (compiler-backend-runtime-helper-known? "tl_oob_abort"))
+      (not (compiler-backend-runtime-helper-known? "tl_div_abort"))
+      (not (compiler-backend-runtime-helper-known? "tl_shift_abort"))
       (compiler-backend-runtime-helper-inventory-symbol-ok? plan ".L_tl_abort")
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
@@ -3135,7 +3133,7 @@
             "    leaq (%rax,%r8,8), %rax\n")
           (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n")
           (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
-          (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
+          (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -4232,7 +4230,7 @@
         (compiler-backend-string-contains? asm "    cqto\n")
         (compiler-backend-string-contains? asm "    idivq %r8\n")
         (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
-        (compiler-backend-string-contains? asm ".globl tl_div_abort\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_div_abort\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -4252,8 +4250,8 @@
           asm
           "    cmpq $64, %r8\n    jb 1f\n    call tl_shift_abort\n1:\n")
         (compiler-backend-string-contains? asm "    call tl_shift_abort\n")
-        (compiler-backend-string-contains? asm ".globl tl_shift_abort\n")
-        (compiler-backend-string-contains? asm ".L_tl_shift_msg:")
+        (not (compiler-backend-string-contains? asm ".globl tl_shift_abort\n"))
+        (not (compiler-backend-string-contains? asm ".L_tl_shift_msg:"))
         (not (compiler-backend-string-contains? asm "    shlq $-1, %rax\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -4334,20 +4332,20 @@
   (let
     [trap-branches : bool
       (backend-and4
-        (compiler-backend-string-contains? asm ".Lmain_div_trap:\n")
-        (compiler-backend-string-contains? asm ".Lmain_shift_trap:\n")
+        (compiler-backend-string-contains? asm ".Lf0_div_trap:\n")
+        (compiler-backend-string-contains? asm ".Lf0_shift_trap:\n")
         (compiler-backend-string-contains? asm "    call tl_div_abort\n")
         (compiler-backend-string-contains? asm "    call tl_shift_abort\n"))]
     [helper-shapes : bool
       (backend-and8
-        (compiler-backend-string-contains? asm ".globl tl_div_abort\n")
-        (compiler-backend-string-contains? asm "tl_div_abort:\n")
-        (compiler-backend-string-contains? asm ".L_tl_div_msg:")
-        (compiler-backend-string-contains? asm "movq $135, %rdi\n")
-        (compiler-backend-string-contains? asm ".globl tl_shift_abort\n")
-        (compiler-backend-string-contains? asm "tl_shift_abort:\n")
-        (compiler-backend-string-contains? asm ".L_tl_shift_msg:")
-        (compiler-backend-string-contains? asm "movq $129, %rdi\n"))]
+        (not (compiler-backend-string-contains? asm ".globl tl_div_abort\n"))
+        (not (compiler-backend-string-contains? asm "tl_div_abort:\n"))
+        (not (compiler-backend-string-contains? asm ".L_tl_div_msg:"))
+        (not (compiler-backend-string-contains? asm "movq $135, %rdi\n"))
+        (not (compiler-backend-string-contains? asm ".globl tl_shift_abort\n"))
+        (not (compiler-backend-string-contains? asm "tl_shift_abort:\n"))
+        (not (compiler-backend-string-contains? asm ".L_tl_shift_msg:"))
+        (not (compiler-backend-string-contains? asm "movq $129, %rdi\n")))]
     [op-shapes : bool
       (backend-and4
         (compiler-backend-string-contains? asm "    idivq %r8\n")

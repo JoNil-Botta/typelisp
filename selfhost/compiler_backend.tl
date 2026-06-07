@@ -2118,10 +2118,22 @@
 (define (compiler-backend-runtime-user-symbol? [name : String]) : bool
   (string-eq name "env-path-separator"))
 
+(define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
+  (or
+    (string-eq name "tl_oob_abort")
+    (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort"))))
+
+(define (compiler-backend-call-raw-symbol?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (or
+    (compiler-backend-plan-provides? plan name)
+    (compiler-backend-fixed-fault-symbol? name)))
+
 (define (compiler-backend-link-symbol
   [name : String]
   [plan : CompilerBackendRuntimePlan]) : String
-  (if (compiler-backend-plan-provides? plan name)
+  (if (compiler-backend-call-raw-symbol? plan name)
     (if (compiler-backend-runtime-user-symbol? name)
       (compiler-backend-user-symbol name)
       name)
@@ -2139,14 +2151,14 @@
       (if (and
         (and
           (string-eq link-symbol name)
-          (compiler-backend-plan-provides? plan name))
+          (compiler-backend-call-raw-symbol? plan name))
         (not (compiler-backend-function-list-defines? functions name)))
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
           name)
         (compiler-backend-link-symbol link-symbol plan)))
     (if (and
-      (compiler-backend-plan-provides? plan name)
+      (compiler-backend-call-raw-symbol? plan name)
       (not (compiler-backend-function-list-defines? functions name)))
       (if (compiler-backend-runtime-user-symbol? name)
         (compiler-backend-user-symbol name)
@@ -2167,7 +2179,7 @@
         (if (and
           (and
             (string-eq link-symbol name)
-            (compiler-backend-plan-provides? plan name))
+            (compiler-backend-call-raw-symbol? plan name))
           (not (compiler-backend-index-function-defines? index name)))
           (if (compiler-backend-runtime-user-symbol? name)
             (compiler-backend-user-symbol name)
@@ -2175,7 +2187,7 @@
           (compiler-backend-link-symbol link-symbol plan)))]
     [else
       (if (and
-        (compiler-backend-plan-provides? plan name)
+        (compiler-backend-call-raw-symbol? plan name)
         (not (compiler-backend-index-function-defines? index name)))
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
@@ -11045,15 +11057,21 @@
       [c : char (string-ref name 0)]
       (or (char-eq c #t') (or (char-eq c #.') (char-eq c #e'))))))
 
-(define (compiler-backend-runtime-helper-core? [name : String]) : bool
+(define (compiler-backend-runtime-helper-core? [name : String])
+  :
+  bool
+  ;; tl_oob_abort / tl_div_abort / tl_shift_abort moved to the runtime prelude
+  ;; (stdlib/runtime.tl) and are now provided by #2143 export-symbol, so they are
+  ;; no longer backend-owned runtime helpers (keeping them here would make the
+  ;; export collide with a "known runtime symbol").
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     false
     (or
       (backend-or8
         (string-eq name "tl_alloc")
-        (string-eq name "tl_oob_abort")
-        (string-eq name "tl_div_abort")
-        (string-eq name "tl_shift_abort")
+        false
+        false
+        false
         (string-eq name ".L_tl_abort")
         (string-eq name "tl_region_mark")
         (string-eq name "tl_region_reset")
@@ -11998,34 +12016,8 @@ tl_profile_alloc_peak_bytes:
 
 ")
 
-(define (compiler-backend-runtime-oob-data) : String
-  "    .section .rodata
-.L_tl_oob_msg:
-    .byte 116,108,58,32,97,114,114,97,121,32,105,110,100,101,120,32,111,117,116,32,111,102,32,98,111,117,110,100,115,10
-    .set .L_tl_oob_msg_len, . - .L_tl_oob_msg
-
-")
-
-(define (compiler-backend-runtime-div-data [div-abort : bool]) : String
-  (if div-abort
-    "    .section .rodata
-.L_tl_div_msg:
-    .ascii \"tl: integer division or remainder error\\n\"
-    .set .L_tl_div_msg_len, . - .L_tl_div_msg
-
-"
-    ""))
-
-(define (compiler-backend-runtime-shift-data [shift-abort : bool]) : String
-  (if shift-abort
-    "    .section .rodata
-.L_tl_shift_msg:
-    .ascii \"tl: shift count out of range\\n\"
-    .set .L_tl_shift_msg_len, . - .L_tl_shift_msg
-
-"
-    ""))
-
+;; The oob/division/shift fault message data moved to the runtime prelude
+;; (stdlib/runtime.tl) handlers (#2143); the backend no longer emits it.
 (define (compiler-backend-runtime-argv-data) : String
   "    .data
     .balign 8
@@ -12133,13 +12125,11 @@ tl_profile_alloc_peak_bytes:
               (compiler-backend-runtime-alloc-data-for-target target)
               "")))
         (string-append
-          (if oob
-            (compiler-backend-runtime-oob-data)
-            "")
+          ;; The oob/division/shift fault messages now live in the runtime
+          ;; prelude (stdlib/runtime.tl) handlers, not backend rodata (#2143).
+          ""
           (string-append
-            (string-append
-              (compiler-backend-runtime-div-data div-abort)
-              (compiler-backend-runtime-shift-data shift-abort))
+            ""
             (string-append
               (if region-reset
                 (compiler-backend-runtime-region-reset-data)
@@ -13667,48 +13657,9 @@ tl_alloc:
 
 ")))))
 
-(define (compiler-backend-runtime-oob-functions) : String
-  "    .globl tl_oob_abort
-tl_oob_abort:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_oob_msg(%rip), %rsi
-    movq $.L_tl_oob_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-")
-
-(define (compiler-backend-runtime-div-functions) : String
-  "    .globl tl_div_abort
-tl_div_abort:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_div_msg(%rip), %rsi
-    movq $.L_tl_div_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $135, %rdi
-    syscall
-
-")
-
-(define (compiler-backend-runtime-shift-functions) : String
-  "    .globl tl_shift_abort
-tl_shift_abort:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_shift_msg(%rip), %rsi
-    movq $.L_tl_shift_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $129, %rdi
-    syscall
-
-")
-
+;; The Linux out-of-bounds/division/shift abort handlers moved to the runtime
+;; prelude (stdlib/runtime.tl as `tl-runtime-*-abort`, exported as the fixed
+;; `tl_*_abort` symbols via #2143); the backend no longer emits them as asm.
 (define (compiler-backend-runtime-abort-functions) : String
   "    .globl tl_abort_string
 tl_abort_string:
@@ -15115,48 +15066,10 @@ tl_profile_alloc_reset_peak:
     (compiler-backend-runtime-windows-fs-functions)
     (compiler-backend-runtime-fs-functions)))
 
-(define (compiler-backend-runtime-windows-fixed-abort-functions
-  [symbol : String]
-  [msg-label : String]
-  [len-label : String]
-  [status : i64]) : String
-  (backend-cat5
-    "    .globl "
-    symbol
-    "\n"
-    (backend-cat4
-      symbol
-      ":\n    push %rbp\n    mov %rsp, %rbp\n    movq $2, %rcx\n    leaq "
-      msg-label
-      "(%rip), %rdx\n")
-    (backend-cat5
-      "    movq $"
-      len-label
-      ", %r8\n    sub $32, %rsp\n    call _write\n    add $32, %rsp\n    movq $"
-      (int->string status)
-      ", %rcx\n    sub $32, %rsp\n    call exit\n\n")))
-
-(define (compiler-backend-runtime-windows-oob-functions) : String
-  (compiler-backend-runtime-windows-fixed-abort-functions
-    "tl_oob_abort"
-    ".L_tl_oob_msg"
-    ".L_tl_oob_msg_len"
-    134))
-
-(define (compiler-backend-runtime-windows-div-functions) : String
-  (compiler-backend-runtime-windows-fixed-abort-functions
-    "tl_div_abort"
-    ".L_tl_div_msg"
-    ".L_tl_div_msg_len"
-    135))
-
-(define (compiler-backend-runtime-windows-shift-functions) : String
-  (compiler-backend-runtime-windows-fixed-abort-functions
-    "tl_shift_abort"
-    ".L_tl_shift_msg"
-    ".L_tl_shift_msg_len"
-    129))
-
+;; The Windows out-of-bounds/division/shift abort handlers (and their shared
+;; fixed-abort emitter) moved to the runtime prelude (stdlib/runtime.tl),
+;; exported as the fixed `tl_*_abort` symbols via #2143; the backend emits no
+;; asm for them.
 (define (compiler-backend-runtime-windows-abort-functions) : String
   "    .globl tl_abort_string
 tl_abort_string:
@@ -17929,23 +17842,21 @@ tl_process_output:
               (compiler-backend-runtime-windows-alloc-functions profile)
               (compiler-backend-runtime-alloc-functions profile))
             "")]
+        ;; The out-of-bounds/division/shift fault handlers now live in the
+        ;; runtime prelude (stdlib/runtime.tl), exported via #2143; the backend
+        ;; emits no asm for them. The plan flags are retained for the runtime
+        ;; index (which still tracks the `tl_*_abort` call sites).
         [oob-asm : String
           (if oob
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-oob-functions)
-              (compiler-backend-runtime-oob-functions))
+            ""
             "")]
         [div-abort-asm : String
           (if div-abort
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-div-functions)
-              (compiler-backend-runtime-div-functions))
+            ""
             "")]
         [shift-abort-asm : String
           (if shift-abort
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-shift-functions)
-              (compiler-backend-runtime-shift-functions))
+            ""
             "")]
         [substring-asm : String
           (if substring
@@ -18935,24 +18846,20 @@ tl_process_output:
   (compiler-ir-extern-cons
     (compiler-ir-extern-default "tl_alloc" (AstTyI64))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_oob_abort" (AstTyUnit))
+      (compiler-ir-extern-default "tl_substring" (AstTyI64))
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_substring" (AstTyI64))
+        (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
+          (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
           (compiler-ir-extern-cons
-            (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
+            (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
             (compiler-ir-extern-cons
-              (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
+              (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
               (compiler-ir-extern-cons
-                (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
-                (compiler-ir-extern-cons
-                  (compiler-ir-extern-default
-                    "tl_process_output"
-                    (ast-ty-func
-                      (ast-type-cons (AstTyI64) AstTypeNil)
-                      (AstTyI64)))
-                  IrExternNil)))))))))
+                (compiler-ir-extern-default
+                  "tl_process_output"
+                  (ast-ty-func (ast-type-cons (AstTyI64) AstTypeNil) (AstTyI64)))
+                IrExternNil))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -19005,7 +18912,6 @@ tl_process_output:
 
 (define (compiler-backend-runtime-helper-source) : String
   "(extern tl_alloc : (-> i64 i64))
-(extern tl_oob_abort : (-> unit))
 (extern tl_substring : (-> i64 i64 i64 i64))
 (extern tl_string_concat : (-> i64 i64 i64 i64 i64))
 (extern tl_string_eq : (-> String String bool))
@@ -19088,8 +18994,8 @@ tl_process_output:
         (backend-and8
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (compiler-backend-string-contains? asm "tl_alloc:\n")
-          (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
-          (compiler-backend-string-contains? asm "tl_oob_abort:\n")
+          (not (compiler-backend-string-contains? asm ".globl tl_oob_abort\n"))
+          (not (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
           (compiler-backend-string-contains? asm ".globl tl_substring\n")
           (compiler-backend-string-contains? asm "tl_substring:\n")
           (compiler-backend-string-contains? asm ".globl tl_string_concat\n")

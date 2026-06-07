@@ -3330,6 +3330,63 @@
           state
           (clone-helper-name name)))]))
 
+;; Functions with an `(:export-symbol …)` declaration (#2143) publish a fixed
+;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
+;; backend-emitted bounds/division/shift checks call the runtime-prelude
+;; handlers). Seed every exported function as a reachability root so the prune
+;; keeps it and its transitive callees even with no IR caller.
+(define (lower-reach-add-export-roots-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]) : LowerReachState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) (box-get path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-reach-add-export-roots-in-module
+              rest
+              rest-paths
+              entry-path
+              next-module
+              all-functions
+              state)]
+          [(AstDeclDefFn name _ _ _ export)
+            (lower-reach-add-export-roots-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              all-functions
+              (match export
+                [(AstFnExport _)
+                  (lower-reach-add-logical
+                    all-functions
+                    state
+                    (lower-decl-logical-name entry-path decl-path module name))]
+                [(AstFnNoExport) state]))]
+          [_
+            (lower-reach-add-export-roots-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              all-functions
+              state)]))]))
+
 (define (lower-prune-unreachable-functions-with-clone-roots
   [entry-path : String]
   [program : AstProgram]
@@ -3371,12 +3428,18 @@
                   all-functions
                   name-cache
                   clone-roots
-                  (lower-reach-add-logical
+                  (lower-reach-add-export-roots-in-module
+                    decls
+                    paths
+                    entry-path
+                    ""
                     all-functions
-                    (LowerReachState
-                      (string-i64-map-with-capacity 8192)
-                      LowerStringNil)
-                    "main")))
+                    (lower-reach-add-logical
+                      all-functions
+                      (LowerReachState
+                        (string-i64-map-with-capacity 8192)
+                        LowerStringNil)
+                      "main"))))
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram

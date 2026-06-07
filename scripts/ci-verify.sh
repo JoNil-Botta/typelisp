@@ -338,8 +338,7 @@ stage1_can_compile_native_windows() {
 echo "[no-rust-stage0] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
 run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
-run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source lint" \
-    env TYPELISP_LINT_JOBS="${TYPELISP_LINT_JOBS:-8}" scripts/check-tl-lint.sh
+run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 
@@ -367,8 +366,7 @@ fi
 SELFHOST_CLI_BIN=$(sed -n '1p' "$SELFHOST_CLI_REFRESHED_PATH_FILE")
 ensure_executable "refreshed selfhost cli" "$SELFHOST_CLI_BIN"
 echo "[no-rust-stage0] downstream fresh CLI gates use refreshed selfhost cli: $SELFHOST_CLI_BIN"
-run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI TypeLisp source lint" \
-    env TYPELISP_LINT_JOBS="${TYPELISP_LINT_JOBS:-8}" scripts/check-tl-lint.sh
+run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI TypeLisp source lint" scripts/check-tl-lint.sh
 
 if [ "$HOST_OS" = linux ]; then
     STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-stage1.path"

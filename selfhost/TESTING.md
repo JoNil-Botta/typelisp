@@ -451,7 +451,7 @@ TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
 scripts/ci-verify.sh
 ```
 
-`scripts/check-tl-lint.sh` runs `typelisp lint <file.tl> --check` over tracked
+`scripts/check-tl-lint.sh` runs one batched `typelisp lint --check` over tracked
 TypeLisp source units and fails CI on any finding. Plain `typelisp lint
 <file.tl>` remains warn-only for reviewable cleanup slices.
 

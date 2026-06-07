@@ -42,6 +42,8 @@
 ;; parallel pair of `(Array i64)` - a tag array (the Token kind, via `token-tag`)
 ;; and a value array (the integer payload of a `TInt`, else 0) - so the cursor is
 ;; a plain `i64` index the helpers advance.
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 (defenum Token
@@ -190,7 +192,7 @@
   (let
     [acc : Expr (parse-factor tags vals cur)]
     (begin
-      (while (or
+      (while (core/or
         (= (current-tag tags cur) (tag-star))
         (= (current-tag tags cur) (tag-slash)))
         (if (= (current-tag tags cur) (tag-star))
@@ -215,7 +217,7 @@
   (let
     [acc : Expr (parse-term tags vals cur)]
     (begin
-      (while (or
+      (while (core/or
         (= (current-tag tags cur) (tag-plus))
         (= (current-tag tags cur) (tag-minus)))
         (if (= (current-tag tags cur) (tag-plus))

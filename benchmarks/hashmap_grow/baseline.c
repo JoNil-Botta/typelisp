@@ -35,11 +35,12 @@ static uint64_t hash_key(uint64_t key) {
 }
 
 static uint64_t bucket_index(uint64_t hash, uint64_t capacity) {
-    return hash_normalize(hash) % capacity;
+    return hash & (capacity - 1ULL);
 }
 
 static uint64_t next_index(uint64_t index, uint64_t capacity) {
-    return (index + 1ULL) % capacity;
+    uint64_t next = index + 1ULL;
+    return next >= capacity ? 0ULL : next;
 }
 
 static uint64_t grow_key(uint64_t i) {

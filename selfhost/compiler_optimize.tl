@@ -4045,16 +4045,16 @@
 (defenum OptDomEntry
   (OptDomEntry String OptLabelSet))
 
-(defenum OptDomTable
+(defenum OptLegacyDomTable
   (OptDomNil)
-  (OptDomCons OptDomEntry (Box OptDomTable)))
+  (OptDomCons OptDomEntry (Box OptLegacyDomTable)))
 
-(define (opt-dom-table-lookup [table : OptDomTable] [label : String]) : OptLabelSet
+(define (opt-dom-table-lookup [table : OptLegacyDomTable] [label : String]) : OptLabelSet
   (match table
     [(OptDomNil) (OptLabelNil)]
     [(OptDomCons entry rest)
       (let
-        [rest : OptDomTable (box-get rest)]
+        [rest : OptLegacyDomTable (box-get rest)]
         (match entry
           [(OptDomEntry entry-label labels)
             (if (string-eq entry-label label)
@@ -4070,7 +4070,7 @@
             (string-eq a-label b-label)
             (opt-label-set-eq? a-labels b-labels))])]))
 
-(define (opt-dom-table-eq? [a : OptDomTable] [b : OptDomTable]) : bool
+(define (opt-dom-table-eq? [a : OptLegacyDomTable] [b : OptLegacyDomTable]) : bool
   (match a
     [(OptDomNil)
       (match b
@@ -4085,7 +4085,7 @@
         [_ false])]))
 
 (define (opt-dom-intersect-preds-rest
-  [table : OptDomTable]
+  [table : OptLegacyDomTable]
   [preds : OptLabelSet]
   [current : OptLabelSet]) : OptLabelSet
   (match preds
@@ -4096,7 +4096,9 @@
         (box-get rest)
         (opt-label-intersection current (opt-dom-table-lookup table pred)))]))
 
-(define (opt-dom-intersect-preds [table : OptDomTable] [preds : OptLabelSet]) : OptLabelSet
+(define (opt-dom-intersect-preds
+  [table : OptLegacyDomTable]
+  [preds : OptLabelSet]) : OptLabelSet
   (match preds
     [(OptLabelNil) (OptLabelNil)]
     [(OptLabelCons pred rest)
@@ -4109,7 +4111,7 @@
   [blocks : CompilerIrBlockList]
   [reachable : OptLabelSet]
   [entry-label : String]
-  [all-reachable : OptLabelSet]) : OptDomTable
+  [all-reachable : OptLabelSet]) : OptLegacyDomTable
   (match blocks
     [(IrBlockNil) (OptDomNil)]
     [(IrBlockCons block rest)
@@ -4135,9 +4137,10 @@
               all-reachable))])]))
 
 ;; CFG index (#2175): integer block ids are assigned in block-list order and
-;; reused for successor/predecessor CSR rows, reachability, and RPO. Existing
-;; callers still consume OptLabelSet adapters, but each CFG snapshot is indexed
-;; once and rebuilt only after block-list-mutating optimization passes.
+;; reused for successor/predecessor CSR rows, reachability, RPO, and RPO slot
+;; lookup. Existing callers still consume OptLabelSet adapters, but each CFG
+;; snapshot is indexed once and rebuilt only after block-list-mutating
+;; optimization passes.
 (defenum OptI64List
   (OptI64Nil)
   (OptI64Cons i64 (Box OptI64List)))
@@ -4153,7 +4156,8 @@
   (preds OptCfgCsr)
   (reachable (Array bool))
   (reach-count i64)
-  (rpo (Array i64)))
+  (rpo (Array i64))
+  (rpo-num (Array i64)))
 
 (defstruct OptPredMap
   (index OptCfgIndex))
@@ -4412,6 +4416,17 @@
       (array-set! rpo index (array-ref postorder (- (- reach-count 1) index)))
       (opt-cfg-index-fill-rpo! postorder rpo reach-count (+ index 1)))))
 
+(define (opt-cfg-index-fill-rpo-num!
+  [rpo : (Array i64)]
+  [rpo-num : (Array i64)]
+  [reach-count : i64]
+  [slot : i64]) : unit
+  (if (>= slot reach-count)
+    unit
+    (begin
+      (array-set! rpo-num (array-ref rpo slot) slot)
+      (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count (+ slot 1)))))
+
 (define (opt-cfg-index-build [blocks : CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
@@ -4427,6 +4442,7 @@
     [reachable : (Array bool) (make-array bool count)]
     [postorder : (Array i64) (make-array i64 count)]
     [rpo : (Array i64) (make-array i64 count)]
+    [rpo-num : (Array i64) (make-array i64 count)]
     [reach-count : i64 0]
     (begin
       (opt-cfg-i64-list-array-fill-empty! succ-rows count)
@@ -4435,6 +4451,7 @@
       (opt-cfg-fill-bool! reachable count false)
       (opt-cfg-fill-i64! postorder count (- 0 1))
       (opt-cfg-fill-i64! rpo count (- 0 1))
+      (opt-cfg-fill-i64! rpo-num count (- 0 1))
       (let
         [succ-csr : OptCfgCsr (opt-cfg-csr-build succ-rows count)]
         [pred-csr : OptCfgCsr (opt-cfg-csr-build pred-rows count)]
@@ -4445,7 +4462,16 @@
               (opt-cfg-index-dfs-postorder! succ-csr reachable postorder 0 0))
             unit)
           (opt-cfg-index-fill-rpo! postorder rpo reach-count 0)
-          (OptCfgIndex ids labels succ-csr pred-csr reachable reach-count rpo))))))
+          (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count 0)
+          (OptCfgIndex
+            ids
+            labels
+            succ-csr
+            pred-csr
+            reachable
+            reach-count
+            rpo
+            rpo-num))))))
 
 (define (opt-cfg-index-block-count [index : OptCfgIndex]) : i64
   (array-length (struct-get index labels)))
@@ -4528,6 +4554,11 @@
     (array-ref (struct-get index rpo) slot)
     (- 0 1)))
 
+(define (opt-cfg-index-rpo-num [index : OptCfgIndex] [id : i64]) : i64
+  (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
+    (array-ref (struct-get index rpo-num) id)
+    (- 0 1)))
+
 (define (opt-cfg-index-rpo-label [index : OptCfgIndex] [slot : i64]) : String
   (opt-cfg-index-label index (opt-cfg-index-rpo-id index slot)))
 
@@ -4544,7 +4575,7 @@
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
-  [old : OptDomTable]
+  [old : OptLegacyDomTable]
   [entry : OptDomEntry]) : OptDomEntry
   (match entry
     [(OptDomEntry label _)
@@ -4563,8 +4594,8 @@
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
-  [old : OptDomTable]
-  [remaining : OptDomTable]) : OptDomTable
+  [old : OptLegacyDomTable]
+  [remaining : OptLegacyDomTable]) : OptLegacyDomTable
   (match remaining
     [(OptDomNil) (OptDomNil)]
     [(OptDomCons entry rest)
@@ -4582,12 +4613,12 @@
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
-  [table : OptDomTable]
-  [remaining : i64]) : OptDomTable
+  [table : OptLegacyDomTable]
+  [remaining : i64]) : OptLegacyDomTable
   (if (<= remaining 0)
     table
     (let
-      [next : OptDomTable
+      [next : OptLegacyDomTable
         (opt-cfg-dominators-step pred-map reachable entry-label table table)]
       (if (opt-dom-table-eq? table next)
         next
@@ -4598,13 +4629,13 @@
           next
           (- remaining 1))))))
 
-(define (opt-cfg-dominators-with
+(define (opt-cfg-dominators-legacy-with
   [blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [entry-label : String]) : OptDomTable
+  [entry-label : String]) : OptLegacyDomTable
   (let
-    [initial : OptDomTable
+    [initial : OptLegacyDomTable
       (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
     (opt-cfg-dominators-fixed
       pred-map
@@ -4613,12 +4644,341 @@
       initial
       (+ (compiler-ir-block-list-count blocks) 1))))
 
+(define (opt-bits-words [bits : i64]) : i64
+  (/ (+ bits 62) 63))
+
+(define (opt-bits-full-word-mask) : i64
+  9223372036854775807)
+
+(define (opt-bits-tail-mask [bits : i64]) : i64
+  (let
+    [rem : i64 (% bits 63)]
+    (if (= rem 0)
+      (opt-bits-full-word-mask)
+      (- (shl 1 rem) 1))))
+
+(define (opt-bits-set! [row : (Array i64)] [base : i64] [bit : i64]) : unit
+  (let
+    [w : i64 (+ base (/ bit 63))]
+    (array-set! row w (bit-or (array-ref row w) (shl 1 (% bit 63))))))
+
+(define (opt-bits-test [row : (Array i64)] [base : i64] [bit : i64]) : bool
+  (not (= (bit-and (array-ref row (+ base (/ bit 63))) (shl 1 (% bit 63))) 0)))
+
+(define (opt-bits-clear! [row : (Array i64)] [base : i64] [words : i64]) : unit
+  (let
+    [w : i64 0]
+    (begin
+      (while (< w words)
+        (begin
+          (array-set! row (+ base w) 0)
+          (set! w (+ w 1))))
+      unit)))
+
+(define (opt-bits-fill-universe! [row : (Array i64)] [base : i64] [bits : i64]) : unit
+  (let
+    [words : i64 (opt-bits-words bits)]
+    [last : i64 (- words 1)]
+    [w : i64 0]
+    (begin
+      (while (< w words)
+        (begin
+          (array-set!
+            row
+            (+ base w)
+            (if (= w last)
+              (opt-bits-tail-mask bits)
+              (opt-bits-full-word-mask)))
+          (set! w (+ w 1))))
+      unit)))
+
+(define (opt-bits-and-into!
+  [dst : (Array i64)]
+  [dst-base : i64]
+  [src : (Array i64)]
+  [src-base : i64]
+  [words : i64]) : unit
+  (let
+    [w : i64 0]
+    (begin
+      (while (< w words)
+        (begin
+          (array-set!
+            dst
+            (+ dst-base w)
+            (bit-and
+              (array-ref dst (+ dst-base w))
+              (array-ref src (+ src-base w))))
+          (set! w (+ w 1))))
+      unit)))
+
+(define (opt-bits-copy!
+  [dst : (Array i64)]
+  [dst-base : i64]
+  [src : (Array i64)]
+  [src-base : i64]
+  [words : i64]) : unit
+  (let
+    [w : i64 0]
+    (begin
+      (while (< w words)
+        (begin
+          (array-set! dst (+ dst-base w) (array-ref src (+ src-base w)))
+          (set! w (+ w 1))))
+      unit)))
+
+(define (opt-bits-eq?
+  [a : (Array i64)]
+  [a-base : i64]
+  [b : (Array i64)]
+  [b-base : i64]
+  [words : i64]) : bool
+  (let
+    [w : i64 0]
+    [same : bool true]
+    (begin
+      (while (and same (< w words))
+        (begin
+          (if (= (array-ref a (+ a-base w)) (array-ref b (+ b-base w)))
+            unit
+            (set! same false))
+          (set! w (+ w 1))))
+      same)))
+
+(defstruct OptDomInfo
+  (index OptCfgIndex)
+  (words i64)
+  (rows (Array i64)))
+
+(define (opt-dom-row-base [words : i64] [id : i64]) : i64
+  (* id words))
+
+(define (opt-dom-fill-reachable-universe!
+  [index : OptCfgIndex]
+  [row : (Array i64)]
+  [base : i64]) : unit
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (if (array-ref (struct-get index reachable) id)
+            (opt-bits-set! row base id)
+            unit)
+          (set! id (+ id 1))))
+      unit)))
+
+(define (opt-dom-init-row!
+  [index : OptCfgIndex]
+  [rows : (Array i64)]
+  [words : i64]
+  [entry-id : i64]
+  [id : i64]) : unit
+  (let
+    [base : i64 (opt-dom-row-base words id)]
+    (begin
+      (opt-bits-clear! rows base words)
+      (if (array-ref (struct-get index reachable) id)
+        (if (= id entry-id)
+          (opt-bits-set! rows base id)
+          (opt-dom-fill-reachable-universe! index rows base))
+        unit))))
+
+(define (opt-dom-init-rows!
+  [index : OptCfgIndex]
+  [rows : (Array i64)]
+  [words : i64]
+  [entry-id : i64]) : unit
+  (let
+    [id : i64 0]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (begin
+      (while (< id count)
+        (begin
+          (opt-dom-init-row! index rows words entry-id id)
+          (set! id (+ id 1))))
+      unit)))
+
+(define (opt-dom-row-from-preds!
+  [index : OptCfgIndex]
+  [rows : (Array i64)]
+  [scratch : (Array i64)]
+  [words : i64]
+  [id : i64]) : unit
+  (let
+    [preds : OptCfgCsr (struct-get index preds)]
+    [edge : i64 (array-ref (struct-get preds offsets) id)]
+    [end : i64 (array-ref (struct-get preds offsets) (+ id 1))]
+    [saw : bool false]
+    (begin
+      (opt-bits-clear! scratch 0 words)
+      (opt-dom-fill-reachable-universe! index scratch 0)
+      (while (< edge end)
+        (let
+          [pred : i64 (array-ref (struct-get preds edges) edge)]
+          (begin
+            (if (array-ref (struct-get index reachable) pred)
+              (begin
+                (opt-bits-and-into!
+                  scratch
+                  0
+                  rows
+                  (opt-dom-row-base words pred)
+                  words)
+                (set! saw true))
+              unit)
+            (set! edge (+ edge 1)))))
+      (if saw
+        unit
+        (opt-bits-clear! scratch 0 words))
+      (opt-bits-set! scratch 0 id))))
+
+(define (opt-dom-update-row!
+  [index : OptCfgIndex]
+  [rows : (Array i64)]
+  [scratch : (Array i64)]
+  [words : i64]
+  [entry-id : i64]
+  [id : i64]) : bool
+  (if (or (= id entry-id) (not (array-ref (struct-get index reachable) id)))
+    false
+    (let
+      [base : i64 (opt-dom-row-base words id)]
+      (begin
+        (opt-dom-row-from-preds! index rows scratch words id)
+        (if (opt-bits-eq? rows base scratch 0 words)
+          false
+          (begin
+            (opt-bits-copy! rows base scratch 0 words)
+            true))))))
+
+(define (opt-dom-iterate-rpo!
+  [index : OptCfgIndex]
+  [rows : (Array i64)]
+  [scratch : (Array i64)]
+  [words : i64]
+  [entry-id : i64]) : bool
+  (let
+    [slot : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< slot (struct-get index reach-count))
+        (begin
+          (if (opt-dom-update-row!
+            index
+            rows
+            scratch
+            words
+            entry-id
+            (opt-cfg-index-rpo-id index slot))
+            (set! changed true)
+            unit)
+          (set! slot (+ slot 1))))
+      changed)))
+
+(define (opt-dom-fixpoint!
+  [index : OptCfgIndex]
+  [rows : (Array i64)]
+  [scratch : (Array i64)]
+  [words : i64]
+  [entry-id : i64]
+  [remaining : i64]) : unit
+  (if (<= remaining 0)
+    unit
+    (if (opt-dom-iterate-rpo! index rows scratch words entry-id)
+      (opt-dom-fixpoint! index rows scratch words entry-id (- remaining 1))
+      unit)))
+
+(define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : String]) : OptDomInfo
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [words : i64 (opt-bits-words count)]
+    [rows : (Array i64) (make-array i64 (* count words))]
+    [scratch : (Array i64) (make-array i64 words)]
+    [entry-id : i64 (- 0 1)]
+    (begin
+      (match (opt-cfg-index-id index entry-label)
+        [(OptSomeI64 id) (set! entry-id id)]
+        [(OptNoI64) unit])
+      (opt-dom-init-rows! index rows words entry-id)
+      (if (>= entry-id 0)
+        (opt-dom-fixpoint! index rows scratch words entry-id (+ count 1))
+        unit)
+      (OptDomInfo index words rows))))
+
+(define (opt-dom-info-dominates-id?
+  [info : OptDomInfo]
+  [dominator-id : i64]
+  [label-id : i64]) : bool
+  (let
+    [index : OptCfgIndex (struct-get info index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (and
+      (and (>= dominator-id 0) (< dominator-id count))
+      (and (>= label-id 0) (< label-id count)))
+      (if (and
+        (array-ref (struct-get index reachable) dominator-id)
+        (array-ref (struct-get index reachable) label-id))
+        (opt-bits-test
+          (struct-get info rows)
+          (opt-dom-row-base (struct-get info words) label-id)
+          dominator-id)
+        false)
+      false)))
+
+(define (opt-dom-info-row-matches-legacy?
+  [info : OptDomInfo]
+  [legacy-labels : OptLabelSet]
+  [label-id : i64]
+  [dominator-id : i64]) : bool
+  (let
+    [index : OptCfgIndex (struct-get info index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (>= dominator-id count)
+      true
+      (let
+        [label : String (opt-cfg-index-label index dominator-id)]
+        [legacy-has : bool (opt-label-contains legacy-labels label)]
+        [info-has : bool
+          (opt-dom-info-dominates-id? info dominator-id label-id)]
+        (if (or (and legacy-has info-has) (and (not legacy-has) (not info-has)))
+          (opt-dom-info-row-matches-legacy?
+            info
+            legacy-labels
+            label-id
+            (+ dominator-id 1))
+          false)))))
+
+(define (opt-dom-info-matches-legacy-from?
+  [info : OptDomInfo]
+  [legacy : OptLegacyDomTable]
+  [id : i64]) : bool
+  (let
+    [index : OptCfgIndex (struct-get info index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (>= id count)
+      true
+      (if (array-ref (struct-get index reachable) id)
+        (let
+          [label : String (opt-cfg-index-label index id)]
+          [legacy-labels : OptLabelSet (opt-dom-table-lookup legacy label)]
+          (if (opt-dom-info-row-matches-legacy? info legacy-labels id 0)
+            (opt-dom-info-matches-legacy-from? info legacy (+ id 1))
+            false))
+        (opt-dom-info-matches-legacy-from? info legacy (+ id 1))))))
+
+(define (opt-dom-info-matches-legacy?
+  [info : OptDomInfo]
+  [legacy : OptLegacyDomTable]) : bool
+  (opt-dom-info-matches-legacy-from? info legacy 0))
+
 (defstruct OptCfgContext
   (index OptCfgIndex)
   (pred-map OptPredMap)
   (reachable OptLabelSet)
   (entry-label String)
-  (doms OptDomTable))
+  (doms OptDomInfo))
 
 (define (opt-cfg-context-build [blocks : CompilerIrBlockList]) : OptCfgContext
   (let
@@ -4626,21 +4986,37 @@
     [pred-map : OptPredMap (OptPredMap index)]
     [reachable : OptLabelSet (opt-cfg-index-reachable-labels index)]
     [entry-label : String (opt-cfg-entry-label blocks)]
-    [doms : OptDomTable
-      (opt-cfg-dominators-with blocks pred-map reachable entry-label)]
+    [doms : OptDomInfo (opt-cfg-dominators-with index entry-label)]
     (OptCfgContext index pred-map reachable entry-label doms)))
 
-(define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomTable
+(define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomInfo
   (struct-get (opt-cfg-context-build blocks) doms))
 
+(define (opt-cfg-dominators-match-legacy? [blocks : CompilerIrBlockList]) : bool
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    (opt-dom-info-matches-legacy?
+      (struct-get context doms)
+      (opt-cfg-dominators-legacy-with
+        blocks
+        (struct-get context pred-map)
+        (struct-get context reachable)
+        (struct-get context entry-label)))))
+
 (define (opt-dom-dominates?
-  [table : OptDomTable]
+  [table : OptDomInfo]
   [dominator : String]
   [label : String]) : bool
-  (opt-label-contains (opt-dom-table-lookup table label) dominator))
+  (match (opt-cfg-index-id (struct-get table index) dominator)
+    [(OptSomeI64 dominator-id)
+      (match (opt-cfg-index-id (struct-get table index) label)
+        [(OptSomeI64 label-id)
+          (opt-dom-info-dominates-id? table dominator-id label-id)]
+        [(OptNoI64) false])]
+    [(OptNoI64) false]))
 
 (define (opt-dom-strict-dominates?
-  [table : OptDomTable]
+  [table : OptDomInfo]
   [dominator : String]
   [label : String]) : bool
   (and
@@ -4648,7 +5024,7 @@
     (opt-dom-dominates? table dominator label)))
 
 (define (opt-cfg-frontier-has-pred?
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [label : String]
   [preds : OptLabelSet]) : bool
   (match preds
@@ -4663,7 +5039,7 @@
   [remaining : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [label : String]) : OptLabelSet
   (match remaining
     [(IrBlockNil) (OptLabelNil)]
@@ -4942,7 +5318,7 @@
 
 (define (opt-verify-var-use
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [var : i64]
   [use-block : String]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -4962,7 +5338,7 @@
 
 (define (opt-verify-var-use-on-edge
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [var : i64]
   [pred-label : String]) : ResultCompilerOptimizeVerify
   (match (opt-var-def-lookup defs var)
@@ -4978,7 +5354,7 @@
 
 (define (opt-verify-value-use
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [value : CompilerIrValue]
   [use-block : String]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -4988,7 +5364,7 @@
 
 (define (opt-verify-value-list-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [values : CompilerIrValueList]
   [use-block : String]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -5008,7 +5384,7 @@
 
 (define (opt-verify-call-args-array-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [values : (Array CompilerIrValue)]
   [use-block : String]
   [use-pos : i64]
@@ -5033,7 +5409,7 @@
 
 (define (opt-verify-call-args-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [args : CompilerIrCallArgs]
   [use-block : String]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -5050,7 +5426,7 @@
 
 (define (opt-verify-maybe-value-use
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [value : CompilerIrMaybeValue]
   [use-block : String]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -5061,7 +5437,7 @@
 
 (define (opt-verify-phi-input-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [inputs : CompilerIrPhiInputList]) : ResultCompilerOptimizeVerify
   (match inputs
     [(IrPhiInputNil) (OkCompilerOptimizeVerify)]
@@ -5084,7 +5460,7 @@
 
 (define (opt-verify-instr-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [pos : i64]
   [instr : CompilerIrInstr]) : ResultCompilerOptimizeVerify
@@ -5198,7 +5574,7 @@
 
 (define (opt-verify-instr-list-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrList]
   [pos : i64]) : ResultCompilerOptimizeVerify
@@ -5218,7 +5594,7 @@
 
 (define (opt-verify-instr-seq-uses-from
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -5336,7 +5712,7 @@
 
 (define (opt-verify-block-uses
   [defs : OptVarDefList]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
   (match blocks
     [(IrBlockNil) (OkCompilerOptimizeVerify)]
@@ -5365,7 +5741,7 @@
             "optimizer verify: duplicate var definition")]
         [else
           (let
-            [doms : OptDomTable (struct-get context doms)]
+            [doms : OptDomInfo (struct-get context doms)]
             [pred-map : OptPredMap (struct-get context pred-map)]
             [defs : OptVarDefList (opt-var-defs-from-function params blocks)]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
@@ -5494,7 +5870,7 @@
   [def-pos : i64]
   [use-block : String]
   [use-pos : i64]
-  [doms : OptDomTable]) : bool
+  [doms : OptDomInfo]) : bool
   (if (string-eq def-block use-block)
     (< def-pos use-pos)
     (opt-dom-dominates? doms def-block use-block)))
@@ -5578,7 +5954,7 @@
 (define (opt-global-copy-lookup
   [facts : OptGlobalCopyFacts]
   [var : i64]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]) : CompilerIrMaybeValue
   (match facts
@@ -5599,7 +5975,7 @@
 
 (define (opt-global-copy-resolve-depth
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]
   [value : CompilerIrValue]
@@ -5622,7 +5998,7 @@
 
 (define (opt-global-copy-resolve
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]
   [value : CompilerIrValue]) : CompilerIrValue
@@ -5630,7 +6006,7 @@
 
 (define (opt-global-copy-subst-value-list
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]
   [values : CompilerIrValueList]) : CompilerIrValueList
@@ -5648,7 +6024,7 @@
 
 (define (opt-global-copy-subst-call-args-array
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]
   [src : (Array CompilerIrValue)]
@@ -5677,7 +6053,7 @@
 
 (define (opt-global-copy-subst-call-args
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]
   [args : CompilerIrCallArgs]) : CompilerIrCallArgs
@@ -5707,7 +6083,7 @@
 
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [pos : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -5834,7 +6210,7 @@
 
 (define (opt-global-copy-instrs
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [pos : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -5847,7 +6223,7 @@
 
 (define (opt-global-copy-instr-seq
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
@@ -5872,7 +6248,7 @@
 
 (define (opt-global-copy-blocks
   [facts : OptGlobalCopyFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
@@ -5963,7 +6339,7 @@
   [facts : OptGlobalExprFacts]
   [key : OptGlobalExprKey]
   [dst : i64]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-block : String]
   [use-pos : i64]) : CompilerIrMaybeValue
   (match facts
@@ -5992,7 +6368,7 @@
 
 (define (opt-global-cse-instr
   [facts : OptGlobalExprFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [pos : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -6015,7 +6391,7 @@
 
 (define (opt-global-cse-instrs
   [facts : OptGlobalExprFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [pos : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -6028,7 +6404,7 @@
 
 (define (opt-global-cse-instr-seq
   [facts : OptGlobalExprFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
@@ -6053,7 +6429,7 @@
 
 (define (opt-global-cse-blocks
   [facts : OptGlobalExprFacts]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
@@ -6070,7 +6446,7 @@
   [context : OptCfgContext]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [doms : OptDomTable (struct-get context doms)]
+    [doms : OptDomInfo (struct-get context doms)]
     [copy-facts : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks blocks (OptGlobalCopyNil))]
     [copied : CompilerIrBlockList
@@ -6433,7 +6809,7 @@
   [blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [source : String]
   [successors : OptLabelSet]
   [tail : OptNaturalLoopList]) : OptNaturalLoopList
@@ -6463,7 +6839,7 @@
   [remaining : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [doms : OptDomTable]) : OptNaturalLoopList
+  [doms : OptDomInfo]) : OptNaturalLoopList
   (match remaining
     [(IrBlockNil) (OptNaturalLoopNil)]
     [(IrBlockCons block rest)
@@ -8640,7 +9016,7 @@
 ;; block strictly dominates `use-label`, or -1 if none qualifies.
 (define (opt-gvn-lookup
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [use-label : String]
   [key : OptExprKey]) : i64
   (match table
@@ -8656,7 +9032,7 @@
 
 (define (opt-gvn-rewrite-instr
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [use-label : String]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -8684,7 +9060,7 @@
 
 (define (opt-gvn-rewrite-instrs
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [use-label : String]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -8697,7 +9073,7 @@
 
 (define (opt-gvn-rewrite-instr-seq-from
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [use-label : String]
   [instrs : CompilerIrInstrSeq]
@@ -8723,7 +9099,7 @@
 
 (define (opt-gvn-rewrite-instr-seq
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [use-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
@@ -8738,7 +9114,7 @@
 
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -8749,7 +9125,7 @@
 
 (define (opt-gvn-rewrite-blocks
   [table : OptGvnMap]
-  [doms : OptDomTable]
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -8766,7 +9142,7 @@
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [doms : OptDomTable (struct-get context doms)]
+    [doms : OptDomInfo (struct-get context doms)]
     [sources : I64I64Map
       (opt-gvn-sources-blocks
         blocks
@@ -16058,14 +16434,14 @@
   (let
     [diamond-blocks : CompilerIrBlockList (opt-ssa-diamond-blocks)]
     [diamond-index : OptCfgIndex (opt-cfg-index-build diamond-blocks)]
-    [diamond-doms : OptDomTable (opt-cfg-dominators diamond-blocks)]
+    [diamond-doms : OptDomInfo (opt-cfg-dominators diamond-blocks)]
     [then-frontier : OptLabelSet
       (opt-cfg-dominance-frontier diamond-blocks "then")]
     [else-frontier : OptLabelSet
       (opt-cfg-dominance-frontier diamond-blocks "else")]
     [loop-blocks : CompilerIrBlockList (opt-ssa-loop-blocks)]
     [loop-index : OptCfgIndex (opt-cfg-index-build loop-blocks)]
-    [loop-doms : OptDomTable (opt-cfg-dominators loop-blocks)]
+    [loop-doms : OptDomInfo (opt-cfg-dominators loop-blocks)]
     [loop-frontier : OptLabelSet
       (opt-cfg-dominance-frontier loop-blocks "loop")]
     [unreachable-index : OptCfgIndex
@@ -16137,6 +16513,20 @@
             (opt-verify-function (opt-ssa-dominance-fail-function))
             "optimizer verify: use is not dominated by definition"))
         26]
+      [(not
+          (=
+            (opt-cfg-index-rpo-num
+              loop-index
+              (opt-cfg-index-rpo-id loop-index 0))
+            0))
+        27]
+      [(not (opt-cfg-dominators-match-legacy? diamond-blocks)) 28]
+      [(not (opt-cfg-dominators-match-legacy? loop-blocks)) 29]
+      [(not (opt-cfg-dominators-match-legacy? (opt-ssa-unreachable-blocks))) 30]
+      [(not
+          (opt-cfg-dominators-match-legacy?
+            (opt-natural-loop-irreducible-blocks)))
+        31]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

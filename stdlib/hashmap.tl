@@ -8,11 +8,12 @@
 ;# equality rules as `hash-string`; i64-key maps normalize the scalar key
 ;# directly and compare with `=`.
 ;#
-;# Capacity may be any positive `i64`: power-of-two capacities compute the start
-;# bucket with a mask, while other capacities fall back to modulo. Probing wraps
-;# with a branch. Each occupied slot caches its key hash so probing compares the
-;# cheap `i64` hash before the full key comparison. The probe visits at most
-;# `capacity` slots, so a full table terminates instead of looping forever.
+;# Public constructors and resizing round capacities up to a positive power of
+;# two, so bucket selection is a mask instead of a modulo in the hot path.
+;# Probing wraps with a branch. Each occupied slot caches its key hash so probing
+;# compares the cheap `i64` hash before the full key comparison. The probe visits
+;# at most `capacity` slots, so a full table terminates instead of looping
+;# forever.
 ;#
 ;# Usage: `(import "stdlib/hashmap.tl")`
 ;#
@@ -74,12 +75,20 @@
 (define (string-i64-map-power-two-capacity? [capacity : i64]) : bool
   (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))
 
+;: Round `capacity` up to the next positive power of two. Non-positive requests
+;: become capacity 1 so every constructed map keeps the mask invariant.
+(define (string-i64-map-round-capacity [capacity : i64]) : i64
+  (let
+    [rounded : i64 1]
+    (begin
+      (while (< rounded capacity)
+        (set! rounded (* rounded 2)))
+      rounded)))
+
 ;: Return the start bucket when `hash` is already in the public hash range.
-;: Power-of-two capacities use masking; other capacities use modulo.
+;: `capacity` must be a positive power of two.
 (define (string-i64-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
-  (if (string-i64-map-power-two-capacity? capacity)
-    (bit-and hash (- capacity 1))
-    (% hash capacity)))
+  (bit-and hash (- capacity 1)))
 
 ;: Return the start bucket for `hash` in a table of `capacity` slots.
 ;: `capacity` must be positive; the result is in `[0, capacity)`.
@@ -310,13 +319,14 @@
       (array-set! slots index (StringI64MapEmpty))
       (string-i64-map-fill-empty slots (+ index 1) count))))
 
-;: Create an empty map with `capacity` slots. `capacity` should be positive;
-;: a non-positive capacity yields a zero-slot map whose inserts return `Full`.
+;: Create an empty map with `capacity` rounded up to a positive power of two.
 (define (string-i64-map-with-capacity [capacity : i64]) : StringI64Map
   (let
-    [slots : (Array StringI64MapSlot) (make-array StringI64MapSlot capacity)]
+    [rounded-capacity : i64 (string-i64-map-round-capacity capacity)]
+    [slots : (Array StringI64MapSlot)
+      (make-array StringI64MapSlot rounded-capacity)]
     (begin
-      (string-i64-map-fill-empty slots 0 capacity)
+      (string-i64-map-fill-empty slots 0 rounded-capacity)
       (StringI64Map slots 0 0))))
 
 ;: Look up borrowed `key`, returning its copied `i64` value or `Missing`.
@@ -611,18 +621,23 @@
         [(StringI64MapTombstone) unit])
       (string-i64-map-rehash-from src dst dst-capacity (+ index 1) count))))
 
-;: Rebuild `map` as a fresh `new-capacity`-slot table holding only its live
-;: entries (tombstones dropped, so the deleted count resets to 0). The backing
-;: array is newly allocated; the old one is reclaimed when the arena resets.
-;: `new-capacity` must be at least the live `len`.
+;: Rebuild `map` as a fresh power-of-two table holding only its live entries
+;: (tombstones dropped, so the deleted count resets to 0). The backing array is
+;: newly allocated; the old one is reclaimed when the arena resets.
 (define (string-i64-map-resized [map : StringI64Map] [new-capacity : i64]) : StringI64Map
   (let
     [src : (Array StringI64MapSlot) (string-i64-map-slots map)]
     [old-capacity : i64 (array-length src)]
-    [dst : (Array StringI64MapSlot) (make-array StringI64MapSlot new-capacity)]
+    [requested-capacity : i64
+      (if (> (string-i64-map-len map) new-capacity)
+        (string-i64-map-len map)
+        new-capacity)]
+    [rounded-capacity : i64 (string-i64-map-round-capacity requested-capacity)]
+    [dst : (Array StringI64MapSlot)
+      (make-array StringI64MapSlot rounded-capacity)]
     (begin
-      (string-i64-map-fill-empty dst 0 new-capacity)
-      (string-i64-map-rehash-from src dst new-capacity 0 old-capacity)
+      (string-i64-map-fill-empty dst 0 rounded-capacity)
+      (string-i64-map-rehash-from src dst rounded-capacity 0 old-capacity)
       (StringI64Map dst (string-i64-map-len map) 0))))
 
 ;: Next capacity when growing: double, with a small floor so a tiny or empty
@@ -630,7 +645,7 @@
 (define (string-i64-map-grow-capacity [capacity : i64]) : i64
   (if (< capacity 4)
     8
-    (* capacity 2)))
+    (* (string-i64-map-round-capacity capacity) 2)))
 
 ;: Grow `map` to the next capacity, rehashing its live entries.
 (define (string-i64-map-grow [map : StringI64Map]) : StringI64Map

@@ -33,7 +33,7 @@
   (ErrTestConfig String))
 
 (defenum InlineTest
-  (InlineTest String String i64 AstExpr String))
+  (InlineTest String String i64 i64 String))
 
 (defenum InlineCollect
   (InlineCollect (Array AstDecl) (Array String) (Array InlineTest)))
@@ -338,7 +338,7 @@
         (match decl
           [(AstDeclTest name body-box span)
             (let
-              [body : AstExpr (box-get body-box)]
+              [body : i64 body-box]
               [test-count : i64 (array-length tests)]
               (begin
                 (array-push!
@@ -395,13 +395,15 @@
     (make-array String 0)
     (make-array InlineTest 0)))
 
-(define (tltest-print-expr [text : String]) : AstExpr
+(define (tltest-print-expr [text : String]) : i64
   (ast-expr-call
-    (AstExprVar "__tl_test_print_error")
-    (ast-expr-cons (AstExprLiteral (AstLitString text)) AstExprNil)))
+    (ast-node-push (AstExprVar "__tl_test_print_error"))
+    (ast-expr-cons
+      (ast-node-push (AstExprLiteral (AstLitString text)))
+      AstExprNil)))
 
-(define (tltest-call-expr [name : String]) : AstExpr
-  (ast-expr-call (AstExprVar name) AstExprNil))
+(define (tltest-call-expr [name : String]) : i64
+  (ast-expr-call (ast-node-push (AstExprVar name)) AstExprNil))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string-eq path "")
@@ -433,21 +435,26 @@
       (AstParam "buf" (ast-ty-ptr (AstTyU8)) false)
       (ast-param-cons (AstParam "n" (AstTyI32) false) AstParamNil))))
 
-(define (tltest-linux-write-ptr-arg) : AstExpr
-  (AstExprUnsafe
-    (ast-expr-cons
-      (ast-expr-cast (ast-expr-ptr-to-int (AstExprVar "buf")) (AstTyI64))
-      AstExprNil)))
+(define (tltest-linux-write-ptr-arg) : i64
+  (ast-node-push
+    (AstExprUnsafe
+      (ast-expr-cons
+        (ast-expr-cast
+          (ast-expr-ptr-to-int (ast-node-push (AstExprVar "buf")))
+          (AstTyI64))
+        AstExprNil))))
 
-(define (tltest-linux-write-syscall) : AstExpr
+(define (tltest-linux-write-syscall) : i64
   (ast-expr-syscall
     (ast-expr-cons
-      (AstExprLiteral (AstLitInt 1))
+      (ast-node-push (AstExprLiteral (AstLitInt 1)))
       (ast-expr-cons
-        (ast-expr-cast (AstExprVar "fd") (AstTyI64))
+        (ast-expr-cast (ast-node-push (AstExprVar "fd")) (AstTyI64))
         (ast-expr-cons
           (tltest-linux-write-ptr-arg)
-          (ast-expr-cons (ast-expr-cast (AstExprVar "n") (AstTyI64)) AstExprNil))))))
+          (ast-expr-cons
+            (ast-expr-cast (ast-node-push (AstExprVar "n")) (AstTyI64))
+            AstExprNil))))))
 
 (define (tltest-linux-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
@@ -482,27 +489,31 @@
               (ast-type-cons (AstTyI64) AstTypeNil)))))
       (AstTyI32))))
 
-(define (tltest-windows-get-stderr-handle-expr) : AstExpr
+(define (tltest-windows-get-stderr-handle-expr) : i64
   (ast-expr-call
-    (AstExprVar "__tl_test_get_std_handle")
+    (ast-node-push (AstExprVar "__tl_test_get_std_handle"))
     (ast-expr-cons
-      (ast-expr-cast (AstExprLiteral (AstLitInt -12)) (AstTyI32))
+      (ast-expr-cast
+        (ast-node-push (AstExprLiteral (AstLitInt -12)))
+        (AstTyI32))
       AstExprNil)))
 
-(define (tltest-windows-write-file-call) : AstExpr
+(define (tltest-windows-write-file-call) : i64
   (ast-expr-call
-    (AstExprVar "__tl_test_write_file")
+    (ast-node-push (AstExprVar "__tl_test_write_file"))
     (ast-expr-cons
-      (AstExprVar "handle")
+      (ast-node-push (AstExprVar "handle"))
       (ast-expr-cons
-        (AstExprVar "buf")
+        (ast-node-push (AstExprVar "buf"))
         (ast-expr-cons
-          (AstExprVar "n")
+          (ast-node-push (AstExprVar "n"))
           (ast-expr-cons
-            (AstExprPtrNull (ast-ty-mut-ptr (AstTyI32)))
-            (ast-expr-cons (AstExprLiteral (AstLitInt 0)) AstExprNil)))))))
+            (ast-node-push (AstExprPtrNull (ast-ty-mut-ptr (AstTyI32))))
+            (ast-expr-cons
+              (ast-node-push (AstExprLiteral (AstLitInt 0)))
+              AstExprNil)))))))
 
-(define (tltest-windows-write-body) : AstExpr
+(define (tltest-windows-write-body) : i64
   (ast-expr-let
     (ast-let-binding-cons
       (ast-let-binding
@@ -518,10 +529,12 @@
     (ast-expr-if
       (ast-expr-binary
         (AstBinEq)
-        (AstExprVar "ok")
-        (ast-expr-cast (AstExprLiteral (AstLitInt 0)) (AstTyI32)))
-      (ast-expr-cast (AstExprLiteral (AstLitInt -1)) (AstTyI32))
-      (AstExprVar "n"))))
+        (ast-node-push (AstExprVar "ok"))
+        (ast-expr-cast
+          (ast-node-push (AstExprLiteral (AstLitInt 0)))
+          (AstTyI32)))
+      (ast-expr-cast (ast-node-push (AstExprLiteral (AstLitInt -1))) (AstTyI32))
+      (ast-node-push (AstExprVar "n")))))
 
 (define (tltest-windows-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
@@ -538,19 +551,22 @@
 (define (tltest-text-param-list) : AstParamList
   (ast-param-cons (AstParam "text" (AstTyString) false) AstParamNil))
 
-(define (tltest-text-length-expr) : AstExpr
+(define (tltest-text-length-expr) : i64
   (ast-expr-call
-    (AstExprVar "string-length")
-    (ast-expr-cons (AstExprVar "text") AstExprNil)))
+    (ast-node-push (AstExprVar "string-length"))
+    (ast-expr-cons (ast-node-push (AstExprVar "text")) AstExprNil)))
 
-(define (tltest-print-runtime-write-call) : AstExpr
+(define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
-    (AstExprVar "__tl_test_write")
+    (ast-node-push (AstExprVar "__tl_test_write"))
     (ast-expr-cons
-      (ast-expr-cast (AstExprLiteral (AstLitInt 2)) (AstTyI32))
+      (ast-expr-cast (ast-node-push (AstExprLiteral (AstLitInt 2))) (AstTyI32))
       (ast-expr-cons
-        (AstExprUnsafe
-          (ast-expr-cons (ast-expr-string-data (AstExprVar "text")) AstExprNil))
+        (ast-node-push
+          (AstExprUnsafe
+            (ast-expr-cons
+              (ast-expr-string-data (ast-node-push (AstExprVar "text")))
+              AstExprNil)))
         (ast-expr-cons
           (ast-expr-cast (tltest-text-length-expr) (AstTyI32))
           AstExprNil)))))
@@ -560,10 +576,13 @@
     "__tl_test_print_error"
     (tltest-text-param-list)
     (AstTyUnit)
-    (AstExprBegin
-      (ast-expr-cons
-        (tltest-print-runtime-write-call)
-        (ast-expr-cons (AstExprLiteral (AstLitUnit)) AstExprNil)))))
+    (ast-node-push
+      (AstExprBegin
+        (ast-expr-cons
+          (tltest-print-runtime-write-call)
+          (ast-expr-cons
+            (ast-node-push (AstExprLiteral (AstLitUnit)))
+            AstExprNil))))))
 
 (define (tltest-program-with-print-runtime
   [program : AstProgram]
@@ -630,7 +649,9 @@
       (- count 1)
       (ast-expr-cons
         (tltest-print-expr (tltest-summary-line count))
-        (ast-expr-cons (AstExprLiteral (AstLitInt 0)) AstExprNil)))))
+        (ast-expr-cons
+          (ast-node-push (AstExprLiteral (AstLitInt 0)))
+          AstExprNil)))))
 
 (define (tltest-test-decls-onto
   [tests : (Array InlineTest)]
@@ -669,7 +690,7 @@
     "main"
     AstParamNil
     (AstTyI64)
-    (AstExprBegin (tltest-main-exprs tests))))
+    (ast-node-push (AstExprBegin (tltest-main-exprs tests)))))
 
 (define (tltest-empty-main-decl) : AstDecl
   (tltest-main-decl (make-array InlineTest 0)))
@@ -686,7 +707,7 @@
     [(AstExprNil) names]
     [(AstExprCons head rest)
       (let
-        [head : AstExpr (box-get head)]
+        [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names)))]))
 
@@ -701,7 +722,7 @@
         (match binding
           [(AstLetBinding _ _ value-box)
             (let
-              [value : AstExpr (box-get value-box)]
+              [value : AstExpr (ast-node-get value-box)]
               (tltest-reach-mark-let-bindings
                 rest
                 (tltest-reach-mark-expr value names)))]))]))
@@ -717,8 +738,8 @@
         (match binding
           [(AstResourceBinding _ init-box cleanup-box)
             (let
-              [init : AstExpr (box-get init-box)]
-              [cleanup : AstExpr (box-get cleanup-box)]
+              [init : AstExpr (ast-node-get init-box)]
+              [cleanup : AstExpr (ast-node-get cleanup-box)]
               (tltest-reach-mark-resource-bindings
                 rest
                 (tltest-reach-mark-expr
@@ -736,7 +757,7 @@
         (match arm
           [(AstMatchArm _ body-box)
             (let
-              [body : AstExpr (box-get body-box)]
+              [body : AstExpr (ast-node-get body-box)]
               (tltest-reach-mark-match-arms
                 rest
                 (tltest-reach-mark-expr body names)))]))]))
@@ -745,28 +766,28 @@
   (match expr
     [(AstExprSpanned inner-box _)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprLiteral _) names]
     [(AstExprVar name) (tltest-reach-mark-name names name)]
     [(AstExprBinary _ left-box right-box)
       (let
-        [left : AstExpr (box-get left-box)]
-        [right : AstExpr (box-get right-box)]
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
         (tltest-reach-mark-expr right (tltest-reach-mark-expr left names)))]
     [(AstExprUnary _ inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprCall func-box args)
       (let
-        [func : AstExpr (box-get func-box)]
+        [func : AstExpr (ast-node-get func-box)]
         (tltest-reach-mark-expr-list args (tltest-reach-mark-expr func names)))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (box-get cond-box)]
-        [then-branch : AstExpr (box-get then-branch-box)]
-        [else-branch : AstExpr (box-get else-branch-box)]
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-branch-box)]
+        [else-branch : AstExpr (ast-node-get else-branch-box)]
         (tltest-reach-mark-expr
           else-branch
           (tltest-reach-mark-expr
@@ -774,90 +795,90 @@
             (tltest-reach-mark-expr cond names))))]
     [(AstExprLet bindings body-box)
       (let
-        [body : AstExpr (box-get body-box)]
+        [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr
           body
           (tltest-reach-mark-let-bindings bindings names)))]
     [(AstExprLambda _ _ body-box)
       (let
-        [body : AstExpr (box-get body-box)]
+        [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr body names))]
     [(AstExprTuple exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprTupleRef tuple-box _)
       (let
-        [tuple : AstExpr (box-get tuple-box)]
+        [tuple : AstExpr (ast-node-get tuple-box)]
         (tltest-reach-mark-expr tuple names))]
     [(AstExprArray exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprMakeArray _ len-box)
       (let
-        [len : AstExpr (box-get len-box)]
+        [len : AstExpr (ast-node-get len-box)]
         (tltest-reach-mark-expr len names))]
     [(AstExprArrayRef array-box index-box)
       (let
-        [array : AstExpr (box-get array-box)]
-        [index : AstExpr (box-get index-box)]
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
         (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
     [(AstExprArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (box-get array-box)]
-        [index : AstExpr (box-get index-box)]
-        [value : AstExpr (box-get value-box)]
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr
           value
           (tltest-reach-mark-expr index (tltest-reach-mark-expr array names))))]
     [(AstExprArrayPush array-box value-box)
       (let
-        [array : AstExpr (box-get array-box)]
-        [value : AstExpr (box-get value-box)]
+        [array : AstExpr (ast-node-get array-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr array names)))]
     [(AstExprStringRef text-box index-box)
       (let
-        [text : AstExpr (box-get text-box)]
-        [index : AstExpr (box-get index-box)]
+        [text : AstExpr (ast-node-get text-box)]
+        [index : AstExpr (ast-node-get index-box)]
         (tltest-reach-mark-expr index (tltest-reach-mark-expr text names)))]
     [(AstExprWhile cond-box body-box)
       (let
-        [cond : AstExpr (box-get cond-box)]
-        [body : AstExpr (box-get body-box)]
+        [cond : AstExpr (ast-node-get cond-box)]
+        [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr body (tltest-reach-mark-expr cond names)))]
     [(AstExprBegin exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprUnsafe exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprSet name value-box)
       (let
-        [value : AstExpr (box-get value-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-name names name)))]
     [(AstExprAnn inner-box _)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprCast inner-box _)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprBorrow _ _ place-box)
       (let
-        [place : AstExpr (box-get place-box)]
+        [place : AstExpr (ast-node-get place-box)]
         (tltest-reach-mark-expr place names))]
     [(AstExprMatch scrutinee-box arms)
       (let
-        [scrutinee : AstExpr (box-get scrutinee-box)]
+        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
         (tltest-reach-mark-match-arms
           arms
           (tltest-reach-mark-expr scrutinee names)))]
     [(AstExprForeach _ _ start-box end-box body-box)
       (let
-        [start : AstExpr (box-get start-box)]
-        [end : AstExpr (box-get end-box)]
-        [body : AstExpr (box-get body-box)]
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr
           body
           (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))]
     [(AstExprSpmdReduce _ _ _ start-box end-box init-box value-box)
       (let
-        [start : AstExpr (box-get start-box)]
-        [end : AstExpr (box-get end-box)]
-        [init : AstExpr (box-get init-box)]
-        [value : AstExpr (box-get value-box)]
+        [start : AstExpr (ast-node-get start-box)]
+        [end : AstExpr (ast-node-get end-box)]
+        [init : AstExpr (ast-node-get init-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr
           value
           (tltest-reach-mark-expr
@@ -865,12 +886,12 @@
             (tltest-reach-mark-expr end (tltest-reach-mark-expr start names)))))]
     [(AstExprStructGet receiver-box _)
       (let
-        [receiver : AstExpr (box-get receiver-box)]
+        [receiver : AstExpr (ast-node-get receiver-box)]
         (tltest-reach-mark-expr receiver names))]
     [(AstExprWithRegion _ body) (tltest-reach-mark-expr-list body names)]
     [(AstExprWithEscape scratch-box body)
       (let
-        [scratch : AstExpr (box-get scratch-box)]
+        [scratch : AstExpr (ast-node-get scratch-box)]
         (tltest-reach-mark-expr-list
           body
           (tltest-reach-mark-expr scratch names)))]
@@ -880,111 +901,111 @@
         (tltest-reach-mark-resource-bindings bindings names))]
     [(AstExprBox inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprBoxGet inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprBorrow _ _ place-box)
       (let
-        [place : AstExpr (box-get place-box)]
+        [place : AstExpr (ast-node-get place-box)]
         (tltest-reach-mark-expr place names))]
     [(AstExprTypeLiteral _) names]
     [(AstExprInit _) names]
     [(AstExprComptime inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprQuote _) names]
     [(AstExprQuasiquote _) names]
     [(AstExprUnquote inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprUnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprTry inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprReturn inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprPtrNull _) names]
     [(AstExprPtrNullCheck inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprPtrAddrOf _) names]
     [(AstExprPtrRead ptr-box)
       (let
-        [ptr : AstExpr (box-get ptr-box)]
+        [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
     [(AstExprPtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (box-get ptr-box)]
-        [value : AstExpr (box-get value-box)]
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value (tltest-reach-mark-expr ptr names)))]
     [(AstExprPtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (box-get ptr-box)]
-        [offset : AstExpr (box-get offset-box)]
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        [offset : AstExpr (ast-node-get offset-box)]
         (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names)))]
     [(AstExprPtrCast ptr-box _)
       (let
-        [ptr : AstExpr (box-get ptr-box)]
+        [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
     [(AstExprPtrToInt ptr-box)
       (let
-        [ptr : AstExpr (box-get ptr-box)]
+        [ptr : AstExpr (ast-node-get ptr-box)]
         (tltest-reach-mark-expr ptr names))]
     [(AstExprIntToPtr value-box _)
       (let
-        [value : AstExpr (box-get value-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr value names))]
     [(AstExprStringData inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprStringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (box-get ptr-box)]
-        [len : AstExpr (box-get len-box)]
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        [len : AstExpr (ast-node-get len-box)]
         (tltest-reach-mark-expr len (tltest-reach-mark-expr ptr names)))]
     [(AstExprArrayData inner-box)
       (let
-        [inner : AstExpr (box-get inner-box)]
+        [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprProgramArgc) names]
     [(AstExprProgramArgv) names]
     [(AstExprProgramEnvp) names]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (box-get leaf-box)]
-        [subleaf : AstExpr (box-get subleaf-box)]
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
     [(AstExprCpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (box-get leaf-box)]
-        [subleaf : AstExpr (box-get subleaf-box)]
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
     [(AstExprCpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (box-get leaf-box)]
-        [subleaf : AstExpr (box-get subleaf-box)]
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
     [(AstExprCpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (box-get leaf-box)]
-        [subleaf : AstExpr (box-get subleaf-box)]
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
         (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
     [(AstExprXgetbv index-box)
       (let
-        [index : AstExpr (box-get index-box)]
+        [index : AstExpr (ast-node-get index-box)]
         (tltest-reach-mark-expr index names))]
     [(AstExprSyscall args) (tltest-reach-mark-expr-list args names)]))
 
@@ -1001,7 +1022,7 @@
           (tltest-reach-mark-tests-from
             tests
             (- index 1)
-            (tltest-reach-mark-expr body names))]))))
+            (tltest-reach-mark-expr (ast-node-get body) names))]))))
 
 (define (tltest-reach-mark-tests
   [tests : (Array InlineTest)]
@@ -1012,13 +1033,13 @@
   (match decl
     [(AstDeclDef name _ expr-box)
       (let
-        [expr : AstExpr (box-get expr-box)]
+        [expr : AstExpr (ast-node-get expr-box)]
         (if (string-i64-map-contains? names name)
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDeclDefFn name _ _ body-box export)
       (let
-        [body : AstExpr (box-get body-box)]
+        [body : AstExpr (ast-node-get body-box)]
         (match export
           [(AstFnExport _)
             (tltest-reach-mark-expr body (tltest-reach-mark-name names name))]
@@ -1195,7 +1216,7 @@
         helper-name
         AstParamNil
         (AstTyUnit)
-        (AstExprLiteral (AstLitUnit)))]
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
     [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
     [second-span : AstSourceSpan (AstSourceSpan 22 1 22 1)]
     [decls : AstDeclList

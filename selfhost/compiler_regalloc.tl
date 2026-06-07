@@ -735,6 +735,11 @@
     [value : i64 bits]
     [offset : i64 0]
     (begin
+      (if (= (bit-and value 0xffffffff) 0)
+        (begin
+          (set! value (shr value 32))
+          (set! offset (+ offset 32)))
+        unit)
       (if (= (bit-and value 0xffff) 0)
         (begin
           (set! value (shr value 16))
@@ -759,24 +764,29 @@
         (+ offset 1)
         offset))))
 
+(define (compiler-reg-extend-set-words
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [point : i64]) : unit
+  (if (>= word-index (compiler-live-set-word-count set))
+    unit
+    (begin
+      (compiler-reg-extend-set-word-bits
+        starts
+        ends
+        (compiler-live-set-word-at set word-index)
+        (* word-index (compiler-live-set-word-bits))
+        point)
+      (compiler-reg-extend-set-words starts ends set (+ word-index 1) point))))
+
 (define (compiler-reg-extend-set
   [starts : (Array i64)]
   [ends : (Array i64)]
   [set : CompilerLiveI64Set]
   [point : i64]) : unit
-  (match set
-    [(CompilerLiveI64Nil) unit]
-    [(CompilerLiveI64Cons chunk rest)
-      (begin
-        (compiler-reg-extend-set-word-bits
-          starts
-          ends
-          (compiler-live-set-chunk-bits chunk)
-          (*
-            (compiler-live-set-chunk-word-index chunk)
-            (compiler-live-set-word-bits))
-          point)
-        (compiler-reg-extend-set starts ends (box-get rest) point))]))
+  (compiler-reg-extend-set-words starts ends set 0 point))
 
 (define (compiler-reg-extend-set-word-bits
   [starts : (Array i64)]
@@ -993,22 +1003,26 @@
         (compiler-reg-bits-set! row base (+ var-base i))
         (compiler-reg-chunk->row! row base (bit-and bits (- bits 1)) var-base)))))
 
+(define (compiler-reg-set-words->row!
+  [set : CompilerLiveI64Set]
+  [row : (Array i64)]
+  [base : i64]
+  [word-index : i64]) : unit
+  (if (>= word-index (compiler-live-set-word-count set))
+    unit
+    (begin
+      (compiler-reg-chunk->row!
+        row
+        base
+        (compiler-live-set-word-at set word-index)
+        (* word-index (compiler-live-set-word-bits)))
+      (compiler-reg-set-words->row! set row base (+ word-index 1)))))
+
 (define (compiler-reg-set->row!
   [set : CompilerLiveI64Set]
   [row : (Array i64)]
   [base : i64]) : unit
-  (match set
-    [(CompilerLiveI64Nil) unit]
-    [(CompilerLiveI64Cons chunk rest)
-      (begin
-        (compiler-reg-chunk->row!
-          row
-          base
-          (compiler-live-set-chunk-bits chunk)
-          (*
-            (compiler-live-set-chunk-word-index chunk)
-            (compiler-live-set-word-bits)))
-        (compiler-reg-set->row! (box-get rest) row base))]))
+  (compiler-reg-set-words->row! set row base 0))
 
 (define (compiler-reg-live-block-succs [block : CompilerLiveBlock]) : CompilerLiveLabelSet
   (match block
@@ -2267,22 +2281,26 @@
           start
           end)))))
 
+(define (compiler-reg-call-set-in-range-words?
+  [set : CompilerLiveI64Set]
+  [start : i64]
+  [end : i64]
+  [word-index : i64]) : bool
+  (if (>= word-index (compiler-live-set-word-count set))
+    false
+    (if (compiler-reg-call-word-in-range?
+      (compiler-live-set-word-at set word-index)
+      (* word-index (compiler-live-set-word-bits))
+      start
+      end)
+      true
+      (compiler-reg-call-set-in-range-words? set start end (+ word-index 1)))))
+
 (define (compiler-reg-call-set-in-range?
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]) : bool
-  (match set
-    [(CompilerLiveI64Nil) false]
-    [(CompilerLiveI64Cons chunk rest)
-      (if (compiler-reg-call-word-in-range?
-        (compiler-live-set-chunk-bits chunk)
-        (*
-          (compiler-live-set-chunk-word-index chunk)
-          (compiler-live-set-word-bits))
-        start
-        end)
-        true
-        (compiler-reg-call-set-in-range? (box-get rest) start end))]))
+  (compiler-reg-call-set-in-range-words? set start end 0))
 
 (define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
   (match (compiler-reg-var-types-lookup type-info var)

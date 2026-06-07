@@ -21,6 +21,12 @@ _tl_shared_u2etl_colon_colonshared:
 .L_tl_str_l29_1993323280_919009571:
     .quad .L_tl_str_data_l29_1993323280_919009571
     .quad 29
+.L_tl_str_data_l24_1300740986_1050262163:
+    .string "tl: invalid region mark\n"
+    .balign 8
+.L_tl_str_l24_1300740986_1050262163:
+    .quad .L_tl_str_data_l24_1300740986_1050262163
+    .quad 24
 
     .globl tl_current_arena
     .section .bss
@@ -175,12 +181,41 @@ tl_shift_abort:
     call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
     movq %rax, -32(%rbp)
 
+.globl tl_abort_string
+tl_abort_string:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $32, %rsp
+    movq %rdi, -8(%rbp)
+.Lf7_entry:
+    movq -8(%rbp), %rdi
+    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    movq %rax, -16(%rbp)
+    movq $134, %rdi
+    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    movq %rax, -32(%rbp)
+
+.globl tl_region_abort
+tl_region_abort:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $32, %rsp
+.Lf8_entry:
+    leaq .L_tl_str_l24_1300740986_1050262163(%rip), %rax
+    movq %rax, -8(%rbp)
+    movq -8(%rbp), %rdi
+    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    movq %rax, -16(%rbp)
+    movq $134, %rdi
+    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    movq %rax, -32(%rbp)
+
 .globl _tl_helper_u2etl_colon_colonhelper
 _tl_helper_u2etl_colon_colonhelper:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf7_entry:
+.Lf9_entry:
     movq $38, %rax
     movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
     addq %r8, %rax
@@ -194,7 +229,7 @@ main:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf8_entry:
+.Lf10_entry:
     call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax
@@ -278,98 +313,6 @@ tl_arena_destroy:
     .globl __errno_location
 __errno_location:
     leaq tl_errno(%rip), %rax
-    ret
-
-    .globl read
-read:
-    movq $0, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl write
-write:
-    movq $1, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl open
-open:
-    movq $2, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl close
-close:
-    movq $3, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl lseek
-lseek:
-    movq $8, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl access
-access:
-    movq $21, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl mkdir
-mkdir:
-    movq $83, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl rmdir
-rmdir:
-    movq $84, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl unlink
-unlink:
-    movq $87, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl rename
-rename:
-    movq $82, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl getcwd
-getcwd:
-    pushq %rdi
-    movq $79, %rax
-    syscall
-    cmpq $-4095, %rax
-    jae .L_tl_shim_getcwd_err
-    popq %rax
-    ret
-.L_tl_shim_getcwd_err:
-    addq $8, %rsp
-    negq %rax
-    movl %eax, tl_errno(%rip)
-    xorq %rax, %rax
-    ret
-    .globl getrandom
-getrandom:
-    movq $318, %rax
-    syscall
-    jmp .L_tl_shim_ret
-.L_tl_shim_ret:
-    cmpq $-4095, %rax
-    jae .L_tl_shim_err
-    ret
-.L_tl_shim_err:
-    negq %rax
-    movl %eax, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-
-    .globl getpid
-getpid:
-    movq $39, %rax
-    syscall
-    ret
-
-    .globl exit
-exit:
-    movq $231, %rax
-    syscall
     ret
 
     .globl fflush

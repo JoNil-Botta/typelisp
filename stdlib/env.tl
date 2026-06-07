@@ -14,63 +14,88 @@
 ;# ```
 (import "string.tl")
 
-;: C library `getenv` binding used by environment helpers.
-(extern env-ffi-getenv (:symbol "getenv") : (-> (Ptr u8) (Ptr u8)))
+;: Raw C library `getenv` binding used by environment helpers.
+(unsafe
+  (extern env-ffi-getenv (:symbol "getenv") : (-> (Ptr u8) (Ptr u8))))
 
-;: C library `strlen` binding used to copy environment values.
-(extern env-ffi-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
-
-;: Copy `text` into a NUL-terminated byte array for C library calls.
-(define (env-c-string [text : String]) : (Array u8)
-  (let
-    [n : i64 (string-length text)]
-    [buf : (Array u8) (make-array u8 (+ n 1))]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (array-set! buf i (cast (string-ref text i) : u8))
-          (set! i (+ i 1))))
-      (array-set! buf n (cast #\nul' : u8))
-      buf)))
+;: Raw C library `strlen` binding used to copy environment values.
+(unsafe
+  (extern env-ffi-strlen (:symbol "strlen") : (-> (Ptr u8) i64)))
 
 ;: Copy a NUL-terminated C string into an owned TypeLisp String.
-(define (env-copy-c-string [ptr : (Ptr u8)]) : String
-  (let
-    [n : i64 (env-ffi-strlen ptr)]
-    [buf : (Array u8) (make-array u8 n)]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (array-set!
-            buf
-            i
-            (unsafe
-              (ptr-read (ptr-offset ptr i))))
-          (set! i (+ i 1))))
-      (unsafe
-        (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) n)))))
+(unsafe
+  (define (env-copy-c-string [ptr : (Ptr u8)]) : String
+    (let
+      [n : i64
+        (unsafe
+          (env-ffi-strlen ptr))]
+      [buf : (Array u8) (make-array u8 n)]
+      [i : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (array-set!
+              buf
+              i
+              (unsafe
+                (ptr-read (ptr-offset ptr i))))
+            (set! i (+ i 1))))
+        (unsafe
+          (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) n))))))
 
 ;: Return the raw C getenv pointer for `name`, or null when missing.
-(define (env-getenv-ptr [name : String]) : (Ptr u8)
-  (let
-    [name-bytes : (Array u8) (env-c-string name)]
-    (env-ffi-getenv
-      (unsafe
-        (ptr-cast (array-data name-bytes) : (Ptr u8))))))
+;:
+;: The local C-string marshalling mirrors `stdlib/ffi.tl` helper semantics:
+;: `env.tl` is imported by the compiler loader while stdlib roots are being
+;: discovered, so depending on another stdlib module here would widen that
+;: bootstrap dependency.
+(unsafe
+  (define (env-getenv-ptr [name : String]) : (Ptr u8)
+    (let
+      [n : i64 (string-length name)]
+      [scan : i64 0]
+      [has-nul : bool false]
+      (begin
+        (while (and (not has-nul) (< scan n))
+          (if (= (string-ref name scan) #\nul')
+            (set! has-nul true)
+            (set! scan (+ scan 1))))
+        (if has-nul
+          (ptr-null : (Ptr u8))
+          (let
+            [name-bytes : (Array u8) (make-array u8 (+ n 1))]
+            [copy : i64 0]
+            (begin
+              (while (< copy n)
+                (begin
+                  (array-set!
+                    name-bytes
+                    copy
+                    (cast (string-ref name copy) : u8))
+                  (set! copy (+ copy 1))))
+              (array-set! name-bytes n (cast #\nul' : u8))
+              (unsafe
+                (env-ffi-getenv
+                  (unsafe
+                    (ptr-cast (array-data name-bytes) : (Ptr u8))))))))))))
 
 ;: Return true when `name` is present in the process environment.
 (define (env-var-exists? [name : String]) : bool
-  (not (ptr-null? (env-getenv-ptr name))))
+  (not
+    (ptr-null?
+      (unsafe
+        (env-getenv-ptr name)))))
 
 ;: Return the value of `name`, or an empty string when the variable is missing.
 (define (env-var-value [name : String]) : String
   (let
-    [value : (Ptr u8) (env-getenv-ptr name)]
+    [value : (Ptr u8)
+      (unsafe
+        (env-getenv-ptr name))]
     (if (ptr-null? value)
       ""
-      (env-copy-c-string value))))
+      (unsafe
+        (env-copy-c-string value)))))
 
 ;: Return the target platform PATH-list separator as a one-byte String.
 (define (env-path-separator) : String

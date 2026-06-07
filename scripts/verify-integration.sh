@@ -871,7 +871,8 @@ run_windows_backend_fixtures() {
         "movq %rcx, .L_tl_argc(%rip)" \
         "movq %rdx, .L_tl_argv(%rip)" \
         ".extern VirtualAlloc" \
-        ".extern exit" \
+        ".extern ExitProcess" \
+        ".extern WriteFile" \
         "call VirtualAlloc" \
         "movq %rcx, %rbx" \
         "movq %r12, %rcx" \
@@ -918,6 +919,8 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_write_file" \
         ".extern .L_tl_file_exists" \
         ".extern .L_tl_abort" \
+        ".extern exit" \
+        ".extern _write" \
         ".extern .L_tl_read_stdin_line" \
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \

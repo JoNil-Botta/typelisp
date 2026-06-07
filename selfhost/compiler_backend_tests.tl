@@ -1931,12 +1931,14 @@
           (backend-and4
             (compiler-backend-string-contains? asm ".globl tl_alloc\n")
             (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
-            (compiler-backend-string-contains? asm "    call _write\n")
-            (compiler-backend-string-contains? asm "    call _read\n"))]
+            (compiler-backend-string-contains? asm "    call WriteFile\n")
+            (not (compiler-backend-string-contains? asm "    call _write\n")))]
         [process-runtime : bool
-          (and
+          (backend-and4
             (compiler-backend-string-contains? asm "    call _lseeki64\n")
-            (compiler-backend-string-contains? asm "tl_process_output:\n"))]
+            (compiler-backend-string-contains? asm "    call _read\n")
+            (compiler-backend-string-contains? asm "tl_process_output:\n")
+            true)]
         [string-runtime : bool
           (backend-and8
             (compiler-backend-string-contains? asm "tl_substring:\n")
@@ -2005,12 +2007,24 @@
           (compiler-backend-string-contains?
             asm
             "    jc .L_tl_alloc_enter_abort\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_region_reset_win_invalid:\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call _write\n    add $32, %rsp\n    movq $134, %rcx\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_win_invalid:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    sub $32, %rsp\n    call tl_region_abort\n"))
+          (backend-and4
+            (compiler-backend-string-contains? asm "    call GetStdHandle\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call WriteFile\n    movq $134, %rcx\n    call ExitProcess\n")
+            (compiler-backend-string-contains? asm "    .extern GetStdHandle\n")
+            (and
+              (compiler-backend-string-contains? asm "    .extern WriteFile\n")
+              (compiler-backend-string-contains?
+                asm
+                "    .extern ExitProcess\n")))
           (compiler-backend-string-contains?
             asm
             "    push %r14\n    movq %rcx, %r12\n")
@@ -2018,7 +2032,11 @@
             (compiler-backend-string-contains?
               asm
               "    push %r14\n    sub $8, %rsp\n    movq %rcx, %r12\n")))
-        (not (compiler-backend-string-contains? asm "syscall\n")))]
+        (and
+          (not (compiler-backend-string-contains? asm "syscall\n"))
+          (and
+            (not (compiler-backend-string-contains? asm "    .extern _write\n"))
+            (not (compiler-backend-string-contains? asm "    .extern exit\n")))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-syscall-source) : String
@@ -2722,7 +2740,9 @@
       (not (compiler-backend-runtime-helper-known? "tl_oob_abort"))
       (not (compiler-backend-runtime-helper-known? "tl_div_abort"))
       (not (compiler-backend-runtime-helper-known? "tl_shift_abort"))
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan ".L_tl_abort")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_abort")
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
         "tl_region_mark")
@@ -4100,7 +4120,7 @@
               (compiler-backend-no-public-runtime-symbol?
                 asm
                 "tl_fs_current_dir")
-              (compiler-backend-string-contains? asm "getcwd:\n")
+              (not (compiler-backend-string-contains? asm "getcwd:\n"))
               (not
                 (compiler-backend-string-contains?
                   asm

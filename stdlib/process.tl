@@ -65,18 +65,12 @@
   (OkProcessChild ProcessChild)
   (ErrProcessChild ProcessError))
 
-;: Backend runtime hook used by `process-output`.
-;:
-;: The public wrapper performs TypeLisp-side validation first. The runtime
-;: helper receives structured command data and returns the same concrete result
-;: model.
-(extern tl_process_output : (-> ProcessCommand ResultProcessOutput))
-
-;: Backend runtime hook used by `process-start`.
-(extern tl_process_start : (-> ProcessCommand ResultProcessChild))
-
-;: Backend runtime hook used by `process-wait`.
-(extern tl_process_wait : (-> ProcessChild ResultProcessOutput))
+;: The process-execution runtime (`tl_process_output`, `tl_process_start`,
+;: `tl_process_wait`) is now implemented in TypeLisp in `process_runtime.tl`
+;: (#2142 slice 4), replacing the former backend assembly. The public wrappers
+;: below validate first, then call those functions. `process_runtime.tl` imports
+;: this module for the shared data model.
+(import "process_runtime.tl")
 
 ;: Return an empty argument list.
 (define (process-args-empty) : ProcessStringList

@@ -78,9 +78,14 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `list.tl`: monomorphic `StringList` and `StringListBuilder` helpers for
   common cons-list workflows, with reverse/append/count and array conversion
   helpers. Import it with `(import "stdlib/list.tl")`.
-- `process.tl`: process command/output/error data model for selfhost tools.
-  Runtime execution currently returns structured unsupported diagnostics rather
-  than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
+- `process.tl`: process command/output/error data model and the public
+  `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
+  Import it with `(import "stdlib/process.tl")`.
+- `process_runtime.tl`: TypeLisp implementation of the process-execution runtime
+  (`tl_process_output`/`tl_process_start`/`tl_process_wait`) that `process.tl`
+  calls — Linux uses raw syscalls (fork/execve with memfd-captured output),
+  Windows uses kernel32 `CreateProcessA` with temp-file redirection. Replaces the
+  former backend assembly (#2142 slice 4); imported transitively via `process.tl`.
 - `profile.tl`: runtime profiling helpers for coarse elapsed time and
   allocation counters, including `profile-now-ms`, `profile-alloc-total`,
   `profile-alloc-live`, `profile-alloc-peak`, and

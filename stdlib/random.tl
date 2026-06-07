@@ -57,14 +57,22 @@
   (OkSystemSeed i64)
   (ErrSystemSeed RandomSystemSeedError))
 
-;: Linux `getrandom` binding used by `random-system-seed`.
+;: Linux `getrandom` via the `getrandom` syscall (number 318), used by
+;: `random-system-seed`. Returns the byte count or a negative status.
 (cfg
   (not windows)
-  (extern random-linux-getrandom (:symbol "getrandom") : (->
-    (MutPtr u8)
-    i64
-    u32
-    i64)))
+  (define (random-linux-syscall-getrandom
+    [buf : (MutPtr u8)]
+    [len : i64]
+    [flags : i64]) : i64
+    (io-linux-syscall-status
+      (syscall
+        318
+        (io-linux-ptr-arg
+          (unsafe
+            (ptr-cast buf : (Ptr u8))))
+        len
+        flags))))
 
 ;: Windows kernel32 `QueryPerformanceCounter` binding used for seed variation.
 (cfg
@@ -244,11 +252,11 @@
     (let
       [seed : (Array i64) (make-array i64 1)]
       [read-count : i64
-        (random-linux-getrandom
+        (random-linux-syscall-getrandom
           (unsafe
             (ptr-cast (array-data seed) : (MutPtr u8)))
           8
-          (cast 0 : u32))]
+          0)]
       (if (= read-count 8)
         (OkSystemSeed (array-ref seed 0))
         (random-system-seed-unavailable)))))

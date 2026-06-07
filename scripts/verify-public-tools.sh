@@ -570,7 +570,7 @@ EOF
     assert_stderr_empty
     assert_contains_any "$target_dir/main.s" "    .globl main" ".globl main"
     assert_not_contains "$target_dir/main.s" "    .globl _start"
-    assert_contains_any "$target_dir/main.s" "    .extern _write" ".extern _write"
+    assert_contains_any "$target_dir/main.s" "    .extern WriteFile" ".extern WriteFile"
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
 done
 
@@ -768,15 +768,10 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 RUN_MATRIX="$WORKDIR/run-matrix"
 mkdir -p "$RUN_MATRIX"
 cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
-(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
-(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(import "stdlib/io.tl")
+
 (define (fixture-stdout-write [text : String]) : unit
-  (begin
-    (fixture-write
-      (cast 1 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
+  (stdout-write (& text)))
 (define (main) : i64
   (begin
     (fixture-stdout-write "hello")
@@ -788,29 +783,14 @@ assert_stderr_empty
 assert_contains "$out" "hello"
 
 cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
-(cfg linux (extern fixture-read (:symbol "read") : (-> i32 (MutPtr u8) i32 i32)))
-(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
-(cfg windows (extern fixture-read (:symbol "_read") : (-> i32 (MutPtr u8) i32 i32)))
-(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(import "stdlib/io.tl")
+
 (define (fixture-stdout-write [text : String]) : unit
-  (begin
-    (fixture-write
-      (cast 1 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
+  (stdout-write (& text)))
 (define (fixture-read-stdin) : String
   (let
-    [buf : (Array u8) (make-array u8 256)]
-    [n : i32
-      (fixture-read
-        (cast 0 : i32)
-        (unsafe (array-data buf))
-        (cast 256 : i32))]
-    (unsafe
-      (string-from-bytes
-        (ptr-cast (array-data buf) : (Ptr u8))
-        (cast n : i64)))))
+    [read : StdinRead (stdin-read-bytes 256)]
+    (stdin-read-text read)))
 (define (main) : unit
   (fixture-stdout-write (fixture-read-stdin)))
 EOF
@@ -1098,15 +1078,10 @@ EOF
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
     if [ "$HOST_OS" = windows ]; then
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
-(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
-(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(import "stdlib/io.tl")
+
 (define (fixture-stdout-write [text : String]) : unit
-  (begin
-    (fixture-write
-      (cast 1 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
+  (stdout-write (& text)))
 (define (main) : i64
   (begin
     (fixture-stdout-write "hello")
@@ -1114,16 +1089,11 @@ EOF
 EOF
     else
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
-(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
-(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(import "stdlib/io.tl")
+
 (extern fixture-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
 (define (fixture-stdout-write [text : String]) : unit
-  (begin
-    (fixture-write
-      (cast 1 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
+  (stdout-write (& text)))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
@@ -1330,41 +1300,45 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/typelisp/release/selfhost_opt_pkg/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/typelisp/dev/selfhost_opt_pkg/selfhost_opt_pkg.s"
+    SELFHOST_OPT_FOLDED_MUL='    movq $42, %rax'
+    SELFHOST_OPT_UNFOLDED_MUL="    imulq %r8, %rax"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_FOLDED_MUL"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-dev "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_DEV_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_FOLDED_MUL"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-release-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast

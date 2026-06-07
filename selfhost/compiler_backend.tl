@@ -11072,7 +11072,7 @@
         false
         false
         false
-        (string-eq name ".L_tl_abort")
+        false
         (string-eq name "tl_region_mark")
         (string-eq name "tl_region_reset")
         (string-eq name "tl_arena_make"))
@@ -12415,8 +12415,8 @@ tl_region_mark:
 
 ;; Freestanding Linux libc-ABI shims (#no-libc). The stdlib binds file/dir/env
 ;; helpers through FFI `extern`s to libc symbols (open/read/write/close/lseek/
-;; access/mkdir/rmdir/unlink/rename/getcwd/getrandom/getpid/exit/
-;; __errno_location/getenv/strlen). Rather
+;; access/mkdir/rmdir/unlink/rename/getpid/exit/__errno_location/getenv/strlen).
+;; Rather
 ;; than link glibc, the entry object DEFINES those symbols itself as raw-syscall
 ;; thunks that mimic the glibc ABI (return -1 and set a private errno on a
 ;; syscall error result in [-4095,-1]). `getenv` walks the stack-captured
@@ -12427,98 +12427,6 @@ tl_region_mark:
   "    .globl __errno_location
 __errno_location:
     leaq tl_errno(%rip), %rax
-    ret
-
-    .globl read
-read:
-    movq $0, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl write
-write:
-    movq $1, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl open
-open:
-    movq $2, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl close
-close:
-    movq $3, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl lseek
-lseek:
-    movq $8, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl access
-access:
-    movq $21, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl mkdir
-mkdir:
-    movq $83, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl rmdir
-rmdir:
-    movq $84, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl unlink
-unlink:
-    movq $87, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl rename
-rename:
-    movq $82, %rax
-    syscall
-    jmp .L_tl_shim_ret
-    .globl getcwd
-getcwd:
-    pushq %rdi
-    movq $79, %rax
-    syscall
-    cmpq $-4095, %rax
-    jae .L_tl_shim_getcwd_err
-    popq %rax
-    ret
-.L_tl_shim_getcwd_err:
-    addq $8, %rsp
-    negq %rax
-    movl %eax, tl_errno(%rip)
-    xorq %rax, %rax
-    ret
-    .globl getrandom
-getrandom:
-    movq $318, %rax
-    syscall
-    jmp .L_tl_shim_ret
-.L_tl_shim_ret:
-    cmpq $-4095, %rax
-    jae .L_tl_shim_err
-    ret
-.L_tl_shim_err:
-    negq %rax
-    movl %eax, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-
-    .globl getpid
-getpid:
-    movq $39, %rax
-    syscall
-    ret
-
-    .globl exit
-exit:
-    movq $231, %rax
-    syscall
     ret
 
     .globl fflush
@@ -12582,6 +12490,22 @@ _errno:
     leaq tl_errno(%rip), %rax
     ret
 
+.L_tl_win_write_abort:
+    andq $-16, %rsp
+    subq $48, %rsp
+    movq %rdx, %r10
+    movq %r8, %r11
+    movl $-12, %ecx
+    call GetStdHandle
+    movq %rax, %rcx
+    movq %r10, %rdx
+    movq %r11, %r8
+    leaq 40(%rsp), %r9
+    movq $0, 32(%rsp)
+    call WriteFile
+    movq $134, %rcx
+    call ExitProcess
+
     .globl __chkstk
 __chkstk:
     pushq %rcx
@@ -12600,25 +12524,6 @@ __chkstk:
     movb $0, (%rax)
     popq %rax
     popq %rcx
-    ret
-
-    .globl memcpy
-memcpy:
-    movq %rcx, %rax
-    movq %rcx, %rdi
-    movq %rdx, %rsi
-    movq %r8, %rcx
-    rep movsb
-    ret
-
-    .globl memset
-memset:
-    movq %rcx, %r9
-    movq %rcx, %rdi
-    movl %edx, %eax
-    movq %r8, %rcx
-    rep stosb
-    movq %r9, %rax
     ret
 
 .L_tl_win_fd_handle:
@@ -12641,36 +12546,6 @@ memset:
     ret
 .L_tl_fdh_id:
     movq %rcx, %rax
-    ret
-
-    .globl _write
-_write:
-    pushq %rbp
-    movq %rsp, %rbp
-    pushq %r12
-    pushq %r13
-    subq $64, %rsp
-    movq %rdx, %r12
-    movl %r8d, %r13d
-    call .L_tl_win_fd_handle
-    movq %rax, %rcx
-    movq %r12, %rdx
-    movl %r13d, %r8d
-    leaq -24(%rbp), %r9
-    movq $0, 32(%rsp)
-    call WriteFile
-    testl %eax, %eax
-    je .L_tl_write_err
-    movl -24(%rbp), %eax
-    movslq %eax, %rax
-    jmp .L_tl_write_ret
-.L_tl_write_err:
-    movq $-1, %rax
-.L_tl_write_ret:
-    addq $64, %rsp
-    popq %r13
-    popq %r12
-    popq %rbp
     ret
 
     .globl _read
@@ -12737,69 +12612,6 @@ _lseeki64:
     popq %rbp
     ret
 
-    .globl _open
-_open:
-    pushq %rbp
-    movq %rsp, %rbp
-    pushq %rbx
-    pushq %r12
-    pushq %r13
-    subq $72, %rsp
-    movq %rcx, %rbx
-    movl %edx, %r12d
-    xorl %r13d, %r13d
-    testl $8, %r12d
-    jz .L_tl_open_noapp
-    movl $4, %r13d
-    jmp .L_tl_open_acc_done
-.L_tl_open_noapp:
-    testl $2, %r12d
-    jz .L_tl_open_nordwr
-    movl $0xC0000000, %r13d
-    jmp .L_tl_open_acc_done
-.L_tl_open_nordwr:
-    testl $1, %r12d
-    jz .L_tl_open_rd
-    movl $0x40000000, %r13d
-    jmp .L_tl_open_acc_done
-.L_tl_open_rd:
-    movl $0x80000000, %r13d
-.L_tl_open_acc_done:
-    movl $3, %eax
-    testl $0x100, %r12d
-    jz .L_tl_open_disp_chk_trunc
-    testl $0x200, %r12d
-    jz .L_tl_open_creat_only
-    movl $2, %eax
-    jmp .L_tl_open_disp_done
-.L_tl_open_creat_only:
-    movl $4, %eax
-    jmp .L_tl_open_disp_done
-.L_tl_open_disp_chk_trunc:
-    testl $0x200, %r12d
-    jz .L_tl_open_disp_done
-    movl $5, %eax
-.L_tl_open_disp_done:
-    movq %rbx, %rcx
-    movl %r13d, %edx
-    movl $3, %r8d
-    xorq %r9, %r9
-    movq %rax, 32(%rsp)
-    movq $0x80, 40(%rsp)
-    movq $0, 48(%rsp)
-    call CreateFileA
-    cmpq $-1, %rax
-    jne .L_tl_open_ret
-    movl $2, tl_errno(%rip)
-    movq $-1, %rax
-.L_tl_open_ret:
-    addq $72, %rsp
-    popq %r13
-    popq %r12
-    popq %rbx
-    popq %rbp
-    ret
-
     .globl _close
 _close:
     cmpq $2, %rcx
@@ -12810,80 +12622,6 @@ _close:
 .L_tl_close_ok:
     xorq %rax, %rax
     ret
-
-    .globl _access
-_access:
-    subq $40, %rsp
-    call GetFileAttributesA
-    addq $40, %rsp
-    cmpl $-1, %eax
-    je .L_tl_acc_err
-    xorq %rax, %rax
-    ret
-.L_tl_acc_err:
-    movl $2, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-
-    .globl _mkdir
-_mkdir:
-    xorq %rdx, %rdx
-    subq $40, %rsp
-    call CreateDirectoryA
-    testl %eax, %eax
-    je .L_tl_mkdir_err
-    addq $40, %rsp
-    xorq %rax, %rax
-    ret
-.L_tl_mkdir_err:
-    call GetLastError
-    addq $40, %rsp
-    cmpl $183, %eax
-    je .L_tl_mkdir_exists
-    movl $2, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-.L_tl_mkdir_exists:
-    movl $17, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-    .globl _rmdir
-_rmdir:
-    subq $40, %rsp
-    call RemoveDirectoryA
-    addq $40, %rsp
-    testl %eax, %eax
-    je .L_tl_dir_err
-    xorq %rax, %rax
-    ret
-    .globl _unlink
-_unlink:
-    subq $40, %rsp
-    call DeleteFileA
-    addq $40, %rsp
-    testl %eax, %eax
-    je .L_tl_dir_err
-    xorq %rax, %rax
-    ret
-    .globl rename
-rename:
-    movl $1, %r8d
-    subq $40, %rsp
-    call MoveFileExA
-    addq $40, %rsp
-    testl %eax, %eax
-    je .L_tl_dir_err
-    xorq %rax, %rax
-    ret
-.L_tl_dir_err:
-    movl $2, tl_errno(%rip)
-    movq $-1, %rax
-    ret
-
-    .globl exit
-exit:
-    subq $40, %rsp
-    call ExitProcess
 
     .globl strlen
 strlen:
@@ -13551,14 +13289,7 @@ tl_region_reset:
     pop %rbx
     ret
 .L_tl_region_reset_invalid:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_region_reset_msg(%rip), %rsi
-    movq $.L_tl_region_reset_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
+    jmp tl_region_abort
 
 ")))))))
 
@@ -13648,35 +13379,20 @@ tl_alloc:
     pop %rbp
     ret
 .L_tl_alloc_abort:
-    movq $2, %rcx
     leaq .L_tl_alloc_msg(%rip), %rdx
     movq $.L_tl_alloc_msg_len, %r8
-    call _write
-    movq $134, %rcx
-    call exit
+    jmp .L_tl_win_write_abort
 
 ")))))
 
 ;; The Linux out-of-bounds/division/shift abort handlers moved to the runtime
 ;; prelude (stdlib/runtime.tl as `tl-runtime-*-abort`, exported as the fixed
 ;; `tl_*_abort` symbols via #2143); the backend no longer emits them as asm.
+;; `tl_abort_string` (the general panic handler) moved to the runtime prelude
+;; (stdlib/runtime.tl as `tl-runtime-abort-string`, exported via #2143); the
+;; backend no longer emits it as asm on either target.
 (define (compiler-backend-runtime-abort-functions) : String
-  "    .globl tl_abort_string
-tl_abort_string:
-    movq 8(%rdi), %rsi
-    movq 0(%rdi), %rdi
-    jmp .L_tl_abort
-.L_tl_abort:
-    movq %rsi, %rdx
-    movq %rdi, %rsi
-    movq $2, %rdi
-    movq $1, %rax
-    syscall
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-")
+  "")
 
 (define (compiler-backend-runtime-env-var-exists-functions) : String
   "    .globl tl_env_var_exists
@@ -14024,15 +13740,8 @@ tl_region_reset:
     jnz .L_tl_region_reset_win_find
     jmp .L_tl_region_reset_win_invalid
 .L_tl_region_reset_win_invalid:
-    movq $2, %rcx
-    leaq .L_tl_region_reset_msg(%rip), %rdx
-    movq $.L_tl_region_reset_msg_len, %r8
     sub $32, %rsp
-    call _write
-    add $32, %rsp
-    movq $134, %rcx
-    sub $32, %rsp
-    call exit
+    call tl_region_abort
 .L_tl_region_reset_win_found:
     movq tl_current_arena(%rip), %r14
 .L_tl_region_reset_win_drop:
@@ -15070,26 +14779,11 @@ tl_profile_alloc_reset_peak:
 ;; fixed-abort emitter) moved to the runtime prelude (stdlib/runtime.tl),
 ;; exported as the fixed `tl_*_abort` symbols via #2143; the backend emits no
 ;; asm for them.
+;; `tl_abort_string` moved to the runtime prelude (see
+;; `compiler-backend-runtime-abort-functions`); the Windows target emits no asm
+;; for it either.
 (define (compiler-backend-runtime-windows-abort-functions) : String
-  "    .globl tl_abort_string
-tl_abort_string:
-    movq 8(%rcx), %rdx
-    movq 0(%rcx), %rcx
-    jmp .L_tl_abort
-.L_tl_abort:
-    push %rbp
-    mov %rsp, %rbp
-    movq %rdx, %r8
-    movq %rcx, %rdx
-    movq $2, %rcx
-    sub $32, %rsp
-    call _write
-    add $32, %rsp
-    movq $134, %rcx
-    sub $32, %rsp
-    call exit
-
-")
+  "")
 
 (define (compiler-backend-runtime-string-eq-functions) : String
   "    .globl tl_string_eq
@@ -18255,9 +17949,14 @@ tl_process_output:
                 (or
                   (compiler-backend-plan-provides? plan "tl_shift_abort")
                   (compiler-backend-plan-provides? plan "tl_region_reset"))))))]
+      [needs-get-std-handle : bool
+        (or
+          needs-write-exit
+          (compiler-backend-plan-provides? plan "tl_process_output"))]
       (string-append
         "    .extern VirtualAlloc
     .extern VirtualFree
+    .extern ExitProcess
 "
         (string-append
           (if (compiler-backend-plan-provides? plan ".L_tl_fs_read_dir_status")
@@ -18270,12 +17969,14 @@ tl_process_output:
             "")
           (string-append
             (if needs-write-exit
-              "    .extern _write
-    .extern exit
+              "    .extern WriteFile
 "
               "")
             (string-append
-              ""
+              (if needs-get-std-handle
+                "    .extern GetStdHandle
+"
+                "")
               (string-append
                 (if (compiler-backend-plan-provides? plan "tl_print_f64")
                   "    .extern _snprintf
@@ -18307,7 +18008,6 @@ tl_process_output:
     .extern WaitForSingleObject
     .extern GetExitCodeProcess
     .extern CloseHandle
-    .extern GetStdHandle
 "
                     ""))))))))
     ""))
@@ -19019,8 +18719,8 @@ tl_process_output:
                 asm
                 "    call tl_string_concat5\n")
               (and
-                (compiler-backend-string-contains? asm "getrandom:\n")
-                (compiler-backend-string-contains? asm "getcwd:\n")))
+                (not (compiler-backend-string-contains? asm "getrandom:\n"))
+                (not (compiler-backend-string-contains? asm "getcwd:\n"))))
             (backend-and8
               (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
               (compiler-backend-string-contains? asm "tl_string_eq:\n")

@@ -1899,13 +1899,20 @@ Example:
 ```
 
 - `name` and `version` are required string fields.
-- `kind` is optional and defaults to `bin`. When present, it accepts `bin` and
-  `staticlib` as symbols or strings; `lib` remains accepted as a compatibility
-  alias for `staticlib`. `bin` produces a native executable; `staticlib`
-  produces a static archive.
+- `kind` is optional. When present, it accepts `bin` and `staticlib` as symbols
+  or strings; `lib` remains accepted as a compatibility alias for `staticlib`.
+  `bin` produces a native executable; `staticlib` produces a static archive.
 - `entry` is optional. It defaults to `src/main.tl` for `bin` packages and
   `src/lib.tl` for `staticlib` packages. An explicit `entry` string overrides
   the convention default.
+- When both `kind` and `entry` are omitted from a disk-backed manifest, package
+  loading inspects the manifest directory: if only `src/main.tl` exists, the
+  package is a `bin`; if only `src/lib.tl` exists, the package is a
+  `staticlib`. If both conventional entry files exist, the package loader emits
+  a diagnostic requiring an explicit `kind` or `entry`. If neither exists, it
+  emits a diagnostic requiring an explicit `kind`/`entry` pair or a conventional
+  entry file. Source-string manifest parsing that has no filesystem context
+  keeps the compatibility default of `bin`.
 - `dependencies` is optional. Each entry has an alias symbol and either a
   string root path, `(alias "relative/or/absolute/path")`, or a GitHub
   shorthand source, `(alias (github "owner/repo" (rev "commit")))`.

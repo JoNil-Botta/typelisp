@@ -779,7 +779,7 @@
 
 (define (build-load-manifest [manifest-path : String]) : ResultBuildManifest
   (if (file-exists? manifest-path)
-    (match (compiler-load-parse-manifest-diagnostic
+    (match (compiler-load-parse-manifest-diagnostic-infer-kind
       manifest-path
       (read-file manifest-path))
       [(OkCompilerPkgManifestDiagnostic manifest) (OkBuildManifest manifest)]

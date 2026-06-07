@@ -248,10 +248,13 @@ build [--manifest-path path/to/typelisp.pkg]` remains package-oriented: it
 resolves `entry` relative to the manifest directory and writes outputs under
 `target/typelisp/<profile>/<package-name>/`, where the package build profile
 defaults to `release`. `--profile dev` uses the `dev` profile; `--profile
-release` and `--release` select the release profile. Omitted `kind` defaults to
-`bin`; omitted `entry` defaults to `src/main.tl` for binaries and `src/lib.tl`
-for static libraries. `kind "bin"` builds a native executable named after the
-package; `kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
+release` and `--release` select the release profile. Omitted `entry` defaults
+to `src/main.tl` for binaries and `src/lib.tl` for static libraries. When both
+`kind` and `entry` are omitted from a disk-backed manifest, package loading
+infers `bin` if only `src/main.tl` exists and `staticlib` if only `src/lib.tl`
+exists; if both or neither conventional entry exists, add an explicit `kind` or
+`entry`. `kind "bin"` builds a native executable named after the package;
+`kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
 `<name>.lib` on Windows). `kind "lib"` remains accepted as a compatibility
 alias. Dependency entries may use a local path relative to that same package
 root, an absolute path, or the GitHub shorthand form shown above. `tag` and

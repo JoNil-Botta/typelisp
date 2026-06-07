@@ -12260,6 +12260,96 @@
           arr-value
           arr-ty))]))
 
+(define (lower-init-default-share-safe-type-list?
+  [ctx : TcContext]
+  [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) true]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (box-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (if (lower-init-default-share-safe? ctx head)
+          (lower-init-default-share-safe-type-list? ctx rest)
+          false))]))
+
+(define (lower-init-default-share-safe-struct?
+  [ctx : TcContext]
+  [struct-name : String]
+  [struct-ty : AstType]) : bool
+  (match (tc-struct-decl ctx struct-name)
+    [(OkTcStructDecl decl)
+      (match decl
+        [(TcStructDecl repr cleanup fields)
+          (if (ast-struct-repr-c? repr)
+            false
+            (if (ast-struct-cleanup? cleanup)
+              false
+              (let
+                [field-types : AstTypeList
+                  (tc-resolve-type-list
+                    ctx
+                    (lower-struct-constructor-field-types-for-result
+                      ctx
+                      struct-name
+                      struct-ty
+                      fields))]
+                (lower-init-default-share-safe-type-list? ctx field-types))))])]
+    [(ErrTcStructDecl _) false]))
+
+(define (lower-init-default-share-safe-enum?
+  [ctx : TcContext]
+  [enum-name : String]
+  [enum-ty : AstType]) : bool
+  (match (tc-enum-decl ctx enum-name)
+    [(OkTcEnumDecl decl)
+      (match decl
+        [(TcEnumDecl cleanup variants)
+          (if (ast-enum-cleanup? cleanup)
+            false
+            (match variants
+              [(AstVariantDefNil) false]
+              [(AstVariantDefCons variant _)
+                (match variant
+                  [(AstVariantDef _ fields _)
+                    (let
+                      [field-types : AstTypeList
+                        (tc-resolve-type-list
+                          ctx
+                          (lower-enum-constructor-fields-for-result
+                            ctx
+                            enum-name
+                            enum-ty
+                            fields))]
+                      (lower-init-default-share-safe-type-list? ctx field-types))])]))])]
+    [(ErrTcEnumDecl _) false]))
+
+(define (lower-init-default-share-safe? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (if (tc-integer-type? resolved)
+      true
+      (match resolved
+        [(AstTyF64) true]
+        [(AstTyF32) true]
+        [(AstTyBool) true]
+        [(AstTyChar) true]
+        [(AstTyUnit) true]
+        [(AstTyString) true]
+        [(AstTyPtr _) true]
+        [(AstTyMutPtr _) true]
+        [(AstTyTuple elems)
+          (lower-init-default-share-safe-type-list? ctx elems)]
+        [(AstTyStruct name)
+          (lower-init-default-share-safe-struct? ctx name resolved)]
+        [(AstTyStructArgs name _)
+          (lower-init-default-share-safe-struct? ctx name resolved)]
+        [(AstTyEnum name)
+          (lower-init-default-share-safe-enum? ctx name resolved)]
+        [(AstTyEnumArgs name _)
+          (lower-init-default-share-safe-enum? ctx name resolved)]
+        [_ false]))))
+
 (define (lower-make-array-init-advance
   [state : LowerState]
   [index-var : i64]
@@ -12282,6 +12372,24 @@
               (IrInstrMov index-var (IrValueVar inc-var) (AstTyI64)))
             (IrInstrJump header-label))
           exit-label))]))
+
+(define (lower-make-array-store-init-body
+  [state : LowerState]
+  [buf-value : CompilerIrValue]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]
+  [elem-ty : AstType]
+  [init-value : CompilerIrValue]) : ResultLowerState
+  (match (lower-emit-gep state buf-value (IrValueVar index-var) elem-ty)
+    [(LowerExpr gep-state elem-ptr _)
+      (lower-make-array-init-advance
+        (lower-state-emit
+          gep-state
+          (IrInstrStorePtr elem-ptr init-value elem-ty))
+        index-var
+        header-label
+        exit-label)]))
 
 (define (lower-make-array-init-body
   [ctx : TcContext]
@@ -12362,6 +12470,49 @@
                 elem-ty
                 origin))]))]))
 
+(define (lower-make-array-store-init-loop-with-labels
+  [state : LowerState]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [elem-ty : AstType]
+  [init-value : CompilerIrValue]
+  [header-label : String]
+  [body-label : String]
+  [exit-label : String]) : ResultLowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc index-alloc index-var)
+      (let
+        [header-start : LowerState
+          (lower-state-finish-block
+            (lower-state-emit
+              (lower-state-emit
+                index-alloc
+                (IrInstrMov index-var (IrValueI64 0) (AstTyI64)))
+              (IrInstrJump header-label))
+            header-label)]
+        (match (lower-emit-binop
+          header-start
+          IrBinLt
+          (IrValueVar index-var)
+          len-i64
+          (AstTyBool))
+          [(LowerExpr cond-state cond-value _)
+            (let
+              [body-start : LowerState
+                (lower-state-finish-block
+                  (lower-state-emit
+                    cond-state
+                    (IrInstrBranch cond-value body-label exit-label))
+                  body-label)]
+              (lower-make-array-store-init-body
+                body-start
+                buf-value
+                index-var
+                header-label
+                exit-label
+                elem-ty
+                init-value))]))]))
+
 (define (lower-make-array-init-loop-runtime
   [ctx : TcContext]
   [state : LowerState]
@@ -12397,6 +12548,71 @@
                   body-label
                   exit-label)])])])))
 
+(define (lower-make-array-store-init-loop-runtime
+  [state : LowerState]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [init-value : CompilerIrValue]) : ResultLowerState
+  (if (= elem-size 0)
+    (OkLowerState state)
+    (match (lower-state-fresh-label state "make_array_init_header")
+      [(LowerLabel header-label-state header-label)
+        (match (lower-state-fresh-label
+          header-label-state
+          "make_array_init_body")
+          [(LowerLabel body-label-state body-label)
+            (match (lower-state-fresh-label
+              body-label-state
+              "make_array_init_exit")
+              [(LowerLabel exit-label-state exit-label)
+                (lower-make-array-store-init-loop-with-labels
+                  exit-label-state
+                  buf-value
+                  len-i64
+                  elem-ty
+                  init-value
+                  header-label
+                  body-label
+                  exit-label)])])])))
+
+(define (lower-make-array-init-loop-nonzero
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (if (= elem-size 0)
+    (OkLowerState state)
+    (if (lower-init-default-share-safe? ctx elem-ty)
+      (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
+        [(OkLowerExpr lowered-init)
+          (match lowered-init
+            [(LowerExpr init-state init-value _)
+              (lower-make-array-store-init-loop-runtime
+                init-state
+                buf-value
+                len-i64
+                elem-ty
+                elem-size
+                init-value)])]
+        [(ErrLowerExpr message) (ErrLowerState message)])
+      (lower-make-array-init-loop-runtime
+        ctx
+        state
+        env
+        type-env
+        buf-value
+        len-i64
+        elem-ty
+        elem-size
+        origin))))
+
 (define (lower-make-array-init-loop
   [ctx : TcContext]
   [state : LowerState]
@@ -12411,7 +12627,7 @@
     [(IrValueI64 literal-len)
       (if (= literal-len 0)
         (OkLowerState state)
-        (lower-make-array-init-loop-runtime
+        (lower-make-array-init-loop-nonzero
           ctx
           state
           env
@@ -12422,7 +12638,7 @@
           elem-size
           origin))]
     [_
-      (lower-make-array-init-loop-runtime
+      (lower-make-array-init-loop-nonzero
         ctx
         state
         env

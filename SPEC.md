@@ -1471,8 +1471,8 @@ The preferred function-head form writes fixed parameters directly on the extern
 head and uses the return type after `:`:
 
 ```lisp test=ignore name=extern-function-head-varargs reason="requires current selfhost parser"
-(extern (printf [fmt : (Ptr u8)] ...) (:symbol "printf") : i32)
-(extern (sumf [count : i64] [value : ...f64]) (:symbol "sumf") : i32)
+(extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
+(extern (sumf [count : i64] [value : ...f64]) : i32 (:symbol "sumf"))
 ```
 
 In a function-head extern, bare `...` marks an open C varargs tail. A bracketed
@@ -1528,15 +1528,15 @@ argument registers.
 
 Example:
 ```lisp test=check name=extern-declaration
-(extern foreign-add : (-> i64 i64 i64))
+(extern (foreign-add [a : i64] [b : i64]) : i64)
 ```
 
 ```lisp test=ignore name=extern-metadata-declaration reason="requires the selfhost parser metadata form"
-(extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
+(extern (local-add [a : i64] [b : i64]) : i64 (:symbol "foreign_add_exact"))
 ```
 
 ```lisp test=ignore name=extern-link-metadata-declaration reason="requires native library fixture"
-(extern native-add (:link-search "native/lib") (:link-lib "native_math") : (-> i64 i64 i64))
+(extern (native-add [a : i64] [b : i64]) : i64 (:link-search "native/lib") (:link-lib "native_math"))
 ```
 
 ### 4.3.1 `(unsafe declaration)` - unsafe functions and externs
@@ -4701,7 +4701,7 @@ defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" type expr+ ")"
 macro-operand ::= "[" ident ":" type "]"
                 | "[" ident ":" type "..." "]"      ; variadic final operand only
 extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
-                | "(" "extern" extern-head extern-meta* ":" type ")"
+                | "(" "extern" extern-head extern-meta* ":" type extern-meta* ")"
 extern-head   ::= "(" ident extern-param* extern-varargs? ")"
 extern-param  ::= "[" ident ":" type "]"
 extern-varargs ::= "..."

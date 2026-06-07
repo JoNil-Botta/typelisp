@@ -2863,38 +2863,45 @@
 (extern bad (:abi c) (:symbol \"bad_enum_args_return\") : (-> i64 (RefOption n)))")
 
 (define (compiler-typecheck-extern-head-varargs-open-source) : String
-  "(extern (printf [fmt : (Ptr u8)] ...) (:symbol \"printf\") : i32)
+  "(extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol \"printf\"))
 (define (main [fmt : (Ptr u8)]) : i64
   (cast (printf fmt 1 2.0) : i64))")
 
 (define (compiler-typecheck-extern-head-varargs-typed-source) : String
-  "(extern (sumf [count : i64] [value : ...f64]) (:symbol \"sumf\") : i32)
+  "(extern (sumf [count : i64] [value : ...f64]) : i32 (:symbol \"sumf\"))
 (define (main) : i64
   (cast (sumf 2 1.0 2.0) : i64))")
 
 (define (compiler-typecheck-extern-head-varargs-typed-mismatch-source) : String
-  "(extern (sumf [count : i64] [value : ...f64]) (:symbol \"sumf\") : i32)
+  "(extern (sumf [count : i64] [value : ...f64]) : i32 (:symbol \"sumf\"))
 (define (main) : i64
   (cast (sumf 1 true) : i64))")
 
 (define (compiler-typecheck-extern-head-varargs-tail-enum-source) : String
   "(defenum ResultI64 (OkI64 i64))
-(extern (bad [count : i64] [value : ...ResultI64]) (:symbol \"bad\") : i64)")
+(extern (bad [count : i64] [value : ...ResultI64]) : i64 (:symbol \"bad\"))")
+
+(define (compiler-typecheck-extern-head-fixed-source) : String
+  "(extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))
+(define (main) : i64
+  (local-add 1 2))")
 
 (define (compiler-typecheck-extern-head-varargs-tests-ok?) : bool
   (and
-    (compiler-typecheck-ok?
-      (compiler-typecheck-extern-head-varargs-open-source))
+    (compiler-typecheck-ok? (compiler-typecheck-extern-head-fixed-source))
     (and
       (compiler-typecheck-ok?
-        (compiler-typecheck-extern-head-varargs-typed-source))
+        (compiler-typecheck-extern-head-varargs-open-source))
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
-          "typecheck: argument type mismatch")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-extern-head-varargs-tail-enum-source)
-          "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64")))))
+        (compiler-typecheck-ok?
+          (compiler-typecheck-extern-head-varargs-typed-source))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
+            "typecheck: argument type mismatch")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-extern-head-varargs-tail-enum-source)
+            "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64"))))))
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and

@@ -2007,9 +2007,13 @@
           (compiler-backend-string-contains?
             asm
             "    jc .L_tl_alloc_enter_abort\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_region_reset_win_invalid:\n    jmp tl_region_abort\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_win_invalid:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    sub $32, %rsp\n    call tl_region_abort\n"))
           (backend-and4
             (compiler-backend-string-contains? asm "    call GetStdHandle\n")
             (compiler-backend-string-contains?

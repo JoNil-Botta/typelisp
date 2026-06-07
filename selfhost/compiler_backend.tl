@@ -13740,7 +13740,8 @@ tl_region_reset:
     jnz .L_tl_region_reset_win_find
     jmp .L_tl_region_reset_win_invalid
 .L_tl_region_reset_win_invalid:
-    jmp tl_region_abort
+    sub $32, %rsp
+    call tl_region_abort
 .L_tl_region_reset_win_found:
     movq tl_current_arena(%rip), %r14
 .L_tl_region_reset_win_drop:

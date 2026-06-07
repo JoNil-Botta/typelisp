@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/string.tl")
 
 (extern tl_region_mark : (-> u64))
@@ -25,7 +27,7 @@
     [total : i64 (scoped-loop 2000 0)]
     [after : u64 (tl_region_mark)]
     (begin
-      (unless (= before after) (return 1))
-      (unless (> total 0) (return 2))
-      (unless (= (string-length anchor) 9) (return 3))
+      (core/unless (= before after) (return 1))
+      (core/unless (> total 0) (return 2))
+      (core/unless (= (string-length anchor) 9) (return 3))
       42)))

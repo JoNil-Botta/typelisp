@@ -19,6 +19,8 @@
 ;;   9223372036854775807
 ;;   -9223372036854775808
 ;; Exit code: 42
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 (import "stdlib/string.tl")
@@ -84,10 +86,10 @@
     (print-newline)
     (print-string (int->string (- (- 0 9223372036854775807) 1)))
     (print-newline)
-    (if (and
+    (if (core/and
       (string-eq "same" (string-append "sa" "me"))
-      (and
-        (not (string=? "same" "different"))
-        (and (= (string->int "-42") -42) (= (string->int "12a") 169))))
+      (not (string=? "same" "different"))
+      (= (string->int "-42") -42)
+      (= (string->int "12a") 169))
       42
       1)))

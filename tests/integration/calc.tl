@@ -41,6 +41,8 @@
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 (import "token.tl")
@@ -67,11 +69,11 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (core/and (>= c #0') (<= c #9')))
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
+  (core/or (= c #\space') (= c #\tab') (= c #\newline')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64
@@ -220,7 +222,7 @@
   (let
     [acc : Expr (parse-factor toks cur)]
     (begin
-      (while (or
+      (while (core/or
         (= (current-tag toks cur) (tag-star))
         (= (current-tag toks cur) (tag-slash)))
         (if (= (current-tag toks cur) (tag-star))
@@ -240,7 +242,7 @@
   (let
     [acc : Expr (parse-term toks cur)]
     (begin
-      (while (or
+      (while (core/or
         (= (current-tag toks cur) (tag-plus))
         (= (current-tag toks cur) (tag-minus)))
         (if (= (current-tag toks cur) (tag-plus))

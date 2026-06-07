@@ -698,6 +698,11 @@ run_linux_backend_fixtures() {
         ".L_tl_read_stdin_bytes:" \
         ".L_tl_stdin_eof:" \
         ".L_tl_flush_stdout:" \
+        "tl_process_output:" \
+        "tl_process_start:" \
+        "tl_process_wait:" \
+        ".L_tl_process_read_all:" \
+        ".L_tl_process_exec_marker:" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
         ".L_tl_string_concat_copy_b:" \
@@ -927,6 +932,18 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_flush_stdout" \
         ".extern tl_random_system_seed" \
         "SystemFunction036" \
+        "tl_process_output:" \
+        "tl_process_start:" \
+        "tl_process_wait:" \
+        ".L_tl_process_read_all:" \
+        ".L_tl_process_exec_marker:" \
+        "tmpfile:" \
+        "_fileno:" \
+        "_get_osfhandle:" \
+        "fclose:" \
+        "__p__environ:" \
+        "    call _lseeki64" \
+        "    call _read" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
         ".L_tl_string_concat_copy_b:" \

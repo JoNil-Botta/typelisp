@@ -987,6 +987,74 @@
         [_ ""])]
     [_ ""]))
 
+(define (compiler-backend-avx512-vector-compare-mnemonic [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstTyI64) "vpcmpq"]
+    [(AstTyU64) "vpcmpuq"]
+    [(AstTyI32) "vpcmpd"]
+    [(AstTyU32) "vpcmpud"]
+    [(AstTyF64) "vcmppd"]
+    [(AstTyF32) "vcmpps"]
+    [_ ""]))
+
+(define (compiler-backend-avx512-compare-imm [op : CompilerIrBinOp]) : i64
+  (match op
+    [(IrBinEq) 0]
+    [(IrBinLt) 1]
+    [(IrBinLe) 2]
+    [(IrBinNe) 4]
+    [(IrBinGe) 5]
+    [(IrBinGt) 6]
+    [_ -1]))
+
+(define (compiler-backend-avx512-splat-load
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]) : ResultCompilerBackend
+  (match elem-ty
+    [(AstTyF64)
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        value
+        elem-ty
+        "%xmm0")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend (string-append asm "    vbroadcastsd %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyF32)
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        value
+        elem-ty
+        "%xmm0")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend (string-append asm "    vbroadcastss %xmm0, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyI32)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [(AstTyU32)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+    [_
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        value
+        "%rax")
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend (string-append asm "    vpbroadcastq %rax, "))]
+        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]))
+
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
   [op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]) : String
@@ -1043,6 +1111,27 @@
           (compiler-diagnostic-with-message instr-diag message))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
+(define (compiler-backend-emit-avx512-splat
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (match (compiler-backend-vector-var-reg assignments dst "splat dst" "zmm")
+      [(OkBackendReg dst-reg)
+        (match (compiler-backend-avx512-splat-load assignments value elem-ty)
+          [(OkCompilerBackend load-asm)
+            (OkCompilerBackend (backend-cat3 load-asm dst-reg "\n"))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
 (define (compiler-backend-emit-avx512-vector-binop
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -1081,6 +1170,60 @@
                         " "
                         rhs-reg
                         (backend-cat5 ", " lhs-reg ", " dst-reg "\n")))]
+                  [(ErrBackendReg message)
+                    (ErrCompilerBackend
+                      (compiler-diagnostic-with-message instr-diag message))])]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])))
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-avx512-vector-compare
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx512-vector-compare-mnemonic elem-ty)]
+      [predicate : i64 (compiler-backend-avx512-compare-imm op)]
+      (if (or (= (string-length mnemonic) 0) (< predicate 0))
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX-512 vector compare"))
+        (match (compiler-backend-avx512-vector-value-reg
+          assignments
+          lhs
+          "cmp lhs")
+          [(OkBackendReg lhs-reg)
+            (match (compiler-backend-avx512-vector-value-reg
+              assignments
+              rhs
+              "cmp rhs")
+              [(OkBackendReg rhs-reg)
+                (match (compiler-backend-mask-var-reg assignments dst "cmp dst")
+                  [(OkBackendReg dst-reg)
+                    (OkCompilerBackend
+                      (backend-cat5
+                        "    "
+                        mnemonic
+                        " $"
+                        (backend-cat5
+                          (int->string predicate)
+                          ", "
+                          rhs-reg
+                          (backend-cat5 ", " lhs-reg ", " dst-reg "\n")
+                          "")
+                        ""))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message instr-diag message))])]
@@ -7062,8 +7205,14 @@
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrLaneId _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrSplat _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSplat dst value lanes elem-ty)
+        (compiler-backend-emit-avx512-splat
+          assignments
+          dst
+          value
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
         (compiler-backend-emit-vector-binop
           assignments
@@ -7083,8 +7232,16 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorCompare _ _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
+        (compiler-backend-emit-avx512-vector-compare
+          assignments
+          dst
+          op
+          lhs
+          rhs
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrMaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-avx512-mask-binop
           assignments

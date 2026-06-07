@@ -533,9 +533,7 @@
     (and
       (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-foreach-varying-if-source)
-          "typecheck: SPMD masked if is recognized but lowering is not implemented")
+        (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-if-source))
         (and
           (compiler-typecheck-error-ok?
             (compiler-typecheck-foreach-varying-while-source)

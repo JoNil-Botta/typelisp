@@ -32,7 +32,6 @@ manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsa
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
 spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
-spmd_masked_if_supported_deferred|check-fail|tests/safety/spmd_masked_if_supported_deferred.tl|-|SPMD masked if is recognized but lowering is not implemented
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
 spmd_masked_if_match_reject|check-fail|tests/safety/spmd_masked_if_match_reject.tl|-|SPMD masked if does not support varying match
 spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls

@@ -79,6 +79,7 @@ spmd_corpus() {
     cat <<'EOF'
 tests/spmd/tail_i64_add.tl
 tests/spmd/tail_i32_add.tl
+tests/spmd/masked_if_i64.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_reduce_scalar.tl
 EOF
@@ -86,6 +87,15 @@ EOF
 
 isa_available() {
     printf '%s\n' "$SIMD_ISAS" | grep -qx "$1"
+}
+
+spmd_mode_supported() {
+    _prog=$1
+    _mode=$2
+    case "$_prog:$_mode" in
+        tests/spmd/masked_if_i64.tl:avx2) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 
 CORPUS="$WORKDIR/corpus.txt"
@@ -156,6 +166,10 @@ while IFS= read -r prog; do
     for pair in "avx2 avx2" "avx512 avx512f"; do
         mode=${pair%% *}
         isa=${pair##* }
+        if ! spmd_mode_supported "$prog" "$mode"; then
+            echo "[spmd-simd]   skip $mode (program requires AVX-512 lowering)"
+            continue
+        fi
         if ! isa_available "$isa"; then
             echo "[spmd-simd]   skip $mode ($isa not runnable on this $HOST_OS host)"
             continue

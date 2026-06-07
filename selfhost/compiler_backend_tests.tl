@@ -2269,6 +2269,14 @@
           "    vmovups "
           "    vaddps ")))))
 
+(define (compiler-backend-avx512-masked-if-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (< (array-ref xs i) 0)
+      (array-set! out i 0)
+      (array-set! out i (+ (array-ref xs i) 1)))))")
+
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
   [move : String]
@@ -2294,6 +2302,35 @@
               (compiler-backend-string-contains? asm "}{z}")
               (compiler-backend-string-contains? asm "kmovw")
               (compiler-backend-string-contains? asm "shll %cl, %eax"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx512-masked-if-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx512-masked-if-source)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx512)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vpcmpq $1,")
+              (compiler-backend-string-contains? asm "    kandw ")
+              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    vpbroadcastq ")
+              (compiler-backend-string-contains? asm "}{z}")
+              (compiler-backend-string-contains? asm "tail_mask_")
+              (compiler-backend-string-contains? asm "%k")
+              (compiler-backend-string-contains? asm "    vmovdqu64 "))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -2565,14 +2602,16 @@
     (and
       (compiler-backend-avx512-vector-map-ok?)
       (and
-        (compiler-backend-avx2-vector-reduce-ok?)
+        (compiler-backend-avx512-masked-if-ok?)
         (and
-          (compiler-backend-avx512-vector-reduce-ok?)
+          (compiler-backend-avx2-vector-reduce-ok?)
           (and
-            (compiler-backend-avx2-vector-homes-ok?)
+            (compiler-backend-avx512-vector-reduce-ok?)
             (and
-              (compiler-backend-avx512-mask-homes-ok?)
-              (compiler-backend-vector-call-lifetime-rejects-ok?))))))))
+              (compiler-backend-avx2-vector-homes-ok?)
+              (and
+                (compiler-backend-avx512-mask-homes-ok?)
+                (compiler-backend-vector-call-lifetime-rejects-ok?)))))))))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let

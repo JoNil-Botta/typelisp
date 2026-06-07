@@ -3962,6 +3962,22 @@
     n
     (* (/ (+ n (- align 1)) align) align)))
 
+(define (lower-inline-layout-size-or
+  [ctx : TcContext]
+  [ty : AstType]
+  [fallback : i64]) : i64
+  (match (tc-inline-aggregate-type-layout ctx ty)
+    [(OkTcLayoutInfo info) (tc-layout-info-size info)]
+    [(ErrTcLayoutInfo _) fallback]))
+
+(define (lower-inline-layout-align-or
+  [ctx : TcContext]
+  [ty : AstType]
+  [fallback : i64]) : i64
+  (match (tc-inline-aggregate-type-layout ctx ty)
+    [(OkTcLayoutInfo info) (tc-layout-info-align info)]
+    [(ErrTcLayoutInfo _) fallback]))
+
 (define (lower-type-size [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
     [(AstTyI64) 8]
@@ -3990,10 +4006,12 @@
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-size ctx (box-get inner))]
-    [(AstTyEnum _) 8]
-    [(AstTyEnumArgs _ _) 8]
-    [(AstTyStruct _) 8]
-    [(AstTyStructArgs _ _) 8]
+    [(AstTyEnum name) (lower-inline-layout-size-or ctx (AstTyEnum name) 8)]
+    [(AstTyEnumArgs name lifetimes)
+      (lower-inline-layout-size-or ctx (AstTyEnumArgs name lifetimes) 8)]
+    [(AstTyStruct name) (lower-inline-layout-size-or ctx (AstTyStruct name) 8)]
+    [(AstTyStructArgs name lifetimes)
+      (lower-inline-layout-size-or ctx (AstTyStructArgs name lifetimes) 8)]
     [(AstTyString) 8]
     [(AstTyStr) 8]
     [(AstTyVar _) 8]
@@ -4027,10 +4045,12 @@
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-align ctx (box-get inner))]
-    [(AstTyEnum _) 8]
-    [(AstTyEnumArgs _ _) 8]
-    [(AstTyStruct _) 8]
-    [(AstTyStructArgs _ _) 8]
+    [(AstTyEnum name) (lower-inline-layout-align-or ctx (AstTyEnum name) 8)]
+    [(AstTyEnumArgs name lifetimes)
+      (lower-inline-layout-align-or ctx (AstTyEnumArgs name lifetimes) 8)]
+    [(AstTyStruct name) (lower-inline-layout-align-or ctx (AstTyStruct name) 8)]
+    [(AstTyStructArgs name lifetimes)
+      (lower-inline-layout-align-or ctx (AstTyStructArgs name lifetimes) 8)]
     [(AstTyString) 8]
     [(AstTyStr) 8]
     [(AstTyVar _) 8]
@@ -4289,6 +4309,32 @@
             src
             (+ src-offset chunk)
             (- size chunk))]))))
+
+(define (lower-store-inline-value-at-offset
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [size : i64]) : LowerState
+  (if (lower-type-contains-inline-aggregate? ctx ty)
+    (lower-copy-bytes state base offset value 0 size)
+    (lower-store-at-offset state base offset value ty)))
+
+(define (lower-load-inline-value-at-offset
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [ty : AstType]
+  [mode : CompilerLowerMode]) : LowerExpr
+  (if (and
+    (lower-mode-inline-aggregates? mode)
+    (lower-type-contains-inline-aggregate? ctx ty))
+    (match (lower-gep-byte state base offset)
+      [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
+    (lower-load-at-offset state base offset ty)))
 
 (define (lower-inline-aggregate-copy-size [ctx : TcContext] [ty : AstType]) : ResultLowerSize
   (match (tc-inline-aggregate-type-layout ctx ty)
@@ -5178,12 +5224,14 @@
                           [stored-state : LowerState
                             (if (<= (tc-layout-info-size info) 0)
                               state
-                              (lower-store-at-offset
+                              (lower-store-inline-value-at-offset
+                                ctx
                                 state
                                 base
                                 offset
                                 value
-                                resolved))]
+                                resolved
+                                (tc-layout-info-size info)))]
                           (lower-store-inline-struct-values
                             ctx
                             stored-state
@@ -5235,7 +5283,14 @@
                     ctx
                     (if (<= (tc-layout-info-size info) 0)
                       state
-                      (lower-store-at-offset state base offset value resolved))
+                      (lower-store-inline-value-at-offset
+                        ctx
+                        state
+                        base
+                        offset
+                        value
+                        resolved
+                        (tc-layout-info-size info)))
                     base
                     (box-get rest-values)
                     rest-types
@@ -5426,7 +5481,13 @@
                       next-cursor
                       fail-label)]
                   [(AstPatBinding name)
-                    (match (lower-load-at-offset state base offset resolved)
+                    (match (lower-load-inline-value-at-offset
+                      ctx
+                      state
+                      base
+                      offset
+                      resolved
+                      mode)
                       [(LowerExpr load-state value _)
                         (match value
                           [(IrValueVar field-var)
@@ -5517,11 +5578,13 @@
                                 [(ErrAstTypeList message)
                                   (ErrLowerEnv (lower-diagnostic message))]
                                 [(OkAstTypeList nested-fields)
-                                  (match (lower-load-at-offset
+                                  (match (lower-load-inline-value-at-offset
+                                    ctx
                                     state
                                     base
                                     offset
-                                    resolved)
+                                    resolved
+                                    mode)
                                     [(LowerExpr field-state field-value _)
                                       (match (lower-load-at-offset
                                         field-state
@@ -5680,9 +5743,7 @@
   [mode : CompilerLowerMode]
   [struct-name : String]
   [field-name : String]) : ResultLowerFieldInfo
-  (if (and
-    (lower-mode-inline-aggregates? mode)
-    (not (lower-struct-repr-c? ctx struct-name)))
+  (if (lower-mode-inline-aggregates? mode)
     (match (lower-struct-field-info ctx struct-name field-name)
       [(OkLowerFieldInfo info)
         (match info
@@ -8132,9 +8193,7 @@
             fields)]
         (match (lower-args-as ctx state env type-env args field-types)
           [(OkLowerArgs args-state values)
-            (if (and
-              (lower-mode-inline-aggregates? (lower-state-mode args-state))
-              (not (lower-struct-repr-c? ctx struct-name)))
+            (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
               (lower-construct-struct-inline-from-values
                 ctx
                 args-state
@@ -9957,9 +10016,13 @@
         [(LowerFieldInfo offset field-ty)
           (match (lower-gep-byte state receiver-value offset)
             [(LowerExpr ptr-state ptr _)
-              (if (and
-                (lower-struct-repr-c? ctx struct-name)
-                (lower-repr-c-inline-field? ctx field-ty))
+              (if (or
+                (and
+                  (lower-struct-repr-c? ctx struct-name)
+                  (lower-repr-c-inline-field? ctx field-ty))
+                (and
+                  (lower-mode-inline-aggregates? (lower-state-mode ptr-state))
+                  (lower-type-contains-inline-aggregate? ctx field-ty)))
                 (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
                 (match (lower-state-alloc-var ptr-state)
                   [(LowerAlloc allocated var-id)
@@ -10027,11 +10090,26 @@
             (lower-type-size ctx inner-ty)
             result-ty)
             [(LowerExpr base-state base _)
-              (OkLowerExpr
-                (LowerExpr
-                  (lower-store-at-offset base-state base 0 inner-value inner-ty)
-                  base
-                  result-ty))])])]
+              (if (lower-type-contains-inline-aggregate? ctx inner-ty)
+                (match (lower-inline-aggregate-copy-size ctx inner-ty)
+                  [(OkLowerSize size)
+                    (OkLowerExpr
+                      (LowerExpr
+                        (lower-copy-bytes base-state base 0 inner-value 0 size)
+                        base
+                        result-ty))]
+                  [(ErrLowerSize message)
+                    (ErrLowerExpr (lower-diagnostic message))])
+                (OkLowerExpr
+                  (LowerExpr
+                    (lower-store-at-offset
+                      base-state
+                      base
+                      0
+                      inner-value
+                      inner-ty)
+                    base
+                    result-ty)))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; Lower `(box-get b)` (#1443): evaluate the box handle and load the boxed value
@@ -10047,7 +10125,19 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr box-state box-value _)
-          (OkLowerExpr (lower-load-at-offset box-state box-value 0 result-ty))])]
+          ;; #1867: when the boxed value is an inline aggregate, the box pointer
+          ;; already addresses the T storage, so box-get yields that pointer
+          ;; (offset 0) rather than scalar-loading the first 8 bytes (which would
+          ;; read only the leading word, e.g. an enum tag, and treat it as the
+          ;; whole value). Scalars still load. Mirrors lower-struct-get.
+          (OkLowerExpr
+            (lower-load-inline-value-at-offset
+              ctx
+              box-state
+              box-value
+              0
+              result-ty
+              (lower-state-mode box-state)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; Locate the byte offset and resolved type of tuple element `target` within the
@@ -14480,6 +14570,15 @@
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
+    [(CompilerLowerScalar) true]
+    [(CompilerLowerLinuxScalar) true]
+    [(CompilerLowerWindowsScalar) true]
+    [(CompilerLowerAvx2) true]
+    [(CompilerLowerLinuxAvx2) true]
+    [(CompilerLowerWindowsAvx2) true]
+    [(CompilerLowerAvx512) true]
+    [(CompilerLowerLinuxAvx512) true]
+    [(CompilerLowerWindowsAvx512) true]
     [(CompilerLowerInlineAggregates) true]
     [_ false]))
 
@@ -16732,6 +16831,33 @@
               [(ErrLowerExpr message) (ErrLowerState message)]))])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
+(define (lower-expr-list-contains-inline-aggregate?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-expr ctx env expr)
+          [(OkTcType ty)
+            (or
+              (lower-type-contains-inline-aggregate? ctx ty)
+              (lower-expr-list-contains-inline-aggregate? ctx env rest))]
+          [(ErrTcType _)
+            (lower-expr-list-contains-inline-aggregate? ctx env rest)]))]))
+
+(define (lower-tail-call-inline-aggregate-risk?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [ret-ty : AstType]) : bool
+  (or
+    (lower-type-contains-inline-aggregate? ctx ret-ty)
+    (lower-expr-list-contains-inline-aggregate? ctx type-env args)))
+
 (define (lower-tail-call
   [ctx : TcContext]
   [state : LowerState]
@@ -16743,7 +16869,7 @@
   [origin : AstExpr]) : ResultLowerState
   (if (and
     (lower-tail-call-target? state env callee)
-    (not (lower-mode-inline-aggregates? (lower-state-mode state))))
+    (not (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)))
     (match (lower-args ctx state env type-env args)
       [(OkLowerArgs args-state values)
         (OkLowerState
@@ -19587,12 +19713,6 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _ _) false]))
 
-(define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
-    [(ErrCompilerLower diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
-    [(OkCompilerLower _ _) false]))
-
 (define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerLinuxScalar))
     [(ErrCompilerLower diag)
@@ -20242,10 +20362,23 @@
     [x : BadList (BadCons 1 BadNil)]
     0))")
 
+(define (compiler-lower-inline-hot-loop-struct-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (main [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [sum : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [p : Pair (Pair i (+ i 1))]
+          (begin
+            (set! sum (+ sum (struct-get p y)))
+            (set! i (+ i 1)))))
+      sum)))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-inline-struct-source)
-    (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source (compiler-lower-inline-struct-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -20275,9 +20408,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-inline-enum-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-inline-enum-source)
-    (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source (compiler-lower-inline-enum-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -20310,9 +20441,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-inline-boxed-recursive-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-inline-boxed-recursive-source)
-    (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source (compiler-lower-inline-boxed-recursive-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -20336,6 +20465,16 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-hot-loop-struct-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-inline-hot-loop-struct-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (> (lower-test-function-branch-count functions "main") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -20343,9 +20482,11 @@
       (compiler-lower-inline-enum-shape-ok?)
       (and
         (compiler-lower-inline-boxed-recursive-shape-ok?)
-        (compiler-lower-inline-error-ok?
-          (compiler-lower-inline-recursive-error-source)
-          "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))
+        (and
+          (compiler-lower-inline-hot-loop-struct-shape-ok?)
+          (compiler-lower-error-ok?
+            (compiler-lower-inline-recursive-error-source)
+            "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge"))))))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (:generated point-family Point \"i64-i64\")
@@ -23797,9 +23938,6 @@
                 0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-load-count functions "borrow-pair") 0)
-                unit
-                (set! ok false))
               ok))])]
     [(ErrCompilerLower _) false]))
 
@@ -24627,7 +24765,7 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "tl_alloc") 0)
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (and
               (> (lower-test-function-gep-offset-count functions "main" 4) 0)
               (> (lower-test-function-gep-offset-count functions "main" 12) 0)))])]

@@ -1164,6 +1164,9 @@
       (set!
         out
         (tc-bind out "expr-list-tail" (tc-fn1 (AstTyExprList) (AstTyExprList))))
+      (set!
+        out
+        (tc-bind out "expr-list-nth" (tc-fn2 (AstTyExprList) (AstTyI64) expr)))
       out)))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType

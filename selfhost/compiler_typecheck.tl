@@ -5330,6 +5330,13 @@
   `(if ,condition ,then-expr ,else-expr))
 (define (main) : i64 (choose true 1 false))")
 
+(define (compiler-typecheck-macro-expr-list-nth-source) : String
+  "(defmacro (second [args : Expr ...]) : Expr
+  (if (< (expr-list-length args) 2)
+    (expr-var \"missing\")
+    (expr-list-nth args 1)))
+(define (main) : bool (second 42 true))")
+
 (define (compiler-typecheck-macro-expand-depth-source) : String
   "(defmacro (again) : Expr `(again))
 (define (main) : i64 (again))")
@@ -5509,9 +5516,12 @@
                 (compiler-typecheck-error-ok?
                   (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
                   "typecheck: if branches must match")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-macro-expand-depth-source)
-                  "macro expansion exceeded depth limit")))))))
+                (and
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-macro-expr-list-nth-source))
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-macro-expand-depth-source)
+                    "macro expansion exceeded depth limit"))))))))
     (and
       (compiler-typecheck-macro-export-tests-ok?)
       (and

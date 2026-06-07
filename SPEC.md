@@ -633,6 +633,8 @@ expanded expression afterward. A final slot may be variadic, written `T ...`;
 the macro body receives those remaining operands as an `ExprList`. For
 `Expr ...`, the remaining operands are captured without per-operand produced
 type checks.
+Macro bodies can inspect variadic captures with `expr-list-empty?`,
+`expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
 
 `Expr` and `ExprList` are compile-time-only types. They are valid in macro
 bodies and explicit `(comptime ...)` helper code, but they have no runtime
@@ -1718,8 +1720,8 @@ There is no automatic stdlib macro prelude in v1. Core macro modules are loaded
 with ordinary explicit imports, for example
 `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, and their
 exports are called through the import alias such as `core/when`, `core/unless`,
-`core/and`, and `core/or`. Unqualified parser-owned core forms remain separate
-until the final stdlib macro migration.
+`core/and`, `core/or`, and `core/cond`. Unqualified parser-owned core forms
+remain separate until the final stdlib macro migration.
 
 Before expanding a module's non-import forms, the loader parses the module,
 collects its import declarations, recursively loads imported modules, and builds

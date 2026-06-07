@@ -14,6 +14,15 @@
       (core/unless flag (set! value 2))
       unit)))
 
+(define (stdlib-core-cond-i64 [value : i64]) : i64
+  (core/cond (< value 0) 0 (= value 0) 1 (+ value 1)))
+
+(define (stdlib-core-cond-string [flag : bool]) : String
+  (core/cond flag "yes" "no"))
+
+(define (stdlib-core-cond-unit [flag : bool]) : unit
+  (core/cond flag unit unit))
+
 (define (stdlib-core-macros-short-circuit-value) : i64
   (let
     [value : i64 0]

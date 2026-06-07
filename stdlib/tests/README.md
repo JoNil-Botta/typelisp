@@ -42,8 +42,9 @@ Coverage notes:
   `vector_slice_escape.tl` verifies the checker rejects returning a slice tied
   to a shorter-lived vector.
 - `core_macros_api.tl` covers explicit import of the stdlib core macro module
-  and the qualified `core/when`, `core/unless`, `core/and`, and `core/or`
-  macros.
+  and the qualified `core/when`, `core/unless`, `core/and`, `core/or`, and
+  `core/cond` macros. The adjacent `core_macros_cond_*` check fixtures cover
+  post-expansion `core/cond` diagnostics.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,

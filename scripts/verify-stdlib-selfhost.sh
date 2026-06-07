@@ -39,6 +39,10 @@ reject_diag() {
             printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/core_macros_cond_branch_mismatch.tl)
+            printf 'typecheck: if branches must match' ;;
+        stdlib/tests/core_macros_cond_non_bool.tl)
+            printf 'typecheck: if condition must be bool' ;;
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/process_borrowed_escape.tl)

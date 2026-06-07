@@ -2453,7 +2453,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (compiler-backend-type-size (box-get inner))]
+    [(AstTyRegion _ inner) (compiler-backend-type-size (ty-node-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
@@ -5311,7 +5311,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam (string-append "arg" (int->string idx)) ty idx)
@@ -5375,7 +5375,7 @@
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
-                (CompilerBackendSomeSignature args (box-get ret-ty))]
+                (CompilerBackendSomeSignature args (ty-node-get ret-ty))]
               [_ (CompilerBackendNoSignature)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
@@ -5418,7 +5418,7 @@
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
     [(AstTyFunc args ret-ty)
-      (CompilerBackendSomeSignature args (box-get ret-ty))]
+      (CompilerBackendSomeSignature args (ty-node-get ret-ty))]
     [_ (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-program-index-extern-signatures-into
@@ -5775,7 +5775,7 @@
     [(AstTypeNil) count]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         [is-float : bool (compiler-backend-float-type? ty)]
         [next-float : i64
@@ -5804,7 +5804,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         [tail : String
           (compiler-backend-windows-vararg-dup-asm
@@ -5873,7 +5873,7 @@
       (match fixed-types
         [(AstTypeCons ty rest)
           (ast-type-cons
-            (box-get ty)
+            (ty-node-get ty)
             (compiler-backend-call-actual-param-types-from
               types
               global-types
@@ -5964,7 +5964,7 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (box-get ty)]
+          [(AstTypeCons ty _) (ty-node-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -6157,7 +6157,7 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (box-get ty)]
+          [(AstTypeCons ty _) (ty-node-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types

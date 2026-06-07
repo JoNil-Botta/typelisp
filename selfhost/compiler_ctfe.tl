@@ -874,7 +874,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (ctfe-reflect-resolve-type infos head)
@@ -885,25 +885,29 @@
     [(AstTyFunc args ret)
       (ast-ty-func
         (ctfe-reflect-resolve-type-list infos args)
-        (ctfe-reflect-resolve-type infos (box-get ret)))]
+        (ctfe-reflect-resolve-type infos (ty-node-get ret)))]
     [(AstTyTuple elems)
       (AstTyTuple (ctfe-reflect-resolve-type-list infos elems))]
     [(AstTyArray elem len)
-      (ast-ty-array (ctfe-reflect-resolve-type infos (box-get elem)) len)]
+      (ast-ty-array (ctfe-reflect-resolve-type infos (ty-node-get elem)) len)]
     [(AstTyDynArray elem)
-      (ast-ty-dyn-array (ctfe-reflect-resolve-type infos (box-get elem)))]
+      (ast-ty-dyn-array (ctfe-reflect-resolve-type infos (ty-node-get elem)))]
     [(AstTyBox elem)
-      (ast-ty-box (ctfe-reflect-resolve-type infos (box-get elem)))]
+      (ast-ty-box (ctfe-reflect-resolve-type infos (ty-node-get elem)))]
     [(AstTyPtr elem)
-      (ast-ty-ptr (ctfe-reflect-resolve-type infos (box-get elem)))]
+      (ast-ty-ptr (ctfe-reflect-resolve-type infos (ty-node-get elem)))]
     [(AstTyMutPtr elem)
-      (ast-ty-mut-ptr (ctfe-reflect-resolve-type infos (box-get elem)))]
+      (ast-ty-mut-ptr (ctfe-reflect-resolve-type infos (ty-node-get elem)))]
     [(AstTyRef region inner)
-      (ast-ty-ref region (ctfe-reflect-resolve-type infos (box-get inner)))]
+      (ast-ty-ref region (ctfe-reflect-resolve-type infos (ty-node-get inner)))]
     [(AstTyMutRef region inner)
-      (ast-ty-mut-ref region (ctfe-reflect-resolve-type infos (box-get inner)))]
+      (ast-ty-mut-ref
+        region
+        (ctfe-reflect-resolve-type infos (ty-node-get inner)))]
     [(AstTyRegion region inner)
-      (ast-ty-region region (ctfe-reflect-resolve-type infos (box-get inner)))]
+      (ast-ty-region
+        region
+        (ctfe-reflect-resolve-type infos (ty-node-get inner)))]
     [(AstTyStruct name)
       (match (ctfe-reflect-info-lookup infos name)
         [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
@@ -928,7 +932,7 @@
     [(AstTypeNil) "nil"]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (ctfe-type-key-with-reflections infos head)
@@ -989,31 +993,31 @@
           (ctfe-type-list-key infos args)
           (string-append
             "_to_"
-            (ctfe-type-key-with-reflections infos (box-get ret)))))]
+            (ctfe-type-key-with-reflections infos (ty-node-get ret)))))]
     [(AstTyTuple elems)
       (string-append "tuple_" (ctfe-type-list-key infos elems))]
     [(AstTyArray elem count)
       (string-append
         "array_"
         (string-append
-          (ctfe-type-key-with-reflections infos (box-get elem))
+          (ctfe-type-key-with-reflections infos (ty-node-get elem))
           (string-append "_" (ctfe-int-key count))))]
     [(AstTyDynArray elem)
       (string-append
         "dynarray_"
-        (ctfe-type-key-with-reflections infos (box-get elem)))]
+        (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyBox elem)
       (string-append
         "box_"
-        (ctfe-type-key-with-reflections infos (box-get elem)))]
+        (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyPtr elem)
       (string-append
         "ptr_"
-        (ctfe-type-key-with-reflections infos (box-get elem)))]
+        (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyMutPtr elem)
       (string-append
         "mutptr_"
-        (ctfe-type-key-with-reflections infos (box-get elem)))]
+        (ctfe-type-key-with-reflections infos (ty-node-get elem)))]
     [(AstTyRef region inner)
       (string-append
         "ref_"
@@ -1021,7 +1025,7 @@
           region
           (string-append
             "_"
-            (ctfe-type-key-with-reflections infos (box-get inner)))))]
+            (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
     [(AstTyMutRef region inner)
       (string-append
         "mutref_"
@@ -1029,7 +1033,7 @@
           region
           (string-append
             "_"
-            (ctfe-type-key-with-reflections infos (box-get inner)))))]
+            (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
     [(AstTyRegion region inner)
       (string-append
         "region_"
@@ -1037,7 +1041,7 @@
           region
           (string-append
             "_"
-            (ctfe-type-key-with-reflections infos (box-get inner)))))]
+            (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
     [(AstTyEnumArgs name lifetimes)
       (string-append
@@ -1240,7 +1244,7 @@
       [(AstTypeNil) (ErrCtfeTypeLookup "index out of range")]
       [(AstTypeCons head rest)
         (let
-          [head : AstType (box-get head)]
+          [head : AstType (ty-node-get head)]
           [rest : AstTypeList (box-get rest)]
           (if (= index 0)
             (OkCtfeTypeLookup (ctfe-reflect-resolve-type infos head))
@@ -1359,7 +1363,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count)
       (let
-        [elem-size : i64 (ctfe-type-size layouts (box-get elem))]
+        [elem-size : i64 (ctfe-type-size layouts (ty-node-get elem))]
         (if (< elem-size 0)
           -1
           (* elem-size count)))]
@@ -1369,7 +1373,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (ctfe-type-size layouts (box-get inner))]
+    [(AstTyRegion _ inner) (ctfe-type-size layouts (ty-node-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
@@ -1419,14 +1423,14 @@
     [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray elem _) (ctfe-type-align layouts (box-get elem))]
+    [(AstTyArray elem _) (ctfe-type-align layouts (ty-node-get elem))]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (ctfe-type-align layouts (box-get inner))]
+    [(AstTyRegion _ inner) (ctfe-type-align layouts (ty-node-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
@@ -1527,7 +1531,8 @@
     [(AstTyEnum name) (ctfe-layout-info-lookup layouts name)]
     [(AstTyEnumArgs name _) (ctfe-layout-info-lookup layouts name)]
     [(AstTyVar name) (ctfe-layout-info-lookup layouts name)]
-    [(AstTyRegion _ inner) (ctfe-layout-info-for-type layouts (box-get inner))]
+    [(AstTyRegion _ inner)
+      (ctfe-layout-info-for-type layouts (ty-node-get inner))]
     [_ (CtfeNoLayoutInfo)]))
 
 ;; Evaluate `(offset-of (type Struct) field)` to the field byte offset.
@@ -1741,9 +1746,9 @@
                     [(string-eq name "array-element-type")
                       (match ty
                         [(AstTyArray elem _)
-                          (OkCtfe (CtfeType (box-get elem)) arg-fuel)]
+                          (OkCtfe (CtfeType (ty-node-get elem)) arg-fuel)]
                         [(AstTyDynArray elem)
-                          (OkCtfe (CtfeType (box-get elem)) arg-fuel)]
+                          (OkCtfe (CtfeType (ty-node-get elem)) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -1780,7 +1785,7 @@
                     [(string-eq name "function-return-type")
                       (match ty
                         [(AstTyFunc _ ret)
-                          (OkCtfe (CtfeType (box-get ret)) arg-fuel)]
+                          (OkCtfe (CtfeType (ty-node-get ret)) arg-fuel)]
                         [_
                           (ErrCtfe
                             (ctfe-diagnostic-at-expr
@@ -4937,12 +4942,12 @@
         [_ false])]
     [(AstTypeCons ah at)
       (let
-        [ah : AstType (box-get ah)]
+        [ah : AstType (ty-node-get ah)]
         [at : AstTypeList (box-get at)]
         (match b
           [(AstTypeCons bh bt)
             (let
-              [bh : AstType (box-get bh)]
+              [bh : AstType (ty-node-get bh)]
               [bt : AstTypeList (box-get bt)]
               (and (ctfe-type-eq ah bh) (ctfe-type-list-eq at bt)))]
           [_ false]))]))
@@ -5026,7 +5031,7 @@
         [(AstTyFunc b-args b-ret)
           (and
             (ctfe-type-list-eq a-args b-args)
-            (ctfe-type-eq (box-get a-ret) (box-get b-ret)))]
+            (ctfe-type-eq (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
@@ -5037,45 +5042,48 @@
         [(AstTyArray b-elem b-count)
           (and
             (= a-count b-count)
-            (ctfe-type-eq (box-get a-elem) (box-get b-elem)))]
+            (ctfe-type-eq (ty-node-get a-elem) (ty-node-get b-elem)))]
         [_ false])]
     [(AstTyDynArray a-elem)
       (match b
         [(AstTyDynArray b-elem)
-          (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
+          (ctfe-type-eq (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyBox a-elem)
       (match b
-        [(AstTyBox b-elem) (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
+        [(AstTyBox b-elem)
+          (ctfe-type-eq (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyPtr a-elem)
       (match b
-        [(AstTyPtr b-elem) (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
+        [(AstTyPtr b-elem)
+          (ctfe-type-eq (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyMutPtr a-elem)
       (match b
-        [(AstTyMutPtr b-elem) (ctfe-type-eq (box-get a-elem) (box-get b-elem))]
+        [(AstTyMutPtr b-elem)
+          (ctfe-type-eq (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyRef a-region a-inner)
       (match b
         [(AstTyRef b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (ctfe-type-eq (box-get a-inner) (box-get b-inner)))]
+            (ctfe-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (ctfe-type-eq (box-get a-inner) (box-get b-inner)))]
+            (ctfe-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (ctfe-type-eq (box-get a-inner) (box-get b-inner)))]
+            (ctfe-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b

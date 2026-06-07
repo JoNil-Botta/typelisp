@@ -6313,7 +6313,7 @@
 (define (compiler-parse-type-ptr-u8? [ty : AstType]) : bool
   (match ty
     [(AstTyPtr elem)
-      (match (box-get elem)
+      (match (ty-node-get elem)
         [(AstTyU8) true]
         [_ false])]
     [_ false]))
@@ -6321,7 +6321,7 @@
 (define (compiler-parse-type-ptr-i64? [ty : AstType]) : bool
   (match ty
     [(AstTyPtr elem)
-      (match (box-get elem)
+      (match (ty-node-get elem)
         [(AstTyI64) true]
         [_ false])]
     [_ false]))
@@ -6329,14 +6329,14 @@
 (define (compiler-parse-type-mut-ptr-u8? [ty : AstType]) : bool
   (match ty
     [(AstTyMutPtr elem)
-      (match (box-get elem)
+      (match (ty-node-get elem)
         [(AstTyU8) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-mut-ptr-ptr-u8? [ty : AstType]) : bool
   (match ty
-    [(AstTyMutPtr elem) (compiler-parse-type-ptr-u8? (box-get elem))]
+    [(AstTyMutPtr elem) (compiler-parse-type-ptr-u8? (ty-node-get elem))]
     [_ false]))
 
 (define (compiler-parse-type-ref-string? [ty : AstType] [region : String]) : bool
@@ -6344,7 +6344,7 @@
     [(AstTyRef actual inner)
       (and
         (string-eq actual region)
-        (match (box-get inner)
+        (match (ty-node-get inner)
           [(AstTyString) true]
           [_ false]))]
     [_ false]))
@@ -6354,7 +6354,7 @@
     [(AstTyRef actual inner)
       (and
         (string-eq actual region)
-        (match (box-get inner)
+        (match (ty-node-get inner)
           [(AstTyStr) true]
           [_ false]))]
     [_ false]))
@@ -6366,9 +6366,9 @@
     [(AstTyMutRef actual inner)
       (and
         (string-eq actual region)
-        (match (box-get inner)
+        (match (ty-node-get inner)
           [(AstTyDynArray elem)
-            (match (box-get elem)
+            (match (ty-node-get elem)
               [(AstTyI64) true]
               [_ false])]
           [_ false]))]
@@ -6424,14 +6424,14 @@
                         (match args
                           [(AstTypeCons first tail)
                             (let
-                              [first : AstType (box-get first)]
+                              [first : AstType (ty-node-get first)]
                               [tail : AstTypeList (box-get tail)]
                               (and
                                 (compiler-parse-type-ptr-i64? first)
                                 (match tail
                                   [(AstTypeNil)
                                     (compiler-parse-type-mut-ptr-ptr-u8?
-                                      (box-get ret))]
+                                      (ty-node-get ret))]
                                   [_ false])))]
                           [_ false])]
                       [_ false]))]
@@ -6492,7 +6492,7 @@
                               (match args
                                 [(AstTypeCons first tail)
                                   (let
-                                    [first : AstType (box-get first)]
+                                    [first : AstType (ty-node-get first)]
                                     [tail : AstTypeList (box-get tail)]
                                     (and
                                       (match first
@@ -6500,7 +6500,7 @@
                                         [_ false])
                                       (match tail
                                         [(AstTypeNil)
-                                          (match (box-get ret)
+                                          (match (ty-node-get ret)
                                             [(AstTyI64) true]
                                             [_ false])]
                                         [_ false])))]
@@ -6536,14 +6536,15 @@
                             (match args
                               [(AstTypeCons first rest0)
                                 (let
-                                  [first : AstType (box-get first)]
+                                  [first : AstType (ty-node-get first)]
                                   [rest0 : AstTypeList (box-get rest0)]
                                   (and
                                     (compiler-parse-type-mut-ptr-u8? first)
                                     (match rest0
                                       [(AstTypeCons second rest1)
                                         (let
-                                          [second : AstType (box-get second)]
+                                          [second : AstType
+                                            (ty-node-get second)]
                                           [rest1 : AstTypeList (box-get rest1)]
                                           (and
                                             (match second
@@ -6553,7 +6554,7 @@
                                               [(AstTypeCons third rest2)
                                                 (let
                                                   [third : AstType
-                                                    (box-get third)]
+                                                    (ty-node-get third)]
                                                   [rest2 : AstTypeList
                                                     (box-get rest2)]
                                                   (and
@@ -6565,7 +6566,7 @@
                                                           rest3)
                                                         (let
                                                           [fourth : AstType
-                                                            (box-get fourth)]
+                                                            (ty-node-get fourth)]
                                                           [rest3 : AstTypeList
                                                             (box-get rest3)]
                                                           (and
@@ -6574,7 +6575,7 @@
                                                               [_ false])
                                                             (match rest3
                                                               [(AstTypeNil)
-                                                                (match (box-get
+                                                                (match (ty-node-get
                                                                   ret)
                                                                   [(AstTyI32)
                                                                     true]
@@ -6608,20 +6609,20 @@
               (and
                 (= (compiler-parse-type-list-count args) 3)
                 (and
-                  (match (box-get ret)
+                  (match (ty-node-get ret)
                     [(AstTyI32) true]
                     [_ false])
                   (match args
                     [(AstTypeCons first rest0)
                       (let
-                        [first : AstType (box-get first)]
+                        [first : AstType (ty-node-get first)]
                         [rest0 : AstTypeList (box-get rest0)]
                         (and
                           (compiler-parse-type-mut-ptr-u8? first)
                           (match rest0
                             [(AstTypeCons second rest1)
                               (let
-                                [second : AstType (box-get second)]
+                                [second : AstType (ty-node-get second)]
                                 [rest1 : AstTypeList (box-get rest1)]
                                 (and
                                   (match second
@@ -6630,7 +6631,7 @@
                                   (match rest1
                                     [(AstTypeCons third rest2)
                                       (let
-                                        [third : AstType (box-get third)]
+                                        [third : AstType (ty-node-get third)]
                                         [rest2 : AstTypeList (box-get rest2)]
                                         (and
                                           (compiler-parse-type-ptr-u8? third)
@@ -6657,13 +6658,13 @@
               (and
                 (= (compiler-parse-type-list-count args) 1)
                 (and
-                  (match (box-get ret)
+                  (match (ty-node-get ret)
                     [(AstTyI32) true]
                     [_ false])
                   (match args
                     [(AstTypeCons first rest)
                       (let
-                        [first : AstType (box-get first)]
+                        [first : AstType (ty-node-get first)]
                         [rest : AstTypeList (box-get rest)]
                         (and
                           (compiler-parse-type-ptr-u8? first)
@@ -6683,14 +6684,14 @@
   (match args
     [(AstTypeCons first rest0)
       (let
-        [first : AstType (box-get first)]
+        [first : AstType (ty-node-get first)]
         [rest0 : AstTypeList (box-get rest0)]
         (and
           (compiler-parse-i64-type? first)
           (match rest0
             [(AstTypeCons second rest1)
               (let
-                [second : AstType (box-get second)]
+                [second : AstType (ty-node-get second)]
                 [rest1 : AstTypeList (box-get rest1)]
                 (and
                   (compiler-parse-i64-type? second)
@@ -6712,7 +6713,7 @@
               (and
                 (= (compiler-parse-type-list-count args) 2)
                 (and
-                  (compiler-parse-i64-type? (box-get ret))
+                  (compiler-parse-i64-type? (ty-node-get ret))
                   (compiler-parse-two-i64-types? args)))]
             [_ false])))]
     [_ false]))
@@ -7432,7 +7433,7 @@
                                           (string-eq extern-name "raw-call")
                                           (match extern-ty
                                             [(AstTyFunc _ ret)
-                                              (match (box-get ret)
+                                              (match (ty-node-get ret)
                                                 [(AstTyI64) true]
                                                 [_ false])]
                                             [_ false])))]

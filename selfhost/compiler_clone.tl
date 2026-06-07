@@ -102,10 +102,10 @@
     [(AstTyNever) true]
     [(AstTyString) true]
     [(AstTyTuple elems) (clone-field-type-list-able? elems names)]
-    [(AstTyArray elem _) (clone-field-type-able? (box-get elem) names)]
-    [(AstTyDynArray elem) (clone-field-type-able? (box-get elem) names)]
-    [(AstTyBox elem) (clone-field-type-able? (box-get elem) names)]
-    [(AstTyRegion _ inner) (clone-field-type-able? (box-get inner) names)]
+    [(AstTyArray elem _) (clone-field-type-able? (ty-node-get elem) names)]
+    [(AstTyDynArray elem) (clone-field-type-able? (ty-node-get elem) names)]
+    [(AstTyBox elem) (clone-field-type-able? (ty-node-get elem) names)]
+    [(AstTyRegion _ inner) (clone-field-type-able? (ty-node-get inner) names)]
     [(AstTyVar name) (clone-name-set-contains? names name)]
     [(AstTyEnum name) (clone-name-set-contains? names name)]
     [(AstTyStruct name) (clone-name-set-contains? names name)]
@@ -118,7 +118,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (if (clone-field-type-able? head names)
           (clone-field-type-list-able? rest names)
@@ -314,12 +314,12 @@
 ;; True iff `tail` is the enum itself, either directly or through a Box tail.
 (define (clone-tail-is-self? [tail : AstType] [self-name : String]) : bool
   (match tail
-    [(AstTyBox inner) (clone-type-is-name? (box-get inner) self-name)]
+    [(AstTyBox inner) (clone-type-is-name? (ty-node-get inner) self-name)]
     [_ (clone-type-is-name? tail self-name)]))
 
 (define (clone-tail-is-boxed-self? [tail : AstType] [self-name : String]) : bool
   (match tail
-    [(AstTyBox inner) (clone-type-is-name? (box-get inner) self-name)]
+    [(AstTyBox inner) (clone-type-is-name? (ty-node-get inner) self-name)]
     [_ false]))
 
 ;; True iff `v` is a two-field variant whose SECOND field is the enum itself
@@ -334,7 +334,7 @@
             (match tail
               [(AstTypeCons tail-ty rest)
                 (let
-                  [tail-ty : AstType (box-get tail-ty)]
+                  [tail-ty : AstType (ty-node-get tail-ty)]
                   [rest : AstTypeList (box-get rest)]
                   (match rest
                     [(AstTypeNil) (clone-tail-is-self? tail-ty self-name)]
@@ -354,7 +354,7 @@
             (match tail
               [(AstTypeCons tail-ty rest)
                 (let
-                  [tail-ty : AstType (box-get tail-ty)]
+                  [tail-ty : AstType (ty-node-get tail-ty)]
                   [rest : AstTypeList (box-get rest)]
                   (match rest
                     [(AstTypeNil) (clone-tail-is-boxed-self? tail-ty self-name)]
@@ -596,7 +596,7 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (clone-root-add-type-list
           decls
@@ -685,11 +685,13 @@
   [ty : AstType]) : CloneNameList
   (match ty
     [(AstTyTuple elems) (clone-root-add-type-list decls able roots elems)]
-    [(AstTyArray elem _) (clone-root-add-type decls able roots (box-get elem))]
-    [(AstTyDynArray elem) (clone-root-add-type decls able roots (box-get elem))]
-    [(AstTyBox elem) (clone-root-add-type decls able roots (box-get elem))]
+    [(AstTyArray elem _)
+      (clone-root-add-type decls able roots (ty-node-get elem))]
+    [(AstTyDynArray elem)
+      (clone-root-add-type decls able roots (ty-node-get elem))]
+    [(AstTyBox elem) (clone-root-add-type decls able roots (ty-node-get elem))]
     [(AstTyRegion _ inner)
-      (clone-root-add-type decls able roots (box-get inner))]
+      (clone-root-add-type decls able roots (ty-node-get inner))]
     [(AstTyVar name) (clone-root-add-name decls able roots name)]
     [(AstTyEnum name) (clone-root-add-name decls able roots name)]
     [(AstTyStruct name) (clone-root-add-name decls able roots name)]

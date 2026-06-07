@@ -76,26 +76,26 @@
   ;; CTFE values, not as a source-level type parameter.
   (AstTyExpr)
   (AstTyExprList)
-  (AstTyFunc AstTypeList (Box AstType))
+  (AstTyFunc AstTypeList i64)
   (AstTyTuple AstTypeList)
-  (AstTyArray (Box AstType) i64)
-  (AstTyDynArray (Box AstType))
-  (AstTyBox (Box AstType))
-  (AstTyRegion String (Box AstType))
-  (AstTyRef String (Box AstType))
-  (AstTyMutRef String (Box AstType))
+  (AstTyArray i64 i64)
+  (AstTyDynArray i64)
+  (AstTyBox i64)
+  (AstTyRegion String i64)
+  (AstTyRef String i64)
+  (AstTyMutRef String i64)
   (AstTyEnum String)
   (AstTyEnumArgs String AstLifetimeList)
   (AstTyStruct String)
   (AstTyStructArgs String AstLifetimeList)
   (AstTyVar String)
   (AstTyVarArgs String AstLifetimeList)
-  (AstTyPtr (Box AstType))
-  (AstTyMutPtr (Box AstType)))
+  (AstTyPtr i64)
+  (AstTyMutPtr i64))
 
 (defenum AstTypeList
   (AstTypeNil)
-  (AstTypeCons (Box AstType) (Box AstTypeList)))
+  (AstTypeCons i64 (Box AstTypeList)))
 
 (defenum AstLifetimeList
   (AstLifetimeNil)
@@ -385,6 +385,70 @@
 (define (ast-node-pool-reset!) : unit
   (ast-node-pool-truncate! 0))
 
+;; --- AstType node pool (flat ty ids) ---
+;; AstType's recursive children are stored as i64 ids into this pool instead of
+;; (Box AstType), mirroring the AstExpr pool above. The pool is PERSISTENT for a
+;; compile (types live for the whole compile, never per-form like the spanned
+;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). Pre-sized so
+;; grow! never fires on real inputs -- a grow! reassign in the inlined hot path
+;; trips an opt2 miscompile (see the typelisp-flat-asttype-plan memory).
+(define ty-node-pool-slots : (Array AstType)
+  (make-array AstType 2000000))
+
+(define ty-node-pool-count : i64
+  0)
+
+;: Current type-node count (also the next ty id ty-node-push will assign).
+(define (ty-node-pool-len) : i64
+  ty-node-pool-count)
+
+;: Grow the pool's backing array to at least double its current capacity.
+(define (ty-node-pool-grow!) : unit
+  (let
+    [old-slots : (Array AstType) ty-node-pool-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [new-slots : (Array AstType) (make-array AstType new-cap)]
+    [len : i64 ty-node-pool-count]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! ty-node-pool-slots new-slots))))
+
+;: Append `node` to the pool and return its ty id.
+(define (ty-node-push [node : AstType]) : i64
+  (begin
+    (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
+      (ty-node-pool-grow!)
+      unit)
+    (let
+      [id : i64 ty-node-pool-count]
+      (begin
+        (array-set! ty-node-pool-slots id node)
+        (set! ty-node-pool-count (+ id 1))
+        id))))
+
+;: Read the type node at `id`.
+(define (ty-node-get [id : i64]) : AstType
+  (array-ref ty-node-pool-slots id))
+
+;: Overwrite the type node at `id` in place.
+(define (ty-node-set! [id : i64] [node : AstType]) : unit
+  (array-set! ty-node-pool-slots id node))
+
+;: Truncate the pool back to `mark` nodes (discard from a failed parse).
+(define (ty-node-pool-truncate! [mark : i64]) : unit
+  (set! ty-node-pool-count mark))
+
+(define (ty-node-pool-reset!) : unit
+  (ty-node-pool-truncate! 0))
+
 (defenum AstExprList
   (AstExprNil)
   (AstExprCons i64 (Box AstExprList)))
@@ -471,34 +535,34 @@
   (AstProgram (Box AstDeclList)))
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
-  (AstTypeCons (box head) (box rest)))
+  (AstTypeCons (ty-node-push head) (box rest)))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
-  (AstTyFunc args (box ret)))
+  (AstTyFunc args (ty-node-push ret)))
 
 (define (ast-ty-array [elem : AstType] [count : i64]) : AstType
-  (AstTyArray (box elem) count))
+  (AstTyArray (ty-node-push elem) count))
 
 (define (ast-ty-dyn-array [elem : AstType]) : AstType
-  (AstTyDynArray (box elem)))
+  (AstTyDynArray (ty-node-push elem)))
 
 (define (ast-ty-box [elem : AstType]) : AstType
-  (AstTyBox (box elem)))
+  (AstTyBox (ty-node-push elem)))
 
 (define (ast-ty-region [region : String] [inner : AstType]) : AstType
-  (AstTyRegion region (box inner)))
+  (AstTyRegion region (ty-node-push inner)))
 
 (define (ast-ty-ref [region : String] [inner : AstType]) : AstType
-  (AstTyRef region (box inner)))
+  (AstTyRef region (ty-node-push inner)))
 
 (define (ast-ty-mut-ref [region : String] [inner : AstType]) : AstType
-  (AstTyMutRef region (box inner)))
+  (AstTyMutRef region (ty-node-push inner)))
 
 (define (ast-ty-ptr [elem : AstType]) : AstType
-  (AstTyPtr (box elem)))
+  (AstTyPtr (ty-node-push elem)))
 
 (define (ast-ty-mut-ptr [elem : AstType]) : AstType
-  (AstTyMutPtr (box elem)))
+  (AstTyMutPtr (ty-node-push elem)))
 
 (define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
   (AstLifetimeCons head (box rest)))
@@ -979,7 +1043,7 @@
       (match b
         [(AstTypeCons b-head b-rest)
           (and
-            (ast-type-eq? (box-get a-head) (box-get b-head))
+            (ast-type-eq? (ty-node-get a-head) (ty-node-get b-head))
             (ast-type-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
@@ -1062,7 +1126,7 @@
         [(AstTyFunc b-args b-ret)
           (and
             (ast-type-list-eq? a-args b-args)
-            (ast-type-eq? (box-get a-ret) (box-get b-ret)))]
+            (ast-type-eq? (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
@@ -1071,37 +1135,40 @@
     [(AstTyArray a-elem a-len)
       (match b
         [(AstTyArray b-elem b-len)
-          (and (= a-len b-len) (ast-type-eq? (box-get a-elem) (box-get b-elem)))]
+          (and
+            (= a-len b-len)
+            (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem)))]
         [_ false])]
     [(AstTyDynArray a-elem)
       (match b
         [(AstTyDynArray b-elem)
-          (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyBox a-elem)
       (match b
-        [(AstTyBox b-elem) (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [(AstTyBox b-elem)
+          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (ast-type-eq? (box-get a-inner) (box-get b-inner)))]
+            (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyRef a-lifetime a-inner)
       (match b
         [(AstTyRef b-lifetime b-inner)
           (and
             (string-eq a-lifetime b-lifetime)
-            (ast-type-eq? (box-get a-inner) (box-get b-inner)))]
+            (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-lifetime a-inner)
       (match b
         [(AstTyMutRef b-lifetime b-inner)
           (and
             (string-eq a-lifetime b-lifetime)
-            (ast-type-eq? (box-get a-inner) (box-get b-inner)))]
+            (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -1138,11 +1205,13 @@
         [_ false])]
     [(AstTyPtr a-elem)
       (match b
-        [(AstTyPtr b-elem) (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [(AstTyPtr b-elem)
+          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]
     [(AstTyMutPtr a-elem)
       (match b
-        [(AstTyMutPtr b-elem) (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [(AstTyMutPtr b-elem)
+          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
         [_ false])]))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
@@ -1484,17 +1553,17 @@
     [nested-ty-ok? : bool
       (match fn-ty
         [(AstTyFunc _ ret)
-          (match (box-get ret)
+          (match (ty-node-get ret)
             [(AstTyRef region ptr)
               (and
                 (string-eq region "r")
-                (match (box-get ptr)
+                (match (ty-node-get ptr)
                   [(AstTyPtr array)
-                    (match (box-get array)
+                    (match (ty-node-get array)
                       [(AstTyArray elem count)
                         (and
                           (= count 4)
-                          (match (box-get elem)
+                          (match (ty-node-get elem)
                             [(AstTyI64) true]
                             [_ false]))]
                       [_ false])]

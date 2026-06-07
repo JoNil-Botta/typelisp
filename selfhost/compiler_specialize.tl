@@ -358,7 +358,7 @@
     [(AstTypeNil) "nil"]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (spec-type-key head)
@@ -397,38 +397,38 @@
         "fn_"
         (string-append
           (spec-type-list-key args)
-          (string-append "_to_" (spec-type-key (box-get ret)))))]
+          (string-append "_to_" (spec-type-key (ty-node-get ret)))))]
     [(AstTyTuple elems) (string-append "tuple_" (spec-type-list-key elems))]
     [(AstTyArray elem count)
       (string-append
         "array_"
         (string-append
-          (spec-type-key (box-get elem))
+          (spec-type-key (ty-node-get elem))
           (string-append "_" (spec-int-key count))))]
     [(AstTyDynArray elem)
-      (string-append "dynarray_" (spec-type-key (box-get elem)))]
-    [(AstTyBox elem) (string-append "box_" (spec-type-key (box-get elem)))]
-    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key (box-get elem)))]
+      (string-append "dynarray_" (spec-type-key (ty-node-get elem)))]
+    [(AstTyBox elem) (string-append "box_" (spec-type-key (ty-node-get elem)))]
+    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key (ty-node-get elem)))]
     [(AstTyMutPtr elem)
-      (string-append "mutptr_" (spec-type-key (box-get elem)))]
+      (string-append "mutptr_" (spec-type-key (ty-node-get elem)))]
     [(AstTyRef region inner)
       (string-append
         "ref_"
         (string-append
           region
-          (string-append "_" (spec-type-key (box-get inner)))))]
+          (string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyMutRef region inner)
       (string-append
         "mutref_"
         (string-append
           region
-          (string-append "_" (spec-type-key (box-get inner)))))]
+          (string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyRegion region inner)
       (string-append
         "region_"
         (string-append
           region
-          (string-append "_" (spec-type-key (box-get inner)))))]
+          (string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
     [(AstTyEnumArgs name lifetimes)
       (string-append
@@ -3258,22 +3258,24 @@
     [(AstTyFunc args ret)
       (ast-ty-func
         (spec-substitute-type-list args subs)
-        (spec-substitute-type (box-get ret) subs))]
+        (spec-substitute-type (ty-node-get ret) subs))]
     [(AstTyTuple elems) (AstTyTuple (spec-substitute-type-list elems subs))]
     [(AstTyArray elem count)
-      (ast-ty-array (spec-substitute-type (box-get elem) subs) count)]
+      (ast-ty-array (spec-substitute-type (ty-node-get elem) subs) count)]
     [(AstTyDynArray elem)
-      (ast-ty-dyn-array (spec-substitute-type (box-get elem) subs))]
-    [(AstTyBox elem) (ast-ty-box (spec-substitute-type (box-get elem) subs))]
-    [(AstTyPtr elem) (ast-ty-ptr (spec-substitute-type (box-get elem) subs))]
+      (ast-ty-dyn-array (spec-substitute-type (ty-node-get elem) subs))]
+    [(AstTyBox elem)
+      (ast-ty-box (spec-substitute-type (ty-node-get elem) subs))]
+    [(AstTyPtr elem)
+      (ast-ty-ptr (spec-substitute-type (ty-node-get elem) subs))]
     [(AstTyMutPtr elem)
-      (ast-ty-mut-ptr (spec-substitute-type (box-get elem) subs))]
+      (ast-ty-mut-ptr (spec-substitute-type (ty-node-get elem) subs))]
     [(AstTyRef region inner)
-      (ast-ty-ref region (spec-substitute-type (box-get inner) subs))]
+      (ast-ty-ref region (spec-substitute-type (ty-node-get inner) subs))]
     [(AstTyMutRef region inner)
-      (ast-ty-mut-ref region (spec-substitute-type (box-get inner) subs))]
+      (ast-ty-mut-ref region (spec-substitute-type (ty-node-get inner) subs))]
     [(AstTyRegion region inner)
-      (ast-ty-region region (spec-substitute-type (box-get inner) subs))]
+      (ast-ty-region region (spec-substitute-type (ty-node-get inner) subs))]
     [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
     [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
     [(AstTyVarArgs name lifetimes)
@@ -3291,7 +3293,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (spec-substitute-type head subs)

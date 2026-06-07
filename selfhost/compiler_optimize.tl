@@ -2625,12 +2625,12 @@
         [_ false])]
     [(AstTypeCons ah at)
       (let
-        [ah : AstType (box-get ah)]
+        [ah : AstType (ty-node-get ah)]
         [at : AstTypeList (box-get at)]
         (match b
           [(AstTypeCons bh bt)
             (let
-              [bh : AstType (box-get bh)]
+              [bh : AstType (ty-node-get bh)]
               [bt : AstTypeList (box-get bt)]
               (and (opt-type-eq ah bh) (opt-type-list-eq at bt)))]
           [_ false]))]))
@@ -2732,7 +2732,7 @@
         [(AstTyFunc b-params b-ret)
           (and
             (opt-type-list-eq a-params b-params)
-            (opt-type-eq (box-get a-ret) (box-get b-ret)))]
+            (opt-type-eq (ty-node-get a-ret) (ty-node-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-items)
       (match b
@@ -2741,44 +2741,50 @@
     [(AstTyArray a-item a-len)
       (match b
         [(AstTyArray b-item b-len)
-          (and (= a-len b-len) (opt-type-eq (box-get a-item) (box-get b-item)))]
+          (and
+            (= a-len b-len)
+            (opt-type-eq (ty-node-get a-item) (ty-node-get b-item)))]
         [_ false])]
     [(AstTyDynArray a-item)
       (match b
-        [(AstTyDynArray b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
+        [(AstTyDynArray b-item)
+          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
         [_ false])]
     [(AstTyBox a-item)
       (match b
-        [(AstTyBox b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
+        [(AstTyBox b-item)
+          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
         [_ false])]
     [(AstTyPtr a-item)
       (match b
-        [(AstTyPtr b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
+        [(AstTyPtr b-item)
+          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
         [_ false])]
     [(AstTyMutPtr a-item)
       (match b
-        [(AstTyMutPtr b-item) (opt-type-eq (box-get a-item) (box-get b-item))]
+        [(AstTyMutPtr b-item)
+          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
         [_ false])]
     [(AstTyRef a-region a-inner)
       (match b
         [(AstTyRef b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (opt-type-eq (box-get a-inner) (box-get b-inner)))]
+            (opt-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (opt-type-eq (box-get a-inner) (box-get b-inner)))]
+            (opt-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
           (and
             (string-eq a-region b-region)
-            (opt-type-eq (box-get a-inner) (box-get b-inner)))]
+            (opt-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -2834,7 +2840,7 @@
       (hash-combine
         1
         (hash-combine
-          (opt-type-hash (box-get head))
+          (opt-type-hash (ty-node-get head))
           (opt-type-list-hash (box-get rest))))]))
 
 (define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
@@ -2870,28 +2876,36 @@
     [(AstTyFunc params ret)
       (hash-combine
         19
-        (hash-combine (opt-type-list-hash params) (opt-type-hash (box-get ret))))]
+        (hash-combine
+          (opt-type-list-hash params)
+          (opt-type-hash (ty-node-get ret))))]
     [(AstTyTuple items) (hash-combine 20 (opt-type-list-hash items))]
     [(AstTyArray item len)
       (hash-combine
         21
-        (hash-combine (opt-type-hash (box-get item)) (hash-i64 len)))]
-    [(AstTyDynArray item) (hash-combine 22 (opt-type-hash (box-get item)))]
-    [(AstTyBox item) (hash-combine 23 (opt-type-hash (box-get item)))]
-    [(AstTyPtr item) (hash-combine 24 (opt-type-hash (box-get item)))]
-    [(AstTyMutPtr item) (hash-combine 25 (opt-type-hash (box-get item)))]
+        (hash-combine (opt-type-hash (ty-node-get item)) (hash-i64 len)))]
+    [(AstTyDynArray item) (hash-combine 22 (opt-type-hash (ty-node-get item)))]
+    [(AstTyBox item) (hash-combine 23 (opt-type-hash (ty-node-get item)))]
+    [(AstTyPtr item) (hash-combine 24 (opt-type-hash (ty-node-get item)))]
+    [(AstTyMutPtr item) (hash-combine 25 (opt-type-hash (ty-node-get item)))]
     [(AstTyRef region inner)
       (hash-combine
         26
-        (hash-combine (hash-string (& region)) (opt-type-hash (box-get inner))))]
+        (hash-combine
+          (hash-string (& region))
+          (opt-type-hash (ty-node-get inner))))]
     [(AstTyMutRef region inner)
       (hash-combine
         27
-        (hash-combine (hash-string (& region)) (opt-type-hash (box-get inner))))]
+        (hash-combine
+          (hash-string (& region))
+          (opt-type-hash (ty-node-get inner))))]
     [(AstTyRegion region inner)
       (hash-combine
         28
-        (hash-combine (hash-string (& region)) (opt-type-hash (box-get inner))))]
+        (hash-combine
+          (hash-string (& region))
+          (opt-type-hash (ty-node-get inner))))]
     [(AstTyEnum name) (hash-combine 29 (hash-string (& name)))]
     [(AstTyEnumArgs name lifetimes)
       (hash-combine

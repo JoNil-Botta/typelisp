@@ -3895,36 +3895,44 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (match head
     [(SpSSym op _)
-      (let
-        [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
-        (cond
-          [(= tag (compiler-parse-tag-expr-ptr-read))
-            (parse-ast-ptr-read dispatch rest)]
-          [(= tag (compiler-parse-tag-expr-ptr-write))
-            (parse-ast-ptr-write dispatch rest)]
-          [(= tag (compiler-parse-tag-expr-ptr-offset))
-            (parse-ast-ptr-offset dispatch rest)]
-          [(= tag (compiler-parse-tag-expr-ptr-cast))
-            (parse-ast-ptr-cast-like dispatch false rest)]
-          [(= tag (compiler-parse-tag-expr-ptr-to-int))
-            (parse-ast-ptr-to-int dispatch rest)]
-          [(= tag (compiler-parse-tag-expr-int-to-ptr))
-            (parse-ast-ptr-cast-like dispatch true rest)]
-          [(= tag (compiler-parse-tag-expr-cond))
-            (parse-ast-cond-or-call dispatch head rest)]
-          [(ast-unop-tag? tag)
-            (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)]
-          [(ast-binop-tag? tag)
-            (if (and
-              (compiler-parse-and-or-binop-tag? tag)
-              (not (parse-ast-spanned-list-exactly-two? rest)))
-              (parse-ast-call dispatch head rest)
-              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest))]
-          [(= tag (compiler-parse-tag-ty-ref)) (parse-ast-borrow dispatch rest)]
-          [(= tag (compiler-parse-tag-ty-mut-ref))
-            (ErrAstExpr
-              "parse: mutable borrow expressions are not implemented (#806)")]
-          [else (parse-ast-list-expr-tag dispatch tag head rest)]))]
+      (if (string-eq op "init")
+        (match rest
+          [(SpSCons first _ _)
+            (if (sexpr-colon? (spanned-sexpr-form (box-get first)))
+              (parse-ast-init dispatch rest)
+              (parse-ast-call dispatch head rest))]
+          [_ (parse-ast-call dispatch head rest)])
+        (let
+          [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
+          (cond
+            [(= tag (compiler-parse-tag-expr-ptr-read))
+              (parse-ast-ptr-read dispatch rest)]
+            [(= tag (compiler-parse-tag-expr-ptr-write))
+              (parse-ast-ptr-write dispatch rest)]
+            [(= tag (compiler-parse-tag-expr-ptr-offset))
+              (parse-ast-ptr-offset dispatch rest)]
+            [(= tag (compiler-parse-tag-expr-ptr-cast))
+              (parse-ast-ptr-cast-like dispatch false rest)]
+            [(= tag (compiler-parse-tag-expr-ptr-to-int))
+              (parse-ast-ptr-to-int dispatch rest)]
+            [(= tag (compiler-parse-tag-expr-int-to-ptr))
+              (parse-ast-ptr-cast-like dispatch true rest)]
+            [(= tag (compiler-parse-tag-expr-cond))
+              (parse-ast-cond-or-call dispatch head rest)]
+            [(ast-unop-tag? tag)
+              (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)]
+            [(ast-binop-tag? tag)
+              (if (and
+                (compiler-parse-and-or-binop-tag? tag)
+                (not (parse-ast-spanned-list-exactly-two? rest)))
+                (parse-ast-call dispatch head rest)
+                (parse-ast-binary dispatch (ast-binop-from-tag tag) rest))]
+            [(= tag (compiler-parse-tag-ty-ref))
+              (parse-ast-borrow dispatch rest)]
+            [(= tag (compiler-parse-tag-ty-mut-ref))
+              (ErrAstExpr
+                "parse: mutable borrow expressions are not implemented (#806)")]
+            [else (parse-ast-list-expr-tag dispatch tag head rest)])))]
     [_ (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
@@ -6034,6 +6042,13 @@
         [_ false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-init-call-name-source) : String
+  "(define (init [n : i64]) : i64 n)
+(define (main) : i64 (init 7))")
+
+(define (compiler-parse-init-call-name-ok?) : bool
+  (compiler-parse-ok? (compiler-parse-init-call-name-source)))
+
 (define (compiler-parse-box-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : (Box i64) (box 7))")
@@ -8124,6 +8139,9 @@
     (if (compiler-parse-init-ok?)
       unit
       (panic "parse: init shape test failed"))
+    (if (compiler-parse-init-call-name-ok?)
+      unit
+      (panic "parse: init call name compatibility test failed"))
     (if (compiler-parse-box-ok?)
       unit
       (panic "parse: box shape test failed"))
@@ -8211,14 +8229,16 @@
                                                 (and
                                                   (compiler-parse-init-ok?)
                                                   (and
-                                                    (compiler-parse-box-ok?)
+                                                    (compiler-parse-init-call-name-ok?)
                                                     (and
-                                                      (compiler-parse-reference-ok?)
+                                                      (compiler-parse-box-ok?)
                                                       (and
-                                                        (compiler-parse-borrow-ok?)
+                                                        (compiler-parse-reference-ok?)
                                                         (and
-                                                          (compiler-parse-resource-with-shape-ok?)
-                                                          (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))))))
+                                                          (compiler-parse-borrow-ok?)
+                                                          (and
+                                                            (compiler-parse-resource-with-shape-ok?)
+                                                            (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

@@ -9354,9 +9354,17 @@
   (OptNoFunction)
   (OptSomeFunction CompilerIrFunction))
 
+(defenum OptSlotList
+  (OptSlotNil)
+  (OptSlotCons i64 (Box OptSlotList)))
+
 (defstruct OptFunctionIndex
   (ids StringI64Map)
   (values (Array CompilerIrFunction)))
+
+(defstruct OptCallGraph
+  (count i64)
+  (edges (Array OptSlotList)))
 
 (defenum OptReachState
   (OptReachState StringI64Map OptStringSet))
@@ -9404,11 +9412,160 @@
 (define (opt-function-index-defines? [index : OptFunctionIndex] [name : String]) : bool
   (string-i64-map-contains? (struct-get index ids) name))
 
+(define (opt-function-index-count [index : OptFunctionIndex]) : i64
+  (array-length (struct-get index values)))
+
+(define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : OptMaybeI64
+  (if (opt-function-index-defines? index name)
+    (match (string-i64-map-get (struct-get index ids) name)
+      [(StringI64MapFound slot) (OptSomeI64 slot)]
+      [(StringI64MapMissing) (OptNoI64)])
+    (OptNoI64)))
+
 (define (opt-function-index-find [index : OptFunctionIndex] [name : String]) : OptMaybeFunction
   (match (string-i64-map-get (struct-get index ids) name)
     [(StringI64MapFound slot)
       (OptSomeFunction (array-ref (struct-get index values) slot))]
     [(StringI64MapMissing) (OptNoFunction)]))
+
+(define (opt-slot-list-contains? [slots : OptSlotList] [slot : i64]) : bool
+  (match slots
+    [(OptSlotNil) false]
+    [(OptSlotCons item rest)
+      (if (= item slot)
+        true
+        (opt-slot-list-contains? (box-get rest) slot))]))
+
+(define (opt-slot-list-add [slots : OptSlotList] [slot : i64]) : OptSlotList
+  (if (opt-slot-list-contains? slots slot)
+    slots
+    (OptSlotCons slot (box slots))))
+
+(define (opt-slot-list-count [slots : OptSlotList]) : i64
+  (match slots
+    [(OptSlotNil) 0]
+    [(OptSlotCons _ rest) (+ 1 (opt-slot-list-count (box-get rest)))]))
+
+(define (opt-callgraph-add-callee
+  [index : OptFunctionIndex]
+  [callees : OptSlotList]
+  [name : String]) : OptSlotList
+  (match (opt-function-index-slot index name)
+    [(OptSomeI64 slot) (opt-slot-list-add callees slot)]
+    [(OptNoI64) callees]))
+
+;; Deliberately call-only: address-taken function values are reachability roots,
+;; but they are not direct call-graph edges for the inliner.
+(define (opt-callgraph-instr
+  [index : OptFunctionIndex]
+  [callees : OptSlotList]
+  [instr : CompilerIrInstr]) : OptSlotList
+  (match instr
+    [(IrInstrCall _ name _ _) (opt-callgraph-add-callee index callees name)]
+    [(IrInstrTailCall name _ _) (opt-callgraph-add-callee index callees name)]
+    [_ callees]))
+
+(define (opt-callgraph-instr-seq-from
+  [index : OptFunctionIndex]
+  [callees : OptSlotList]
+  [slots : (Array CompilerIrInstr)]
+  [instr-index : i64]
+  [count : i64]) : OptSlotList
+  (if (>= instr-index count)
+    callees
+    (opt-callgraph-instr-seq-from
+      index
+      (opt-callgraph-instr index callees (array-ref slots instr-index))
+      slots
+      (+ instr-index 1)
+      count)))
+
+(define (opt-callgraph-instr-seq
+  [index : OptFunctionIndex]
+  [callees : OptSlotList]
+  [instrs : CompilerIrInstrSeq]) : OptSlotList
+  (opt-callgraph-instr-seq-from
+    index
+    callees
+    (struct-get instrs slots)
+    0
+    (struct-get instrs len)))
+
+(define (opt-callgraph-blocks
+  [index : OptFunctionIndex]
+  [callees : OptSlotList]
+  [blocks : CompilerIrBlockList]) : OptSlotList
+  (match blocks
+    [(IrBlockNil) callees]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-callgraph-blocks
+            index
+            (opt-callgraph-instr-seq index callees instrs)
+            (box-get rest))])]))
+
+(define (opt-callgraph-callees
+  [index : OptFunctionIndex]
+  [func : CompilerIrFunction]) : OptSlotList
+  (match func
+    [(IrFunction _ _ _ _ blocks) (opt-callgraph-blocks index OptSlotNil blocks)]))
+
+(define (opt-callgraph-init-edges
+  [edges : (Array OptSlotList)]
+  [slot : i64]
+  [count : i64]) : unit
+  (if (>= slot count)
+    unit
+    (begin
+      (array-set! edges slot OptSlotNil)
+      (opt-callgraph-init-edges edges (+ slot 1) count))))
+
+(define (opt-callgraph-build-slots
+  [index : OptFunctionIndex]
+  [edges : (Array OptSlotList)]
+  [values : (Array CompilerIrFunction)]
+  [slot : i64]
+  [count : i64]) : unit
+  (if (>= slot count)
+    unit
+    (begin
+      (array-set!
+        edges
+        slot
+        (opt-callgraph-callees index (array-ref values slot)))
+      (opt-callgraph-build-slots index edges values (+ slot 1) count))))
+
+(define (opt-callgraph-build [index : OptFunctionIndex]) : OptCallGraph
+  (let
+    [count : i64 (opt-function-index-count index)]
+    [edges : (Array OptSlotList) (make-array OptSlotList count)]
+    [values : (Array CompilerIrFunction) (struct-get index values)]
+    (begin
+      (opt-callgraph-init-edges edges 0 count)
+      (opt-callgraph-build-slots index edges values 0 count)
+      (OptCallGraph count edges))))
+
+(define (opt-callgraph-callee-count [graph : OptCallGraph] [from-slot : i64]) : i64
+  (if (or (< from-slot 0) (>= from-slot (struct-get graph count)))
+    -1
+    (opt-slot-list-count (array-ref (struct-get graph edges) from-slot))))
+
+(define (opt-callgraph-has-edge?
+  [graph : OptCallGraph]
+  [from-slot : i64]
+  [to-slot : i64]) : bool
+  (if (or
+    (< from-slot 0)
+    (or
+      (< to-slot 0)
+      (or
+        (>= from-slot (struct-get graph count))
+        (>= to-slot (struct-get graph count)))))
+    false
+    (opt-slot-list-contains?
+      (array-ref (struct-get graph edges) from-slot)
+      to-slot)))
 
 ;; Devirtualize syntactically known function values before program-level
 ;; inlining, so the existing direct-call inliner can see them.
@@ -13275,6 +13432,133 @@
 (define (compiler-optimize-global-dce-self-test) : i64
   (if (compiler-optimize-global-dce-ok?)
     42
+    1))
+
+(define (opt-callgraph-test-slot [index : OptFunctionIndex] [name : String]) : i64
+  (match (opt-function-index-slot index name)
+    [(OptSomeI64 slot) slot]
+    [(OptNoI64) -1]))
+
+(define (opt-callgraph-test-edge?
+  [index : OptFunctionIndex]
+  [graph : OptCallGraph]
+  [caller : String]
+  [callee : String]) : bool
+  (opt-callgraph-has-edge?
+    graph
+    (opt-callgraph-test-slot index caller)
+    (opt-callgraph-test-slot index callee)))
+
+(define (opt-callgraph-test-edge-count
+  [index : OptFunctionIndex]
+  [graph : OptCallGraph]
+  [caller : String]) : i64
+  (opt-callgraph-callee-count graph (opt-callgraph-test-slot index caller)))
+
+(define (opt-callgraph-main-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall 0 "a" IrCallArgsNil (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrCall 1 "external" IrCallArgsNil (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrCallIndirect 2 (IrValueFunction "c") IrCallArgsNil (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 3 (IrValueGlobal "address_taken") (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrTailCall "b" IrCallArgsNil (AstTyI64))
+            IrInstrNil))))))
+
+(define (opt-callgraph-call-instrs [name : String]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall 0 name IrCallArgsNil (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+      IrInstrNil)))
+
+(define (opt-callgraph-tail-instrs [name : String]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrTailCall name IrCallArgsNil (AstTyI64))
+    IrInstrNil))
+
+(define (opt-callgraph-return-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+    IrInstrNil))
+
+(define (opt-callgraph-acyclic-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-test-function-named "main" (opt-callgraph-main-instrs))
+    (compiler-ir-function-cons
+      (opt-test-function-named "a" (opt-callgraph-call-instrs "c"))
+      (compiler-ir-function-cons
+        (opt-test-function-named "b" (opt-callgraph-return-instrs))
+        (compiler-ir-function-cons
+          (opt-test-function-named "c" (opt-callgraph-tail-instrs "b"))
+          (compiler-ir-function-cons
+            (opt-test-function-named
+              "address_taken"
+              (opt-callgraph-return-instrs))
+            IrFunctionNil))))))
+
+(define (opt-callgraph-rec-even-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall 0 "rec_odd" IrCallArgsNil (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrCall 1 "rec_odd" IrCallArgsNil (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+        IrInstrNil))))
+
+(define (opt-callgraph-recursive-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-test-function-named "rec_even" (opt-callgraph-rec-even-instrs))
+    (compiler-ir-function-cons
+      (opt-test-function-named "rec_odd" (opt-callgraph-tail-instrs "rec_even"))
+      (compiler-ir-function-cons
+        (opt-test-function-named "lonely" (opt-callgraph-return-instrs))
+        IrFunctionNil))))
+
+(define (compiler-optimize-callgraph-acyclic-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList (opt-callgraph-acyclic-functions)]
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [graph : OptCallGraph (opt-callgraph-build index)]
+    (cond
+      [(not (= (struct-get graph count) 5)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "main") 2)) false]
+      [(not (opt-callgraph-test-edge? index graph "main" "a")) false]
+      [(not (opt-callgraph-test-edge? index graph "main" "b")) false]
+      [(opt-callgraph-test-edge? index graph "main" "c") false]
+      [(opt-callgraph-test-edge? index graph "main" "address_taken") false]
+      [(not (= (opt-callgraph-test-edge-count index graph "a") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "a" "c")) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "b") 0)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "c") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "c" "b")) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "address_taken") 0))
+        false]
+      [else true])))
+
+(define (compiler-optimize-callgraph-recursive-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList (opt-callgraph-recursive-functions)]
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [graph : OptCallGraph (opt-callgraph-build index)]
+    (cond
+      [(not (= (struct-get graph count) 3)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "rec_even") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "rec_even" "rec_odd")) false]
+      [(opt-callgraph-test-edge? index graph "rec_even" "rec_even") false]
+      [(not (= (opt-callgraph-test-edge-count index graph "rec_odd") 1)) false]
+      [(not (opt-callgraph-test-edge? index graph "rec_odd" "rec_even")) false]
+      [(not (= (opt-callgraph-test-edge-count index graph "lonely") 0)) false]
+      [else true])))
+
+(define (compiler-optimize-callgraph-self-test) : i64
+  (if (compiler-optimize-callgraph-acyclic-ok?)
+    (if (compiler-optimize-callgraph-recursive-ok?)
+      42
+      2)
     1))
 
 (define (opt-function-blocks [func : CompilerIrFunction]) : CompilerIrBlockList

@@ -2415,12 +2415,23 @@ typecheck: return type mismatch"))]
 ;; Combined smoke: extraction (#722) then runner (#724). Returns 42 iff both
 ;; self-test batteries pass.
 (define (doc-test-smoke-all) : i64
-  (if (= (doc-test-smoke) 42)
-    (if (source-tool-link-inputs-dedupe-smoke-ok?)
-      (doc-test-run-smoke)
-      (begin
-        (panic "source-tool: link input dedupe smoke regressed")
-        0))
-    (begin
-      (panic "doc-test: extraction smoke regressed")
-      0)))
+  (begin
+    (unless
+      (= (doc-test-smoke) 42)
+      (return
+        (begin
+          (panic "doc-test: extraction smoke regressed")
+          0)))
+    (unless
+      (source-tool-link-inputs-dedupe-smoke-ok?)
+      (return
+        (begin
+          (panic "source-tool: link input dedupe smoke regressed")
+          0)))
+    (unless
+      (source-tool-windows-stack-reserve-smoke-ok?)
+      (return
+        (begin
+          (panic "source-tool: windows stack reserve smoke regressed")
+          0)))
+    (doc-test-run-smoke)))

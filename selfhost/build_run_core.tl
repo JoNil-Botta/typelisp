@@ -838,6 +838,9 @@
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons "kernel32.lib" (process-args-empty)))
 
+(define (source-tool-windows-stack-reserve-arg) : String
+  "/STACK:268435456")
+
 (define (source-tool-windows-link-search-args [dirs : ProcessStringList]) : ProcessStringList
   (match dirs
     [(ProcessStringNil) (process-args-empty)]
@@ -881,10 +884,18 @@
               (process-args-cons
                 "/DYNAMICBASE:NO"
                 (process-args-cons
-                  "/STACK:16777216"
+                  (source-tool-windows-stack-reserve-arg)
                   (process-args-append
                     (source-tool-link-inputs-windows-args link-inputs)
                     (source-tool-windows-link-libs)))))))))))
+
+(define (source-tool-windows-stack-reserve-smoke-ok?) : bool
+  (source-tool-string-list-contains?
+    (source-tool-windows-linker-args
+      "input.obj"
+      "output.exe"
+      (source-tool-link-inputs-empty))
+    (source-tool-windows-stack-reserve-arg)))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

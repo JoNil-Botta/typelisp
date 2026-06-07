@@ -1,11 +1,24 @@
 ;# FFI boundary helpers.
 ;#
-;# Provides caller-owned C string marshalling helpers for raw-pointer FFI
-;# boundaries. These helpers do not allocate and do not extend the lifetime of
-;# the input `String`; callers own the destination `(MutPtr u8)` storage and its
-;# capacity.
+;# Provides C string marshalling helpers for raw-pointer FFI boundaries. The
+;# `ffi-c-string-copy!` family writes into caller-owned storage without
+;# allocating. `ffi-c-string-alloc` and `ffi-cstr` allocate a NUL-terminated byte
+;# buffer in the active arena and return its `(Ptr u8)`.
 ;#
 ;# Usage: `(import "stdlib/ffi.tl")`
+;#
+;# ```typelisp run
+;# ;; doctest-exit: 0
+;# (import "stdlib/ffi.tl")
+;# (define (main) : i64
+;#   (let
+;#     [ptr : (Ptr u8) (ffi-cstr "abc")]
+;#     (if (or
+;#       (ptr-null? ptr)
+;#       (not (= (cast (unsafe (ptr-read (ptr-offset ptr 3))) : i64) 0)))
+;#       1
+;#       0)))
+;# ```
 ;: Result type for copying a TypeLisp string into caller-owned C string storage.
 (defenum FfiCStringCopyResult
   (FfiCStringCopyOk i64)
@@ -67,3 +80,30 @@
             (unsafe
               (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
             (FfiCStringCopyOk needed)))))))
+
+;: Allocate a NUL-terminated C string copy in the active arena.
+;:
+;: Returns null when `text` contains an interior NUL byte. On success, the
+;: returned pointer remains valid until the active arena is rewound, reset, or
+;: destroyed; callers must not free it and must not use it after the owning arena
+;: is invalidated.
+(define (ffi-c-string-alloc [text : String]) : (Ptr u8)
+  (if (ffi-c-string-interior-nul? text)
+    (ptr-null : (Ptr u8))
+    (let
+      [needed : i64 (ffi-c-string-required-bytes text)]
+      [n : i64 (string-length text)]
+      [buf : (Array u8) (make-array u8 needed)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (array-data buf))]
+      (begin
+        (ffi-c-string-copy-bytes! text dst n)
+        (unsafe
+          (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
+        (unsafe
+          (ptr-cast dst : (Ptr u8)))))))
+
+;: Short alias for `ffi-c-string-alloc`.
+(define (ffi-cstr [text : String]) : (Ptr u8)
+  (ffi-c-string-alloc text))

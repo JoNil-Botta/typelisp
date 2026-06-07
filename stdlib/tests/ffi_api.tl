@@ -8,6 +8,10 @@
   (unsafe
     (ptr-read (ptr-offset ptr index))))
 
+(define (ffi-test-read-const-u8 [ptr : (Ptr u8)] [index : i64]) : u8
+  (unsafe
+    (ptr-read (ptr-offset ptr index))))
+
 (define (ffi-test-write-u8! [ptr : (MutPtr u8)] [index : i64] [value : i64]) : unit
   (unsafe
     (ptr-write! (ptr-offset ptr index) (cast value : u8))))
@@ -124,4 +128,59 @@
           (ffi-test-read-u8 nul-buf 0)
           88
           "interior NUL does not write prefix")))
+    (let
+      [empty-ptr : (Ptr u8) (ffi-c-string-alloc "")]
+      (begin
+        (assert-false
+          (ptr-null? empty-ptr)
+          "empty allocated c string returns non-null pointer")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 empty-ptr 0)
+          0
+          "empty allocated c string writes trailing NUL")))
+    (let
+      [ptr : (Ptr u8) (ffi-c-string-alloc "abc")]
+      (begin
+        (assert-false
+          (ptr-null? ptr)
+          "allocated c string returns non-null pointer")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 ptr 0)
+          97
+          "alloc copied a")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 ptr 1)
+          98
+          "alloc copied b")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 ptr 2)
+          99
+          "alloc copied c")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 ptr 3)
+          0
+          "alloc writes trailing NUL")))
+    (let
+      [alias-ptr : (Ptr u8) (ffi-cstr "xy")]
+      (begin
+        (assert-false
+          (ptr-null? alias-ptr)
+          "ffi-cstr alias returns non-null pointer")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 alias-ptr 0)
+          120
+          "ffi-cstr alias copied x")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 alias-ptr 1)
+          121
+          "ffi-cstr alias copied y")
+        (ffi-test-assert-u8-eq
+          (ffi-test-read-const-u8 alias-ptr 2)
+          0
+          "ffi-cstr alias writes trailing NUL")))
+    (let
+      [with-nul : String (ffi-test-string-with-nul)]
+      (assert-true
+        (ptr-null? (ffi-c-string-alloc with-nul))
+        "alloc rejects interior NUL with null pointer"))
     42))

@@ -67,9 +67,10 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.
-- `ffi_api.tl` covers caller-owned C string buffers: required byte counts,
-  exact-capacity copies, trailing NUL writes, too-small buffers, and interior
-  NUL rejection using an explicitly unsafe test-only string fixture.
+- `ffi_api.tl` covers C string buffers: required byte counts, exact-capacity
+  caller-owned copies, trailing NUL writes, too-small buffers, interior NUL
+  rejection using an explicitly unsafe test-only string fixture, and
+  active-arena pointer allocation through `ffi-c-string-alloc` / `ffi-cstr`.
 - `fs_path_join_many_api.tl` covers the variadic path-join macro for zero,
   single, two, three, four, and duplicate-separator joins.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir

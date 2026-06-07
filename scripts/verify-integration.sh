@@ -312,7 +312,7 @@ EOF
 # Cases covered by the selfhost-native generated-program gate rather than the
 # seed-backed integration manifests.
 # Immutable-reference native smoke fixtures are covered by
-# verify-selfhost-native.sh until the published stage0 includes #1720.
+# verify-native-link-linux.sh until the published stage0 includes #1720.
 selfhost_native_manifest_cases() {
     cat <<'EOF'
 ref_fixed_array_return

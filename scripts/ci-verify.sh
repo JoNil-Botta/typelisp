@@ -543,7 +543,7 @@ else
     # symbols, so the manifest still uses stage1 expectation mode.
     run_with_compiler "$SELFHOST_CLI_BIN" "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_with_compiler "$SELFHOST_CLI_BIN" "deterministic assembly" scripts/check-deterministic-asm.sh
-    run_with_compiler "$SELFHOST_CLI_BIN" "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
+    run_with_compiler "$SELFHOST_CLI_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
 
     # The Windows stage2 self-compile allocation ceiling (#1601) is fixed on
     # this branch (it is based on the 1601 branch), and lib-native-link.sh
@@ -656,20 +656,20 @@ if [ "$HOST_OS" = linux ]; then
         export DOC_SITE_OUT
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 docs Pages build path" scripts/verify-doc-site.sh
         unset DOC_SITE_OUT
-        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost native generated programs" scripts/verify-selfhost-native.sh
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 native link generated programs" scripts/verify-native-link-linux.sh
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost external compiler corpus" scripts/verify-selfhost.sh
     else
         DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
         export DOC_SITE_OUT
         run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI docs Pages build path" scripts/verify-doc-site.sh
         unset DOC_SITE_OUT
-        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI selfhost native generated programs" scripts/verify-selfhost-native.sh
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI native link generated programs" scripts/verify-native-link-linux.sh
         run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI selfhost external compiler corpus" scripts/verify-selfhost.sh
     fi
 else
     echo
     echo "[no-rust-stage0] Linux-only GNU as/ld gates are not Windows-applicable:"
-    echo "[no-rust-stage0]   stdlib documentation, selfhost native generated programs,"
+    echo "[no-rust-stage0]   stdlib documentation, native link generated programs,"
     echo "[no-rust-stage0]   selfhost external compiler corpus"
 fi
 

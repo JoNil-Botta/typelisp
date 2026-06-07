@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-windows-selfhost-msvc-link.sh - Windows no-Rust selfhost build/run
-# smoke for the MSVC link.exe path (#860).
+# verify-native-link-windows.sh - Windows no-Rust native link
+# smoke for compiler-owned MSVC link.exe discovery and lld-link fallback.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -12,44 +12,25 @@ case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
     Linux*) HOST_OS=linux ;;
     *)
-        echo "windows selfhost MSVC link smoke is unsupported on this host: $(uname -s)" >&2
+        echo "windows native link smoke is unsupported on this host: $(uname -s)" >&2
         exit 1
         ;;
 esac
 
 if [ "$HOST_OS" != windows ]; then
-    echo "windows selfhost MSVC link smoke is Windows-only"
+    echo "windows native link smoke is Windows-only"
     exit 0
 fi
 
 COMPILER=${TYPELISP_BIN:-}
 if [ -z "$COMPILER" ]; then
-    echo "windows selfhost MSVC link smoke requires TYPELISP_BIN" >&2
+    echo "windows native link smoke requires TYPELISP_BIN" >&2
     exit 1
 fi
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 fi
-
-WORKDIR="$ROOT/target/windows-selfhost-msvc-link"
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
-
-WINDOWS_SDK_ROOT_POSIX=
-WINDOWS_SDK_VERSION_VALUE=
-
-SRC="$WORKDIR/tiny.tl"
-BIN="$WORKDIR/tiny.exe"
-BIN_DISPLAY=$BIN
-if command -v cygpath >/dev/null 2>&1; then
-    BIN_DISPLAY=$(cygpath -m "$BIN")
-fi
-
-cat > "$SRC" <<'EOF'
-(define (main) : i64
-  42)
-EOF
 
 fail() {
     echo "$*" >&2
@@ -83,115 +64,19 @@ short_windows_path() {
     to_windows_path "$1"
 }
 
-find_windows_sdk_root() {
-    for candidate_dir in \
-        "/c/Program Files (x86)/Windows Kits/10" \
-        "/c/Program Files/Windows Kits/10"; do
-        if [ -d "$candidate_dir/Include" ] && [ -d "$candidate_dir/Lib" ]; then
-            printf '%s\n' "$candidate_dir"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-find_windows_sdk_version() {
-    sdk_root=$1
-    latest=
-    for include_dir in "$sdk_root"/Include/10.*; do
-        if [ -d "$include_dir/ucrt" ] &&
-            [ -d "$include_dir/um" ] &&
-            [ -d "$include_dir/shared" ]; then
-            version=$(basename "$include_dir")
-            if [ -z "$latest" ] || [ "$version" \> "$latest" ]; then
-                latest=$version
-            fi
-        fi
-    done
-    if [ -n "$latest" ]; then
-        printf '%s\n' "$latest"
+resolve_windows_archiver() {
+    if [ -n "${TYPELISP_WINDOWS_LIB:-}" ]; then
+        to_unix_path "$TYPELISP_WINDOWS_LIB"
         return 0
     fi
-
-    return 1
-}
-
-configure_windows_sdk_env() {
-    sdk_root=$(find_windows_sdk_root || true)
-    if [ -n "$sdk_root" ]; then
-        WINDOWS_SDK_ROOT_POSIX=$sdk_root
-    fi
-
-    if [ -n "$WINDOWS_SDK_ROOT_POSIX" ]; then
-        sdk_version=$(find_windows_sdk_version "$WINDOWS_SDK_ROOT_POSIX" || true)
-        if [ -n "$sdk_version" ]; then
-            WINDOWS_SDK_VERSION_VALUE=$sdk_version
-        fi
-    fi
-
-    if [ -z "${WindowsSdkDir:-}" ] && [ -n "$WINDOWS_SDK_ROOT_POSIX" ]; then
-        WindowsSdkDir=$(short_windows_path "$WINDOWS_SDK_ROOT_POSIX")
-        export WindowsSdkDir
-    fi
-    if [ -z "${WindowsSDKVersion:-}" ] && [ -n "$WINDOWS_SDK_VERSION_VALUE" ]; then
-        WindowsSDKVersion=$WINDOWS_SDK_VERSION_VALUE
-        export WindowsSDKVersion
-    fi
-
-    if [ -n "${WindowsSdkDir:-}" ] && [ -n "${WindowsSDKVersion:-}" ]; then
-        echo "[windows-selfhost-msvc] sdk=$WindowsSdkDir version=$WindowsSDKVersion"
-    fi
-}
-
-find_link() {
-    latest=
-    for candidate in \
-        "/c/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe \
-        "/c/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe \
-        "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe \
-        "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe; do
-        if [ -x "$candidate" ]; then
-            latest=$candidate
-        fi
-    done
-
-    if [ -n "$latest" ]; then
-        printf '%s\n' "$latest"
+    if command -v llvm-lib >/dev/null 2>&1; then
+        command -v llvm-lib
         return 0
     fi
-
-    if command -v link.exe >/dev/null 2>&1; then
-        path_link=$(command -v link.exe)
-        case "$path_link" in
-            */Git/usr/bin/link.exe) ;;
-            *)
-                printf '%s\n' "$path_link"
-                return 0
-                ;;
-        esac
-    fi
-
-    return 1
-}
-
-find_lib() {
-    latest=
-    for candidate in \
-        "/c/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe \
-        "/c/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe \
-        "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe \
-        "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe; do
-        if [ -x "$candidate" ]; then
-            latest=$candidate
-        fi
-    done
-
-    if [ -n "$latest" ]; then
-        printf '%s\n' "$latest"
+    if command -v llvm-lib.exe >/dev/null 2>&1; then
+        command -v llvm-lib.exe
         return 0
     fi
-
     if command -v lib.exe >/dev/null 2>&1; then
         command -v lib.exe
         return 0
@@ -200,55 +85,17 @@ find_lib() {
     return 1
 }
 
-configure_windows_link_env() {
-    if [ -n "${TYPELISP_WINDOWS_LINK:-}" ]; then
+resolve_lld_link_command() {
+    if command -v lld-link >/dev/null 2>&1; then
+        printf '%s\n' "lld-link"
+        return 0
+    fi
+    if command -v lld-link.exe >/dev/null 2>&1; then
+        printf '%s\n' "lld-link.exe"
         return 0
     fi
 
-    link_path=$(find_link || true)
-    if [ -z "$link_path" ]; then
-        return 0
-    fi
-
-    TYPELISP_WINDOWS_LINK=$(short_windows_path "$link_path")
-    case "$TYPELISP_WINDOWS_LINK" in
-        *" "*) fail "linker path contains spaces after short-path conversion: $TYPELISP_WINDOWS_LINK" ;;
-    esac
-    export TYPELISP_WINDOWS_LINK
-    echo "[windows-selfhost-msvc] linker=$TYPELISP_WINDOWS_LINK"
-    configure_msvc_inherited_env "$link_path"
-}
-
-prepend_env_list() {
-    name=$1
-    value=$2
-    current=$(eval "printf '%s' \"\${$name:-}\"")
-    if [ -n "$current" ]; then
-        eval "$name=\"\$value;\$current\""
-    else
-        eval "$name=\"\$value\""
-    fi
-    export "$name"
-}
-
-configure_msvc_inherited_env() {
-    link_path=$1
-    if [ -z "$WINDOWS_SDK_ROOT_POSIX" ] || [ -z "$WINDOWS_SDK_VERSION_VALUE" ]; then
-        return 0
-    fi
-
-    link_dir=$(dirname "$link_path")
-    toolset_root=$(CDPATH= cd -- "$link_dir/../../.." && pwd)
-    sdk_root=$WINDOWS_SDK_ROOT_POSIX
-    sdk_version=$WINDOWS_SDK_VERSION_VALUE
-
-    prepend_env_list "LIB" "$(short_windows_path "$sdk_root/Lib/$sdk_version/um/x64")"
-    prepend_env_list "LIB" "$(short_windows_path "$sdk_root/Lib/$sdk_version/ucrt/x64")"
-    prepend_env_list "LIB" "$(short_windows_path "$toolset_root/lib/x64")"
-    prepend_env_list "INCLUDE" "$(short_windows_path "$sdk_root/Include/$sdk_version/shared")"
-    prepend_env_list "INCLUDE" "$(short_windows_path "$sdk_root/Include/$sdk_version/um")"
-    prepend_env_list "INCLUDE" "$(short_windows_path "$sdk_root/Include/$sdk_version/ucrt")"
-    prepend_env_list "INCLUDE" "$(short_windows_path "$toolset_root/include")"
+    return 1
 }
 
 find_clang() {
@@ -316,11 +163,37 @@ case "$TYPELISP_WINDOWS_CLANG" in
     *" "*) fail "assembler path contains spaces after short-path conversion: $TYPELISP_WINDOWS_CLANG" ;;
 esac
 export TYPELISP_WINDOWS_CLANG
-echo "[windows-selfhost-msvc] assembler=$TYPELISP_WINDOWS_CLANG"
-configure_windows_sdk_env
-configure_windows_link_env
+echo "[windows-native-link] assembler=$TYPELISP_WINDOWS_CLANG"
 
-echo "[windows-selfhost-msvc] build --direct"
+run_windows_link_smoke() {
+    SMOKE_NAME=$1
+    FORCED_LINK=$2
+
+    if [ -n "$FORCED_LINK" ]; then
+        TYPELISP_WINDOWS_LINK=$FORCED_LINK
+        export TYPELISP_WINDOWS_LINK
+        echo "[windows-native-link:$SMOKE_NAME] linker override=$TYPELISP_WINDOWS_LINK"
+    else
+        unset TYPELISP_WINDOWS_LINK LIB INCLUDE WindowsSdkDir WindowsSDKVersion VCToolsInstallDir VCToolsVersion
+        echo "[windows-native-link:$SMOKE_NAME] linker=compiler auto-discovery"
+    fi
+
+    WORKDIR="$ROOT/target/native-link-windows-$SMOKE_NAME"
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+
+    SRC="$WORKDIR/tiny.tl"
+    BIN="$WORKDIR/tiny.exe"
+    BIN_DISPLAY=$BIN
+    if command -v cygpath >/dev/null 2>&1; then
+        BIN_DISPLAY=$(cygpath -m "$BIN")
+    fi
+
+    cat > "$SRC" <<'EOF'
+(define (main) : i64
+  42)
+EOF
+echo "[windows-native-link] build --direct"
 if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     --direct "$SRC" --target windows-x86_64 -o "$BIN" --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/build.stdout" 2> "$WORKDIR/build.stderr"; then
@@ -344,7 +217,7 @@ fi
 assert_empty "$WORKDIR/built.stdout"
 assert_empty "$WORKDIR/built.stderr"
 
-echo "[windows-selfhost-msvc] run --direct"
+echo "[windows-native-link] run --direct"
 set +e
 "$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
     --direct "$SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
@@ -380,10 +253,10 @@ if command -v cygpath >/dev/null 2>&1; then
     LINK_BIN_DISPLAY=$(cygpath -m "$LINK_BIN")
 fi
 
-echo "[windows-selfhost-msvc] create named link library"
-LIB_PATH=$(find_lib || true)
-if [ -z "$LIB_PATH" ]; then
-    fail "missing archiver: lib.exe"
+echo "[windows-native-link] create named link library"
+ARCHIVER_PATH=$(resolve_windows_archiver || true)
+if [ -z "$ARCHIVER_PATH" ]; then
+    fail "missing archiver: llvm-lib (or configured lib.exe/TYPELISP_WINDOWS_LIB)"
 fi
 CLANG_RUN_PATH=$(find_clang || true)
 if [ -z "$CLANG_RUN_PATH" ]; then
@@ -391,7 +264,7 @@ if [ -z "$CLANG_RUN_PATH" ]; then
 fi
 "$CLANG_RUN_PATH" --target=x86_64-pc-windows-msvc -c \
     "$LINK_LIB_DIR/ffi_add7.s" -o "$LINK_LIB_DIR/ffi_add7.obj"
-MSYS2_ARG_CONV_EXCL='*' "$LIB_PATH" /NOLOGO \
+MSYS2_ARG_CONV_EXCL='*' "$ARCHIVER_PATH" /NOLOGO \
     "/OUT:$(to_windows_path "$LINK_LIB_DIR/ffi_add7.lib")" \
     "$(to_windows_path "$LINK_LIB_DIR/ffi_add7.obj")" \
     > "$WORKDIR/link-lib.stdout" 2> "$WORKDIR/link-lib.stderr"
@@ -400,7 +273,7 @@ assert_empty "$WORKDIR/link-lib.stderr"
 LINK_SEARCH=$(to_windows_path "$LINK_LIB_DIR")
 LINK_SEARCH_METADATA=$(printf '%s' "$LINK_SEARCH" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
-echo "[windows-selfhost-msvc] build --direct --link-lib"
+echo "[windows-native-link] build --direct --link-lib"
 if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     --direct "$LINK_SRC" --target windows-x86_64 -o "$LINK_BIN" \
     --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
@@ -425,7 +298,7 @@ fi
 assert_empty "$WORKDIR/built-link.stdout"
 assert_empty "$WORKDIR/built-link.stderr"
 
-echo "[windows-selfhost-msvc] run --direct --link-lib"
+echo "[windows-native-link] run --direct --link-lib"
 set +e
 "$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
     --direct "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
@@ -456,7 +329,7 @@ if command -v cygpath >/dev/null 2>&1; then
     LINK_METADATA_BIN_DISPLAY=$(cygpath -m "$LINK_METADATA_BIN")
 fi
 
-echo "[windows-selfhost-msvc] build --direct extern link metadata"
+echo "[windows-native-link] build --direct extern link metadata"
 if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     --direct "$LINK_METADATA_SRC" --target windows-x86_64 -o "$LINK_METADATA_BIN" \
     --stdlib-root "$ROOT/stdlib" \
@@ -481,7 +354,7 @@ fi
 assert_empty "$WORKDIR/built-link-metadata.stdout"
 assert_empty "$WORKDIR/built-link-metadata.stderr"
 
-echo "[windows-selfhost-msvc] run --direct extern link metadata"
+echo "[windows-native-link] run --direct extern link metadata"
 set +e
 "$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
     --direct "$LINK_METADATA_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
@@ -502,7 +375,7 @@ if command -v cygpath >/dev/null 2>&1; then
     PUBLIC_LINK_BIN_DISPLAY=$(cygpath -m "$PUBLIC_LINK_BIN")
 fi
 
-echo "[windows-selfhost-msvc] public build --link-lib"
+echo "[windows-native-link] public build --link-lib"
 if ! "$COMPILER" build "$LINK_SRC" --target windows-x86_64 -o "$PUBLIC_LINK_BIN" \
     --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
     > "$WORKDIR/public-build-link.stdout" 2> "$WORKDIR/public-build-link.stderr"; then
@@ -525,7 +398,7 @@ fi
 assert_empty "$WORKDIR/public-built-link.stdout"
 assert_empty "$WORKDIR/public-built-link.stderr"
 
-echo "[windows-selfhost-msvc] public run --link-lib"
+echo "[windows-native-link] public run --link-lib"
 set +e
 "$COMPILER" run "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
@@ -546,7 +419,7 @@ if command -v cygpath >/dev/null 2>&1; then
     PUBLIC_LINK_METADATA_BIN_DISPLAY=$(cygpath -m "$PUBLIC_LINK_METADATA_BIN")
 fi
 
-echo "[windows-selfhost-msvc] public build extern link metadata"
+echo "[windows-native-link] public build extern link metadata"
 if ! "$COMPILER" build "$LINK_METADATA_SRC" --target windows-x86_64 \
     -o "$PUBLIC_LINK_METADATA_BIN" --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/public-build-link-metadata.stdout" 2> "$WORKDIR/public-build-link-metadata.stderr"; then
@@ -569,7 +442,7 @@ fi
 assert_empty "$WORKDIR/public-built-link-metadata.stdout"
 assert_empty "$WORKDIR/public-built-link-metadata.stderr"
 
-echo "[windows-selfhost-msvc] public run extern link metadata"
+echo "[windows-native-link] public run extern link metadata"
 set +e
 "$COMPILER" run "$LINK_METADATA_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
     > "$WORKDIR/public-run-link-metadata.stdout" 2> "$WORKDIR/public-run-link-metadata.stderr"
@@ -583,4 +456,15 @@ fi
 assert_empty "$WORKDIR/public-run-link-metadata.stdout"
 assert_empty "$WORKDIR/public-run-link-metadata.stderr"
 
-echo "windows selfhost MSVC link smoke passed"
+echo "[windows-native-link:$SMOKE_NAME] smoke passed"
+}
+
+run_windows_link_smoke msvc-auto ""
+
+LLD_LINK_COMMAND=$(resolve_lld_link_command || true)
+if [ -z "$LLD_LINK_COMMAND" ]; then
+    fail "missing linker fallback: lld-link"
+fi
+run_windows_link_smoke lld-link "$LLD_LINK_COMMAND"
+
+echo "windows native link smoke passed"

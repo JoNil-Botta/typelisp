@@ -157,7 +157,7 @@ move the named gate to `selfhost/cli.tl` or to an equivalent focused smoke.
 | Driver | Classification | Reason retained |
 |--------|----------------|-----------------|
 | `selfhost/compile.tl` | Required bootstrap entry | `scripts/check-bootstrap-fixpoint.sh` compiles it to produce each compiler stage, keeping bootstrap compile-only and independent of `build`. |
-| `selfhost/build.tl` | Required focused compatibility/coverage entry | `scripts/verify-public-tools.sh`, `scripts/verify-windows-selfhost-msvc-link.sh`, and `scripts/analyze-selfhost-build-asm-size.sh` compile or run the build command as a smaller focused tool. |
+| `selfhost/build.tl` | Required focused compatibility/coverage entry | `scripts/verify-public-tools.sh`, `scripts/verify-native-link-windows.sh`, and `scripts/analyze-selfhost-build-asm-size.sh` compile or run the build command as a smaller focused tool. |
 | `selfhost/run.tl` | Required focused compatibility/coverage entry | Public-tool and Windows link gates compile or run the run command as a focused host-action tool. |
 | `selfhost/check.tl` | Required focused compatibility/coverage entry | Stdlib selfhost and safety-corpus gates build a smaller frontend checker binary rather than the full CLI. |
 | `selfhost/doc.tl` | Required focused compatibility/coverage entry | Public-tool and documentation gates compile the doc command as a focused generator while `typelisp doc` remains the public command. |
@@ -325,7 +325,7 @@ are too low-level for a manifest row.
 
 ### Selfhost native generated programs
 
-`scripts/verify-selfhost-native.sh` covers Linux-only cases where a selfhost
+`scripts/verify-native-link-linux.sh` covers Linux-only cases where a selfhost
 TypeLisp driver emits assembly that must then assemble, link, and run as a native
 executable. It builds `selfhost/compiler_driver.tl`, verifies generated
 file-to-file assembly for multi-file imports, stdlib imports, runtime helpers,
@@ -428,7 +428,7 @@ compile manifest, borrowed-str source checks, the safety corpus, native
 integration manifests, standalone examples, and stdlib modules/fixtures through
 that bootstrapped artifact. Command-tier gates such as public-tool host-action
 coverage, stdlib documentation, doctests, inline tests, docs Pages build,
-selfhost native generated programs, and the external selfhost corpus use their
+native link generated programs, and the external selfhost corpus use their
 explicit seed/fresh-cli fallback or skip paths until #1662 and related resource
 blockers are closed. The Windows job runs host-supported gates against the
 published stage0 compiler, verifies the fresh CLI build/run smoke, runs the

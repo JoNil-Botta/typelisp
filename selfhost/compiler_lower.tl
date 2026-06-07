@@ -1401,6 +1401,24 @@
     items
     (LowerStringCons name (box items))))
 
+(define (lower-function-logical-name-from-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [decl : AstDecl]) : TcMaybeString
+  (match decl
+    [(AstDeclDefFn name _ _ _ _)
+      (TcSomeString (lower-decl-logical-name entry-path decl-path module name))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-function-logical-name-from-decl
+          entry-path
+          decl-path
+          module
+          inner))]
+    [_ (TcNoString)]))
+
 (define (lower-function-set-from-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -1431,23 +1449,20 @@
               entry-path
               next-module
               out)]
-          [(AstDeclDefFn name _ _ _ _)
-            (lower-function-set-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              (string-i64-map-put
-                out
-                (lower-decl-logical-name entry-path decl-path module name)
-                1))]
           [_
             (lower-function-set-from-decls-in-module
               rest
               rest-paths
               entry-path
               module
-              out)]))]))
+              (match (lower-function-logical-name-from-decl
+                entry-path
+                decl-path
+                module
+                decl)
+                [(TcSomeString logical-name)
+                  (string-i64-map-put out logical-name 1)]
+                [(TcNoString) out]))]))]))
 
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
@@ -2762,6 +2777,26 @@
     [(AstExprSyscall args)
       (lower-reach-expr-list all-functions names state args)]))
 
+(define (lower-reach-global-decl
+  [all-functions : StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [decl : AstDecl]) : LowerReachState
+  (match decl
+    [(AstDeclDef _ _ expr-box)
+      (let
+        [expr : AstExpr (box-get expr-box)]
+        (lower-reach-expr all-functions names state expr))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-global-decl all-functions names state inner))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-global-decl all-functions names state inner))]
+    [_ state]))
+
 (define (lower-reach-global-decls
   [all-functions : StringI64Map]
   [names : LowerNameCache]
@@ -2772,29 +2807,11 @@
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDef _ _ expr-box)
-            (let
-              [expr : AstExpr (box-get expr-box)]
-              (lower-reach-global-decls
-                all-functions
-                names
-                (lower-reach-expr all-functions names state expr)
-                rest))]
-          [(AstDeclComptimeDecl _ inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (lower-reach-global-decls
-                all-functions
-                names
-                (match inner
-                  [(AstDeclDef _ _ expr-box)
-                    (let
-                      [expr : AstExpr (box-get expr-box)]
-                      (lower-reach-expr all-functions names state expr))]
-                  [_ state])
-                rest))]
-          [_ (lower-reach-global-decls all-functions names state rest)]))]))
+        (lower-reach-global-decls
+          all-functions
+          names
+          (lower-reach-global-decl all-functions names state decl)
+          rest))]))
 
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
@@ -3177,6 +3194,25 @@
     (string-i64-map-contains? reachable logical-name)
     (string-i64-map-contains? dispatch-variants logical-name)))
 
+(define (lower-decl-kept-by-reach-or-dispatch?
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]
+  [decl : AstDecl]) : bool
+  (match (lower-function-logical-name-from-decl
+    entry-path
+    decl-path
+    module
+    decl)
+    [(TcSomeString logical-name)
+      (lower-function-kept-by-reach-or-dispatch?
+        reachable
+        dispatch-variants
+        logical-name)]
+    [(TcNoString) true]))
+
 (define (lower-filter-reachable-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -3211,11 +3247,14 @@
                 next-module
                 reachable
                 dispatch-variants))]
-          [(AstDeclDefFn name _ _ _ _)
-            (if (lower-function-kept-by-reach-or-dispatch?
+          [_
+            (if (lower-decl-kept-by-reach-or-dispatch?
+              entry-path
+              decl-path
+              module
               reachable
               dispatch-variants
-              (lower-decl-logical-name entry-path decl-path module name))
+              decl)
               (ast-decl-cons
                 decl
                 (lower-filter-reachable-decls-in-module
@@ -3225,16 +3264,6 @@
                   module
                   reachable
                   dispatch-variants))
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                reachable
-                dispatch-variants))]
-          [_
-            (ast-decl-cons
-              decl
               (lower-filter-reachable-decls-in-module
                 rest
                 rest-paths
@@ -3277,11 +3306,14 @@
                 next-module
                 reachable
                 dispatch-variants))]
-          [(AstDeclDefFn name _ _ _ _)
-            (if (lower-function-kept-by-reach-or-dispatch?
+          [_
+            (if (lower-decl-kept-by-reach-or-dispatch?
+              entry-path
+              decl-path
+              module
               reachable
               dispatch-variants
-              (lower-decl-logical-name entry-path decl-path module name))
+              decl)
               (ast-decl-path-cons
                 decl-path
                 (lower-filter-reachable-paths-in-module
@@ -3291,16 +3323,6 @@
                   module
                   reachable
                   dispatch-variants))
-              (lower-filter-reachable-paths-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                reachable
-                dispatch-variants))]
-          [_
-            (ast-decl-path-cons
-              decl-path
               (lower-filter-reachable-paths-in-module
                 rest
                 rest-paths
@@ -3335,6 +3357,34 @@
 ;; backend-emitted bounds/division/shift checks call the runtime-prelude
 ;; handlers). Seed every exported function as a reachability root so the prune
 ;; keeps it and its transitive callees even with no IR caller.
+(define (lower-reach-add-export-root-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [decl : AstDecl]) : LowerReachState
+  (match decl
+    [(AstDeclDefFn name _ _ _ export)
+      (match export
+        [(AstFnExport _)
+          (lower-reach-add-logical
+            all-functions
+            state
+            (lower-decl-logical-name entry-path decl-path module name))]
+        [(AstFnNoExport) state])]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-add-export-root-decl
+          entry-path
+          decl-path
+          module
+          all-functions
+          state
+          inner))]
+    [_ state]))
+
 (define (lower-reach-add-export-roots-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -3364,20 +3414,6 @@
               next-module
               all-functions
               state)]
-          [(AstDeclDefFn name _ _ _ export)
-            (lower-reach-add-export-roots-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              all-functions
-              (match export
-                [(AstFnExport _)
-                  (lower-reach-add-logical
-                    all-functions
-                    state
-                    (lower-decl-logical-name entry-path decl-path module name))]
-                [(AstFnNoExport) state]))]
           [_
             (lower-reach-add-export-roots-in-module
               rest
@@ -3385,7 +3421,13 @@
               entry-path
               module
               all-functions
-              state)]))]))
+              (lower-reach-add-export-root-decl
+                entry-path
+                decl-path
+                module
+                all-functions
+                state
+                decl))]))]))
 
 (define (lower-prune-unreachable-functions-with-clone-roots
   [entry-path : String]
@@ -24355,6 +24397,22 @@
             (if (string-eq found name)
               true
               (lower-test-decl-list-defines? rest name))]
+          [(AstDeclComptimeDecl _ inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (if (lower-test-decl-list-defines?
+                (ast-decl-cons inner AstDeclNil)
+                name)
+                true
+                (lower-test-decl-list-defines? rest name)))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (if (lower-test-decl-list-defines?
+                (ast-decl-cons inner AstDeclNil)
+                name)
+                true
+                (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
 (define (compiler-lower-ast-dce-program) : AstProgram
@@ -24402,6 +24460,13 @@
           (AstTyI64)
           (AstExprLiteral (AstLitInt 9)))
         AstDeclNil))))
+
+(define (compiler-lower-unsafe-ast-dce-source) : String
+  "(define (main) : i64 (unsafe (unsafe-entry)))
+(define (unsafe-helper) : i64 41)
+(unsafe (define (unsafe-entry) : i64 (unsafe-helper)))
+(define (dead-helper) : i64 0)
+(unsafe (define (dead-unsafe) : i64 (dead-helper)))")
 
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
@@ -24467,6 +24532,45 @@
                                   (=
                                     (lower-test-decl-list-count no-main-kept)
                                     2)))))))]))])])])))
+
+(define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : AstDeclList]) : bool
+  (and
+    (= (lower-test-decl-list-count kept) 3)
+    (and
+      (lower-test-decl-list-defines? kept "main")
+      (and
+        (lower-test-decl-list-defines? kept "unsafe-helper")
+        (and
+          (lower-test-decl-list-defines? kept "unsafe-entry")
+          (and
+            (not (lower-test-decl-list-defines? kept "dead-helper"))
+            (not (lower-test-decl-list-defines? kept "dead-unsafe"))))))))
+
+(define (compiler-lower-unsafe-ast-dce-ok?) : bool
+  (match (parse-ast-source (compiler-lower-unsafe-ast-dce-source))
+    [(OkAstProgram program)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [names : LowerNameEnv
+              (lower-name-env-from-decls
+                decls
+                AstDeclPathNil
+                "entry.tl"
+                LowerNameNil)]
+            [pruned : LowerPrunedProgram
+              (lower-prune-unreachable-functions
+                "entry.tl"
+                program
+                AstDeclPathNil
+                names)]
+            (match pruned
+              [(LowerPrunedProgram kept-program _)
+                (match kept-program
+                  [(AstProgram kept-box)
+                    (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
@@ -24604,6 +24708,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ast-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-unsafe-ast-dce-ok?)
         unit
         (set! ok false))
       ok)))

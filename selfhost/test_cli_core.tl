@@ -426,29 +426,114 @@
     "TypeLisp tests passed: "
     (string-append (int->string count) " test(s)\n")))
 
-(define (tltest-print-runtime-write-symbol [target : CompilerBackendTarget]) : String
-  (match target
-    [(BackendTargetLinux) "write"]
-    [(BackendTargetWindows) "_write"]))
+(define (tltest-print-runtime-write-params) : AstParamList
+  (ast-param-cons
+    (AstParam "fd" (AstTyI32) false)
+    (ast-param-cons
+      (AstParam "buf" (ast-ty-ptr (AstTyU8)) false)
+      (ast-param-cons (AstParam "n" (AstTyI32) false) AstParamNil))))
 
-(define (tltest-print-runtime-write-type) : AstType
-  (ast-ty-func
-    (ast-type-cons
-      (AstTyI32)
-      (ast-type-cons
-        (ast-ty-ptr (AstTyU8))
-        (ast-type-cons (AstTyI32) AstTypeNil)))
-    (AstTyI32)))
+(define (tltest-linux-write-ptr-arg) : AstExpr
+  (AstExprUnsafe
+    (ast-expr-cons
+      (ast-expr-cast (ast-expr-ptr-to-int (AstExprVar "buf")) (AstTyI64))
+      AstExprNil)))
 
-(define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
-  (AstDeclExtern
+(define (tltest-linux-write-syscall) : AstExpr
+  (ast-expr-syscall
+    (ast-expr-cons
+      (AstExprLiteral (AstLitInt 1))
+      (ast-expr-cons
+        (ast-expr-cast (AstExprVar "fd") (AstTyI64))
+        (ast-expr-cons
+          (tltest-linux-write-ptr-arg)
+          (ast-expr-cons (ast-expr-cast (AstExprVar "n") (AstTyI64)) AstExprNil))))))
+
+(define (tltest-linux-print-runtime-write-decl) : AstDecl
+  (ast-decl-def-fn
     "__tl_test_write"
+    (tltest-print-runtime-write-params)
+    (AstTyI32)
+    (ast-expr-cast (tltest-linux-write-syscall) (AstTyI32))))
+
+(define (tltest-windows-get-std-handle-decl) : AstDecl
+  (AstDeclExtern
+    "__tl_test_get_std_handle"
     (AstExternMetadata
       (AstExternAbiC)
-      (tltest-print-runtime-write-symbol target)
+      "GetStdHandle"
       AstExternLinkInputNil
       true)
-    (tltest-print-runtime-write-type)))
+    (ast-ty-func (ast-type-cons (AstTyI32) AstTypeNil) (AstTyI64))))
+
+(define (tltest-windows-write-file-decl) : AstDecl
+  (AstDeclExtern
+    "__tl_test_write_file"
+    (AstExternMetadata (AstExternAbiC) "WriteFile" AstExternLinkInputNil true)
+    (ast-ty-func
+      (ast-type-cons
+        (AstTyI64)
+        (ast-type-cons
+          (ast-ty-ptr (AstTyU8))
+          (ast-type-cons
+            (AstTyI32)
+            (ast-type-cons
+              (ast-ty-mut-ptr (AstTyI32))
+              (ast-type-cons (AstTyI64) AstTypeNil)))))
+      (AstTyI32))))
+
+(define (tltest-windows-get-stderr-handle-expr) : AstExpr
+  (ast-expr-call
+    (AstExprVar "__tl_test_get_std_handle")
+    (ast-expr-cons
+      (ast-expr-cast (AstExprLiteral (AstLitInt -12)) (AstTyI32))
+      AstExprNil)))
+
+(define (tltest-windows-write-file-call) : AstExpr
+  (ast-expr-call
+    (AstExprVar "__tl_test_write_file")
+    (ast-expr-cons
+      (AstExprVar "handle")
+      (ast-expr-cons
+        (AstExprVar "buf")
+        (ast-expr-cons
+          (AstExprVar "n")
+          (ast-expr-cons
+            (AstExprPtrNull (ast-ty-mut-ptr (AstTyI32)))
+            (ast-expr-cons (AstExprLiteral (AstLitInt 0)) AstExprNil)))))))
+
+(define (tltest-windows-write-body) : AstExpr
+  (ast-expr-let
+    (ast-let-binding-cons
+      (ast-let-binding
+        "handle"
+        (AstSomeType (AstTyI64))
+        (tltest-windows-get-stderr-handle-expr))
+      (ast-let-binding-cons
+        (ast-let-binding
+          "ok"
+          (AstSomeType (AstTyI32))
+          (tltest-windows-write-file-call))
+        AstLetBindingNil))
+    (ast-expr-if
+      (ast-expr-binary
+        (AstBinEq)
+        (AstExprVar "ok")
+        (ast-expr-cast (AstExprLiteral (AstLitInt 0)) (AstTyI32)))
+      (ast-expr-cast (AstExprLiteral (AstLitInt -1)) (AstTyI32))
+      (AstExprVar "n"))))
+
+(define (tltest-windows-print-runtime-write-decl) : AstDecl
+  (ast-decl-def-fn
+    "__tl_test_write"
+    (tltest-print-runtime-write-params)
+    (AstTyI32)
+    (tltest-windows-write-body)))
+
+(define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
+  (match target
+    [(BackendTargetLinux) (tltest-linux-print-runtime-write-decl)]
+    [(BackendTargetWindows) (tltest-windows-print-runtime-write-decl)]))
 
 (define (tltest-text-param-list) : AstParamList
   (ast-param-cons (AstParam "text" (AstTyString) false) AstParamNil))
@@ -488,14 +573,35 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (ast-program
-          (ast-decl-cons
-            (tltest-print-runtime-write-decl target)
-            (ast-decl-cons (tltest-print-runtime-print-decl) decls))))]))
+          (match target
+            [(BackendTargetLinux)
+              (ast-decl-cons
+                (tltest-print-runtime-write-decl target)
+                (ast-decl-cons (tltest-print-runtime-print-decl) decls))]
+            [(BackendTargetWindows)
+              (ast-decl-cons
+                (tltest-windows-get-std-handle-decl)
+                (ast-decl-cons
+                  (tltest-windows-write-file-decl)
+                  (ast-decl-cons
+                    (tltest-print-runtime-write-decl target)
+                    (ast-decl-cons (tltest-print-runtime-print-decl) decls))))])))]))
 
-(define (tltest-paths-with-print-runtime [paths : AstDeclPathList]) : AstDeclPathList
-  (ast-decl-path-cons
-    "<generated test runtime>"
-    (ast-decl-path-cons "<generated test runtime>" paths)))
+(define (tltest-paths-with-print-runtime-count
+  [count : i64]
+  [paths : AstDeclPathList]) : AstDeclPathList
+  (if (<= count 0)
+    paths
+    (ast-decl-path-cons
+      "<generated test runtime>"
+      (tltest-paths-with-print-runtime-count (- count 1) paths))))
+
+(define (tltest-paths-with-print-runtime
+  [target : CompilerBackendTarget]
+  [paths : AstDeclPathList]) : AstDeclPathList
+  (match target
+    [(BackendTargetLinux) (tltest-paths-with-print-runtime-count 2 paths)]
+    [(BackendTargetWindows) (tltest-paths-with-print-runtime-count 4 paths)]))
 
 (define (tltest-main-exprs-from
   [tests : (Array InlineTest)]
@@ -1153,7 +1259,7 @@
   [target : CompilerBackendTarget]) : i64
   (match (typecheck-compiler-program-with-paths
     (tltest-program-with-print-runtime program target)
-    (tltest-paths-with-print-runtime paths))
+    (tltest-paths-with-print-runtime target paths))
     [(OkCompilerTypecheck _)
       (begin
         (print-string
@@ -1309,7 +1415,7 @@
           (tltest-run-harness-in-temp
             source
             (tltest-program-with-print-runtime program backend-target)
-            (tltest-paths-with-print-runtime paths)
+            (tltest-paths-with-print-runtime backend-target paths)
             backend-target
             opt-level
             temp-dir)]

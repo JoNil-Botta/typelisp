@@ -11998,14 +11998,13 @@
                   "\n"
                   ""))))])]))
 
+;; The out-of-memory message moved to the runtime prelude (stdlib/runtime.tl as
+;; `tl-runtime-oom-abort`, exported `tl_oom_abort` via #2221); the allocator's
+;; abort paths now `jmp tl_oom_abort` instead of writing backend rodata, so the
+;; allocator contributes no runtime data.
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
-  "    .section .rodata
-.L_tl_alloc_msg:
-    .byte 116,108,58,32,97,108,108,111,99,97,116,105,111,110,32,102,97,105,108,101,100,10
-    .set .L_tl_alloc_msg_len, . - .L_tl_alloc_msg
-
-")
+  "")
 
 ;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
 ;; region runtime, and the first-class arena builtins (#1633). It is the
@@ -12385,14 +12384,7 @@ tl_alloc:
             profile)
           "    ret
 .L_tl_alloc_abort:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_alloc_msg(%rip), %rsi
-    movq $.L_tl_alloc_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
+    jmp tl_oom_abort
 
 ")))))
 
@@ -12410,67 +12402,19 @@ tl_region_mark:
 
 ")
 
-;; Freestanding Linux libc-ABI shims (#no-libc). The stdlib binds file/dir/env
-;; helpers through FFI `extern`s to libc symbols (open/read/write/close/lseek/
-;; access/mkdir/rmdir/unlink/rename/getpid/exit/__errno_location/getenv/strlen).
-;; Rather
-;; than link glibc, the entry object DEFINES those symbols itself as raw-syscall
-;; thunks that mimic the glibc ABI (return -1 and set a private errno on a
-;; syscall error result in [-4095,-1]). `getenv` walks the stack-captured
-;; environment (`.L_tl_envp`), `strlen` is a NUL scan. With these present the
-;; final link needs no `-lc` and no dynamic loader. C args rdi/rsi/rdx already
-;; match the System V syscall arg registers for the <=3-argument calls here.
+;; Freestanding Linux runtime support (#no-libc). The stdlib issues OS calls
+;; through raw `syscall`s and TypeLisp bodies (io.tl/fs.tl/env.tl/runtime.tl), so
+;; the only libc-ABI symbol the entry object still has to define is
+;; `__errno_location`: the stdlib reads/writes its single private errno slot
+;; through that accessor (`tl_errno`). The former `strlen`/`getenv`/`fflush`
+;; shims were removed once env.tl walked the stack environment directly, the env
+;; value copy used an in-TypeLisp NUL scan, and stdout flushing became a no-op
+;; (the freestanding runtime is unbuffered). With this present the final link
+;; needs no `-lc` and no dynamic loader.
 (define (compiler-backend-runtime-linux-libc-shim-functions) : String
   "    .globl __errno_location
 __errno_location:
     leaq tl_errno(%rip), %rax
-    ret
-
-    .globl fflush
-fflush:
-    xorq %rax, %rax
-    ret
-
-    .globl strlen
-strlen:
-    movq %rdi, %rax
-.L_tl_strlen_loop:
-    cmpb $0, (%rax)
-    je .L_tl_strlen_done
-    incq %rax
-    jmp .L_tl_strlen_loop
-.L_tl_strlen_done:
-    subq %rdi, %rax
-    ret
-
-    .globl getenv
-getenv:
-    movq .L_tl_envp(%rip), %r8
-.L_tl_getenv_loop:
-    movq (%r8), %rsi
-    testq %rsi, %rsi
-    jz .L_tl_getenv_nf
-    movq %rdi, %rax
-.L_tl_getenv_cmp:
-    movb (%rax), %cl
-    testb %cl, %cl
-    jz .L_tl_getenv_namedone
-    movb (%rsi), %dl
-    cmpb %cl, %dl
-    jne .L_tl_getenv_next
-    incq %rax
-    incq %rsi
-    jmp .L_tl_getenv_cmp
-.L_tl_getenv_namedone:
-    cmpb $61, (%rsi)
-    jne .L_tl_getenv_next
-    leaq 1(%rsi), %rax
-    ret
-.L_tl_getenv_next:
-    addq $8, %r8
-    jmp .L_tl_getenv_loop
-.L_tl_getenv_nf:
-    xorq %rax, %rax
     ret
 
     .data
@@ -12481,27 +12425,21 @@ tl_errno:
 
 ")
 
+;; Windows freestanding runtime support (kernel32-only). Like the Linux side, the
+;; OS-calling primitives now live in TypeLisp (io.tl/fs.tl/env.tl/runtime.tl via
+;; direct kernel32 bindings), so this block only retains the genuinely
+;; backend-level pieces: `_errno` (the private errno-slot accessor over
+;; `tl_errno`), `__chkstk` (required by the MSVC ABI for large stack frames), and
+;; the program entry (`tl_setup_argv` builds argv from GetCommandLineA, `_tl_start`
+;; is the entry thunk). The former `strlen`/`getenv`/`fflush` shims and the
+;; `.L_tl_win_write_abort` OOM helper were removed (env.tl walks
+;; GetEnvironmentStringsA itself; tl_setup_argv now inlines its NUL scan; the OOM
+;; abort moved to the `tl_oom_abort` prelude handler).
 (define (compiler-backend-runtime-windows-libc-shim-functions) : String
   "    .globl _errno
 _errno:
     leaq tl_errno(%rip), %rax
     ret
-
-.L_tl_win_write_abort:
-    andq $-16, %rsp
-    subq $48, %rsp
-    movq %rdx, %r10
-    movq %r8, %r11
-    movl $-12, %ecx
-    call GetStdHandle
-    movq %rax, %rcx
-    movq %r10, %rdx
-    movq %r11, %r8
-    leaq 40(%rsp), %r9
-    movq $0, 32(%rsp)
-    call WriteFile
-    movq $134, %rcx
-    call ExitProcess
 
     .globl __chkstk
 __chkstk:
@@ -12523,86 +12461,6 @@ __chkstk:
     popq %rcx
     ret
 
-    .globl strlen
-strlen:
-    movq %rcx, %rax
-.L_tl_win_sl:
-    cmpb $0, (%rax)
-    je .L_tl_win_sld
-    incq %rax
-    jmp .L_tl_win_sl
-.L_tl_win_sld:
-    subq %rcx, %rax
-    ret
-
-    .globl fflush
-fflush:
-    xorq %rax, %rax
-    ret
-
-    .globl getenv
-getenv:
-    pushq %rbp
-    movq %rsp, %rbp
-    pushq %rbx
-    pushq %r12
-    pushq %r13
-    pushq %r14
-    subq $32, %rsp
-    movq %rcx, %rbx
-    call GetEnvironmentStringsA
-    movq %rax, %r12
-.L_tl_ge_entry:
-    cmpb $0, (%r12)
-    je .L_tl_ge_null
-    movq %rbx, %r13
-    movq %r12, %r14
-.L_tl_ge_cmp:
-    movb (%r13), %al
-    testb %al, %al
-    je .L_tl_ge_name_end
-    movb (%r14), %cl
-    cmpb $65, %al
-    jb .L_tl_ge_al_lc
-    cmpb $90, %al
-    ja .L_tl_ge_al_lc
-    addb $32, %al
-.L_tl_ge_al_lc:
-    cmpb $65, %cl
-    jb .L_tl_ge_cl_lc
-    cmpb $90, %cl
-    ja .L_tl_ge_cl_lc
-    addb $32, %cl
-.L_tl_ge_cl_lc:
-    cmpb %al, %cl
-    jne .L_tl_ge_skip
-    incq %r13
-    incq %r14
-    jmp .L_tl_ge_cmp
-.L_tl_ge_name_end:
-    cmpb $61, (%r14)
-    jne .L_tl_ge_skip
-    leaq 1(%r14), %rax
-    jmp .L_tl_ge_ret
-.L_tl_ge_skip:
-    cmpb $0, (%r12)
-    je .L_tl_ge_skipnull
-    incq %r12
-    jmp .L_tl_ge_skip
-.L_tl_ge_skipnull:
-    incq %r12
-    jmp .L_tl_ge_entry
-.L_tl_ge_null:
-    xorq %rax, %rax
-.L_tl_ge_ret:
-    addq $32, %rsp
-    popq %r14
-    popq %r13
-    popq %r12
-    popq %rbx
-    popq %rbp
-    ret
-
     .globl tl_setup_argv
 tl_setup_argv:
     pushq %rbp
@@ -12615,9 +12473,13 @@ tl_setup_argv:
     subq $40, %rsp
     call GetCommandLineA
     movq %rax, %rbx
-    movq %rbx, %rcx
-    call strlen
-    movq %rax, %r12
+    xorq %r12, %r12
+.L_tl_argv_cmdlen:
+    cmpb $0, (%rbx,%r12)
+    je .L_tl_argv_cmdlen_done
+    incq %r12
+    jmp .L_tl_argv_cmdlen
+.L_tl_argv_cmdlen_done:
     leaq 1(%r12), %rcx
     subq $32, %rsp
     call .L_tl_boot_alloc
@@ -13150,9 +13012,8 @@ tl_alloc:
     pop %rbp
     ret
 .L_tl_alloc_abort:
-    leaq .L_tl_alloc_msg(%rip), %rdx
-    movq $.L_tl_alloc_msg_len, %r8
-    jmp .L_tl_win_write_abort
+    sub $32, %rsp
+    call tl_oom_abort
 
 ")))))
 
@@ -13165,314 +13026,32 @@ tl_alloc:
 (define (compiler-backend-runtime-abort-functions) : String
   "")
 
+;; Environment lookups moved entirely into TypeLisp (stdlib/env.tl): the Linux
+;; side walks the SysV stack-captured environment via the program-argv/argc
+;; builtins, and the Windows side calls kernel32 GetEnvironmentStringsA directly,
+;; with the name match and value copy done in TypeLisp. The backend therefore
+;; emits no `tl_env_var_exists` / `tl_env_var_value` / `_tl_env_path_separator`
+;; asm on either target (these were the last consumers of the removed `getenv`
+;; and `strlen` libc shims). The generators are retained as empty strings so the
+;; runtime-plan gating (which still tracks the now-never-set env call sites) does
+;; not need a struct change.
 (define (compiler-backend-runtime-env-var-exists-functions) : String
-  "    .globl tl_env_var_exists
-tl_env_var_exists:
-    .globl _tl_env_var_exists_question
-_tl_env_var_exists_question:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    movq 0(%rdi), %rbx
-    movq 8(%rdi), %r12
-    cmpq $0, %r12
-    jl .L_tl_env_var_exists_false
-    movq .L_tl_envp(%rip), %r13
-.L_tl_env_var_exists_next:
-    movq (%r13), %r14
-    testq %r14, %r14
-    jz .L_tl_env_var_exists_false
-    xorq %r15, %r15
-.L_tl_env_var_exists_name_loop:
-    cmpq %r12, %r15
-    jge .L_tl_env_var_exists_name_done
-    movzbl (%rbx,%r15), %eax
-    cmpb %al, (%r14,%r15)
-    jne .L_tl_env_var_exists_advance
-    incq %r15
-    jmp .L_tl_env_var_exists_name_loop
-.L_tl_env_var_exists_name_done:
-    cmpb $61, (%r14,%r12)
-    je .L_tl_env_var_exists_true
-.L_tl_env_var_exists_advance:
-    addq $8, %r13
-    jmp .L_tl_env_var_exists_next
-.L_tl_env_var_exists_true:
-    movq $1, %rax
-    jmp .L_tl_env_var_exists_return
-.L_tl_env_var_exists_false:
-    xorq %rax, %rax
-.L_tl_env_var_exists_return:
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-env-var-value-functions) : String
-  "    .globl tl_env_var_value
-tl_env_var_value:
-    .globl _tl_env_var_value
-_tl_env_var_value:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $8, %rsp
-    movq 0(%rdi), %rbx
-    movq 8(%rdi), %r12
-    cmpq $0, %r12
-    jl .L_tl_env_var_value_empty
-    movq .L_tl_envp(%rip), %r13
-.L_tl_env_var_value_next:
-    movq (%r13), %r14
-    testq %r14, %r14
-    jz .L_tl_env_var_value_empty
-    xorq %r15, %r15
-.L_tl_env_var_value_name_loop:
-    cmpq %r12, %r15
-    jge .L_tl_env_var_value_name_done
-    movzbl (%rbx,%r15), %eax
-    cmpb %al, (%r14,%r15)
-    jne .L_tl_env_var_value_advance
-    incq %r15
-    jmp .L_tl_env_var_value_name_loop
-.L_tl_env_var_value_name_done:
-    cmpb $61, (%r14,%r12)
-    je .L_tl_env_var_value_found
-.L_tl_env_var_value_advance:
-    addq $8, %r13
-    jmp .L_tl_env_var_value_next
-.L_tl_env_var_value_found:
-    leaq 1(%r14,%r12), %rbx
-    xorq %r12, %r12
-.L_tl_env_var_value_len_loop:
-    cmpb $0, (%rbx,%r12)
-    je .L_tl_env_var_value_len_done
-    incq %r12
-    jmp .L_tl_env_var_value_len_loop
-.L_tl_env_var_value_len_done:
-    movq %r12, %rdi
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_env_var_value_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_env_var_value_fat
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_env_var_value_copy_loop
-.L_tl_env_var_value_empty:
-    xorq %r12, %r12
-    xorq %r13, %r13
-.L_tl_env_var_value_fat:
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 (define (compiler-backend-runtime-env-path-separator-functions) : String
-  "    .globl _tl_env_path_separator
-_tl_env_path_separator:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    sub $8, %rsp
-    call .L_tl_alloc8
-    movq %rax, %r12
-    movb $58, (%r12)
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq $1, 8(%rax)
-    add $8, %rsp
-    pop %r12
-    pop %rbp
-    ret
+  "")
 
-")
-
-;; Windows variant of `_tl_env_path_separator`: builds the 1-char `;` String
-;; (Windows PATH separator, byte 59) instead of `:`. Win64 ABI: tl_alloc takes
-;; the size in %rcx and needs 32-byte shadow space at each call (its slow path
-;; calls VirtualAlloc). Returns a String fat-value {ptr@0, len@8} in %rax.
 (define (compiler-backend-runtime-windows-env-path-separator-functions) : String
-  "    .globl _tl_env_path_separator
-_tl_env_path_separator:
-    push %rbp
-    mov %rsp, %rbp
-    push %r12
-    sub $8, %rsp
-    call .L_tl_alloc8
-    movq %rax, %r12
-    movb $59, (%r12)
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq $1, 8(%rax)
-    add $8, %rsp
-    pop %r12
-    pop %rbp
-    ret
+  "")
 
-")
-
-;; Windows variant of `_tl_env_var_exists_question`. The Linux helper walks the
-;; SysV stack-captured environment array (.L_tl_envp), which is never populated
-;; on Windows, so this uses the CRT `getenv`. ABI: the String argument arrives
-;; as a pointer to a {ptr,len} fat-value in %rcx (dereferenced 0(%rcx)/8(%rcx),
-;; mirroring the Linux helper's 0(%rdi)/8(%rdi)). Copies the name into a fresh
-;; NUL-terminated buffer, calls getenv, and returns bool (i64 0/1) in %rax.
 (define (compiler-backend-runtime-windows-env-var-exists-functions) : String
-  "    .globl tl_env_var_exists
-tl_env_var_exists:
-    .globl _tl_env_var_exists_question
-_tl_env_var_exists_question:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq 0(%rcx), %rbx
-    movq 8(%rcx), %r12
-    cmpq $0, %r12
-    jl .L_tl_env_var_exists_win_false
-    movq %r12, %rax
-    addq $1, %rax
-    js .L_tl_env_var_exists_win_false
-    movq %rax, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_env_var_exists_win_name_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_env_var_exists_win_name_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_env_var_exists_win_name_copy_loop
-.L_tl_env_var_exists_win_name_copy_done:
-    movb $0, (%r13,%r12)
-    movq %r13, %rcx
-    sub $32, %rsp
-    call getenv
-    add $32, %rsp
-    testq %rax, %rax
-    setne %al
-    movzbq %al, %rax
-    jmp .L_tl_env_var_exists_win_return
-.L_tl_env_var_exists_win_false:
-    xorq %rax, %rax
-.L_tl_env_var_exists_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
+  "")
 
-")
-
-;; Windows variant of `_tl_env_var_value`. Like env-var-exists, uses the CRT
-;; `getenv` (the Linux `.L_tl_envp` walk is unavailable on Windows). The String
-;; name arrives as a pointer to a {ptr,len} fat-value in %rcx. Copies the name
-;; into a NUL-terminated buffer, getenv -> char* (NULL if unset), strlen, copies
-;; the value into a fresh buffer, and returns a String fat-value {ptr,len} in
-;; %rax (the empty String {0,0} when unset), matching the Linux helper.
 (define (compiler-backend-runtime-windows-env-var-value-functions) : String
-  "    .globl tl_env_var_value
-tl_env_var_value:
-    .globl _tl_env_var_value
-_tl_env_var_value:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq 0(%rcx), %rbx
-    movq 8(%rcx), %r12
-    cmpq $0, %r12
-    jl .L_tl_env_var_value_win_empty
-    movq %r12, %rcx
-    addq $1, %rcx
-    js .L_tl_env_var_value_win_empty
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_env_var_value_win_name_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_env_var_value_win_name_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_env_var_value_win_name_copy_loop
-.L_tl_env_var_value_win_name_copy_done:
-    movb $0, (%r13,%r12)
-    movq %r13, %rcx
-    sub $32, %rsp
-    call getenv
-    add $32, %rsp
-    testq %rax, %rax
-    jz .L_tl_env_var_value_win_empty
-    movq %rax, %rbx
-    movq %rbx, %rcx
-    sub $32, %rsp
-    call strlen
-    add $32, %rsp
-    movq %rax, %r12
-    movq %r12, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_env_var_value_win_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_env_var_value_win_fat
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_env_var_value_win_copy_loop
-.L_tl_env_var_value_win_empty:
-    xorq %r12, %r12
-    xorq %r13, %r13
-.L_tl_env_var_value_win_fat:
-    call .L_tl_alloc16
-    movq %r13, 0(%rax)
-    movq %r12, 8(%rax)
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+  "")
 
 ;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end;
@@ -16681,9 +16260,7 @@ tl_string_concat5:
           (compiler-backend-string-contains? asm "    js .L_tl_alloc_abort\n"))
         (and
           (compiler-backend-string-contains? asm ".L_tl_alloc_abort:\n")
-          (compiler-backend-string-contains?
-            asm
-            "    leaq .L_tl_alloc_msg(%rip), %rsi\n")))]
+          (compiler-backend-string-contains? asm "    jmp tl_oom_abort\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-user-helper-name-program) : CompilerIrProgram

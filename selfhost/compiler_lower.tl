@@ -17504,7 +17504,9 @@
 (define (lower-type-contains-inline-aggregate? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyTuple elems) (lower-type-list-contains-inline-aggregate? ctx elems)]
     [(AstTyArray elem _)
       (lower-type-contains-inline-aggregate? ctx (box-get elem))]

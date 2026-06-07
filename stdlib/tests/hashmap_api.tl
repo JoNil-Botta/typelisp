@@ -82,6 +82,33 @@
     [(StringI64MapRemoveOk m) m]
     [(StringI64MapRemoveMissing m) m]))
 
+(define (update-ok? [r : StringI64MapUpdateResult]) : bool
+  (match r
+    [(StringI64MapUpdateOk _) true]
+    [(StringI64MapUpdateMissing _) false]))
+
+(define (update-result-map [r : StringI64MapUpdateResult]) : StringI64Map
+  (match r
+    [(StringI64MapUpdateOk m) m]
+    [(StringI64MapUpdateMissing m) m]))
+
+(define (entry-or-insert-inserted? [r : StringI64MapEntryOrInsertResult]) : bool
+  (match r
+    [(StringI64MapEntryOrInsertInserted _ _) true]
+    [(StringI64MapEntryOrInsertFound _ _) false]))
+
+(define (entry-or-insert-result-map [r : StringI64MapEntryOrInsertResult]) : StringI64Map
+  (match r
+    [(StringI64MapEntryOrInsertFound m _) m]
+    [(StringI64MapEntryOrInsertInserted m _) m]))
+
+(define (entry-or-insert-value-or
+  [r : StringI64MapEntryOrInsertResult]
+  [fallback : i64]) : i64
+  (match r
+    [(StringI64MapEntryOrInsertFound _ v) v]
+    [(StringI64MapEntryOrInsertInserted _ v) v]))
+
 ;; Iteration entry extractors (concrete returns, no panic in a match arm).
 (define (entry-none? [e : StringI64MapEntry]) : bool
   (match e
@@ -116,6 +143,35 @@
     [(StringStringMapRemoveOk m) m]
     [(StringStringMapRemoveMissing m) m]))
 
+(define (string-string-update-ok? [r : StringStringMapUpdateResult]) : bool
+  (match r
+    [(StringStringMapUpdateOk _) true]
+    [(StringStringMapUpdateMissing _) false]))
+
+(define (string-string-update-result-map [r : StringStringMapUpdateResult]) : StringStringMap
+  (match r
+    [(StringStringMapUpdateOk m) m]
+    [(StringStringMapUpdateMissing m) m]))
+
+(define (string-string-entry-or-insert-inserted?
+  [r : StringStringMapEntryOrInsertResult]) : bool
+  (match r
+    [(StringStringMapEntryOrInsertInserted _ _) true]
+    [(StringStringMapEntryOrInsertFound _ _) false]))
+
+(define (string-string-entry-or-insert-result-map
+  [r : StringStringMapEntryOrInsertResult]) : StringStringMap
+  (match r
+    [(StringStringMapEntryOrInsertFound m _) m]
+    [(StringStringMapEntryOrInsertInserted m _) m]))
+
+(define (string-string-entry-or-insert-value-or
+  [r : StringStringMapEntryOrInsertResult]
+  [fallback : String]) : String
+  (match r
+    [(StringStringMapEntryOrInsertFound _ v) v]
+    [(StringStringMapEntryOrInsertInserted _ v) v]))
+
 (define (string-string-entry-value-length-or
   [e : StringStringMapEntry]
   [fallback : i64]) : i64
@@ -143,6 +199,33 @@
   (match r
     [(I64I64MapRemoveOk m) m]
     [(I64I64MapRemoveMissing m) m]))
+
+(define (i64-i64-update-ok? [r : I64I64MapUpdateResult]) : bool
+  (match r
+    [(I64I64MapUpdateOk _) true]
+    [(I64I64MapUpdateMissing _) false]))
+
+(define (i64-i64-update-result-map [r : I64I64MapUpdateResult]) : I64I64Map
+  (match r
+    [(I64I64MapUpdateOk m) m]
+    [(I64I64MapUpdateMissing m) m]))
+
+(define (i64-i64-entry-or-insert-inserted? [r : I64I64MapEntryOrInsertResult]) : bool
+  (match r
+    [(I64I64MapEntryOrInsertInserted _ _) true]
+    [(I64I64MapEntryOrInsertFound _ _) false]))
+
+(define (i64-i64-entry-or-insert-result-map [r : I64I64MapEntryOrInsertResult]) : I64I64Map
+  (match r
+    [(I64I64MapEntryOrInsertFound m _) m]
+    [(I64I64MapEntryOrInsertInserted m _) m]))
+
+(define (i64-i64-entry-or-insert-value-or
+  [r : I64I64MapEntryOrInsertResult]
+  [fallback : i64]) : i64
+  (match r
+    [(I64I64MapEntryOrInsertFound _ v) v]
+    [(I64I64MapEntryOrInsertInserted _ v) v]))
 
 (define (i64-i64-entry-value-or [e : I64I64MapEntry] [fallback : i64]) : i64
   (match e
@@ -499,6 +582,108 @@
                       (lookup-value-or (string-i64-map-get r4 "k1") -1)
                       111
                       "k1 reinserted value")))))))))
+    ;; --- update / entry-or-insert API (#888) ---
+    (let
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+      [u2 : StringI64Map (string-i64-map-insert-or-update u1 "beta" 20)]
+      [hit : StringI64MapUpdateResult
+        (string-i64-map-update-if-present u2 "alpha" 70)]
+      [u3 : StringI64Map (update-result-map hit)]
+      (begin
+        (assert-true (update-ok? hit) "update-if-present hit is ok")
+        (assert-i64-eq (string-i64-map-len u3) 2 "update hit keeps len")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u3 "alpha") -1)
+          70
+          "update hit overwrites alpha")))
+    (let
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+      [miss : StringI64MapUpdateResult
+        (string-i64-map-update-if-present u1 "missing" 999)]
+      [u2 : StringI64Map (update-result-map miss)]
+      (begin
+        (assert-false (update-ok? miss) "update missing is not ok")
+        (assert-i64-eq (string-i64-map-len u2) 1 "update missing keeps len")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u2 "missing") -1)
+          -1
+          "update missing does not insert")))
+    (let
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "beta" 20)]
+      [borrow-key : String "beta"]
+      [borrow-hit : StringI64MapUpdateResult
+        (string-i64-map-update-borrowed-if-present u1 (& borrow-key) 80)]
+      [u2 : StringI64Map (update-result-map borrow-hit)]
+      (begin
+        (assert-true
+          (update-ok? borrow-hit)
+          "borrowed update-if-present hit is ok")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u2 "beta") -1)
+          80
+          "borrowed update overwrites beta")))
+    (let
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+      [u2 : StringI64Map (string-i64-map-insert-or-update u1 "beta" 20)]
+      [removed : StringI64MapRemoveResult (string-i64-map-remove u2 "alpha")]
+      [u6 : StringI64Map (remove-result-map removed)]
+      [inserted : StringI64MapEntryOrInsertResult
+        (string-i64-map-entry-or-insert u6 "alpha" 111)]
+      [u7 : StringI64Map (entry-or-insert-result-map inserted)]
+      [found : StringI64MapEntryOrInsertResult
+        (string-i64-map-entry-or-insert u7 "alpha" 222)]
+      [u8 : StringI64Map (entry-or-insert-result-map found)]
+      (begin
+        (assert-i64-eq
+          (string-i64-map-deleted u6)
+          1
+          "entry test starts with one tombstone")
+        (assert-true
+          (entry-or-insert-inserted? inserted)
+          "entry-or-insert inserts missing key")
+        (assert-i64-eq
+          (entry-or-insert-value-or inserted -1)
+          111
+          "entry-or-insert returns inserted default")
+        (assert-i64-eq
+          (string-i64-map-deleted u7)
+          0
+          "entry-or-insert reuses tombstone")
+        (assert-false
+          (entry-or-insert-inserted? found)
+          "entry-or-insert finds existing key")
+        (assert-i64-eq
+          (entry-or-insert-value-or found -1)
+          111
+          "entry-or-insert returns existing value")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u8 "alpha") -1)
+          111
+          "entry-or-insert found does not overwrite")))
+    (let
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 111)]
+      [u9 : StringI64Map (string-i64-map-insert-or-update u1 "alpha" 333)]
+      [grow0 : StringI64Map (string-i64-map-with-capacity 1)]
+      [grow1 : StringI64Map (string-i64-map-insert-or-update grow0 "a" 1)]
+      [grow2 : StringI64Map (string-i64-map-insert-or-update grow1 "b" 2)]
+      [grow3 : StringI64Map (string-i64-map-insert-or-update grow2 "c" 3)]
+      (begin
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u9 "alpha") -1)
+          333
+          "insert-or-update overwrites existing key")
+        (assert-i64-eq
+          (string-i64-map-len grow3)
+          3
+          "insert-or-update inserts multiple keys")
+        (assert-true
+          (> (string-i64-map-capacity grow3) 1)
+          "insert-or-update grows tiny table")))
     ;; --- resize / rehash (#827) ---
     ;; needs-grow? threshold: a fresh capacity-4 table is below the 3/4 load.
     (assert-false
@@ -738,6 +923,105 @@
                     0)
                   13
                   "StringString iteration value length sum")))))))
+    ;; --- generated String -> String update / entry-or-insert API (#888) ---
+    (let
+      [alpha-update : String "alpha"]
+      [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+      [ssu1 : StringStringMap
+        (string-string-map-insert-or-update ssu0 "alpha" "red")]
+      [ssu2 : StringStringMap
+        (string-string-map-insert-or-update ssu1 "beta" "amber")]
+      [ssu-hit : StringStringMapUpdateResult
+        (string-string-map-update-borrowed-if-present
+          ssu2
+          (& alpha-update)
+          "green")]
+      [ssu3 : StringStringMap (string-string-update-result-map ssu-hit)]
+      (begin
+        (assert-true
+          (string-string-update-ok? ssu-hit)
+          "StringString borrowed update hit")
+        (assert-owned-string-eq
+          (string-string-lookup-value-or
+            (string-string-map-get ssu3 "alpha")
+            "fallback")
+          "green"
+          "StringString update overwrites alpha")))
+    (let
+      [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+      [ssu1 : StringStringMap
+        (string-string-map-insert-or-update ssu0 "alpha" "red")]
+      [ssu-miss : StringStringMapUpdateResult
+        (string-string-map-update-if-present ssu1 "missing" "black")]
+      [ssu2 : StringStringMap (string-string-update-result-map ssu-miss)]
+      (begin
+        (assert-false
+          (string-string-update-ok? ssu-miss)
+          "StringString update miss")
+        (assert-i64-eq
+          (string-string-map-len ssu2)
+          1
+          "StringString update miss keeps len")))
+    (let
+      [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+      [ssu1 : StringStringMap
+        (string-string-map-insert-or-update ssu0 "alpha" "green")]
+      [ssu2 : StringStringMap
+        (string-string-map-insert-or-update ssu1 "beta" "amber")]
+      [ssu-removed : StringStringMapRemoveResult
+        (string-string-map-remove ssu2 "beta")]
+      [ssu3 : StringStringMap (string-string-remove-result-map ssu-removed)]
+      [ssu-inserted : StringStringMapEntryOrInsertResult
+        (string-string-map-entry-or-insert ssu3 "beta" "gold")]
+      [ssu4 : StringStringMap
+        (string-string-entry-or-insert-result-map ssu-inserted)]
+      [ssu-found : StringStringMapEntryOrInsertResult
+        (string-string-map-entry-or-insert ssu4 "alpha" "purple")]
+      [ssu5 : StringStringMap
+        (string-string-entry-or-insert-result-map ssu-found)]
+      (begin
+        (assert-true
+          (string-string-entry-or-insert-inserted? ssu-inserted)
+          "StringString entry-or-insert inserted")
+        (assert-owned-string-eq
+          (string-string-entry-or-insert-value-or ssu-inserted "fallback")
+          "gold"
+          "StringString entry-or-insert returns default")
+        (assert-i64-eq
+          (string-string-map-deleted ssu4)
+          0
+          "StringString entry-or-insert reuses tombstone")
+        (assert-false
+          (string-string-entry-or-insert-inserted? ssu-found)
+          "StringString entry-or-insert found")
+        (assert-owned-string-eq
+          (string-string-entry-or-insert-value-or ssu-found "fallback")
+          "green"
+          "StringString entry-or-insert returns existing")
+        (assert-owned-string-eq
+          (string-string-lookup-value-or
+            (string-string-map-get ssu5 "alpha")
+            "fallback")
+          "green"
+          "StringString entry-or-insert found does not overwrite")))
+    (let
+      [ssu0 : StringStringMap (string-string-map-with-capacity 2)]
+      [ssu1 : StringStringMap
+        (string-string-map-insert-or-update ssu0 "alpha" "green")]
+      [ssu2 : StringStringMap
+        (string-string-map-insert-or-update ssu1 "beta" "gold")]
+      [ssu3 : StringStringMap
+        (string-string-map-insert-or-update ssu2 "gamma" "blue")]
+      (begin
+        (assert-owned-string-eq
+          (string-string-lookup-value-or
+            (string-string-map-get ssu3 "gamma")
+            "fallback")
+          "blue"
+          "StringString insert-or-update inserts new key")
+        (assert-true
+          (> (string-string-map-capacity ssu3) 2)
+          "StringString insert-or-update grows")))
     ;; --- generated i64 -> i64 map family (#817) ---
     (let
       [ii0 : I64I64Map (i64-i64-map-with-capacity 4)]
@@ -793,4 +1077,75 @@
                     0)
                   169
                   "I64I64 iteration value sum")))))))
+    ;; --- generated i64 -> i64 update / entry-or-insert API (#888) ---
+    (let
+      [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
+      [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 10)]
+      [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 20)]
+      [iiu-hit : I64I64MapUpdateResult
+        (i64-i64-map-update-if-present iiu2 1 70)]
+      [iiu3 : I64I64Map (i64-i64-update-result-map iiu-hit)]
+      (begin
+        (assert-true (i64-i64-update-ok? iiu-hit) "I64I64 update hit")
+        (assert-i64-eq
+          (i64-i64-lookup-value-or (i64-i64-map-get iiu3 1) -1)
+          70
+          "I64I64 update overwrites key 1")))
+    (let
+      [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
+      [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 10)]
+      [iiu-miss : I64I64MapUpdateResult
+        (i64-i64-map-update-if-present iiu1 99 990)]
+      [iiu2 : I64I64Map (i64-i64-update-result-map iiu-miss)]
+      (begin
+        (assert-false (i64-i64-update-ok? iiu-miss) "I64I64 update miss")
+        (assert-i64-eq (i64-i64-map-len iiu2) 1 "I64I64 update miss keeps len")))
+    (let
+      [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
+      [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 70)]
+      [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 20)]
+      [iiu-removed : I64I64MapRemoveResult (i64-i64-map-remove iiu2 2)]
+      [iiu5 : I64I64Map (i64-i64-remove-result-map iiu-removed)]
+      [iiu-inserted : I64I64MapEntryOrInsertResult
+        (i64-i64-map-entry-or-insert iiu5 2 222)]
+      [iiu6 : I64I64Map (i64-i64-entry-or-insert-result-map iiu-inserted)]
+      [iiu-found : I64I64MapEntryOrInsertResult
+        (i64-i64-map-entry-or-insert iiu6 1 111)]
+      [iiu7 : I64I64Map (i64-i64-entry-or-insert-result-map iiu-found)]
+      (begin
+        (assert-true
+          (i64-i64-entry-or-insert-inserted? iiu-inserted)
+          "I64I64 entry-or-insert inserted")
+        (assert-i64-eq
+          (i64-i64-entry-or-insert-value-or iiu-inserted -1)
+          222
+          "I64I64 entry-or-insert returns default")
+        (assert-i64-eq
+          (i64-i64-map-deleted iiu6)
+          0
+          "I64I64 entry-or-insert reuses tombstone")
+        (assert-false
+          (i64-i64-entry-or-insert-inserted? iiu-found)
+          "I64I64 entry-or-insert found")
+        (assert-i64-eq
+          (i64-i64-entry-or-insert-value-or iiu-found -1)
+          70
+          "I64I64 entry-or-insert returns existing")
+        (assert-i64-eq
+          (i64-i64-lookup-value-or (i64-i64-map-get iiu7 1) -1)
+          70
+          "I64I64 entry-or-insert found does not overwrite")))
+    (let
+      [iiu0 : I64I64Map (i64-i64-map-with-capacity 2)]
+      [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 70)]
+      [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 222)]
+      [iiu8 : I64I64Map (i64-i64-map-insert-or-update iiu2 3 30)]
+      (begin
+        (assert-i64-eq
+          (i64-i64-lookup-value-or (i64-i64-map-get iiu8 3) -1)
+          30
+          "I64I64 insert-or-update inserts key 3")
+        (assert-true
+          (> (i64-i64-map-capacity iiu8) 2)
+          "I64I64 insert-or-update grows")))
     42))

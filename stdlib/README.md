@@ -66,13 +66,16 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   compatibility `String -> i64` map, while generated `StringStringMap` and
   `I64I64Map` add `String -> String` and `i64 -> i64` instantiations with the
   same API shape: `*-map-with-capacity` / `-insert` / `-put` / `-get` /
-  `-contains?` / `-remove` / `-len` / `-capacity`, tombstone accounting,
+  `-contains?` / `-remove` / `-update-if-present` / `-insert-or-update` /
+  `-entry-or-insert` / `-len` / `-capacity`, tombstone accounting,
   resize/rehash helpers, and deterministic bucket-order iteration through
   `-next-occupied` / `-entry-at`. String-key maps expose borrowed-key lookup,
-  containment, and removal helpers such as `string-string-map-get-borrowed`;
-  owned-key wrappers remain for compatibility. Generated metadata uses explicit
-  key descriptor identities: `stdlib/hashmap/string-key-v1` for `String` keys
-  and `stdlib/hashmap/i64-key-v1` for `i64` keys; unsupported key types are not
+  containment, removal, and update helpers such as
+  `string-string-map-get-borrowed` and
+  `string-string-map-update-borrowed-if-present`; owned-key wrappers remain for
+  compatibility. Generated metadata uses explicit key descriptor identities:
+  `stdlib/hashmap/string-key-v1` for `String` keys and
+  `stdlib/hashmap/i64-key-v1` for `i64` keys; unsupported key types are not
   inferred through traits. Use these stdlib maps for ordinary program data and
   keep compiler-specialized symbol tables where their value domain or lifecycle
   is deliberately narrower. Import it with

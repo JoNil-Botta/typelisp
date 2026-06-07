@@ -81,8 +81,8 @@ Coverage notes:
   range normalization, and string edge cases.
 - `hashmap_api.tl` covers the compatibility `StringI64Map`, generated
   `StringStringMap` and `I64I64Map` APIs, key descriptor identities, borrowed
-  string-key wrappers, tombstone reuse, growth/rehash, and deterministic
-  bucket-order iteration.
+  string-key wrappers, update-only and entry-or-insert helpers, tombstone reuse,
+  growth/rehash, and deterministic bucket-order iteration.
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and async start/wait API validation.

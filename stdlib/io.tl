@@ -190,22 +190,22 @@
       [ignore-mode : i32 mode]
       [f : i64 (cast flags : i64)]
       [access : i64
-        (if (= (bit-and f 8) 0)
-          (if (= (bit-and f 2) 0)
-            (if (= (bit-and f 1) 0)
-              2147483648
-              1073741824)
-            3221225472)
-          4)]
+        (if (= (bit-and f 0x8) 0)
+          (if (= (bit-and f 0x2) 0)
+            (if (= (bit-and f 0x1) 0)
+              0x80000000
+              0x40000000)
+            0xc0000000)
+          0x4)]
       [disp : i64
-        (if (= (bit-and f 256) 0)
-          (if (= (bit-and f 512) 0)
+        (if (= (bit-and f 0x100) 0)
+          (if (= (bit-and f 0x200) 0)
             3
             5)
-          (if (= (bit-and f 512) 0)
+          (if (= (bit-and f 0x200) 0)
             4
             2))]
-      [handle : i64 (io-win-create-file path access 3 0 disp 128 0)]
+      [handle : i64 (io-win-create-file path access 0x3 0 disp 0x80 0)]
       (if (= handle -1)
         (begin
           (unsafe
@@ -692,7 +692,7 @@
 
 ;: Low 32-bit mask isolating a base-2^32 limb.
 (define ftoa-mask32 : u64
-  (cast 4294967295 : u64))
+  (cast 0xffffffff : u64))
 
 ;: A zero-valued BigNum.
 (define (bn-zero) : BigNum
@@ -982,10 +982,10 @@
           (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))
       (let
         [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
-        [expf : u64 (bit-and (shr bits 52) (cast 2047 : u64))]
-        [frac : u64 (bit-and bits (cast 4503599627370495 : u64))]
+        [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
+        [frac : u64 (bit-and bits (cast 0xfffffffffffff : u64))]
         (cond
-          [(= expf (cast 2047 : u64))
+          [(= expf (cast 0x7ff : u64))
             (if (= frac (cast 0 : u64))
               (if neg
                 "-inf"
@@ -1002,7 +1002,7 @@
               [m : u64
                 (if (= expf (cast 0 : u64))
                   frac
-                  (bit-or frac (cast 4503599627370496 : u64)))]
+                  (bit-or frac (cast 0x10000000000000 : u64)))]
               [e2 : i64
                 (if (= expf (cast 0 : u64))
                   -1074

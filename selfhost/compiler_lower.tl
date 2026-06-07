@@ -19034,12 +19034,12 @@
           [next : i64
             (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
           [reduced : i64
-            (+ (bit-and next 2147483647) (shr next 31))]
+            (+ (bit-and next 0x7fffffff) (shr next 31))]
           (begin
             (set!
               hash
-              (if (>= reduced 2147483647)
-                (- reduced 2147483647)
+              (if (>= reduced 0x7fffffff)
+                (- reduced 0x7fffffff)
                 reduced))
             (set! i (+ i 1)))))
       hash)))

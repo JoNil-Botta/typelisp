@@ -383,10 +383,10 @@
 (define (process-decode-status [status : i32]) : i64
   (let
     [value : i64 (cast status : i64)]
-    [signal : i64 (bit-and value 127)]
+    [signal : i64 (bit-and value 0x7f)]
     (if (not (= signal 0))
       (+ 128 signal)
-      (bit-and (shr value 8) 255))))
+      (bit-and (shr value 8) 0xff))))
 
 ;: Write `len` bytes at `data-addr` to `fd`, returning 0 on success, the raw
 ;: negative `-errno` on a write error, or -1 on a zero-length write.
@@ -879,11 +879,11 @@
                   [handle : i64
                     (io-win-create-file
                       (io-array-const-ptr namebuf)
-                      3221225472
-                      3
+                      0xc0000000
+                      0x3
                       (process-array-u64-addr security)
                       2
-                      67109120
+                      0x4000100
                       0)]
                   (if (= handle -1)
                     -1
@@ -905,7 +905,7 @@
       [procinfo : (Array u64) (make-array u64 3)]
       (begin
         (array-set! startup 0 (cast 104 : u64))
-        (array-set! startup 7 (shl (cast 256 : u64) 32))
+        (array-set! startup 7 (shl (cast 0x100 : u64) 32))
         (array-set!
           startup
           10

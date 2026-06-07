@@ -58,11 +58,11 @@
 
 ;: XCR0 bit1 = SSE/XMM, bit2 = AVX/YMM. 0x6 means YMM state is enabled.
 (define (cpu-ymm-enabled?) : bool
-  (= (bit-and (cpu-xcr0) 6) 6))
+  (= (bit-and (cpu-xcr0) 0x6) 0x6))
 
 ;: XCR0 0xe6 = SSE | AVX | opmask | ZMM_Hi256 | Hi16_ZMM: ZMM state is enabled.
 (define (cpu-zmm-enabled?) : bool
-  (= (bit-and (cpu-xcr0) 230) 230))
+  (= (bit-and (cpu-xcr0) 0xe6) 0xe6))
 
 ;: CPUID.7.0:EBX bit 5 = AVX2.
 (define (cpu-has-avx2?) : bool

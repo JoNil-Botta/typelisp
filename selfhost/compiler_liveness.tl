@@ -81,7 +81,7 @@
   31)
 
 (define (compiler-live-set-bits-mask) : i64
-  2147483647)
+  0x7fffffff)
 
 (define (compiler-live-set-word-index [value : i64]) : i64
   (/ value 31))
@@ -99,7 +99,7 @@
   (shr chunk 31))
 
 (define (compiler-live-set-chunk-bits [chunk : i64]) : i64
-  (bit-and chunk 2147483647))
+  (bit-and chunk 0x7fffffff))
 
 (define (compiler-live-set-empty) : CompilerLiveI64Set
   CompilerLiveI64Nil)

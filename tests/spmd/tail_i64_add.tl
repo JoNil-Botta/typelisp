@@ -39,4 +39,4 @@
     (begin
       (init a b n)
       (fill a b out n)
-      (bit-and (checksum out n) 255))))
+      (bit-and (checksum out n) 0xff))))

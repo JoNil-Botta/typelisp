@@ -5797,6 +5797,60 @@
       (match ticket [(Open code) unit] [(Closed) unit])
       (take-ticket ticket))))")
 
+(define (compiler-typecheck-move-cleanup-enum-payload-prefix) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(define (close-code [code : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defenum MaybeHandle
+  (:cleanup cleanup-maybe-handle)
+  (Some FileHandle (:owned))
+  (Code i64 (:cleanup close-code))
+  (None))
+(define (take-handle [h : FileHandle]) : unit unit)
+")
+
+(define (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (cleanup-enum-owner-payload-one-shot [m : MaybeHandle]) : unit
+  (match m
+    [(Some h) (take-handle h)]
+    [(Code code) unit]
+    [(None) unit]))"))
+
+(define (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (bad-cleanup-enum-owner-payload-repeat [m : MaybeHandle]) : unit
+  (match m
+    [(Some h) (begin (take-handle h) (take-handle h))]
+    [(Code code) unit]
+    [(None) unit]))"))
+
+(define (compiler-typecheck-move-cleanup-enum-payload-copyable-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (cleanup-enum-payload-copyable [m : MaybeHandle]) : i64
+  (match m
+    [(Some h) 0]
+    [(Code code) (+ code code)]
+    [(None) 0]))"))
+
+(define (compiler-typecheck-move-cleanup-enum-payload-shadow-source) : String
+  (string-append
+    (compiler-typecheck-move-cleanup-enum-payload-prefix)
+    "(define (cleanup-enum-payload-shadow
+  [h : FileHandle]
+  [m : MaybeHandle]) : unit
+  (begin
+    (match m
+      [(Some h) (take-handle h)]
+      [(Code code) unit]
+      [(None) unit])
+    (take-handle h)))"))
+
 (define (compiler-typecheck-move-owner-call-ok-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -6803,6 +6857,23 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-cleanup-enum-match-local-reuse-source)
         "typecheck: use of moved value `ticket`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source)
+        "typecheck: use of moved value `h`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-payload-copyable-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-enum-payload-shadow-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

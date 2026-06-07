@@ -2749,12 +2749,7 @@
     [(AstTyMutRef _ inner)
       (match (tc-resolve-type ctx (box-get inner))
         [(AstTyStr) (ErrTcUnit (tc-source-str-mut-ref-policy-message))]
-        [_
-          (match (tc-source-type-policy-ok ctx (box-get inner))
-            [(OkTcUnit)
-              (ErrTcUnit
-                "typecheck: mutable reference types require mutable borrow checker support (#806)")]
-            [(ErrTcUnit message) (ErrTcUnit message)])])]
+        [_ (tc-source-type-policy-ok ctx (box-get inner))])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx (box-get inner))]
     [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
     [(AstTyEnum name)
@@ -3154,7 +3149,7 @@
         (match (tc-source-expr-policy-ok ctx inner)
           [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (tc-source-expr-policy-ok ctx place))]
@@ -7631,7 +7626,7 @@
     [(AstExprSpmdReduce _ _ _ _ _ _ _)
       (ErrTcSpmdExprInfo
         "typecheck: spmd-reduce inside foreach is not supported")]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (match (tc-spmd-expr ctx env spmd-env place)
@@ -8136,7 +8131,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-expr-uses-free-name? inner name bound))]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (tc-expr-uses-free-name? place name bound))]
@@ -8516,7 +8511,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-expr-sets-free-name? inner name bound))]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (tc-expr-sets-free-name? place name bound))]
@@ -10655,6 +10650,7 @@
 (define (tc-borrow-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [place-expr : AstExpr]) : ResultTcType
   (match (tc-borrow-place ctx env place-expr)
@@ -10663,10 +10659,16 @@
         [(TcBorrowPlace inferred referent-ty)
           (match lifetime
             [(AstBorrowLifetimeInferred)
-              (OkTcType (ast-ty-ref inferred referent-ty))]
+              (OkTcType
+                (if mutable
+                  (ast-ty-mut-ref inferred referent-ty)
+                  (ast-ty-ref inferred referent-ty)))]
             [(AstBorrowLifetimeNamed requested)
               (if (string-eq requested inferred)
-                (OkTcType (ast-ty-ref inferred referent-ty))
+                (OkTcType
+                  (if mutable
+                    (ast-ty-mut-ref inferred referent-ty)
+                    (ast-ty-ref inferred referent-ty)))
                 (ErrTcType "typecheck: borrow lifetime mismatch"))])])]
     [(ErrTcBorrowPlace message) (ErrTcType message)]))
 
@@ -12357,10 +12359,10 @@
               (ErrTcType
                 "typecheck: cast requires scalar numeric (integer/char/float) source and target"))]
           [(ErrTcType message) (ErrTcType message)]))]
-    [(AstExprBorrow lifetime place-box)
+    [(AstExprBorrow mutable lifetime place-box)
       (let
         [place : AstExpr (box-get place-box)]
-        (tc-borrow-expr ctx env lifetime place))]
+        (tc-borrow-expr ctx env mutable lifetime place))]
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -14184,7 +14186,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
-    [(AstExprBorrow _ inner-box)
+    [(AstExprBorrow _ _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
@@ -14438,13 +14440,15 @@
     [(OkTcMove _) OkTcUnit]
     [(ErrTcMove message) (ErrTcUnit message)]))
 
-;; --- lexical immutable-borrow conflict checker (#1050) ----------------------
+;; --- lexical borrow conflict checker (#1050/#806) --------------------------
 ;;
-;; Immutable borrows are lexical in this staged model: `begin` keeps borrows
-;; live, while `let`, `with-arena`, resource `with`, lambdas, and individual
-;; match arms bound their own borrow additions. The checker reuses the move
-;; path encoding so whole roots, fields, tuple elements, and fixed-array literal
-;; elements share the same ancestor/descendant conflict policy as moved paths.
+;; Borrows are lexical in this staged model: `begin` keeps borrows live, while
+;; `let`, `with-arena`, resource `with`, lambdas, and individual match arms
+;; bound their own borrow additions. The checker reuses the move path encoding
+;; so whole roots, fields, tuple elements, and fixed-array literal elements share
+;; the same ancestor/descendant conflict policy as moved paths. Mutable borrows
+;; add both the ordinary borrowed path and a namespaced mutable marker, allowing
+;; many immutable borrows but only one exclusive mutable borrow.
 (defenum TcBorrowCheckResult
   (OkTcBorrowCheck TcMovedSet)
   (ErrTcBorrowCheck String))
@@ -14467,6 +14471,28 @@
     (string-append "typecheck: cannot assign to borrowed place `" path)
     "`"))
 
+(define (tc-borrow-check-mutably-borrow-message [path : String]) : String
+  (string-append
+    (string-append "typecheck: cannot mutably borrow borrowed place `" path)
+    "`"))
+
+(define (tc-borrow-check-immutably-borrow-message [path : String]) : String
+  (string-append
+    (string-append
+      "typecheck: cannot immutably borrow mutably borrowed place `"
+      path)
+    "`"))
+
+(define (tc-borrow-check-mut-path [path : String]) : String
+  (string-append "#mut." path))
+
+(define (tc-borrow-check-remove-root-state
+  [borrowed : TcMovedSet]
+  [name : String]) : TcMovedSet
+  (tc-moved-remove-root-state
+    (tc-moved-remove-root-state borrowed name)
+    (tc-borrow-check-mut-path name)))
+
 (define (tc-borrow-check-local-place-path
   [locals : TcMovedSet]
   [expr : AstExpr]) : TcMaybeString
@@ -14479,13 +14505,17 @@
         (TcNoString))]
     [(TcNoString) (TcNoString)]))
 
-(define (tc-borrow-check-add-place
-  [locals : TcMovedSet]
+(define (tc-borrow-check-add-borrow-path
   [borrowed : TcMovedSet]
-  [place : AstExpr]) : TcMovedSet
-  (match (tc-borrow-check-local-place-path locals place)
-    [(TcSomeString path) (tc-moved-add borrowed (tc-moved-path-key path))]
-    [(TcNoString) borrowed]))
+  [path : String]
+  [mutable : bool]) : TcMovedSet
+  (let
+    [borrowed1 : TcMovedSet (tc-moved-add borrowed (tc-moved-path-key path))]
+    (if mutable
+      (tc-moved-add
+        borrowed1
+        (tc-moved-path-key (tc-borrow-check-mut-path path)))
+      borrowed1)))
 
 (define (tc-borrow-check-move-conflict [borrowed : TcMovedSet] [path : String]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
@@ -14498,6 +14528,40 @@
   (if (tc-moved-path-conflict? borrowed path)
     (ErrTcUnit (tc-borrow-check-assign-message path))
     OkTcUnit))
+
+(define (tc-borrow-check-mutably-borrow-conflict
+  [borrowed : TcMovedSet]
+  [path : String]) : ResultTcUnit
+  (if (tc-moved-path-conflict? borrowed path)
+    (ErrTcUnit (tc-borrow-check-mutably-borrow-message path))
+    OkTcUnit))
+
+(define (tc-borrow-check-immutably-borrow-conflict
+  [borrowed : TcMovedSet]
+  [path : String]) : ResultTcUnit
+  (if (tc-moved-path-conflict? borrowed (tc-borrow-check-mut-path path))
+    (ErrTcUnit (tc-borrow-check-immutably-borrow-message path))
+    OkTcUnit))
+
+(define (tc-borrow-check-add-place-with-mutability
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [mutable : bool]
+  [place : AstExpr]) : TcBorrowCheckResult
+  (match (tc-borrow-check-local-place-path locals place)
+    [(TcSomeString path)
+      (if mutable
+        (match (tc-borrow-check-mutably-borrow-conflict borrowed path)
+          [(OkTcUnit)
+            (OkTcBorrowCheck
+              (tc-borrow-check-add-borrow-path borrowed path true))]
+          [(ErrTcUnit message) (ErrTcBorrowCheck message)])
+        (match (tc-borrow-check-immutably-borrow-conflict borrowed path)
+          [(OkTcUnit)
+            (OkTcBorrowCheck
+              (tc-borrow-check-add-borrow-path borrowed path false))]
+          [(ErrTcUnit message) (ErrTcBorrowCheck message)]))]
+    [(TcNoString) (OkTcBorrowCheck borrowed)]))
 
 (define (tc-borrow-check-after-consuming-place
   [locals : TcMovedSet]
@@ -14700,7 +14764,7 @@
                           name
                           (tc-move-binding-type ctx env maybe-ty init))
                         (tc-moved-add locals name)
-                        (tc-moved-remove-root-state borrowed2 name)
+                        (tc-borrow-check-remove-root-state borrowed2 name)
                         rest)]
                     [(ErrTcBorrowCheck message)
                       (ErrTcBorrowCheckBindings message)])]
@@ -14740,7 +14804,7 @@
                               name
                               (tc-type-without-regions init-ty))
                             (tc-moved-add locals name)
-                            (tc-moved-remove-root-state borrowed2 name)
+                            (tc-borrow-check-remove-root-state borrowed2 name)
                             rest)]
                         [(ErrTcType message)
                           (ErrTcBorrowCheckResourceBindings message)])]
@@ -14820,15 +14884,24 @@
           [(OkTcBorrowCheck borrowed1)
             (match (tc-move-call-param-types ctx env func)
               [(OkTcTypeList params)
-                (tc-borrow-check-exprs-with-types
+                (match (tc-borrow-check-exprs-with-types
                   ctx
                   env
                   locals
-                  borrowed1
+                  (tc-moved-clone borrowed1)
                   args
-                  params)]
+                  params)
+                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
               [(ErrTcTypeList _)
-                (tc-borrow-check-exprs ctx env locals borrowed1 args)])]
+                (match (tc-borrow-check-exprs
+                  ctx
+                  env
+                  locals
+                  (tc-moved-clone borrowed1)
+                  args)
+                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
@@ -15006,15 +15079,18 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
-    [(AstExprBorrow _ inner-box)
+    [(AstExprBorrow mutable _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed inner)
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-place ctx env inner)
               [(OkTcBorrowPlace _)
-                (OkTcBorrowCheck
-                  (tc-borrow-check-add-place locals borrowed1 inner))]
+                (tc-borrow-check-add-place-with-mutability
+                  locals
+                  borrowed1
+                  mutable
+                  inner)]
               [(ErrTcBorrowPlace message) (ErrTcBorrowCheck message)])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExprMatch scrut-box arms)
@@ -15040,7 +15116,9 @@
                   ctx
                   (tc-bind env index (tc-resolve-type ctx index-ty))
                   (tc-moved-add (tc-moved-clone locals) index)
-                  (tc-moved-remove-root-state (tc-moved-clone borrowed2) index)
+                  (tc-borrow-check-remove-root-state
+                    (tc-moved-clone borrowed2)
+                    index)
                   body)
                   [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed2)]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
@@ -15669,10 +15747,11 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (ast-expr-cast (macro-hygiene-expr inner env macro-name depth) ty))]
-    [(AstExprBorrow lifetime place-box)
+    [(AstExprBorrow mutable lifetime place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (ast-expr-borrow
+          mutable
           lifetime
           (macro-hygiene-expr place env macro-name depth)))]
     [(AstExprMatch scrut-box arms)

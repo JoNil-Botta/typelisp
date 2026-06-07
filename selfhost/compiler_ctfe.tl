@@ -515,7 +515,10 @@
     [(AstExprSet _ _) "set!"]
     [(AstExprAnn _ _) "type annotation"]
     [(AstExprCast _ _) "cast"]
-    [(AstExprBorrow _ _) "borrow"]
+    [(AstExprBorrow mutable _ _)
+      (if mutable
+        "mutable borrow"
+        "borrow")]
     [(AstExprMatch _ _) "match"]
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) "spmd-reduce"]
@@ -3314,13 +3317,13 @@
           [(OkCtfeQuoteExpr quoted _ next-fuel)
             (OkCtfeQuoteExpr (ast-expr-cast quoted ty) ty next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
-    [(AstExprBorrow lifetime place-box)
+    [(AstExprBorrow mutable lifetime place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (match (ctfe-quote-expr place env fuel quasiquote)
           [(OkCtfeQuoteExpr quoted-place _ next-fuel)
             (OkCtfeQuoteExpr
-              (ast-expr-borrow lifetime quoted-place)
+              (ast-expr-borrow mutable lifetime quoted-place)
               (AstTyExpr)
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
@@ -4238,16 +4241,18 @@
               [b-inner : AstExpr (box-get b-inner-box)]
               (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty)))]
           [_ false]))]
-    [(AstExprBorrow a-life a-place-box)
+    [(AstExprBorrow a-mut a-life a-place-box)
       (let
         [a-place : AstExpr (box-get a-place-box)]
         (match b
-          [(AstExprBorrow b-life b-place-box)
+          [(AstExprBorrow b-mut b-life b-place-box)
             (let
               [b-place : AstExpr (box-get b-place-box)]
               (and
-                (ctfe-borrow-lifetime-eq a-life b-life)
-                (ctfe-expr-eq a-place b-place)))]
+                (= a-mut b-mut)
+                (and
+                  (ctfe-borrow-lifetime-eq a-life b-life)
+                  (ctfe-expr-eq a-place b-place))))]
           [_ false]))]
     [(AstExprMatch a-scrut-box a-arms)
       (let

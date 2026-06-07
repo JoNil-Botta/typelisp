@@ -834,7 +834,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (tltest-reach-mark-expr place names))]
@@ -886,7 +886,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (tltest-reach-mark-expr place names))]

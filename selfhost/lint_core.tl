@@ -905,7 +905,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBorrow _ place-box)
+    [(AstExprBorrow _ _ place-box)
       (let
         [place : AstExpr (box-get place-box)]
         (lint-walk-expr place threshold acc))]

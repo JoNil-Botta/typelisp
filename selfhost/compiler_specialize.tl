@@ -4163,7 +4163,7 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-unquote-splicing rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprBorrow _ _) (OkSpecExpr expr state)]))
+    [(AstExprBorrow _ _ _) (OkSpecExpr expr state)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
   (match expr
@@ -4672,7 +4672,7 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
-    [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
+    [(AstExprBorrow _ _ _) (OkSpecSubExpr expr)]))
 
 (define (spec-substitute-values-expr-list
   [exprs : AstExprList]
@@ -5270,7 +5270,7 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
-    [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
+    [(AstExprBorrow _ _ _) (OkSpecSubExpr expr)]))
 
 (define (spec-substitute-types-expr-list
   [exprs : AstExprList]

@@ -137,6 +137,14 @@
 (define (fmt-is-digit [c : char]) : bool
   (and (>= c #0') (<= c #9')))
 
+(define (fmt-is-hex-digit [c : char]) : bool
+  (or
+    (fmt-is-digit c)
+    (or (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F')))))
+
+(define (fmt-is-binary-digit [c : char]) : bool
+  (or (= c #0') (= c #1')))
+
 (define (fmt-is-alpha [c : char]) : bool
   (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
 
@@ -180,6 +188,31 @@
           false)
         false))))
 
+(define (fmt-number-digits-start [src : String] [start : i64]) : i64
+  (if (= (string-ref src start) #-')
+    (+ start 1)
+    start))
+
+(define (fmt-number-prefixed? [src : String] [start : i64] [n : i64]) : bool
+  (let
+    [digits-start : i64 (fmt-number-digits-start src start)]
+    (if (< (+ digits-start 1) n)
+      (if (= (string-ref src digits-start) #0')
+        (let
+          [prefix : char (string-ref src (+ digits-start 1))]
+          (or
+            (= prefix #x')
+            (or (= prefix #X') (or (= prefix #b') (= prefix #B')))))
+        false)
+      false)))
+
+(define (fmt-number-prefix-base [src : String] [start : i64]) : i64
+  (let
+    [prefix : char (string-ref src (+ (fmt-number-digits-start src start) 1))]
+    (if (or (= prefix #x') (= prefix #X'))
+      16
+      2)))
+
 (define (fmt-starts-ellipsis [src : String] [i : i64] [n : i64]) : bool
   (and
     (< (+ i 2) n)
@@ -187,7 +220,47 @@
       (= (string-ref src i) #.')
       (and (= (string-ref src (+ i 1)) #.') (= (string-ref src (+ i 2)) #.')))))
 
-(define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
+(define (fmt-scan-based-int-end
+  [src : String]
+  [start : i64]
+  [n : i64]
+  [base : i64]) : i64
+  (let
+    [j : i64 start]
+    [keep : bool true]
+    (begin
+      (while keep
+        (if (< j n)
+          (let
+            [c : char (string-ref src j)]
+            (if (if (= base 16)
+              (fmt-is-hex-digit c)
+              (fmt-is-binary-digit c))
+              (set! j (+ j 1))
+              (set! keep false)))
+          (set! keep false)))
+      j)))
+
+(define (fmt-scan-prefixed-number-end [src : String] [start : i64] [n : i64]) : i64
+  (let
+    [digits-start : i64 (fmt-number-digits-start src start)]
+    [base : i64 (fmt-number-prefix-base src start)]
+    [value-start : i64 (+ digits-start 2)]
+    [end : i64 (fmt-scan-based-int-end src value-start n base)]
+    (cond
+      [(= end value-start)
+        (begin
+          (panic "format lexer: malformed integer literal")
+          end)]
+      [(if (< end n)
+          (fmt-is-symbol-char (string-ref src end))
+          false)
+        (begin
+          (panic "format lexer: malformed integer literal")
+          end)]
+      [else end])))
+
+(define (fmt-scan-decimal-number-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [seen-dot : bool false]
@@ -209,6 +282,11 @@
                 (set! keep false))))
           (set! keep false)))
       j)))
+
+(define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
+  (if (fmt-number-prefixed? src start n)
+    (fmt-scan-prefixed-number-end src start n)
+    (fmt-scan-decimal-number-end src start n)))
 
 (define (fmt-scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
   (let

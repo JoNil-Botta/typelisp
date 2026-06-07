@@ -77,6 +77,21 @@
 (define (is-digit [c : char]) : bool
   (and (>= c #0') (<= c #9')))
 
+(define (is-hex-digit [c : char]) : bool
+  (or (is-digit c) (or (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F')))))
+
+(define (is-binary-digit [c : char]) : bool
+  (or (= c #0') (= c #1')))
+
+(define (hex-digit-value [c : char]) : i64
+  (let
+    [code : i64 (cast c : i64)]
+    (cond
+      [(and (>= code 48) (<= code 57)) (- code 48)]
+      [(and (>= code 97) (<= code 102)) (+ 10 (- code 97))]
+      [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
+      [else 0])))
+
 ;; `c` is an ASCII letter.
 (define (is-alpha [c : char]) : bool
   (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
@@ -150,6 +165,23 @@
           (set! keep false)))
       j)))
 
+(define (scan-based-int-end [src : String] [start : i64] [n : i64] [base : i64]) : i64
+  (let
+    [j : i64 start]
+    [keep : bool true]
+    (begin
+      (while keep
+        (if (< j n)
+          (let
+            [c : char (string-ref src j)]
+            (if (if (= base 16)
+              (is-hex-digit c)
+              (is-binary-digit c))
+              (set! j (+ j 1))
+              (set! keep false)))
+          (set! keep false)))
+      j)))
+
 ;; A float token is an integer digit run followed by `.` and at least one
 ;; fractional digit. The literal text is carried through later selfhost stages.
 (define (float-tail? [src : String] [int-end : i64] [n : i64]) : bool
@@ -172,8 +204,76 @@
     (+ start 1)
     start))
 
+(define (number-prefixed? [src : String] [start : i64] [n : i64]) : bool
+  (let
+    [digits-start : i64 (number-digits-start src start)]
+    (if (< (+ digits-start 1) n)
+      (if (= (string-ref src digits-start) #0')
+        (let
+          [prefix : char (string-ref src (+ digits-start 1))]
+          (or
+            (= prefix #x')
+            (or (= prefix #X') (or (= prefix #b') (= prefix #B')))))
+        false)
+      false)))
+
+(define (number-prefix-base [src : String] [start : i64]) : i64
+  (let
+    [prefix : char (string-ref src (+ (number-digits-start src start) 1))]
+    (if (or (= prefix #x') (= prefix #X'))
+      16
+      2)))
+
+(define (scan-prefixed-int-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
+  (let
+    [digits-start : i64 (number-digits-start src start)]
+    [base : i64 (number-prefix-base src start)]
+    [value-start : i64 (+ digits-start 2)]
+    [end : i64 (scan-based-int-end src value-start n base)]
+    (cond
+      [(= end value-start) (ErrLexI64 "lexer: malformed integer literal")]
+      [(if (< end n)
+          (is-symbol-char (string-ref src end))
+          false)
+        (ErrLexI64 "lexer: malformed integer literal")]
+      [else (OkLexI64 end)])))
+
+(define (scan-number-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
+  (if (number-prefixed? src start n)
+    (scan-prefixed-int-end-result src start n)
+    (OkLexI64 (scan-number-end src start n))))
+
+(define (parse-based-int [src : String] [start : i64] [end : i64] [base : i64]) : i64
+  (let
+    [j : i64 start]
+    [value : i64 0]
+    (begin
+      (while (< j end)
+        (begin
+          (set! value (+ (* value base) (hex-digit-value (string-ref src j))))
+          (set! j (+ j 1))))
+      value)))
+
+(define (parse-prefixed-int [src : String] [start : i64] [end : i64]) : i64
+  (let
+    [digits-start : i64 (number-digits-start src start)]
+    [sign : i64
+      (if (= (string-ref src start) #-')
+        -1
+        1)]
+    [base : i64 (number-prefix-base src start)]
+    [value : i64 (parse-based-int src (+ digits-start 2) end base)]
+    (* sign value)))
+
+(define (number-int-value [src : String] [start : i64] [end : i64] [n : i64]) : i64
+  (if (number-prefixed? src start n)
+    (parse-prefixed-int src start end)
+    (string->int (substring src start (- end start)))))
+
 (define (number-float? [src : String] [start : i64] [n : i64]) : bool
-  (float-tail? src (scan-int-end src (number-digits-start src start) n) n))
+  (if (number-prefixed? src start n)
+    false
+    (float-tail? src (scan-int-end src (number-digits-start src start) n) n)))
 
 (define (negative-number-start? [src : String] [start : i64] [n : i64]) : bool
   (if (= (string-ref src start) #-')
@@ -456,7 +556,7 @@
       [(= c #;') (OkLexI64 (scan-comment-end src (+ i 1) n))]
       [(= c ##') (lex-check-char-end src i n)]
       [(or (is-digit c) (negative-number-start? src i n))
-        (OkLexI64 (scan-number-end src i n))]
+        (scan-number-end-result src i n)]
       [(is-symbol-char c) (OkLexI64 (scan-symbol-end src i n))]
       [else (ErrLexI64 "lexer: unexpected character")])))
 
@@ -608,18 +708,26 @@
                     (set! message err)
                     (set! err-pos i))])]
             [(or (is-digit c) (negative-number-start? src i n))
-              (let
-                [end : i64 (scan-number-end src i n)]
-                (begin
-                  (array-set! starts count i)
-                  (if (number-float? src i n)
-                    (array-set! toks count (TFloat (substring src i (- end i))))
-                    (array-set!
-                      toks
-                      count
-                      (TInt (string->int (substring src i (- end i))))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
+              (match (scan-number-end-result src i n)
+                [(OkLexI64 end)
+                  (begin
+                    (array-set! starts count i)
+                    (if (number-float? src i n)
+                      (array-set!
+                        toks
+                        count
+                        (TFloat (substring src i (- end i))))
+                      (array-set!
+                        toks
+                        count
+                        (TInt (number-int-value src i end n))))
+                    (set! count (+ count 1))
+                    (set! i end))]
+                [(ErrLexI64 err)
+                  (begin
+                    (set! ok false)
+                    (set! message err)
+                    (set! err-pos i))])]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]
@@ -813,29 +921,35 @@
                       (set! message err)
                       (set! err-pos i))]))]
             [(or (is-digit c) (negative-number-start? src i n))
-              (let
-                [end : i64 (scan-number-end src i n)]
-                [token-line : i64 line]
-                [token-col : i64 col]
-                (begin
-                  (if (number-float? src i n)
-                    (array-set!
-                      stoks
-                      count
-                      (SpannedToken
-                        (TFloat (substring src i (- end i)))
-                        token-line
-                        token-col))
-                    (array-set!
-                      stoks
-                      count
-                      (SpannedToken
-                        (TInt (string->int (substring src i (- end i))))
-                        token-line
-                        token-col)))
-                  (set! count (+ count 1))
-                  (set! col (+ col (- end i)))
-                  (set! i end)))]
+              (match (scan-number-end-result src i n)
+                [(OkLexI64 end)
+                  (let
+                    [token-line : i64 line]
+                    [token-col : i64 col]
+                    (begin
+                      (if (number-float? src i n)
+                        (array-set!
+                          stoks
+                          count
+                          (SpannedToken
+                            (TFloat (substring src i (- end i)))
+                            token-line
+                            token-col))
+                        (array-set!
+                          stoks
+                          count
+                          (SpannedToken
+                            (TInt (number-int-value src i end n))
+                            token-line
+                            token-col)))
+                      (set! count (+ count 1))
+                      (set! col (+ col (- end i)))
+                      (set! i end)))]
+                [(ErrLexI64 err)
+                  (begin
+                    (set! ok false)
+                    (set! message err)
+                    (set! err-pos i))])]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]
@@ -979,6 +1093,27 @@
             (string-eq (token-sym (array-ref toks 2)) "-"))))]
     [(ErrTokens _) false]))
 
+(define (lex-token-int-eq? [toks : (Array Token)] [idx : i64] [value : i64]) : bool
+  (and
+    (= (token-tag (array-ref toks idx)) (tag-int))
+    (= (token-int (array-ref toks idx)) value)))
+
+(define (lex-prefixed-int-token-ok?) : bool
+  (match (lex-result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
+    [(OkTokens toks)
+      (and
+        (lex-token-int-eq? toks 1 42)
+        (and
+          (lex-token-int-eq? toks 2 42)
+          (and
+            (lex-token-int-eq? toks 3 -42)
+            (and
+              (lex-token-int-eq? toks 4 42)
+              (and
+                (lex-token-int-eq? toks 5 -42)
+                (= (token-tag (array-ref toks 7)) (tag-end)))))))]
+    [(ErrTokens _) false]))
+
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 ;; positions, including a token inside a nested list and the trailing EOF.
 ;; Source `"(a\n  (b c))"` lexes to:
@@ -1089,6 +1224,23 @@
     (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unknown named character literal")
     (lex-error-ok? "ok\n@" 2 1 "lexer: unexpected character")))
 
+(define (lex-prefixed-int-errors-ok?) : bool
+  (and
+    (lex-error-ok? "0x" 1 1 "lexer: malformed integer literal")
+    (and
+      (lex-error-ok? "0xg" 1 1 "lexer: malformed integer literal")
+      (lex-error-ok? "0b102" 1 1 "lexer: malformed integer literal"))))
+
+(define (lex-check-prefixed-int-ok?) : bool
+  (match (lex-check "(0x2a -0b101010)")
+    [(OkLexI64 _) true]
+    [(ErrLexI64 _) false]))
+
+(define (lex-check-prefixed-int-error-ok?) : bool
+  (match (lex-check "0b102")
+    [(OkLexI64 _) false]
+    [(ErrLexI64 message) (string-eq message "lexer: malformed integer literal")]))
+
 (define (lex-string-source [inner : String]) : String
   (string-append (lex-quote-text) (string-append inner (lex-quote-text))))
 
@@ -1192,25 +1344,52 @@
 (define (lex-span-self-test) : i64
   (match (lex-spanned-result "(a\n  (b c))")
     [(OkSpannedTokens s)
-      (if (and
-        (lex-span-positions-ok? s)
-        (and
-          (lex-string-escapes-ok?)
-          (and
-            (lex-basic-token-sequence-ok?)
-            (and
-              (lex-char-literals-ok?)
-              (and
-                (lex-error-spans-ok?)
-                (and
-                  (lex-percent-symbol-ok?)
-                  (and
-                    (lex-ampersand-symbol-ok?)
-                    (and
-                      (lex-float-token-ok?)
-                      (and
-                        (lex-negative-int-token-ok?)
-                        (lex-quote-prefix-tokens-ok?))))))))))
-        42
-        1)]
+      (let
+        [ok : bool true]
+        (begin
+          (if (lex-span-positions-ok? s)
+            unit
+            (set! ok false))
+          (if (lex-string-escapes-ok?)
+            unit
+            (set! ok false))
+          (if (lex-basic-token-sequence-ok?)
+            unit
+            (set! ok false))
+          (if (lex-char-literals-ok?)
+            unit
+            (set! ok false))
+          (if (lex-error-spans-ok?)
+            unit
+            (set! ok false))
+          (if (lex-percent-symbol-ok?)
+            unit
+            (set! ok false))
+          (if (lex-ampersand-symbol-ok?)
+            unit
+            (set! ok false))
+          (if (lex-float-token-ok?)
+            unit
+            (set! ok false))
+          (if (lex-negative-int-token-ok?)
+            unit
+            (set! ok false))
+          (if (lex-prefixed-int-token-ok?)
+            unit
+            (set! ok false))
+          (if (lex-prefixed-int-errors-ok?)
+            unit
+            (set! ok false))
+          (if (lex-check-prefixed-int-ok?)
+            unit
+            (set! ok false))
+          (if (lex-check-prefixed-int-error-ok?)
+            unit
+            (set! ok false))
+          (if (lex-quote-prefix-tokens-ok?)
+            unit
+            (set! ok false))
+          (if ok
+            42
+            1)))]
     [(ErrSpannedTokens _) 2]))

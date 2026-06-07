@@ -3593,6 +3593,9 @@ runtime helpers. `stdlib/io.tl`, `stdlib/env.tl`, `stdlib/fs.tl`, and
 target-specific implementations with `cfg`. Low-level language forms expose
 entry `argc`/`argv`/`envp`, raw string/array storage, and CPU instructions when
 stdlib code needs capabilities that are not expressible as ordinary FFI calls.
+`stdlib/msvc.tl` owns Windows MSVC/link.exe and SDK discovery through stdlib
+environment, filesystem, and process helpers rather than backend runtime
+symbols.
 
 | Symbol | Purpose |
 |--------|---------|
@@ -3611,8 +3614,6 @@ stdlib code needs capabilities that are not expressible as ordinary FFI calls.
 | `tl_oob_abort` | Bounds-check trap |
 | `tl_div_abort` | Integer division/remainder trap |
 | `tl_shift_abort` | Shift-count trap |
-| `tl_windows_setup_instances` | Windows SetupConfiguration enumeration |
-| `tl_windows_sdk_registry_install` | Windows SDK registry lookup |
 
 ### 6.3 Builtin operator aliases
 

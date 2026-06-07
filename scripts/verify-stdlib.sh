@@ -223,14 +223,14 @@ stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-|-
-stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
+stdlib/tests/io_file_handle.tl|42|-|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-
 stdlib/tests/fs_path_join_many_api.tl|42|-|-
-stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
+stdlib/tests/fs_api.tl|42|-|-|-
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-

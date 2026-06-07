@@ -11465,30 +11465,19 @@
         (string-eq name "tl_arena_poison_enable")))))
 
 ;; Current stdlib modules still depend on these backend runtime shims for
-;; unavoidable OS/profile operations. `stdlib/fs.tl` metadata probes are tracked
-;; by #2047.
+;; unavoidable profile operations.
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     false
-    (or
-      (backend-or8
-        (string-eq name "tl_profile_alloc_total")
-        (string-eq name "tl_profile_alloc_live")
-        (string-eq name "tl_profile_alloc_peak")
-        (string-eq name "tl_profile_alloc_reset_peak")
-        false
-        false
-        false
-        false)
-      (backend-or8
-        (string-eq name ".L_tl_fs_file_kind_status")
-        (string-eq name ".L_tl_fs_file_size_status")
-        (string-eq name ".L_tl_fs_file_size")
-        false
-        false
-        false
-        false
-        false))))
+    (backend-or8
+      (string-eq name "tl_profile_alloc_total")
+      (string-eq name "tl_profile_alloc_live")
+      (string-eq name "tl_profile_alloc_peak")
+      (string-eq name "tl_profile_alloc_reset_peak")
+      false
+      false
+      false
+      false)))
 
 ;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
 ;; string equality/parsing moved in #2036 and allocating string helpers moved in
@@ -11737,18 +11726,9 @@
             false
             false
             false
-            (compiler-backend-provides-runtime-name?
-              name
-              ".L_tl_fs_file_kind_status"
-              provides-fs)
-            (compiler-backend-provides-runtime-name?
-              name
-              ".L_tl_fs_file_size_status"
-              provides-fs)
-            (compiler-backend-provides-runtime-name?
-              name
-              ".L_tl_fs_file_size"
-              provides-fs))
+            false
+            false
+            false)
           (or
             (compiler-backend-plan-provides-tail?
               name
@@ -11921,12 +11901,6 @@
         ".L_tl_fs_remove_dir_status")]
     [extern-fs-rename-status : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_rename_status")]
-    [extern-fs-file-kind-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_kind_status")]
-    [extern-fs-file-size-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_size_status")]
-    [extern-fs-file-size : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_size")]
     [extern-fs-process-id : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_process_id")]
     [extern-read-line : bool
@@ -12033,12 +12007,6 @@
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_remove_dir_status")]
     [calls-fs-rename-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_rename_status")]
-    [calls-fs-file-kind-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_kind_status")]
-    [calls-fs-file-size-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size_status")]
-    [calls-fs-file-size : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size")]
     [calls-fs-process-id : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
     [calls-read-line : bool
@@ -12108,18 +12076,7 @@
     [needs-file-exists : bool false]
     [needs-file-handle : bool false]
     [needs-file-read-chunk : bool false]
-    [needs-fs-runtime : bool
-      (or
-        (backend-or4
-          extern-fs-file-kind-status
-          extern-fs-file-size-status
-          extern-fs-file-size
-          false)
-        (backend-or4
-          calls-fs-file-kind-status
-          calls-fs-file-size-status
-          calls-fs-file-size
-          false))]
+    [needs-fs-runtime : bool false]
     [needs-read-line : bool false]
     [needs-read-bytes : bool false]
     [needs-stdin-eof : bool false]
@@ -13427,393 +13384,10 @@ tl_profile_alloc_reset_peak:
       "")))
 
 (define (compiler-backend-runtime-fs-functions) : String
-  ".L_tl_fs_file_kind_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    sub $160, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_file_kind_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_file_kind_status_invalid
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_file_kind_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_file_kind_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_file_kind_status_path_copy_loop
-.L_tl_fs_file_kind_status_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $262, %rax
-    movq $-100, %rdi
-    movq %r13, %rsi
-    movq %rsp, %rdx
-    xorq %r10, %r10
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_file_kind_status_error_from_rax
-    movl 24(%rsp), %eax
-    andl $61440, %eax
-    cmpl $32768, %eax
-    je .L_tl_fs_file_kind_status_regular
-    cmpl $16384, %eax
-    je .L_tl_fs_file_kind_status_directory
-    movq $-3, %rax
-    jmp .L_tl_fs_file_kind_status_return
-.L_tl_fs_file_kind_status_regular:
-    movq $-1, %rax
-    jmp .L_tl_fs_file_kind_status_return
-.L_tl_fs_file_kind_status_directory:
-    movq $-2, %rax
-    jmp .L_tl_fs_file_kind_status_return
-.L_tl_fs_file_kind_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_file_kind_status_return
-.L_tl_fs_file_kind_status_invalid:
-    movq $22, %rax
-.L_tl_fs_file_kind_status_return:
-    add $160, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_file_size_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    sub $160, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_file_size_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_file_size_status_invalid
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_file_size_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_file_size_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_file_size_status_path_copy_loop
-.L_tl_fs_file_size_status_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $262, %rax
-    movq $-100, %rdi
-    movq %r13, %rsi
-    movq %rsp, %rdx
-    xorq %r10, %r10
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_file_size_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_file_size_status_return
-.L_tl_fs_file_size_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_file_size_status_return
-.L_tl_fs_file_size_status_invalid:
-    movq $22, %rax
-.L_tl_fs_file_size_status_return:
-    add $160, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_file_size:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    sub $160, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_file_size_zero
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_file_size_zero
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_file_size_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_file_size_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_file_size_path_copy_loop
-.L_tl_fs_file_size_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $262, %rax
-    movq $-100, %rdi
-    movq %r13, %rsi
-    movq %rsp, %rdx
-    xorq %r10, %r10
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_file_size_zero
-    movq 48(%rsp), %rax
-    jmp .L_tl_fs_file_size_return
-.L_tl_fs_file_size_zero:
-    xorq %rax, %rax
-.L_tl_fs_file_size_return:
-    add $160, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-
-")
+  "")
 
 (define (compiler-backend-runtime-windows-fs-functions) : String
-  ".L_tl_fs_file_kind_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_file_kind_status_win_invalid
-    movq %r12, %rcx
-    addq $1, %rcx
-    js .L_tl_fs_file_kind_status_win_invalid
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_fs_file_kind_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_file_kind_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_fs_file_kind_status_win_path_copy_loop
-.L_tl_fs_file_kind_status_win_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $40, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r12
-    movq %r13, %rcx
-    xorq %rdx, %rdx
-    movq %r12, %r8
-    sub $32, %rsp
-    call GetFileAttributesExA
-    add $32, %rsp
-    testl %eax, %eax
-    jz .L_tl_fs_file_kind_status_win_errno
-    movl 0(%r12), %eax
-    testl $16, %eax
-    jnz .L_tl_fs_file_kind_status_win_directory
-.L_tl_fs_file_kind_status_win_regular:
-    movq $-1, %rax
-    jmp .L_tl_fs_file_kind_status_win_return
-.L_tl_fs_file_kind_status_win_directory:
-    movq $-2, %rax
-    jmp .L_tl_fs_file_kind_status_win_return
-.L_tl_fs_file_kind_status_win_errno:
-    call .L_tl_fs_win_last_error_status
-    testq %rax, %rax
-    jne .L_tl_fs_file_kind_status_win_return
-    movq $1, %rax
-    jmp .L_tl_fs_file_kind_status_win_return
-.L_tl_fs_file_kind_status_win_invalid:
-    movq $22, %rax
-.L_tl_fs_file_kind_status_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_file_size_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_file_size_status_win_invalid
-    movq %r12, %rcx
-    addq $1, %rcx
-    js .L_tl_fs_file_size_status_win_invalid
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_fs_file_size_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_file_size_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_fs_file_size_status_win_path_copy_loop
-.L_tl_fs_file_size_status_win_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $40, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r12
-    movq %r13, %rcx
-    xorq %rdx, %rdx
-    movq %r12, %r8
-    sub $32, %rsp
-    call GetFileAttributesExA
-    add $32, %rsp
-    testl %eax, %eax
-    jz .L_tl_fs_file_size_status_win_errno
-    xorq %rax, %rax
-    jmp .L_tl_fs_file_size_status_win_return
-.L_tl_fs_file_size_status_win_errno:
-    call .L_tl_fs_win_last_error_status
-    testq %rax, %rax
-    jne .L_tl_fs_file_size_status_win_return
-    movq $1, %rax
-    jmp .L_tl_fs_file_size_status_win_return
-.L_tl_fs_file_size_status_win_invalid:
-    movq $22, %rax
-.L_tl_fs_file_size_status_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_file_size:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_file_size_win_zero
-    movq %r12, %rcx
-    addq $1, %rcx
-    js .L_tl_fs_file_size_win_zero
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_fs_file_size_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_file_size_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_fs_file_size_win_path_copy_loop
-.L_tl_fs_file_size_win_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $40, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r12
-    movq %r13, %rcx
-    xorq %rdx, %rdx
-    movq %r12, %r8
-    sub $32, %rsp
-    call GetFileAttributesExA
-    add $32, %rsp
-    testl %eax, %eax
-    jz .L_tl_fs_file_size_win_zero
-    movl 32(%r12), %eax
-    movl 28(%r12), %edx
-    shlq $32, %rdx
-    orq %rdx, %rax
-    jmp .L_tl_fs_file_size_win_return
-.L_tl_fs_file_size_win_zero:
-    xorq %rax, %rax
-.L_tl_fs_file_size_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_win_last_error_status:
-    sub $40, %rsp
-    call GetLastError
-    add $40, %rsp
-    movl %eax, %eax
-    cmpq $2, %rax
-    je .L_tl_fs_win_status_not_found
-    cmpq $3, %rax
-    je .L_tl_fs_win_status_not_directory
-    cmpq $5, %rax
-    je .L_tl_fs_win_status_permission
-    cmpq $87, %rax
-    je .L_tl_fs_win_status_invalid
-    cmpq $123, %rax
-    je .L_tl_fs_win_status_invalid
-    cmpq $161, %rax
-    je .L_tl_fs_win_status_invalid
-    cmpq $206, %rax
-    je .L_tl_fs_win_status_name_too_long
-    cmpq $267, %rax
-    je .L_tl_fs_win_status_not_directory
-    ret
-.L_tl_fs_win_status_not_found:
-    movq $2, %rax
-    ret
-.L_tl_fs_win_status_not_directory:
-    movq $20, %rax
-    ret
-.L_tl_fs_win_status_permission:
-    movq $13, %rax
-    ret
-.L_tl_fs_win_status_invalid:
-    movq $22, %rax
-    ret
-.L_tl_fs_win_status_name_too_long:
-    movq $36, %rax
-    ret
-
-
-")
+  "")
 
 (define (compiler-backend-runtime-fs-functions-for-target
   [target : CompilerBackendTarget]) : String
@@ -15104,31 +14678,21 @@ tl_string_concat5:
     .extern ExitProcess
 "
         (string-append
-          (if (or
-            (compiler-backend-plan-provides? plan ".L_tl_fs_file_kind_status")
-            (or
-              (compiler-backend-plan-provides? plan ".L_tl_fs_file_size_status")
-              (compiler-backend-plan-provides? plan ".L_tl_fs_file_size")))
-            "    .extern GetFileAttributesExA
-    .extern GetLastError
+          (if needs-write-exit
+            "    .extern WriteFile
 "
             "")
           (string-append
-            (if needs-write-exit
-              "    .extern WriteFile
+            (if needs-get-std-handle
+              "    .extern GetStdHandle
 "
               "")
             (string-append
-              (if needs-get-std-handle
-                "    .extern GetStdHandle
+              (if (compiler-backend-plan-provides? plan "tl_print_f64")
+                "    .extern _snprintf
 "
                 "")
-              (string-append
-                (if (compiler-backend-plan-provides? plan "tl_print_f64")
-                  "    .extern _snprintf
-"
-                  "")
-                ""))))))
+              "")))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

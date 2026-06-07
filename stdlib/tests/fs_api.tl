@@ -152,6 +152,15 @@
 (define (test-try-file-metadata [path : String]) : ResultFsMetadata
   (try-file-metadata (& path)))
 
+(define (test-fs-file-kind-status [path : String]) : i64
+  (fs-file-kind-status path))
+
+(define (test-fs-file-size-status [path : String]) : i64
+  (fs-file-size-status path))
+
+(define (test-fs-file-size [path : String]) : i64
+  (fs-file-size path))
+
 (define (test-try-remove-file-if-exists [path : String]) : ResultIoUnit
   (try-remove-file-if-exists (& path)))
 
@@ -236,6 +245,33 @@
   (match (test-try-file-metadata path)
     [(ErrFsMetadata error) (assert-true (io-error-unsupported? error) message)]
     [(OkFsMetadata _) (panic message)]))
+
+(define (assert-runtime-metadata-regular
+  [path : String]
+  [expected-size : i64]
+  [message : String]) : unit
+  (begin
+    (assert-i64-eq
+      (test-fs-file-kind-status path)
+      fs-file-kind-regular-code
+      message)
+    (assert-i64-eq (test-fs-file-size-status path) io-status-ok message)
+    (assert-i64-eq (test-fs-file-size path) expected-size message)))
+
+(define (assert-runtime-metadata-directory [path : String] [message : String]) : unit
+  (begin
+    (assert-i64-eq
+      (test-fs-file-kind-status path)
+      fs-file-kind-directory-code
+      message)
+    (assert-i64-eq (test-fs-file-size-status path) io-status-ok message)
+    (assert-i64-eq (test-fs-file-size path) 0 message)))
+
+(define (assert-runtime-metadata-not-found [path : String] [message : String]) : unit
+  (begin
+    (assert-i64-eq (test-fs-file-kind-status path) io-status-not-found message)
+    (assert-i64-eq (test-fs-file-size-status path) io-status-not-found message)
+    (assert-i64-eq (test-fs-file-size path) 0 message)))
 
 (define (assert-file-contents
   [path : String]
@@ -652,6 +688,9 @@
               (assert-file-metadata-directory
                 dir
                 "windows temp dir metadata is directory")
+              (assert-runtime-metadata-directory
+                dir
+                "windows runtime metadata dir")
               (assert-ok-unit
                 (test-try-write-file file-a "assembly")
                 "windows write temp artifact: ")
@@ -662,12 +701,19 @@
                 file-a
                 8
                 "windows temp artifact metadata size")
+              (assert-runtime-metadata-regular
+                file-a
+                8
+                "windows runtime metadata file")
               (assert-file-kind-not-found
                 (test-fs-path-join dir "missing artifact.s")
                 "windows missing file kind is not found")
               (assert-file-metadata-not-found
                 (test-fs-path-join dir "missing artifact.s")
                 "windows missing file metadata is not found")
+              (assert-runtime-metadata-not-found
+                (test-fs-path-join dir "missing artifact.s")
+                "windows runtime metadata missing")
               (assert-ok-unit
                 (test-try-remove-file file-a)
                 "windows remove temp artifact: ")
@@ -713,6 +759,7 @@
             (assert-file-metadata-directory
               dir-a
               "temp dir a metadata is directory")
+            (assert-runtime-metadata-directory dir-a "runtime metadata dir")
             (assert-ok-unit
               (test-try-write-file file-a "assembly")
               "write temp artifact a: ")
@@ -726,12 +773,16 @@
               file-a
               8
               "temp artifact a metadata size")
+            (assert-runtime-metadata-regular file-a 8 "runtime metadata file")
             (assert-file-kind-not-found
               (test-fs-path-join dir-a "missing artifact.s")
               "missing file kind is not found")
             (assert-file-metadata-not-found
               (test-fs-path-join dir-a "missing artifact.s")
               "missing file metadata is not found")
+            (assert-runtime-metadata-not-found
+              (test-fs-path-join dir-a "missing artifact.s")
+              "runtime metadata missing")
             (assert-ok-unit
               (test-try-remove-file file-a)
               "remove temp artifact a: ")

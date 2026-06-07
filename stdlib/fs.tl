@@ -2,8 +2,7 @@
 ;#
 ;# Provides recoverable current-directory and temporary-directory APIs, path-join,
 ;# lexical path normalization, safe relative suffix checks, and cleanup helpers on
-;# top of direct platform FFI bindings and remaining compiler/runtime metadata
-;# primitives:
+;# top of direct platform FFI bindings:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
 ;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`,
@@ -12,7 +11,6 @@
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
-;; requires-stage0-symbol: fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/fs.tl")
 ;# (define joined : String
@@ -35,24 +33,6 @@
 (defenum ResultIoStringList
   (OkIoStringList StringList)
   (ErrIoStringList IoError))
-
-;: Runtime status probe for retrieving a filesystem node kind.
-(extern fs-runtime-file-kind-status (:symbol ".L_tl_fs_file_kind_status") : (->
-  (Ptr u8)
-  i64
-  i64))
-
-;: Runtime status probe for retrieving a regular-file size.
-(extern fs-runtime-file-size-status (:symbol ".L_tl_fs_file_size_status") : (->
-  (Ptr u8)
-  i64
-  i64))
-
-;: Runtime integer probe for retrieving a regular-file size.
-(extern fs-runtime-file-size (:symbol ".L_tl_fs_file_size") : (->
-  (Ptr u8)
-  i64
-  i64))
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (fs-linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
@@ -134,6 +114,14 @@
   (extern fs-win-delete-file (:symbol "DeleteFileA") : (-> (Ptr u8) i32)))
 
 (cfg windows (extern fs-win-get-last-error (:symbol "GetLastError") : (-> i32)))
+
+(cfg
+  windows
+  (extern fs-win-get-file-attributes-ex (:symbol "GetFileAttributesExA") : (->
+    (Ptr u8)
+    i32
+    (MutPtr u8)
+    i32)))
 
 (cfg
   windows
@@ -567,17 +555,215 @@
 (define (fs-read-dir [path : String]) : String
   (cfg windows (fs-windows-read-dir path) (fs-linux-read-dir path)))
 
+;: Status sentinel for regular files returned by `fs-file-kind-status`.
+(define fs-file-kind-regular-code : i64
+  -1)
+
+;: Status sentinel for directories returned by `fs-file-kind-status`.
+(define fs-file-kind-directory-code : i64
+  -2)
+
+;: Status sentinel for filesystem nodes that are neither files nor directories.
+(define fs-file-kind-other-code : i64
+  -3)
+
+;: Private result tuple for a filesystem metadata probe.
+(defstruct FsFileMetadataProbe
+  (status i64)
+  (kind i64)
+  (size i64))
+
+;: Byte size of the Windows `WIN32_FILE_ATTRIBUTE_DATA` buffer.
+(define fs-windows-file-attribute-data-size : i64
+  40)
+
+;: Windows file attribute bit that marks a directory.
+(define fs-windows-file-attribute-directory : i64
+  16)
+
+;: Byte offset of `dwFileAttributes` in `WIN32_FILE_ATTRIBUTE_DATA`.
+(define fs-windows-file-attributes-offset : i64
+  0)
+
+;: Byte offset of `nFileSizeHigh` in `WIN32_FILE_ATTRIBUTE_DATA`.
+(define fs-windows-file-size-high-offset : i64
+  28)
+
+;: Byte offset of `nFileSizeLow` in `WIN32_FILE_ATTRIBUTE_DATA`.
+(define fs-windows-file-size-low-offset : i64
+  32)
+
+;: Read a `u32` field from a metadata buffer at a byte offset.
+(define (fs-metadata-read-u32-at [base : (MutPtr u8)] [offset : i64]) : u32
+  (unsafe
+    (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr u32)))))
+
+;: Read an `i64` field from a metadata buffer at a byte offset.
+(define (fs-metadata-read-i64-at [base : (MutPtr u8)] [offset : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr i64)))))
+
+;: Linux `newfstatat(AT_FDCWD, path, statbuf, 0)` syscall.
+(cfg
+  (not windows)
+  (define (fs-linux-syscall-newfstatat
+    [path : (Ptr u8)]
+    [statbuf : (MutPtr u8)]) : i64
+    (io-linux-syscall-status
+      (syscall
+        262
+        fs-linux-at-fdcwd
+        (io-linux-ptr-arg path)
+        (io-linux-ptr-arg
+          (unsafe
+            (ptr-cast statbuf : (Ptr u8))))
+        0))))
+
+(cfg
+  (not windows)
+  (define fs-linux-stat-buffer-size : i64
+    160))
+
+(cfg
+  (not windows)
+  (define fs-linux-stat-mode-offset : i64
+    24))
+
+(cfg
+  (not windows)
+  (define fs-linux-stat-size-offset : i64
+    48))
+
+(cfg
+  (not windows)
+  (define fs-linux-stat-mode-kind-mask : i64
+    61440))
+
+(cfg
+  (not windows)
+  (define fs-linux-stat-regular-mode : i64
+    32768))
+
+(cfg
+  (not windows)
+  (define fs-linux-stat-directory-mode : i64
+    16384))
+
+(cfg
+  (not windows)
+  (define (fs-linux-file-kind-from-mode [mode : i64]) : i64
+    (let
+      [kind : i64 (bit-and mode fs-linux-stat-mode-kind-mask)]
+      (cond
+        [(= kind fs-linux-stat-regular-mode) fs-file-kind-regular-code]
+        [(= kind fs-linux-stat-directory-mode) fs-file-kind-directory-code]
+        [else fs-file-kind-other-code]))))
+
+(cfg
+  (not windows)
+  (define (fs-linux-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
+    (let
+      [statbuf : (Array u8) (make-array u8 fs-linux-stat-buffer-size)]
+      [statptr : (MutPtr u8) (io-array-ptr statbuf)]
+      [status : i64
+        (fs-status-from-result (fs-linux-syscall-newfstatat path statptr))]
+      (if (= status io-status-ok)
+        (let
+          [kind : i64
+            (fs-linux-file-kind-from-mode
+              (cast
+                (fs-metadata-read-u32-at statptr fs-linux-stat-mode-offset)
+                :
+                i64))]
+          (FsFileMetadataProbe
+            status
+            kind
+            (if (= kind fs-file-kind-regular-code)
+              (fs-metadata-read-i64-at statptr fs-linux-stat-size-offset)
+              0)))
+        (FsFileMetadataProbe status status 0)))))
+
+;: Preserve the former metadata runtime's raw fallback when Windows gives no code.
+(cfg
+  windows
+  (define (fs-windows-metadata-error-status) : i64
+    (let
+      [status : i64 (fs-windows-last-error-status)]
+      (if (= status io-status-ok)
+        1
+        status))))
+
+(cfg
+  windows
+  (define (fs-windows-file-kind-from-attributes [attrs : i64]) : i64
+    (if (not (= (bit-and attrs fs-windows-file-attribute-directory) 0))
+      fs-file-kind-directory-code
+      fs-file-kind-regular-code)))
+
+(cfg
+  windows
+  (define (fs-windows-file-size-from-data [data : (MutPtr u8)]) : i64
+    (let
+      [high : u64
+        (cast
+          (fs-metadata-read-u32-at data fs-windows-file-size-high-offset)
+          :
+          u64)]
+      [low : u64
+        (cast
+          (fs-metadata-read-u32-at data fs-windows-file-size-low-offset)
+          :
+          u64)]
+      (cast (bit-or low (shl high 32)) : i64))))
+
+(cfg
+  windows
+  (define (fs-windows-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
+    (let
+      [data : (Array u8) (make-array u8 fs-windows-file-attribute-data-size)]
+      [dataptr : (MutPtr u8) (io-array-ptr data)]
+      [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
+      (if (= ok (cast 0 : i32))
+        (let
+          [status : i64 (fs-windows-metadata-error-status)]
+          (FsFileMetadataProbe status status 0))
+        (let
+          [kind : i64
+            (fs-windows-file-kind-from-attributes
+              (cast
+                (fs-metadata-read-u32-at
+                  dataptr
+                  fs-windows-file-attributes-offset)
+                :
+                i64))]
+          (FsFileMetadataProbe
+            io-status-ok
+            kind
+            (if (= kind fs-file-kind-regular-code)
+              (fs-windows-file-size-from-data dataptr)
+              0)))))))
+
+;: Probe path metadata and return status, kind sentinel, and regular-file size.
+(define (fs-file-metadata-probe [path : String]) : FsFileMetadataProbe
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    (cfg
+      windows
+      (fs-windows-file-metadata-probe path-ptr)
+      (fs-linux-file-metadata-probe path-ptr))))
+
 ;: Return the host status code or sentinel for a filesystem node kind.
 (define (fs-file-kind-status [path : String]) : i64
-  (fs-runtime-file-kind-status (io-string-data path) (string-length path)))
+  (struct-get (fs-file-metadata-probe path) kind))
 
 ;: Return the host status code for retrieving a regular-file size.
 (define (fs-file-size-status [path : String]) : i64
-  (fs-runtime-file-size-status (io-string-data path) (string-length path)))
+  (struct-get (fs-file-metadata-probe path) status))
 
 ;: Return the host-reported byte size for a regular file.
 (define (fs-file-size [path : String]) : i64
-  (fs-runtime-file-size (io-string-data path) (string-length path)))
+  (struct-get (fs-file-metadata-probe path) size))
 
 ;: Linux `ERANGE` status returned when the current-dir buffer is too small.
 (define fs-status-range : i64
@@ -691,18 +877,6 @@
 (defenum FsPathSegmentList
   (FsPathSegmentNil)
   (FsPathSegmentCons String (Box FsPathSegmentList)))
-
-;: Runtime status sentinel for regular files returned by `fs-file-kind-status`.
-(define fs-file-kind-regular-code : i64
-  -1)
-
-;: Runtime status sentinel for directories returned by `fs-file-kind-status`.
-(define fs-file-kind-directory-code : i64
-  -2)
-
-;: Runtime status sentinel for filesystem nodes that are neither files nor directories.
-(define fs-file-kind-other-code : i64
-  -3)
 
 ;: Portable coarse filesystem node kind.
 (defenum FsFileKind

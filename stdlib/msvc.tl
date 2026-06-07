@@ -8,7 +8,6 @@
 ;#
 ;# Usage: `(import "stdlib/msvc.tl")`
 ;#
-;; requires-stage0-symbol: fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/msvc.tl")
 ;# (define target : String "x86_64-pc-windows-msvc")

@@ -623,6 +623,11 @@ EOF
     cat > "$TEST_PKG/src/no-tests.tl" <<'EOF'
 (define package-no-test-value : i64 42)
 EOF
+    i=0
+    while [ "$i" -lt 2500 ]; do
+        printf '(define package-large-no-inline-%s : i64 %s)\n' "$i" "$i"
+        i=$((i + 1))
+    done > "$TEST_PKG/src/large-no-inline.tl"
     cat > "$TEST_PKG/target/ignored/fail.tl" <<'EOF'
 (test ignored-target
   (panic "target directory inline test should be ignored"))

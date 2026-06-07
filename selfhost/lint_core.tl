@@ -274,7 +274,9 @@
         [func : AstExpr (ast-node-get func-box)]
         (match func
           [(AstExprVar name)
-            (and (string-eq name "not") (lint-single-arg-call? args))]
+            (and
+              (string-eq (intern-str name) "not")
+              (lint-single-arg-call? args))]
           [_ false]))]
     [(AstExprUnary (AstUnNot) _) true]
     [_ false]))
@@ -1137,7 +1139,7 @@
 
 (define (compiler-lint-self-test) : i64
   (let
-    [vx : i64 (ast-node-push (AstExprVar "x"))]
+    [vx : i64 (ast-node-push (AstExprVar (intern "x")))]
     [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
     [unit-expr : i64 (ast-node-push (AstExprLiteral AstLitUnit))]
     [ladder3 : i64

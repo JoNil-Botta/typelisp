@@ -415,6 +415,10 @@ case|selfhost_compiler_embedded_stdlib|selfhost/compiler_embedded_stdlib.tl|asse
 contains|compiler_embedded_stdlib_lookup:
 end
 
+case|selfhost_compiler_intern|selfhost/compiler_intern.tl|assembly|skip|direct
+contains|_tl_compiler_intern_intern_str:
+end
+
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:

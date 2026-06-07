@@ -4249,7 +4249,7 @@
                 (if variadic
                   (CtfeExprList AstExprNil)
                   (CtfeExpr
-                    (ast-node-push (AstExprVar name))
+                    (ast-node-push (AstExprVar (intern name)))
                     (tc-resolve-type ctx ty))))
               rest)]))]))
 
@@ -5522,7 +5522,7 @@
 
 (define (tc-expr-var-name [expr : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan expr)
-    [(AstExprVar name) (TcSomeString name)]
+    [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
 (define (tc-nullary-variant-call-expr
@@ -5991,7 +5991,7 @@
 
 (define (tc-call-extern-abi [ctx : TcContext] [func : AstExpr]) : TcMaybeExternAbi
   (match (ast-expr-unspan func)
-    [(AstExprVar name) (tc-call-extern-abi-for-name ctx name)]
+    [(AstExprVar name) (tc-call-extern-abi-for-name ctx (intern-str name))]
     [_ (TcNoExternAbi)]))
 
 (define (tc-call-varargs-tail-args [args : AstExprList] [params : AstTypeList]) : ResultTcExprList
@@ -6798,9 +6798,9 @@
       ;; ordinary call/resolution paths.
       (let
         [name : String
-          (if (tc-hygiene-global-name? raw-name)
-            (tc-hygiene-global-base raw-name)
-            raw-name)]
+          (if (tc-hygiene-global-name? (intern-str raw-name))
+            (tc-hygiene-global-base (intern-str raw-name))
+            (intern-str raw-name))]
         (cond
           [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
             (tc-layout-query-runtime-call name args)]
@@ -7034,7 +7034,9 @@
   [bound : TcStringList]) : bool
   (match (ast-expr-unspan func)
     [(AstExprVar var-name)
-      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
+      (and
+        (string-eq (intern-str var-name) name)
+        (not (tc-string-list-contains bound name)))]
     [_ false]))
 
 (define (tc-ref-closure-local-uses-ok?
@@ -7049,7 +7051,7 @@
     [(AstExprVar var-name)
       (not
         (and
-          (string-eq var-name name)
+          (string-eq (intern-str var-name) name)
           (not (tc-string-list-contains bound name))))]
     [(AstExprBinary _ left-box right-box)
       (let
@@ -7610,7 +7612,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-spmd-masked-if-direct-index spmd-env inner))]
     [(AstExprVar name)
-      (if (tc-spmd-masked-if-index-var? spmd-env name)
+      (if (tc-spmd-masked-if-index-var? spmd-env (intern-str name))
         OkTcUnit
         (tc-spmd-masked-if-unsupported
           "gather/scatter-like array indexes; use the foreach index plus a uniform offset"))]
@@ -8062,7 +8064,7 @@
         (tc-spmd-expr-typed ctx env spmd-env inner expr-ty))]
     [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprVar name)
-      (match (tc-spmd-env-lookup spmd-env name)
+      (match (tc-spmd-env-lookup spmd-env (intern-str name))
         [(TcSpmdFound _ class _ _) (tc-spmd-finish expr-ty class spmd-env)]
         [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
     [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
@@ -8855,7 +8857,9 @@
         (tc-expr-uses-free-name? inner name bound))]
     [(AstExprLiteral _) false]
     [(AstExprVar var-name)
-      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
+      (and
+        (string-eq (intern-str var-name) name)
+        (not (tc-string-list-contains bound name)))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -9594,7 +9598,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-result-uses-cleanup-owner? inner owners bound))]
-    [(AstExprVar name) (tc-name-is-free-cleanup-owner? owners name bound)]
+    [(AstExprVar name)
+      (tc-name-is-free-cleanup-owner? owners (intern-str name) bound)]
     [(AstExprIf _ then-branch-box else-branch-box)
       (let
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -11439,8 +11444,8 @@
 (define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup-visible ctx env name)
-        [(OkTcType ty) (tc-borrow-place-var name ty)]
+      (match (tc-lookup-visible ctx env (intern-str name))
+        [(OkTcType ty) (tc-borrow-place-var (intern-str name) ty)]
         [(ErrTcType message) (ErrTcBorrowPlace message)])]
     [(AstExprStructGet receiver-box field)
       (let
@@ -11484,8 +11489,8 @@
   [expr : AstExpr]) : ResultTcString
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup-visible ctx env name)
-        [(OkTcType ty) (tc-store-place-lifetime-var name ty)]
+      (match (tc-lookup-visible ctx env (intern-str name))
+        [(OkTcType ty) (tc-store-place-lifetime-var (intern-str name) ty)]
         [(ErrTcType message) (ErrTcString message)])]
     [(AstExprStructGet receiver-box _)
       (let
@@ -13019,25 +13024,25 @@
         (tc-expr ctx env inner))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
-      (if (tc-hygiene-global-name? name)
+      (if (tc-hygiene-global-name? (intern-str name))
         (let
-          [global-name : String (tc-hygiene-global-base name)]
+          [global-name : String (tc-hygiene-global-base (intern-str name))]
           (if (tc-hygiene-global-binding-unsafe? env global-name)
             (match (tc-require-unsafe env global-name)
               [(OkTcUnit)
                 (tc-lookup-hygiene-global-visible ctx env global-name)]
               [(ErrTcUnit message) (ErrTcType message)])
             (tc-lookup-hygiene-global-visible ctx env global-name)))
-        (match (tc-lookup-unsafe env name)
+        (match (tc-lookup-unsafe env (intern-str name))
           [(OkTcTypeUnsafe ty unsafe)
             (if unsafe
-              (match (tc-require-unsafe env name)
+              (match (tc-require-unsafe env (intern-str name))
                 [(OkTcUnit)
-                  (match (tc-qualified-value-visible-ok ctx name)
+                  (match (tc-qualified-value-visible-ok ctx (intern-str name))
                     [(OkTcUnit) (OkTcType ty)]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [(ErrTcUnit message) (ErrTcType message)])
-              (match (tc-qualified-value-visible-ok ctx name)
+              (match (tc-qualified-value-visible-ok ctx (intern-str name))
                 [(OkTcUnit) (OkTcType ty)]
                 [(ErrTcUnit message) (ErrTcType message)]))]
           [(ErrTcTypeUnsafe message) (ErrTcType message)]))]
@@ -14087,7 +14092,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-bare-var inner))]
-    [(AstExprVar name) (TcSomeString name)]
+    [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
 ;; The root local named by a projection chain. This intentionally returns bare
@@ -14123,7 +14128,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-root-projection-var inner))]
-    [(AstExprVar name) (TcSomeString name)]
+    [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
 (define (tc-move-dynamic-array-element-message) : String
@@ -14222,7 +14227,7 @@
                 (TcSomeString (tc-move-array-index-path base index))]
               [(TcMoveNoIndex) (TcNoString)])]
           [(TcNoString) (TcNoString)]))]
-    [(AstExprVar name) (TcSomeString name)]
+    [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
 (define (tc-move-struct-field-path [expr : AstExpr]) : TcMaybeString
@@ -14963,8 +14968,8 @@
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
-      (if (tc-moved-contains? moved name)
-        (ErrTcMove (tc-move-use-message name))
+      (if (tc-moved-contains? moved (intern-str name))
+        (ErrTcMove (tc-move-use-message (intern-str name)))
         (OkTcMove moved))]
     [(AstExprBinary _ left-box right-box)
       (let
@@ -16788,7 +16793,8 @@
         (ast-expr-spanned (macro-hygiene-expr inner env macro-name depth) span))]
     [(AstExprVar name)
       (ast-node-push
-        (AstExprVar (macro-hygiene-rename-var env macro-name name)))]
+        (AstExprVar
+          (intern (macro-hygiene-rename-var env macro-name (intern-str name)))))]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -17349,9 +17355,9 @@
     [(AstExprVar name)
       (let
         [lookup-name : String
-          (if (tc-hygiene-global-name? name)
-            (tc-hygiene-global-base name)
-            name)]
+          (if (tc-hygiene-global-name? (intern-str name))
+            (tc-hygiene-global-base (intern-str name))
+            (intern-str name))]
         (if (tc-name-qualified? lookup-name)
           (macro-qualified-call-decl ctx decls lookup-name call-expr)
           (match (compiler-symbols-lookup-macro-in-module
@@ -17664,7 +17670,7 @@
 
 (define (macro-compat-call-name [func : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan func)
-    [(AstExprVar name) (TcSomeString name)]
+    [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
 (define (macro-compat-guard-message [name : String]) : String
@@ -18165,9 +18171,9 @@
       (macro-call-callee-name (ast-node-get inner-box))]
     [(AstExprVar name)
       (TcSomeString
-        (if (tc-hygiene-global-name? name)
-          (tc-hygiene-global-base name)
-          name))]
+        (if (tc-hygiene-global-name? (intern-str name))
+          (tc-hygiene-global-base (intern-str name))
+          (intern-str name)))]
     [_ (TcNoString)]))
 
 (define (macro-call-is-expandable?

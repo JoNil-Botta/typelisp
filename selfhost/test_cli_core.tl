@@ -397,13 +397,13 @@
 
 (define (tltest-print-expr [text : String]) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar "__tl_test_print_error"))
+    (ast-node-push (AstExprVar (intern "__tl_test_print_error")))
     (ast-expr-cons
       (ast-node-push (AstExprLiteral (AstLitString text)))
       AstExprNil)))
 
 (define (tltest-call-expr [name : String]) : i64
-  (ast-expr-call (ast-node-push (AstExprVar name)) AstExprNil))
+  (ast-expr-call (ast-node-push (AstExprVar (intern name))) AstExprNil))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string-eq path "")
@@ -440,7 +440,7 @@
     (AstExprUnsafe
       (ast-expr-cons
         (ast-expr-cast
-          (ast-expr-ptr-to-int (ast-node-push (AstExprVar "buf")))
+          (ast-expr-ptr-to-int (ast-node-push (AstExprVar (intern "buf"))))
           (AstTyI64))
         AstExprNil))))
 
@@ -449,11 +449,11 @@
     (ast-expr-cons
       (ast-node-push (AstExprLiteral (AstLitInt 1)))
       (ast-expr-cons
-        (ast-expr-cast (ast-node-push (AstExprVar "fd")) (AstTyI64))
+        (ast-expr-cast (ast-node-push (AstExprVar (intern "fd"))) (AstTyI64))
         (ast-expr-cons
           (tltest-linux-write-ptr-arg)
           (ast-expr-cons
-            (ast-expr-cast (ast-node-push (AstExprVar "n")) (AstTyI64))
+            (ast-expr-cast (ast-node-push (AstExprVar (intern "n"))) (AstTyI64))
             AstExprNil))))))
 
 (define (tltest-linux-print-runtime-write-decl) : AstDecl
@@ -491,7 +491,7 @@
 
 (define (tltest-windows-get-stderr-handle-expr) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar "__tl_test_get_std_handle"))
+    (ast-node-push (AstExprVar (intern "__tl_test_get_std_handle")))
     (ast-expr-cons
       (ast-expr-cast
         (ast-node-push (AstExprLiteral (AstLitInt -12)))
@@ -500,13 +500,13 @@
 
 (define (tltest-windows-write-file-call) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar "__tl_test_write_file"))
+    (ast-node-push (AstExprVar (intern "__tl_test_write_file")))
     (ast-expr-cons
-      (ast-node-push (AstExprVar "handle"))
+      (ast-node-push (AstExprVar (intern "handle")))
       (ast-expr-cons
-        (ast-node-push (AstExprVar "buf"))
+        (ast-node-push (AstExprVar (intern "buf")))
         (ast-expr-cons
-          (ast-node-push (AstExprVar "n"))
+          (ast-node-push (AstExprVar (intern "n")))
           (ast-expr-cons
             (ast-node-push (AstExprPtrNull (ast-ty-mut-ptr (AstTyI32))))
             (ast-expr-cons
@@ -529,12 +529,12 @@
     (ast-expr-if
       (ast-expr-binary
         (AstBinEq)
-        (ast-node-push (AstExprVar "ok"))
+        (ast-node-push (AstExprVar (intern "ok")))
         (ast-expr-cast
           (ast-node-push (AstExprLiteral (AstLitInt 0)))
           (AstTyI32)))
       (ast-expr-cast (ast-node-push (AstExprLiteral (AstLitInt -1))) (AstTyI32))
-      (ast-node-push (AstExprVar "n")))))
+      (ast-node-push (AstExprVar (intern "n"))))))
 
 (define (tltest-windows-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
@@ -553,19 +553,20 @@
 
 (define (tltest-text-length-expr) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar "string-length"))
-    (ast-expr-cons (ast-node-push (AstExprVar "text")) AstExprNil)))
+    (ast-node-push (AstExprVar (intern "string-length")))
+    (ast-expr-cons (ast-node-push (AstExprVar (intern "text"))) AstExprNil)))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar "__tl_test_write"))
+    (ast-node-push (AstExprVar (intern "__tl_test_write")))
     (ast-expr-cons
       (ast-expr-cast (ast-node-push (AstExprLiteral (AstLitInt 2))) (AstTyI32))
       (ast-expr-cons
         (ast-node-push
           (AstExprUnsafe
             (ast-expr-cons
-              (ast-expr-string-data (ast-node-push (AstExprVar "text")))
+              (ast-expr-string-data
+                (ast-node-push (AstExprVar (intern "text"))))
               AstExprNil)))
         (ast-expr-cons
           (ast-expr-cast (tltest-text-length-expr) (AstTyI32))
@@ -769,7 +770,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprLiteral _) names]
-    [(AstExprVar name) (tltest-reach-mark-name names name)]
+    [(AstExprVar name) (tltest-reach-mark-name names (intern-str name))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]

@@ -4038,7 +4038,8 @@
             (OkAstExpr
               (ast-expr-wrap-span (ast-node-push (AstExprLiteral AstLitUnit)) s))]
           [else
-            (OkAstExpr (ast-expr-wrap-span (ast-node-push (AstExprVar name)) s))]))]
+            (OkAstExpr
+              (ast-expr-wrap-span (ast-node-push (AstExprVar (intern name))) s))]))]
     [(SpSCons head rest _)
       (match (sp-node-get head)
         [(SpSSym op _)
@@ -6866,7 +6867,7 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name) (string-eq place-name name)]
+          [(AstExprVar place-name) (string-eq (intern-str place-name) name)]
           [_ false]))]
     [_ false]))
 
@@ -6878,7 +6879,7 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name) (string-eq place-name name)]
+          [(AstExprVar place-name) (string-eq (intern-str place-name) name)]
           [_ false]))]
     [_ false]))
 
@@ -6894,7 +6895,7 @@
           [(AstExprVar place-name)
             (and
               (string-eq actual-lifetime lifetime)
-              (string-eq place-name name))]
+              (string-eq (intern-str place-name) name))]
           [_ false]))]
     [_ false]))
 
@@ -6931,7 +6932,9 @@
                                           (ast-node-get first-place-box)]
                                         (match (ast-expr-unspan first-place)
                                           [(AstExprVar first-name)
-                                            (if (string-eq first-name "x")
+                                            (if (string-eq
+                                              (intern-str first-name)
+                                              "x")
                                               (match (ast-expr-unspan second)
                                                 [(AstExprBorrow
                                                     _
@@ -6950,7 +6953,8 @@
                                                             lifetime
                                                             "x")
                                                           (string-eq
-                                                            second-name
+                                                            (intern-str
+                                                              second-name)
                                                             "x"))]
                                                       [_ false]))]
                                                 [_ false])
@@ -7069,7 +7073,7 @@
 
 (define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprVar found) (string-eq found name)]
+    [(AstExprVar found) (string-eq (intern-str found) name)]
     [_ false]))
 
 (define (compiler-parse-return-expr? [expr : AstExpr]) : bool
@@ -8543,7 +8547,7 @@
                               (match (ast-expr-unspan callee)
                                 [(AstExprVar name)
                                   (and
-                                    (string-eq name "arena-make")
+                                    (string-eq (intern-str name) "arena-make")
                                     (match body-exprs
                                       [(AstExprCons _ tail)
                                         (let
@@ -8705,7 +8709,8 @@
                                       [unquoted : AstExpr
                                         (ast-node-get unquoted-box)]
                                       (match (ast-expr-unspan unquoted)
-                                        [(AstExprVar name) (string-eq name "e")]
+                                        [(AstExprVar name)
+                                          (string-eq (intern-str name) "e")]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]

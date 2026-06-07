@@ -8,6 +8,8 @@
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
 ;; but later parser work decides when they are populated.
+(import "compiler_intern.tl")
+
 (defstruct AstSourceSpan
   (start-line i64)
   (start-col i64)
@@ -223,7 +225,7 @@
 (defenum AstExpr
   (AstExprSpanned i64 AstSourceSpan)
   (AstExprLiteral AstLiteral)
-  (AstExprVar String)
+  (AstExprVar i64)
   (AstExprBinary AstBinOp i64 i64)
   (AstExprUnary AstUnOp i64)
   (AstExprCall i64 AstExprList)
@@ -1430,7 +1432,7 @@
                 [else-expr : AstExpr (ast-node-get else-box)]
                 (and
                   (match cond
-                    [(AstExprVar name) (string-eq name "cond")]
+                    [(AstExprVar name) (string-eq (intern-str name) "cond")]
                     [_ false])
                   (and
                     (match then-expr
@@ -1439,7 +1441,8 @@
                           [scrut : AstExpr (ast-node-get scrut-box)]
                           (and
                             (match scrut
-                              [(AstExprVar name) (string-eq name "input")]
+                              [(AstExprVar name)
+                                (string-eq (intern-str name) "input")]
                               [_ false])
                             (compiler-ast-single-arm-box-ok? arms)))]
                       [_ false])
@@ -1470,11 +1473,14 @@
         (ast-match-arm variant-pattern begin-expr)
         AstMatchArmNil)]
     [match-expr : i64
-      (ast-expr-match (ast-node-push (AstExprVar "input")) arms)]
+      (ast-expr-match (ast-node-push (AstExprVar (intern "input"))) arms)]
     [nested : i64
       (ast-expr-let
         bindings
-        (ast-expr-if (ast-node-push (AstExprVar "cond")) match-expr begin-expr))]
+        (ast-expr-if
+          (ast-node-push (AstExprVar (intern "cond")))
+          match-expr
+          begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))
 
 (define (compiler-ast-decl-def-lit-ok?

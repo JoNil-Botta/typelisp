@@ -176,8 +176,8 @@
 ;: Out-of-memory abort, exported as `tl_oom_abort` (#2221). Reached from the
 ;: allocator (`tl_alloc`) when it cannot obtain more memory, so it MUST NOT
 ;: allocate: `runtime-abort-write` only takes the address/length of a static
-;: string literal, and `runtime-os-write` passes a NULL `lpNumberOfBytesWritten`
-;: to WriteFile on Windows (no out-param buffer) — both are allocation-free.
+;: string literal, and current Windows builds use `ptr-addr-of` so
+;: `runtime-os-write` passes WriteFile a stack-backed byte-count cell.
 ;: Replaces the former hand-written `.L_tl_alloc_abort` asm (and its Windows
 ;: `.L_tl_win_write_abort` helper) on both targets.
 (define (tl-runtime-oom-abort)

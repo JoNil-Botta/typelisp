@@ -4898,6 +4898,23 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-export-symbol-fixed-fault-source) : String
+  "(extern tl_oob_abort : (-> never))
+(define (tl-runtime-oob-abort) (:export-symbol \"tl_oob_abort\") : never
+  (tl_oob_abort))
+(define (main) : i64 0)")
+
+(define (compiler-backend-export-symbol-fixed-fault-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-export-symbol-fixed-fault-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
+        (and
+          (compiler-backend-string-contains? asm "tl_oob_abort:\n")
+          (not (compiler-backend-string-contains? asm ".extern tl_oob_abort\n"))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-duplicate-export-symbol-source) : String
   "(define (a) (:export-symbol \"dup_export\") : i64 1)
 (define (b) (:export-symbol \"dup_export\") : i64 2)
@@ -4920,6 +4937,15 @@
 (define (compiler-backend-export-symbol-main-source) : String
   "(define (main) (:export-symbol \"tl_not_main\") : i64 0)")
 
+(define (compiler-backend-export-symbol-invalid-source) : String
+  "(define (bad) (:export-symbol \"bad symbol\") : i64 1)
+(define (main) : i64 (bad))")
+
+(define (compiler-backend-export-symbol-extern-collision-source) : String
+  "(extern imported (:symbol \"dup_link\") : (-> i64))
+(define (exported) (:export-symbol \"dup_link\") : i64 42)
+(define (main) : i64 (imported))")
+
 (define (compiler-backend-export-symbol-diagnostics-ok?) : bool
   (and
     (backend-and4
@@ -4935,14 +4961,24 @@
       (compiler-backend-error-ok?
         (compiler-backend-export-symbol-runtime-collision-source)
         "backend: exported function symbol collides with runtime symbol tl_alloc"))
-    (compiler-backend-error-ok?
-      (compiler-backend-export-symbol-main-source)
-      "backend: main cannot use :export-symbol")))
+    (backend-and4
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-main-source)
+        "backend: main cannot use :export-symbol")
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-invalid-source)
+        "backend: invalid exported function symbol bad symbol")
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-extern-collision-source)
+        "backend: extern symbol collides with emitted symbol dup_link")
+      true)))
 
 (define (compiler-backend-export-symbol-tests-ok?) : bool
   (and
     (compiler-backend-export-symbol-ok?)
-    (compiler-backend-export-symbol-diagnostics-ok?)))
+    (and
+      (compiler-backend-export-symbol-fixed-fault-ok?)
+      (compiler-backend-export-symbol-diagnostics-ok?))))
 
 (define (compiler-backend-raw-pointer-fixture-shape-ok?) : bool
   (match (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))

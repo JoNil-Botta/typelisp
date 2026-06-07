@@ -506,7 +506,7 @@
           [(AstReplExpr expr)
             (match (repl-load-session-decls session-source)
               [(OkReplDeclList decls)
-                (match (typecheck-compiler-repl-expr decls expr)
+                (match (typecheck-compiler-repl-expr decls (ast-node-get expr))
                   [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
                   [(ErrTcType message)
                     (repl-print-error-line (string-append "Error: " message))])]
@@ -533,7 +533,7 @@
                   session-source)]))]
         [(AstReplExpr expr)
           (begin
-            (repl-evaluate-expr session-source input expr)
+            (repl-evaluate-expr session-source input (ast-node-get expr))
             session-source)])]
     [(ErrAstReplItem message)
       (begin

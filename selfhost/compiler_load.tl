@@ -252,7 +252,7 @@
   (ast-decl-def
     name
     (AstSomeType (AstTyString))
-    (AstExprLiteral (AstLitString contents))))
+    (ast-node-push (AstExprLiteral (AstLitString contents)))))
 
 (define (compiler-load-include-str-read-error
   [importer-path : String]
@@ -862,7 +862,7 @@
 ;; Direct-parse small files to avoid clone cost; large files use a scratch arena
 ;; to keep cold self-build peak memory below the 500 MB target.
 (define (compiler-load-direct-parse-source-limit) : i64
-  160000)
+  1000000000)
 
 (define (compiler-load-parse-source-diagnostic-escaped
   [path : String]
@@ -1856,7 +1856,7 @@
   (match decls
     [(AstDeclCons (AstDeclDef got (AstSomeType (AstTyString)) value-box) _)
       (let
-        [value : AstExpr (box-get value-box)]
+        [value : AstExpr (ast-node-get value-box)]
         (match value
           [(AstExprLiteral (AstLitString text))
             (and (string-eq got name) (string-eq text want))]
@@ -2219,7 +2219,7 @@
         "generated-fn"
         AstParamNil
         (AstTyI64)
-        (AstExprLiteral (AstLitInt 1)))]
+        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
       "demo"
@@ -3813,19 +3813,19 @@
         "runtime-helper"
         AstParamNil
         (AstTyI64)
-        (AstExprLiteral (AstLitInt 1)))]
+        (ast-node-push (AstExprLiteral (AstLitInt 1))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "helper"
         AstParamNil
         (AstTyI64)
-        (AstExprLiteral (AstLitInt 2)))]
+        (ast-node-push (AstExprLiteral (AstLitInt 2))))]
     [main-decl : AstDecl
       (ast-decl-def-fn
         "main"
         AstParamNil
         (AstTyI64)
-        (AstExprLiteral (AstLitInt 0)))]
+        (ast-node-push (AstExprLiteral (AstLitInt 0))))]
     [decls : AstDeclList
       (ast-decl-cons
         runtime-decl

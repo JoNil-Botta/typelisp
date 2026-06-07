@@ -33,10 +33,12 @@
 ;: Runtime hook backing `profile-alloc-reset-peak`.
 (extern tl_profile_alloc_reset_peak : (-> unit))
 
+;: Return a pointer to one slot in the shared timestamp scratch buffer.
 (define (profile-scratch-ptr [slot : i64]) : (MutPtr i64)
   (unsafe
     (ptr-offset (ptr-cast (array-data profile-now-scratch) : (MutPtr i64)) slot)))
 
+;: Return the shared timestamp scratch data address for raw Linux syscalls.
 (define (profile-scratch-addr) : i64
   (unsafe
     (cast

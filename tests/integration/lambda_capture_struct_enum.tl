@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 ; Capturing scalar-field struct and enum values in closure environments (#540).
 ; Each case reads scalars out of a captured aggregate; `main` yields 42 only if
 ; every case holds. The "returned" cases capture an aggregate whose inline
@@ -45,7 +47,7 @@
 
 (define (main) : i64
   (begin
-    (unless (case-struct-immediate) (return 1))
-    (unless (case-struct-returned) (return 2))
-    (unless (case-enum-returned) (return 3))
+    (core/unless (case-struct-immediate) (return 1))
+    (core/unless (case-struct-returned) (return 2))
+    (core/unless (case-enum-returned) (return 3))
     42))

@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 ; Capturing top-level scalar-element fixed `(Array T N)` values in closure
 ; environments (#571). `main` yields 42 only if every case holds. The
 ; "returned" case captures a fixed array whose inline storage is frame-owned in
@@ -29,7 +31,7 @@
 
 (define (main) : i64
   (begin
-    (unless (case-immediate) (return 1))
-    (unless (case-returned) (return 2))
-    (unless (case-mutated-after-capture) (return 3))
+    (core/unless (case-immediate) (return 1))
+    (core/unless (case-returned) (return 2))
+    (core/unless (case-mutated-after-capture) (return 3))
     42))

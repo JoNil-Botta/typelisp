@@ -385,8 +385,7 @@
         runtime-paths
         runtime-modules
         runtime-seen)
-      (match (compiler-load-file-with-paths-and-roots-cfg
-        "stdlib/core_macros.tl"
+      (match (compiler-load-core-macro-prelude-with-roots-cfg
         runtime-seen
         stdlib-roots
         cfgs)
@@ -395,25 +394,12 @@
             macro-paths
             macro-modules
             macro-seen)
-          ;; core_macros.tl declares `(module stdlib.core-macros)`, which would
-          ;; otherwise leak into a module-less entry program (its `main` would be
-          ;; mangled under stdlib.core-macros and miss the entry-point lookup).
-          ;; Append a root `(module "")` marker so the entry resumes at the root
-          ;; module, mirroring how imports restore the importer module (see
-          ;; compiler-load-decls-after-import). runtime.tl needs no marker: it
-          ;; declares no module.
           (OkCompilerLoadWithPaths
-            (compiler-load-decl-list-append
-              (compiler-load-decl-list-append runtime-decls macro-decls)
-              (ast-decl-cons (AstDeclModule "") AstDeclNil))
-            (compiler-load-decl-path-list-append
-              (compiler-load-decl-path-list-append runtime-paths macro-paths)
-              (ast-decl-path-cons "stdlib/core_macros.tl" AstDeclPathNil))
+            (compiler-load-decl-list-append runtime-decls macro-decls)
+            (compiler-load-decl-path-list-append runtime-paths macro-paths)
             (compiler-load-decl-module-list-append
-              (compiler-load-decl-module-list-append
-                runtime-modules
-                macro-modules)
-              (ast-decl-module-cons "" AstDeclModuleNil))
+              runtime-modules
+              macro-modules)
             macro-seen)]
         [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
@@ -794,8 +780,7 @@
             runtime-paths
             runtime-modules
             runtime-seen)
-          (match (compiler-load-package-file-with-paths-and-roots-cfg
-            "stdlib/core_macros.tl"
+          (match (compiler-load-package-core-macro-prelude-with-roots-cfg
             runtime-seen
             stdlib-roots
             manifest-dir
@@ -818,45 +803,57 @@
                     entry-paths
                     entry-modules
                     seen)
-                  ;; Reset to the root module after core_macros so a module-less
-                  ;; entry's `main` is not mangled under stdlib.core-macros (see
-                  ;; compiler-driver-load-runtime-prelude).
                   (OkCompilerLoadWithPaths
                     (compiler-load-decl-list-append
-                      (compiler-load-decl-list-append
-                        (compiler-load-decl-list-append
-                          runtime-decls
-                          macro-decls)
-                        (ast-decl-cons (AstDeclModule "") AstDeclNil))
+                      (compiler-load-decl-list-append runtime-decls macro-decls)
                       entry-decls)
                     (compiler-load-decl-path-list-append
                       (compiler-load-decl-path-list-append
-                        (compiler-load-decl-path-list-append
-                          runtime-paths
-                          macro-paths)
-                        (ast-decl-path-cons
-                          "stdlib/core_macros.tl"
-                          AstDeclPathNil))
+                        runtime-paths
+                        macro-paths)
                       entry-paths)
                     (compiler-load-decl-module-list-append
                       (compiler-load-decl-module-list-append
-                        (compiler-load-decl-module-list-append
-                          runtime-modules
-                          macro-modules)
-                        (ast-decl-module-cons "" AstDeclModuleNil))
+                        runtime-modules
+                        macro-modules)
                       entry-modules)
                     seen)]
                 [(ErrCompilerLoadWithPaths diag)
                   (ErrCompilerLoadWithPaths diag)])]
             [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
         [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])
-      (compiler-load-package-file-with-paths-and-roots-cfg
-        input-path
+      (match (compiler-load-package-core-macro-prelude-with-roots-cfg
         (sym-i64-empty)
         stdlib-roots
         manifest-dir
         deps
-        cfgs))))
+        cfgs)
+        [(OkCompilerLoadWithPaths
+            prelude-decls
+            prelude-paths
+            prelude-modules
+            prelude-seen)
+          (match (compiler-load-package-file-with-paths-and-roots-cfg
+            input-path
+            prelude-seen
+            stdlib-roots
+            manifest-dir
+            deps
+            cfgs)
+            [(OkCompilerLoadWithPaths
+                entry-decls
+                entry-paths
+                entry-modules
+                seen)
+              (OkCompilerLoadWithPaths
+                (compiler-load-decl-list-append prelude-decls entry-decls)
+                (compiler-load-decl-path-list-append prelude-paths entry-paths)
+                (compiler-load-decl-module-list-append
+                  prelude-modules
+                  entry-modules)
+                seen)]
+            [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))))
 
 (define (compiler-driver-load-package-file-with-runtime-owned
   [input-path : String]

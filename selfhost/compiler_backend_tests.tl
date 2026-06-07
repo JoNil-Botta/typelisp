@@ -2767,29 +2767,31 @@
 (define (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
-    (backend-and8
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_process_output")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_process_start")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_process_wait")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_profile_alloc_total")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_profile_alloc_live")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_profile_alloc_peak")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_profile_alloc_reset_peak")
-      false)
+    (and
+      (backend-and4
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_process_output")
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_process_start")
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_process_wait")
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_profile_alloc_total"))
+      (and
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_profile_alloc_live")
+        (and
+          (compiler-backend-runtime-helper-inventory-symbol-ok?
+            plan
+            "tl_profile_alloc_peak")
+          (compiler-backend-runtime-helper-inventory-symbol-ok?
+            plan
+            "tl_profile_alloc_reset_peak"))))
     (and
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan

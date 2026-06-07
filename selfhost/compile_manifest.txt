@@ -98,6 +98,7 @@ end
 
 case|integration_sym_i64_env|tests/integration/sym_i64_env.tl|assembly|present|stage
 copy|selfhost/sym_i64_env.tl|sym_i64_env_core.tl
+copy|selfhost/compiler_intern.tl|compiler_intern.tl
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:
 contains|_tl_sym_i64_lookup:

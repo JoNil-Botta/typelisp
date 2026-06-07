@@ -11,7 +11,7 @@ argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:_tl_clone_u24Bundle
-tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl stdlib/core_macros.tl stdlib/io.tl stdlib/string.tl
+tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl compiler_intern.tl stdlib/core_macros.tl stdlib/io.tl stdlib/string.tl
 tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
@@ -100,7 +100,7 @@ string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\
 string_length|tests/integration/string_length.tl|5|-|-|-
 string_match|tests/integration/string_match.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|stdlib/string.tl
-sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl stdlib/io.tl stdlib/string.tl
+sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nPASS: id-key-contains\nPASS: id-key-string-contains\nPASS: id-key-value\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl compiler_intern.tl stdlib/io.tl stdlib/string.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
 text_buf|tests/integration/text_buf.tl|0|left-right\n|-|text_buf_core.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-

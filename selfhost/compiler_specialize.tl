@@ -1036,6 +1036,15 @@
     [remove-result : String (string-append map-name "RemoveResult")]
     [remove-ok : String (string-append map-name "RemoveOk")]
     [remove-missing : String (string-append map-name "RemoveMissing")]
+    [update-result : String (string-append map-name "UpdateResult")]
+    [update-ok : String (string-append map-name "UpdateOk")]
+    [update-missing : String (string-append map-name "UpdateMissing")]
+    [entry-or-insert-result : String
+      (string-append map-name "EntryOrInsertResult")]
+    [entry-or-insert-found : String
+      (string-append map-name "EntryOrInsertFound")]
+    [entry-or-insert-inserted : String
+      (string-append map-name "EntryOrInsertInserted")]
     [entry : String (string-append map-name "Entry")]
     [entry-none : String (string-append map-name "EntryNone")]
     [entry-some : String (string-append map-name "EntrySome")]
@@ -1270,7 +1279,24 @@
           remove-ok
           " "
           map-name))
-      (set! buf (gen-tb5 buf ")\n  (" remove-missing " " map-name "))\n"))
+      (set! buf (gen-tb4 buf ")\n  (" remove-missing " " map-name))
+      (set!
+        buf
+        (gen-tb5 buf "))\n(defenum " update-result "\n  (" update-ok " "))
+      (set! buf (gen-tb5 buf map-name ")\n  (" update-missing " " map-name))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "))\n(defenum "
+          entry-or-insert-result
+          "\n  ("
+          entry-or-insert-found
+          " "))
+      (set!
+        buf
+        (gen-tb5 buf map-name " " value-type ")\n  (" entry-or-insert-inserted))
+      (set! buf (gen-tb6 buf " " map-name " " value-type "))\n" ""))
       (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
       (set!
         buf
@@ -1551,6 +1577,86 @@
       (set! buf (gen-tb2 buf "-remove-borrowed map (& key)))\n" ""))
       (set!
         buf
+        (gen-tb3 buf "(define (" prefix "-update-borrowed-if-present\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [key : (& key str)]\n  [value : "
+          value-type
+          "]) : "
+          update-result))
+      (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-slots map)]\n    [hash : i64 ("
+          prefix
+          "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (match ("
+          prefix
+          "-probe-borrowed slots ("
+          prefix
+          "-capacity map) key hash)\n      [("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          probe-found
+          " index)\n        (match (array-ref slots index)\n          [("
+          occupied
+          " slot-key _ slot-hash)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            (begin\n              (array-set! slots index ("
+          occupied
+          " slot-key value slot-hash))\n              ("))
+      (set! buf (gen-tb4 buf update-ok " map))]\n          [(" empty ") ("))
+      (set!
+        buf
+        (gen-tb4 buf update-missing " map)]\n          [(" tombstone ") ("))
+      (set!
+        buf
+        (gen-tb4 buf update-missing " map)])]\n      [(" probe-absent " _) ("))
+      (set!
+        buf
+        (gen-tb4 buf update-missing " map)]\n      [(" probe-full ") ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          update-missing
+          " map)])))\n(define ("
+          prefix
+          "-update-if-present\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [key : String]\n  [value : "
+          value-type
+          "]) : "
+          update-result))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "\n  ("
+          prefix
+          "-update-borrowed-if-present map (& key) value))\n"
+          ""))
+      (set!
+        buf
         (gen-tb3
           buf
           "(define ("
@@ -1771,9 +1877,130 @@
           "-grow full) key value)\n          [("
           insert-ok
           " u) u]\n"))
+      (set! buf (gen-tb4 buf "          [(" insert-full " u) u])])))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-insert-or-update\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
       (set!
         buf
-        (gen-tb4 buf "          [(" insert-full " u) u])])))\n(defenum " entry))
+        (gen-tb4
+          buf
+          "  [key : String]\n  [value : "
+          value-type
+          "]) : "
+          map-name))
+      (set! buf (gen-tb3 buf "\n  (" prefix "-put map key value))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-entry-or-insert\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [key : String]\n  [default-value : "
+          value-type
+          "]) : "
+          entry-or-insert-result))
+      (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-slots map)]\n    [hash : i64 ("
+          prefix
+          "-hash-key (& key))]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (match ("
+          prefix
+          "-probe-borrowed slots ("
+          prefix
+          "-capacity map) (& key) hash)\n      [("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          probe-found
+          " index)\n        (match (array-ref slots index)\n          [("
+          occupied
+          " _ value _) ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          entry-or-insert-found
+          " map value)]\n          [("
+          empty
+          ")\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            (let\n              [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "              ("
+          entry-or-insert-inserted
+          " updated default-value))]\n          [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ")\n            (let\n              [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "              ("
+          entry-or-insert-inserted
+          " updated default-value))])]\n      [("
+          probe-absent))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          " _)\n        (let\n          [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "          ("
+          entry-or-insert-inserted
+          " updated default-value))]\n      [("
+          probe-full))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ")\n        (let\n          [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "          ("
+          entry-or-insert-inserted
+          " updated default-value))])))\n(defenum "))
+      (set! buf (gen-tb2 buf entry ""))
       (set!
         buf
         (gen-tb6
@@ -1891,6 +2118,15 @@
     [remove-result : String (string-append map-name "RemoveResult")]
     [remove-ok : String (string-append map-name "RemoveOk")]
     [remove-missing : String (string-append map-name "RemoveMissing")]
+    [update-result : String (string-append map-name "UpdateResult")]
+    [update-ok : String (string-append map-name "UpdateOk")]
+    [update-missing : String (string-append map-name "UpdateMissing")]
+    [entry-or-insert-result : String
+      (string-append map-name "EntryOrInsertResult")]
+    [entry-or-insert-found : String
+      (string-append map-name "EntryOrInsertFound")]
+    [entry-or-insert-inserted : String
+      (string-append map-name "EntryOrInsertInserted")]
     [entry : String (string-append map-name "Entry")]
     [entry-none : String (string-append map-name "EntryNone")]
     [entry-some : String (string-append map-name "EntrySome")]
@@ -2082,7 +2318,24 @@
           remove-ok
           " "
           map-name))
-      (set! buf (gen-tb5 buf ")\n  (" remove-missing " " map-name "))\n"))
+      (set! buf (gen-tb4 buf ")\n  (" remove-missing " " map-name))
+      (set!
+        buf
+        (gen-tb5 buf "))\n(defenum " update-result "\n  (" update-ok " "))
+      (set! buf (gen-tb5 buf map-name ")\n  (" update-missing " " map-name))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "))\n(defenum "
+          entry-or-insert-result
+          "\n  ("
+          entry-or-insert-found
+          " "))
+      (set!
+        buf
+        (gen-tb5 buf map-name " " value-type ")\n  (" entry-or-insert-inserted))
+      (set! buf (gen-tb6 buf " " map-name " " value-type "))\n" ""))
       (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
       (set!
         buf
@@ -2367,6 +2620,60 @@
       (set!
         buf
         (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-update-if-present\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [key : i64]\n  [value : "
+          value-type
+          "]) : "
+          update-result))
+      (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-slots map)]\n    [hash : i64 ("
+          prefix
+          "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (match ("
+          prefix
+          "-probe slots ("
+          prefix
+          "-capacity map) key hash)\n      [("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          probe-found
+          " index)\n        (match (array-ref slots index)\n          [("
+          occupied
+          " slot-key _ slot-hash)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "            (begin\n              (array-set! slots index ("
+          occupied
+          " slot-key value slot-hash))\n              ("))
+      (set! buf (gen-tb4 buf update-ok " map))]\n          [(" empty ") ("))
+      (set!
+        buf
+        (gen-tb4 buf update-missing " map)]\n          [(" tombstone ") ("))
+      (set!
+        buf
+        (gen-tb4 buf update-missing " map)])]\n      [(" probe-absent " _) ("))
+      (set!
+        buf
+        (gen-tb4 buf update-missing " map)]\n      [(" probe-full ") ("))
+      (set! buf (gen-tb3 buf update-missing " map)])))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -2589,9 +2896,125 @@
           "-grow full) key value)\n          [("
           insert-ok
           " u) u]\n"))
+      (set! buf (gen-tb4 buf "          [(" insert-full " u) u])])))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-insert-or-update\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
       (set!
         buf
-        (gen-tb4 buf "          [(" insert-full " u) u])])))\n(defenum " entry))
+        (gen-tb4 buf "  [key : i64]\n  [value : " value-type "]) : " map-name))
+      (set! buf (gen-tb3 buf "\n  (" prefix "-put map key value))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-entry-or-insert\n"))
+      (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [key : i64]\n  [default-value : "
+          value-type
+          "]) : "
+          entry-or-insert-result))
+      (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-slots map)]\n    [hash : i64 ("
+          prefix
+          "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "    (match ("
+          prefix
+          "-probe slots ("
+          prefix
+          "-capacity map) key hash)\n      [("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          probe-found
+          " index)\n        (match (array-ref slots index)\n          [("
+          occupied
+          " _ value _) ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          entry-or-insert-found
+          " map value)]\n          [("
+          empty
+          ")\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "            (let\n              [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "              ("
+          entry-or-insert-inserted
+          " updated default-value))]\n          [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ")\n            (let\n              [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "              ("
+          entry-or-insert-inserted
+          " updated default-value))])]\n      [("
+          probe-absent))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          " _)\n        (let\n          [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "          ("
+          entry-or-insert-inserted
+          " updated default-value))]\n      [("
+          probe-full))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          ")\n        (let\n          [updated : "
+          map-name
+          " ("
+          prefix
+          "-put map key default-value)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "          ("
+          entry-or-insert-inserted
+          " updated default-value))])))\n(defenum "))
+      (set! buf (gen-tb2 buf entry ""))
       (set!
         buf
         (gen-tb6 buf "\n  (" entry-none ")\n  (" entry-some " i64 " value-type))
@@ -6455,6 +6878,27 @@
                     (if (= put-count 1)
                       unit
                       (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-string-map-update-if-present")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-string-map-insert-or-update")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-string-map-entry-or-insert")
+                      1)
+                      unit
+                      (set! ok false))
                     (if (= string-map-count 1)
                       unit
                       (set! ok false))
@@ -6464,6 +6908,27 @@
                     (if (= string-round-count 1)
                       unit
                       (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "string-string-map-update-borrowed-if-present")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "string-string-map-insert-or-update")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "string-string-map-entry-or-insert")
+                      1)
+                      unit
+                      (set! ok false))
                     (if (= i64-map-count 1)
                       unit
                       (set! ok false))
@@ -6471,6 +6936,27 @@
                       unit
                       (set! ok false))
                     (if (= i64-round-count 1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-i64-map-update-if-present")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-i64-map-insert-or-update")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-i64-map-entry-or-insert")
+                      1)
                       unit
                       (set! ok false))
                     (if (= i64-string-round-count 1)

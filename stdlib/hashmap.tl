@@ -290,6 +290,19 @@
   (StringI64MapRemoveOk StringI64Map)
   (StringI64MapRemoveMissing StringI64Map))
 
+;: Result of an update-only operation: the updated map when the key was present,
+;: or `Missing` with the map unchanged when it was absent.
+(defenum StringI64MapUpdateResult
+  (StringI64MapUpdateOk StringI64Map)
+  (StringI64MapUpdateMissing StringI64Map))
+
+;: Result of `entry-or-insert`: the map plus the live value. `Found` means the
+;: key already existed and the map was not changed; `Inserted` means the default
+;: value was inserted, growing/rehashing first if needed.
+(defenum StringI64MapEntryOrInsertResult
+  (StringI64MapEntryOrInsertFound StringI64Map i64)
+  (StringI64MapEntryOrInsertInserted StringI64Map i64))
+
 ;: The map's backing slot array.
 (define (string-i64-map-slots [map : StringI64Map]) : (Array StringI64MapSlot)
   (struct-get map slots))
@@ -573,6 +586,41 @@
 (define (string-i64-map-remove [map : StringI64Map] [key : String]) : StringI64MapRemoveResult
   (string-i64-map-remove-borrowed map (& key)))
 
+;: Update borrowed `key` only when it is already present. This preserves the
+;: stored key object and hash, mutating only the occupied slot value.
+(define (string-i64-map-update-borrowed-if-present
+  [map : StringI64Map]
+  [key : (& key str)]
+  [value : i64]) : StringI64MapUpdateResult
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [hash : i64 (hash-string key)]
+    (match (string-i64-map-probe-borrowed
+      slots
+      (string-i64-map-capacity map)
+      key
+      hash)
+      [(StringI64MapProbeFound index)
+        (match (array-ref slots index)
+          [(StringI64MapOccupied slot-key _ slot-hash)
+            (begin
+              (array-set!
+                slots
+                index
+                (StringI64MapOccupied slot-key value slot-hash))
+              (StringI64MapUpdateOk map))]
+          [(StringI64MapEmpty) (StringI64MapUpdateMissing map)]
+          [(StringI64MapTombstone) (StringI64MapUpdateMissing map)])]
+      [(StringI64MapProbeAbsent _) (StringI64MapUpdateMissing map)]
+      [(StringI64MapProbeFull) (StringI64MapUpdateMissing map)])))
+
+;: Owned-key wrapper for update-only mutation.
+(define (string-i64-map-update-if-present
+  [map : StringI64Map]
+  [key : String]
+  [value : i64]) : StringI64MapUpdateResult
+  (string-i64-map-update-borrowed-if-present map (& key) value))
+
 ;: Insert into a fresh destination table during rehash. Source entries are
 ;: unique, and the destination has no tombstones, so only the first empty slot
 ;: matters.
@@ -684,6 +732,50 @@
         (match (string-i64-map-insert (string-i64-map-grow full) key value)
           [(StringI64MapInsertOk u) u]
           [(StringI64MapInsertFull u) u])])))
+
+;: Insert `key -> value`, or update the existing key to `value`.
+(define (string-i64-map-insert-or-update
+  [map : StringI64Map]
+  [key : String]
+  [value : i64]) : StringI64Map
+  (string-i64-map-put map key value))
+
+;: Return the existing value for `key`, or insert `default-value` and return it.
+;: This does not expose a live bucket handle; callers thread the returned map.
+(define (string-i64-map-entry-or-insert
+  [map : StringI64Map]
+  [key : String]
+  [default-value : i64]) : StringI64MapEntryOrInsertResult
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [hash : i64 (hash-string (& key))]
+    (match (string-i64-map-probe-borrowed
+      slots
+      (string-i64-map-capacity map)
+      (& key)
+      hash)
+      [(StringI64MapProbeFound index)
+        (match (array-ref slots index)
+          [(StringI64MapOccupied _ value _)
+            (StringI64MapEntryOrInsertFound map value)]
+          [(StringI64MapEmpty)
+            (let
+              [updated : StringI64Map
+                (string-i64-map-put map key default-value)]
+              (StringI64MapEntryOrInsertInserted updated default-value))]
+          [(StringI64MapTombstone)
+            (let
+              [updated : StringI64Map
+                (string-i64-map-put map key default-value)]
+              (StringI64MapEntryOrInsertInserted updated default-value))])]
+      [(StringI64MapProbeAbsent _)
+        (let
+          [updated : StringI64Map (string-i64-map-put map key default-value)]
+          (StringI64MapEntryOrInsertInserted updated default-value))]
+      [(StringI64MapProbeFull)
+        (let
+          [updated : StringI64Map (string-i64-map-put map key default-value)]
+          (StringI64MapEntryOrInsertInserted updated default-value))])))
 
 ;: A single iteration step: an occupied entry (its key and value) or none.
 ;: `string-i64-map-entry-at` returns `None` for an empty slot, a tombstone, or

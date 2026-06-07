@@ -8297,6 +8297,7 @@
             (box-get elem)
             (IrValueI64 0)
             (AstTyI64)
+            (AstExprLiteral (AstLitInt 0))
             origin)]
         [(AstTyBox elem)
           (lower-box
@@ -12721,6 +12722,11 @@
         [(LowerExpr done-state _ _) (OkLowerState done-state)])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
+(define (lower-make-array-zero-literal-length? [len : AstExpr]) : bool
+  (match (ast-expr-unspan len)
+    [(AstExprLiteral (AstLitInt value)) (= value 0)]
+    [_ false]))
+
 (define (lower-make-array-init-loop-nonzero
   [ctx : TcContext]
   [state : LowerState]
@@ -12773,11 +12779,26 @@
   [byte-count : CompilerIrValue]
   [elem-ty : AstType]
   [elem-size : i64]
+  [zero-literal-length : bool]
   [origin : AstExpr]) : ResultLowerState
-  (match len-i64
-    [(IrValueI64 literal-len)
-      (if (= literal-len 0)
-        (OkLowerState state)
+  (if zero-literal-length
+    (OkLowerState state)
+    (match len-i64
+      [(IrValueI64 literal-len)
+        (if (= literal-len 0)
+          (OkLowerState state)
+          (lower-make-array-init-loop-nonzero
+            ctx
+            state
+            env
+            type-env
+            buf-value
+            len-i64
+            byte-count
+            elem-ty
+            elem-size
+            origin))]
+      [_
         (lower-make-array-init-loop-nonzero
           ctx
           state
@@ -12788,19 +12809,7 @@
           byte-count
           elem-ty
           elem-size
-          origin))]
-    [_
-      (lower-make-array-init-loop-nonzero
-        ctx
-        state
-        env
-        type-env
-        buf-value
-        len-i64
-        byte-count
-        elem-ty
-        elem-size
-        origin)]))
+          origin)])))
 
 (define (lower-make-array-alloc-buffer
   [ctx : TcContext]
@@ -12811,6 +12820,7 @@
   [len-i64 : CompilerIrValue]
   [elem-ty : AstType]
   [elem-size : i64]
+  [zero-literal-length : bool]
   [origin : AstExpr]) : ResultLowerExpr
   (match (lower-emit-binop
     state
@@ -12840,6 +12850,7 @@
               byte-count
               elem-ty
               elem-size
+              zero-literal-length
               origin)
               [(OkLowerState init-state)
                 (lower-make-array-store-fat init-state arr-ty buf-var len-i64)]
@@ -12856,6 +12867,7 @@
   [len-i64 : CompilerIrValue]
   [elem-ty : AstType]
   [elem-size : i64]
+  [zero-literal-length : bool]
   [origin : AstExpr]) : ResultLowerExpr
   (let
     [fail-start : LowerState (lower-state-finish-block state fail-label)]
@@ -12874,6 +12886,7 @@
       len-i64
       elem-ty
       elem-size
+      zero-literal-length
       origin)))
 
 (define (lower-make-array-from-len
@@ -12884,6 +12897,7 @@
   [elem-ty : AstType]
   [len-value : CompilerIrValue]
   [len-ty : AstType]
+  [len-expr : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
   (let
     [resolved-elem : AstType (tc-resolve-type ctx elem-ty)]
@@ -12942,6 +12956,8 @@
                                   len-i64
                                   resolved-elem
                                   elem-size
+                                  (lower-make-array-zero-literal-length?
+                                    len-expr)
                                   origin)]))])])])]))])))
 
 (define (lower-make-array
@@ -12964,6 +12980,7 @@
             elem-ty
             len-value
             len-ty
+            len
             origin)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 

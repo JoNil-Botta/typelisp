@@ -192,6 +192,11 @@
   "(define (main) : unit
   (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
 
+(define (compiler-typecheck-zero-make-array-recursive-source) : String
+  "(defenum Loop (LoopBox (Box Loop)))
+(define (main) : unit
+  (let [items : (Array Loop) (make-array Loop 0)] unit))")
+
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -223,16 +228,19 @@
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-dyn-array-push-read-ok-source))
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-reference-dyn-array-push-escape-source)
-          "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+        (compiler-typecheck-ok?
+          (compiler-typecheck-zero-make-array-recursive-source))
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-reference-dyn-array-make-reject-source)
-            "typecheck: init unsupported type (& n i64)")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-reference-dyn-array-hidden-source)
-            "typecheck: make-array element type is not supported"))))))
+            (compiler-typecheck-reference-dyn-array-push-escape-source)
+            "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-reference-dyn-array-make-reject-source)
+              "typecheck: init unsupported type (& n i64)")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-reference-dyn-array-hidden-source)
+              "typecheck: make-array element type is not supported")))))))
 
 (define (compiler-typecheck-reference-lambda-capture-tests-ok?) : bool
   (and

@@ -61,6 +61,19 @@
     (let [f : (-> i64) (lambda () : i64 (read r))]
       (f))))")
 
+(define (compiler-typecheck-reference-lambda-while-ok-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [i : i64 0]
+      (let [f : (-> i64) (lambda () : i64 (read r))]
+        (begin
+          (while (< i 1)
+            (begin
+              (set! i (+ i 1))
+              (let [v : i64 (f)] unit)))
+          (f))))))")
+
 (define (compiler-typecheck-reference-lambda-nested-ok-source) : String
   "(define (read [r : (& n i64)]) : i64 42)
 (define (main [n : i64]) : i64
@@ -222,33 +235,36 @@
         (compiler-typecheck-reference-lambda-local-ok-source))
       (and
         (compiler-typecheck-ok?
-          (compiler-typecheck-reference-lambda-nested-ok-source))
+          (compiler-typecheck-reference-lambda-while-ok-source))
         (and
           (compiler-typecheck-ok?
-            (compiler-typecheck-reference-lambda-inner-arena-ok-source))
+            (compiler-typecheck-reference-lambda-nested-ok-source))
           (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-lambda-local-return-source)
-              "typecheck: reference-capturing closure value would escape lexical scope")
+            (compiler-typecheck-ok?
+              (compiler-typecheck-reference-lambda-inner-arena-ok-source))
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-reference-lambda-store-source)
+                (compiler-typecheck-reference-lambda-local-return-source)
                 "typecheck: reference-capturing closure value would escape lexical scope")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-lambda-pass-unknown-source)
+                  (compiler-typecheck-reference-lambda-store-source)
                   "typecheck: reference-capturing closure value would escape lexical scope")
                 (and
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-reference-lambda-assign-source)
+                    (compiler-typecheck-reference-lambda-pass-unknown-source)
                     "typecheck: reference-capturing closure value would escape lexical scope")
                   (and
                     (compiler-typecheck-error-ok?
-                      (compiler-typecheck-reference-lambda-inner-arena-return-source)
+                      (compiler-typecheck-reference-lambda-assign-source)
                       "typecheck: reference-capturing closure value would escape lexical scope")
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-reference-lambda-mutable-reject-source)
-                      "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")))))))))))
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-reference-lambda-inner-arena-return-source)
+                        "typecheck: reference-capturing closure value would escape lexical scope")
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-reference-lambda-mutable-reject-source)
+                        "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope"))))))))))))
 
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and

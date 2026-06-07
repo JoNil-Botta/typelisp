@@ -6944,6 +6944,13 @@
         (and
           (tc-ref-closure-local-uses-ok? str name bound)
           (tc-ref-closure-local-uses-ok? index name bound)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? cond name bound)
+          (tc-ref-closure-local-uses-ok? body name bound)))]
     [(AstExprBegin exprs)
       (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
     [(AstExprUnsafe exprs)

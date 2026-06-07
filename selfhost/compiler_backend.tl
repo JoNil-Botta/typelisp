@@ -2148,7 +2148,9 @@
     (string-eq name "tl_oob_abort")
     (or
       (string-eq name "tl_div_abort")
-      (or (string-eq name "tl_shift_abort") (string-eq name "tl_array_fill8")))))
+      (or
+        (string-eq name "tl_shift_abort")
+        (or (string-eq name "tl_array_fill8") (string-eq name "tl_array_zero"))))))
 
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
@@ -5522,6 +5524,10 @@
       (ast-type-cons
         (ast-ty-mut-ptr (AstTyU8))
         (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))]
+    [(string-eq name "tl_array_zero")
+      (ast-type-cons
+        (ast-ty-mut-ptr (AstTyU8))
+        (ast-type-cons (AstTyI64) AstTypeNil))]
     [else AstTypeNil]))
 
 (define (compiler-backend-call-param-types

@@ -1049,7 +1049,9 @@
                   (string-eq name "tl_region_reset")
                   (or
                     (string-eq name "tl_array_fill8")
-                    (string-eq name ".L_tl_flush_stdout")))))))))))
+                    (or
+                      (string-eq name "tl_array_zero")
+                      (string-eq name ".L_tl_flush_stdout"))))))))))))
 
 (define (compiler-ir-runtime-control-flow? [name : String]) : bool
   (or

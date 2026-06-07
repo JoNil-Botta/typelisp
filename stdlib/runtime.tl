@@ -161,6 +161,21 @@
           (set! i (+ i 1))))
       unit)))
 
+;: Zero `byte-count` bytes starting at `buf`.
+(define (tl-runtime-array-zero [buf : (MutPtr u8)] [byte-count : i64])
+  (:export-symbol "tl_array_zero")
+  :
+  unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i byte-count)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
+          (set! i (+ i 1))))
+      unit)))
+
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
 ;: Reached from the allocator's region-reset validation (not the out-of-memory
 ;: path), so the allocating write is safe here.

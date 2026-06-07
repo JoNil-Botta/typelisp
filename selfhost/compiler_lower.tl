@@ -12605,6 +12605,37 @@
         (not (tc-type-eq resolved (AstTyF64)))
         (lower-init-default-share-safe? ctx resolved)))))
 
+(define (lower-make-array-zero-fill-supported? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (if (tc-integer-type? resolved)
+      true
+      (match resolved
+        [(AstTyF64) true]
+        [(AstTyF32) true]
+        [(AstTyBool) true]
+        [(AstTyChar) true]
+        [(AstTyUnit) true]
+        [(AstTyPtr _) true]
+        [(AstTyMutPtr _) true]
+        [_ false]))))
+
+(define (lower-make-array-zero-fill
+  [state : LowerState]
+  [buf-value : CompilerIrValue]
+  [byte-count : CompilerIrValue]) : ResultLowerState
+  (match (lower-runtime-call-values
+    state
+    "tl_array_zero"
+    (compiler-ir-value-cons
+      buf-value
+      (compiler-ir-value-cons byte-count IrValueNil))
+    (AstTyUnit))
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr done-state _ _) (OkLowerState done-state)])]
+    [(ErrLowerExpr message) (ErrLowerState message)]))
+
 (define (lower-make-array-init-loop-nonzero
   [ctx : TcContext]
   [state : LowerState]
@@ -12612,12 +12643,15 @@
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
+  [byte-count : CompilerIrValue]
   [elem-ty : AstType]
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
-  (if (= elem-size 0)
-    (OkLowerState state)
-    (if (lower-init-default-share-safe? ctx elem-ty)
+  (cond
+    [(= elem-size 0) (OkLowerState state)]
+    [(lower-make-array-zero-fill-supported? ctx elem-ty)
+      (lower-make-array-zero-fill state buf-value byte-count)]
+    [(lower-init-default-share-safe? ctx elem-ty)
       (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
         [(OkLowerExpr lowered-init)
           (match lowered-init
@@ -12631,7 +12665,8 @@
                   elem-ty
                   elem-size
                   init-value))])]
-        [(ErrLowerExpr message) (ErrLowerState message)])
+        [(ErrLowerExpr message) (ErrLowerState message)])]
+    [else
       (lower-make-array-init-loop-runtime
         ctx
         state
@@ -12641,7 +12676,7 @@
         len-i64
         elem-ty
         elem-size
-        origin))))
+        origin)]))
 
 (define (lower-make-array-init-loop
   [ctx : TcContext]
@@ -12650,6 +12685,7 @@
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
+  [byte-count : CompilerIrValue]
   [elem-ty : AstType]
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
@@ -12664,6 +12700,7 @@
           type-env
           buf-value
           len-i64
+          byte-count
           elem-ty
           elem-size
           origin))]
@@ -12675,6 +12712,7 @@
         type-env
         buf-value
         len-i64
+        byte-count
         elem-ty
         elem-size
         origin)]))
@@ -12714,6 +12752,7 @@
               type-env
               (IrValueVar buf-var)
               len-i64
+              byte-count
               elem-ty
               elem-size
               origin)
@@ -23283,7 +23322,14 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-functions-call-count functions "tl_alloc") 1)
-            (> (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
+            (and
+              (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
+              (=
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "tl_array_zero")
+                1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool

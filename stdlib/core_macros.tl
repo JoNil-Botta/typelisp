@@ -1,8 +1,13 @@
-;# Core expression macros for explicit stdlib import.
+;# Core expression macros - the implicit prelude (#2060).
 ;#
-;# This module is not an automatic prelude. Import it explicitly and call the
-;# exported macros through the import alias while the built-in unqualified guard
-;# forms remain in place.
+;# The compile driver links this module into every program (alongside
+;# stdlib/runtime.tl), so a bare `when`, `unless`, `cond`, or n-ary `and`/`or`
+;# that is not bound locally resolves to these macros without an import. Local
+;# macros and explicit imports shadow the prelude. (The parser still owns the
+;# two-argument `and`/`or` binary forms pending the builtin removal in #1141.)
+;#
+;# The qualified surface remains available for explicit callers; the import only
+;# adds the `core/` alias since the macros are already in scope:
 ;#
 ;# Usage: `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`
 ;#

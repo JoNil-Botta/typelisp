@@ -341,6 +341,50 @@
           head
           (compiler-load-decl-module-list-append rest right)))]))
 
+(define compiler-load-core-macro-prelude-path : String
+  "stdlib/core_macros.tl")
+
+;; `core_macros.tl` declares `(module stdlib.core-macros)`. Add a root module
+;; marker after loading it so the following entry resumes in the root module,
+;; matching import restoration and keeping module-less `main` discoverable.
+(define (compiler-load-append-root-module-marker
+  [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
+  (match loaded
+    [(OkCompilerLoadWithPaths decls paths modules seen)
+      (OkCompilerLoadWithPaths
+        (compiler-load-decl-list-append
+          decls
+          (ast-decl-cons (AstDeclModule "") AstDeclNil))
+        (compiler-load-decl-path-list-append
+          paths
+          (ast-decl-path-cons
+            compiler-load-core-macro-prelude-path
+            AstDeclPathNil))
+        (compiler-load-decl-module-list-append
+          modules
+          (ast-decl-module-cons "" AstDeclModuleNil))
+        seen)]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-load-core-macro-prelude-with-roots-cfg
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-append-root-module-marker
+    (compiler-load-file-with-paths-and-roots-cfg
+      compiler-load-core-macro-prelude-path
+      seen
+      stdlib-roots
+      cfgs)))
+
+(define (compiler-load-core-macro-prelude-with-roots
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]) : ResultCompilerLoadWithPaths
+  (compiler-load-core-macro-prelude-with-roots-cfg
+    seen
+    stdlib-roots
+    (compiler-cfg-empty)))
+
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
     [(OkCompilerLoadWithPaths decls _ _ seen) (OkCompilerLoad decls seen)]
@@ -1877,6 +1921,21 @@
     manifest-dir
     deps
     cfgs))
+
+(define (compiler-load-package-core-macro-prelude-with-roots-cfg
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-append-root-module-marker
+    (compiler-load-package-file-with-paths-and-roots-cfg
+      compiler-load-core-macro-prelude-path
+      seen
+      stdlib-roots
+      manifest-dir
+      deps
+      cfgs)))
 
 (define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
   (match decls

@@ -17264,8 +17264,57 @@
         [(ErrCompilerExports message)
           (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))]))))
 
+;; The implicit core macro prelude module (stdlib/core_macros.tl). A bare name
+;; that is not bound as a macro in the current module falls back to this module's
+;; EXPORTED macros, so `and`/`or`/`when`/`unless`/`cond` resolve without an
+;; explicit import (#2060). Local macros and explicit imports therefore take
+;; precedence over the prelude. Returns MacroNoDecl (an ordinary call, not an
+;; error) when the name is not a prelude macro, leaving plain calls unaffected.
+(define (macro-prelude-resolve-with-exports
+  [exports : CompilerExports]
+  [decls : AstDeclList]
+  [lookup-name : String]) : ResultMacroCallDecl
+  (match (compiler-exports-lookup
+    exports
+    (compiler-export-kind-macro)
+    "stdlib.core-macros"
+    lookup-name)
+    [(SomeI64 handle)
+      (match (macro-find-decl-by-index
+        decls
+        (compiler-symbol-handle-index handle))
+        [(MacroSomeDecl macro-name params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl
+              (macro-canonical-name "stdlib.core-macros" lookup-name)
+              params
+              ret
+              body))]
+        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
+    [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
+
+(define (macro-prelude-call-decl
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (if macro-expand-exports-ready
+    (macro-prelude-resolve-with-exports
+      macro-expand-exports-value
+      decls
+      lookup-name)
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (macro-prelude-resolve-with-exports exports decls lookup-name)]
+      [(ErrCompilerExports message)
+        (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
+
 ;; If `func` names a visible macro, return that macro's decl. Bare local macros
 ;; are source-order visible; qualified macro calls must pass the export table.
+;; A bare name not bound locally falls back to the implicit core macro prelude.
 (define (macro-call-decl
   [ctx : TcContext]
   [func : AstExpr]
@@ -17309,7 +17358,8 @@
                   (ctfe-diagnostic-at-expr
                     call-expr
                     (macro-late-local-message lookup-name))))]
-            [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])))]
+            [(NoneI64)
+              (macro-prelude-call-decl ctx decls lookup-name call-expr)])))]
     [_ (OkMacroCallDecl (MacroNoDecl))]))
 
 (define (macro-local-decl-index-step! [decl : AstDecl]) : unit

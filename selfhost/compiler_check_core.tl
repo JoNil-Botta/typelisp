@@ -64,36 +64,59 @@
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
   (compiler-check-program-with-paths path decls AstDeclPathNil))
 
+(define (compiler-check-loaded-with-prelude
+  [path : String]
+  [prelude-decls : AstDeclList]
+  [prelude-paths : AstDeclPathList]
+  [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
+  (match loaded
+    [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (compiler-check-program-with-paths
+          path
+          (compiler-load-decl-list-append prelude-decls entry-decls)
+          (compiler-load-decl-path-list-append prelude-paths entry-paths)))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (ErrCompilerCheck diag))]))
+
+(define (compiler-check-file-loaded-with-prelude
+  [path : String]
+  [stdlib-roots : StringVec]
+  [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
+  (match prelude
+    [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+      (compiler-check-loaded-with-prelude
+        path
+        prelude-decls
+        prelude-paths
+        (compiler-load-file-with-paths-and-roots path prelude-seen stdlib-roots))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-check-profile-finish "load"))
+        (ErrCompilerCheck diag))]))
+
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-file-with-paths path (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (compiler-check-program-with-paths path decls paths))]
-      [(ErrCompilerLoadWithPaths diag)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+    (compiler-check-file-loaded-with-prelude
+      path
+      (string-vec-new)
+      (compiler-load-core-macro-prelude-with-roots
+        (sym-i64-empty)
+        (string-vec-new)))))
 
 (define (compiler-check-file-with-roots
   [path : String]
   [stdlib-roots : StringVec]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-file-with-paths-and-roots
+    (compiler-check-file-loaded-with-prelude
       path
-      (sym-i64-empty)
-      stdlib-roots)
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (compiler-check-program-with-paths path decls paths))]
-      [(ErrCompilerLoadWithPaths diag)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+      stdlib-roots
+      (compiler-load-core-macro-prelude-with-roots (sym-i64-empty) stdlib-roots))))
 
 (define (compiler-check-package-file-with-roots
   [path : String]
@@ -102,16 +125,23 @@
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-package-file-with-paths-and-roots
-      path
+    (match (compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym-i64-empty)
       stdlib-roots
       manifest-dir
-      deps)
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (compiler-check-program-with-paths path decls paths))]
+      deps
+      (compiler-cfg-empty))
+      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+        (compiler-check-loaded-with-prelude
+          path
+          prelude-decls
+          prelude-paths
+          (compiler-load-package-file-with-paths-and-roots
+            path
+            prelude-seen
+            stdlib-roots
+            manifest-dir
+            deps))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -120,11 +150,19 @@
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-source-with-paths path source (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (compiler-check-program-with-paths path decls paths))]
+    (match (compiler-load-core-macro-prelude-with-roots
+      (sym-i64-empty)
+      (string-vec-new))
+      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+        (compiler-check-loaded-with-prelude
+          path
+          prelude-decls
+          prelude-paths
+          (compiler-load-source-with-paths-and-roots
+            path
+            source
+            prelude-seen
+            (string-vec-new)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -136,15 +174,19 @@
   [stdlib-roots : StringVec]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-source-with-paths-and-roots
-      path
-      source
+    (match (compiler-load-core-macro-prelude-with-roots
       (sym-i64-empty)
       stdlib-roots)
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (compiler-check-program-with-paths path decls paths))]
+      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+        (compiler-check-loaded-with-prelude
+          path
+          prelude-decls
+          prelude-paths
+          (compiler-load-source-with-paths-and-roots
+            path
+            source
+            prelude-seen
+            stdlib-roots))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -182,6 +224,15 @@
 (defenum Maybe (Present i64))
 (define answer : i64 42)
 (define (main) : i64 answer)")
+
+(define (compiler-check-implicit-core-prelude-source) : String
+  "(define (main) : i64
+  (let
+    [value : i64 0]
+    (begin
+      (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
+      (unless (or false false false) (set! value (+ value 20)))
+      value)))")
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
   "(import \"stdlib/io.tl\")
@@ -357,6 +408,11 @@
     (compiler-check-runtime-stdlib-boundary-no-import-ok?)
     (compiler-check-runtime-stdlib-boundary-import-ok?)))
 
+(define (compiler-check-implicit-core-prelude-ok?) : bool
+  (compiler-check-source-ok?
+    "tests/implicit_core_prelude_check.tl"
+    (compiler-check-implicit-core-prelude-source)))
+
 (define (compiler-check-seen-root-ok?) : bool
   (match (compiler-load-source
     "selfhost/already_loaded.tl"
@@ -405,6 +461,12 @@
       (return
         (begin
           (panic "compiler-check: runtime stdlib boundary smoke mismatch")
+          0)))
+    (unless
+      (compiler-check-implicit-core-prelude-ok?)
+      (return
+        (begin
+          (panic "compiler-check: implicit core prelude smoke mismatch")
           0)))
     (unless
       (compiler-check-seen-root-ok?)

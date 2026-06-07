@@ -18,8 +18,8 @@
   ;; specialization pass would otherwise produce them too late and any program
   ;; that both defines a macro and uses a generated function would fail to
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
-  (match (gen-normalize-program program)
-    [(OkGenProgram generated)
+  (match (gen-normalize-program-with-paths program paths "")
+    [(OkGenProgramWithPaths generated generated-paths)
       (match (macro-expand-program generated)
         [(OkMacroExpand expanded)
           (if (compiler-specialize-needed? expanded)
@@ -29,9 +29,11 @@
                   specialized
                   AstDeclPathNil)]
               [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
-            (typecheck-compiler-specialized-program-with-paths expanded paths))]
+            (typecheck-compiler-specialized-program-with-paths
+              expanded
+              generated-paths))]
         [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
-    [(ErrGenProgram diag) (ErrCompilerTypecheck diag)]))
+    [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))

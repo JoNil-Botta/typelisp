@@ -18293,8 +18293,8 @@
     (cfg compile-profile (compiler-lower-profile-start))
     ;; Generate declaration families before macro expansion (see
     ;; typecheck-compiler-program-with-paths for why).
-    (match (gen-normalize-program program)
-      [(OkGenProgram generated)
+    (match (gen-normalize-program-with-paths program paths entry-path)
+      [(OkGenProgramWithPaths generated generated-paths)
         (match (macro-expand-program generated)
           [(OkMacroExpand expanded)
             (begin
@@ -18304,7 +18304,7 @@
               (lower-compiler-expanded-program-with-decl-paths-mode
                 entry-path
                 expanded
-                paths
+                generated-paths
                 mode))]
           [(ErrMacroExpand diag)
             (begin
@@ -18312,7 +18312,7 @@
                 compile-profile
                 (compiler-lower-profile-finish "macro_expand"))
               (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])]
-      [(ErrGenProgram diag)
+      [(ErrGenProgramWithPaths diag)
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
           (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])))
@@ -21669,6 +21669,44 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-generated-path-source) : String
+  "(comptime-decl (:generated point-family Point \"same\")
+  (defstruct Point (x i64)))
+(comptime-decl (:generated point-family Point \"same\")
+  (defstruct Point (x i64)))
+(define (after [x : i64]) : i64 (+ x 1))
+(define (main) : i64 (after 41))")
+
+(define (compiler-lower-generated-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "gen.tl"
+    (ast-decl-path-cons
+      "gen.tl"
+      (ast-decl-path-cons "lib.tl" (ast-decl-path-cons "app.tl" AstDeclPathNil)))))
+
+(define (compiler-lower-generated-paths-preserved-ok?) : bool
+  (match (parse-ast-source (compiler-lower-generated-path-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-generated-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (and
+                (lower-test-function-defined? functions "lib.tl::after")
+                (and
+                  (lower-test-function-defined? functions "main")
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      "lib.tl::after")
+                    1)))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-lower-module-symbol-source) : String
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x answer))
@@ -24393,6 +24431,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-generated-paths-preserved-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-symbols-ok?)

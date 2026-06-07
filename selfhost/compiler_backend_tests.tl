@@ -2897,6 +2897,15 @@
     (compiler-backend-runtime-helper-known? name)
     (compiler-backend-plan-provides? plan name)))
 
+(define (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (and
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
+    (match (compiler-backend-runtime-helper-owner name)
+      [(BackendRuntimeOwnerCore) true]
+      [_ false])))
+
 (define (compiler-backend-runtime-helper-inventory-compat-alias-ok?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
@@ -2910,31 +2919,35 @@
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
     (backend-and8
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_alloc")
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+        plan
+        "tl_alloc")
       (not (compiler-backend-runtime-helper-known? "tl_oob_abort"))
       (not (compiler-backend-runtime-helper-known? "tl_div_abort"))
       (not (compiler-backend-runtime-helper-known? "tl_shift_abort"))
       (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
         plan
         ".L_tl_abort")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_region_mark")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_region_reset")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_arena_make"))
     (backend-and4
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_arena_current")
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_arena_set")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+        plan
+        "tl_arena_set")
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_arena_destroy")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_arena_poison_enable"))))
 
@@ -3172,6 +3185,75 @@
           (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok?
             plan)
           (compiler-backend-runtime-helper-inventory-negative-ok? plan))))))
+
+(define (compiler-backend-runtime-page-call-inventory-linux-ok?) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        (BackendTargetLinux)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (backend-and8
+        (compiler-backend-string-contains? asm "tl_alloc:\n")
+        (compiler-backend-string-contains? asm "tl_region_mark:\n")
+        (compiler-backend-string-contains? asm "tl_region_reset:\n")
+        (compiler-backend-string-contains? asm "tl_arena_make:\n")
+        (compiler-backend-string-contains? asm "tl_arena_current:\n")
+        (compiler-backend-string-contains? asm "tl_arena_set:\n")
+        (compiler-backend-string-contains? asm "tl_arena_destroy:\n")
+        (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
+      (and
+        (backend-and4
+          (=
+            (compiler-backend-string-count
+              asm
+              "    movq $9, %rax\n    syscall\n")
+            2)
+          (=
+            (compiler-backend-string-count
+              asm
+              "    movq $11, %rax\n    syscall\n")
+            3)
+          (= (compiler-backend-string-count asm "    syscall\n") 6)
+          (=
+            (compiler-backend-string-count
+              asm
+              "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
+            1))
+        (and
+          (not (compiler-backend-string-contains? asm "VirtualAlloc"))
+          (not (compiler-backend-string-contains? asm "VirtualFree")))))))
+
+(define (compiler-backend-runtime-page-call-inventory-windows-ok?) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        (BackendTargetWindows)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (backend-and8
+        (compiler-backend-string-contains? asm "tl_alloc:\n")
+        (compiler-backend-string-contains? asm "tl_region_mark:\n")
+        (compiler-backend-string-contains? asm "tl_region_reset:\n")
+        (compiler-backend-string-contains? asm "tl_arena_make:\n")
+        (compiler-backend-string-contains? asm "tl_arena_current:\n")
+        (compiler-backend-string-contains? asm "tl_arena_set:\n")
+        (compiler-backend-string-contains? asm "tl_arena_destroy:\n")
+        (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
+      (and
+        (backend-and4
+          (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 2)
+          (= (compiler-backend-string-count asm "    call VirtualFree\n") 3)
+          (not (compiler-backend-string-contains? asm "    syscall\n"))
+          (not (compiler-backend-string-contains? asm "    call WriteFile\n")))
+        (and
+          (not (compiler-backend-string-contains? asm "    call _write\n"))
+          (not (compiler-backend-string-contains? asm "SystemFunction036")))))))
+
+(define (compiler-backend-runtime-page-call-inventory-ok?) : bool
+  (and
+    (compiler-backend-runtime-page-call-inventory-linux-ok?)
+    (compiler-backend-runtime-page-call-inventory-windows-ok?)))
 
 (define (compiler-backend-memory-op-ok?) : bool
   (and
@@ -5224,7 +5306,9 @@
             (compiler-backend-runtime-helper-asm-ok?)
             (and
               (compiler-backend-runtime-helper-inventory-ok?)
-              (compiler-backend-profile-runtime-split-ok?)))
+              (and
+                (compiler-backend-runtime-page-call-inventory-ok?)
+                (compiler-backend-profile-runtime-split-ok?))))
           (compiler-backend-alloc-runtime-arena-ok?)
           (compiler-backend-region-ok?)
           (compiler-backend-process-fallback-absent-ok?)

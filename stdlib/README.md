@@ -164,10 +164,19 @@ authoritative ownership table for symbols accepted by
 `compiler-backend-plan-provides?`; that function rejects unclassified helper
 names so runtime-plan additions must be assigned an owner first.
 
-- **Core runtime:** allocator, traps, arena control, and ABI-level abort helpers:
-  `tl_alloc`, `tl_oob_abort`, `tl_div_abort`, `tl_shift_abort`, `.L_tl_abort`,
-  `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_current`,
-  `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`.
+- **Core runtime:** the backend-owned allocator/arena substrate:
+  `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`,
+  `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`,
+  `tl_arena_poison_enable`. These helpers are irreducible backend runtime
+  because they bootstrap ordinary TypeLisp allocation, own the single
+  `tl_current_arena` slot, and must stay import-free and allocation-free on
+  allocation/reclaim paths. Their checked OS-call inventory is Linux
+  `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`, `tl_arena_destroy`, and
+  `tl_region_reset`, plus the current `tl_arena_make` fatal-exit syscall;
+  Windows uses kernel32 `VirtualAlloc`/`VirtualFree` in the corresponding page
+  acquisition/release paths. `tl_region_mark`, `tl_arena_current`,
+  `tl_arena_set`, and `tl_arena_poison_enable` only read or update backend
+  runtime state.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
   wrappers around OS/profile surfaces: `tl_profile_alloc_total`,
   `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
@@ -176,21 +185,16 @@ names so runtime-plan additions must be assigned an owner first.
   preferred long-term owner is TypeLisp stdlib code or a narrower stdlib FFI
   boundary: `tl_substring`, `tl_string_concat`, `tl_string_concat3`,
   `tl_string_concat4`, `tl_string_concat5`, `tl_string_eq`,
-  `tl_string_to_int`, `tl_int_to_string`, `tl_hash_string`, `.L_tl_read_file`,
-  `.L_tl_write_file`, `.L_tl_file_exists`, `.L_tl_read_file_status`,
-  `.L_tl_write_file_status`, `.L_tl_append_file_status`,
-  `.L_tl_file_exists_status`, `.L_tl_file_open_status`,
-  `.L_tl_file_close_status`, `.L_tl_file_read_chunk_status`,
-  `.L_tl_file_write_status`, `.L_tl_file_flush_status`,
-  `.L_tl_file_read_chunk_bytes`, `.L_tl_file_read_chunk_eof`,
-  `.L_tl_read_stdin_line`, `.L_tl_read_stdin_bytes`, `.L_tl_stdin_eof`,
-  `.L_tl_flush_stdout`. String migrations are tracked by #2036/#2037.
-- **Compatibility alias:** legacy public spellings that remain only so existing
-  extern callers link: `tl_print_err`, `tl_print_str`, `tl_print_string`,
-  `tl_print_char`, `tl_print_f64`, `.L_tl_arg_count`, `tl_arg_count`,
-  `.L_tl_arg`, `tl_arg`. The former backend-emitted `tl_env_var_exists` /
-  `tl_env_var_value` / `_tl_env_path_separator` env helpers were removed once
-  `stdlib/env.tl` implemented environment lookup in TypeLisp (#2142 follow-up);
+  `tl_string_to_int`, `tl_int_to_string`, `tl_hash_string`. String migrations
+  are tracked by #2036/#2037. Bounds/division/shift/general/OOM abort handlers,
+  file/IO/process/fs helpers, primary env implementations, random seed,
+  profile time, and CPU feature helpers have moved to TypeLisp
+  stdlib/runtime-prelude exports or direct platform bindings; only the env
+  compatibility aliases below remain recognized by the plan table.
+- **Compatibility alias:** legacy env spellings recognized by the runtime-plan
+  ownership table: `tl_env_var_exists`, `tl_env_var_value`,
+  `env-path-separator`. Their backend emitters are empty because
+  `stdlib/env.tl` owns environment lookup in TypeLisp (#2142 follow-up), and
   source builds use the `env.tl` wrappers directly.
 - **Deprecated/delete candidate:** no current runtime-plan symbols are in this
   category. Add symbols here only with a linked removal owner.

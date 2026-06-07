@@ -30,8 +30,13 @@
 (define (clone-helper-name [type-name : String]) : String
   (string-append "clone$" type-name))
 
+;; Clone name-sets always hold the program's whole type-name universe (hundreds
+;; of structs/enums) and the fixpoint rebuilds the accepted set on each step, so
+;; starting at capacity 8 forced a chain of rehash+fill-empty grows on every
+;; build. Seed at a capacity that covers typical whole-program type counts so the
+;; common case never rehashes.
 (define (clone-name-set-empty) : CloneNameSet
-  (CloneNameSet (string-i64-map-with-capacity 8)))
+  (CloneNameSet (string-i64-map-with-capacity 1024)))
 
 (define (clone-name-set-map [names : CloneNameSet]) : StringI64Map
   (struct-get names map))

@@ -8650,6 +8650,56 @@
       (OptSomeFunction (array-ref (struct-get index values) slot))]
     [(StringI64MapMissing) (OptNoFunction)]))
 
+;; Devirtualize syntactically known function values before program-level
+;; inlining, so the existing direct-call inliner can see them.
+(define (opt-devirt-known-function-instr [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrCallIndirect dst (IrValueFunction name) args ty)
+      (IrInstrCall dst name args ty)]
+    [_ instr]))
+
+(define (opt-devirt-known-function-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons
+        (opt-devirt-known-function-instr instr)
+        (opt-devirt-known-function-instrs (box-get rest)))]))
+
+(define (opt-devirt-known-function-block [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (compiler-ir-block
+        label
+        (opt-devirt-known-function-instrs
+          (compiler-ir-instr-seq-to-list instrs)))]))
+
+(define (opt-devirt-known-function-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-devirt-known-function-block block)
+        (opt-devirt-known-function-blocks (box-get rest)))]))
+
+(define (opt-devirt-known-function-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret vars blocks)
+      (IrFunction
+        name
+        params
+        ret
+        vars
+        (opt-devirt-known-function-blocks blocks))]))
+
+(define (opt-devirt-known-function-list [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) (IrFunctionNil)]
+    [(IrFunctionCons func rest)
+      (compiler-ir-function-cons
+        (opt-devirt-known-function-function func)
+        (opt-devirt-known-function-list (box-get rest)))]))
+
 ;; ---------------------------------------------------------------------------
 ;; Function inlining (opt level 2 only). Splices the body of small single-block
 ;; leaf callees into their call sites, removing call/return overhead and exposing
@@ -9046,7 +9096,10 @@
   [level : i64]) : CompilerIrFunctionList
   (if (< level 2)
     functions
-    (opt-inline-function-list functions (opt-function-index-build functions))))
+    (let
+      [devirt : CompilerIrFunctionList
+        (opt-devirt-known-function-list functions)]
+      (opt-inline-function-list devirt (opt-function-index-build devirt)))))
 
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
@@ -11977,6 +12030,107 @@
     (opt-inline-frame-caller)
     (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
 
+(define (opt-inline-known-indirect-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 10) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 32) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCallIndirect
+                2
+                (IrValueFunction "inline_add")
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (opt-inline-known-indirect-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-known-indirect-caller)
+    (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
+
+(define (opt-devirt-dynamic-caller) : CompilerIrFunction
+  (IrFunction
+    "dynamic"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 0) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrCallIndirect
+              2
+              (IrValueVar 0)
+              (IrCallArgsOne (IrValueI64 1))
+              (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+              IrInstrNil))))
+      IrBlockNil)))
+
+(define (opt-devirt-reach-target) : CompilerIrFunction
+  (IrFunction
+    "kept_target"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons (IrInstrJump "exit") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 7)))
+            IrInstrNil))
+        IrBlockNil))))
+
+(define (opt-devirt-reach-main) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCallIndirect
+            1
+            (IrValueFunction "kept_target")
+            IrCallArgsNil
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-devirt-reach-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (opt-devirt-reach-main)
+      (compiler-ir-function-cons
+        (opt-devirt-reach-target)
+        (compiler-ir-function-cons
+          (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
+          IrFunctionNil)))
+    IrExternNil))
+
 (define (opt-inline-count-binop-dst [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -11989,6 +12143,31 @@
               0)]
           [_ 0])
         (opt-inline-count-binop-dst (box-get rest) dst))]))
+
+(define (opt-count-direct-call-name
+  [instrs : CompilerIrInstrList]
+  [name : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrCall _ call-name _ _)
+            (if (string-eq call-name name)
+              1
+              0)]
+          [_ 0])
+        (opt-count-direct-call-name (box-get rest) name))]))
+
+(define (opt-count-indirect-call-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrCallIndirect _ _ _ _) 1]
+          [_ 0])
+        (opt-count-indirect-call-instrs (box-get rest)))]))
 
 (define (opt-inline-mov-dst-src?
   [instrs : CompilerIrInstrList]
@@ -12008,6 +12187,15 @@
   (let
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions (opt-inline-frame-functions) 2)]
+    [devirt-direct : CompilerIrFunction
+      (opt-devirt-known-function-function (opt-inline-known-indirect-caller))]
+    [devirt-dynamic : CompilerIrFunction
+      (opt-devirt-known-function-function (opt-devirt-dynamic-caller))]
+    [devirt-inlined : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-known-indirect-functions) 2)]
+    [devirt-reach : CompilerIrFunctionList
+      (opt-program-functions
+        (optimize-program-with-level (opt-devirt-reach-program) 2))]
     (match (opt-function-list-find optimized "main")
       [(OptSomeFunction main)
         (let
@@ -12018,8 +12206,64 @@
             [(not (= (opt-inline-count-binop-dst instrs 3) 1)) 3]
             [(not (= (opt-inline-count-binop-dst instrs 5) 0)) 4]
             [(not (opt-inline-mov-dst-src? instrs 2 3)) 5]
-            [else 42]))]
-      [(OptNoFunction) 6])))
+            [(not
+                (=
+                  (opt-count-direct-call-name
+                    (opt-function-first-instrs devirt-direct)
+                    "inline_add")
+                  1))
+              6]
+            [(not
+                (=
+                  (opt-count-indirect-call-instrs
+                    (opt-function-first-instrs devirt-direct))
+                  0))
+              7]
+            [(not
+                (=
+                  (opt-count-indirect-call-instrs
+                    (opt-function-first-instrs devirt-dynamic))
+                  1))
+              8]
+            [(not
+                (=
+                  (opt-count-direct-call-name
+                    (opt-function-first-instrs devirt-dynamic)
+                    "inline_add")
+                  0))
+              9]
+            [else
+              (match (opt-function-list-find devirt-inlined "main")
+                [(OptSomeFunction indirect-main)
+                  (let
+                    [indirect-instrs : CompilerIrInstrList
+                      (opt-function-first-instrs indirect-main)]
+                    (cond
+                      [(not (= (opt-function-frame indirect-main) 4)) 10]
+                      [(not
+                          (= (compiler-ir-instr-list-count indirect-instrs) 5))
+                        11]
+                      [(not
+                          (= (opt-inline-count-binop-dst indirect-instrs 3) 1))
+                        12]
+                      [(not
+                          (= (opt-count-indirect-call-instrs indirect-instrs) 0))
+                        13]
+                      [(not (opt-inline-mov-dst-src? indirect-instrs 2 3)) 14]
+                      [(not
+                          (= (compiler-ir-function-list-count devirt-reach) 2))
+                        15]
+                      [(not (opt-function-list-defines? devirt-reach "main"))
+                        16]
+                      [(not
+                          (opt-function-list-defines?
+                            devirt-reach
+                            "kept_target"))
+                        17]
+                      [(opt-function-list-defines? devirt-reach "dead") 18]
+                      [else 42]))]
+                [(OptNoFunction) 19])]))]
+      [(OptNoFunction) 20])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

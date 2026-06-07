@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 ; Capturing nested aggregate fields in closure environments (#584).
 ; Returned closures read through copied nested handles after the creator frame
 ; has returned. `main` yields 42 only if every case holds.
@@ -66,7 +68,7 @@
 
 (define (main) : i64
   (begin
-    (unless (case-struct-string) (return 1))
-    (unless (case-struct-dynarray) (return 2))
-    (unless (case-enum-nested) (return 3))
+    (core/unless (case-struct-string) (return 1))
+    (core/unless (case-struct-dynarray) (return 2))
+    (core/unless (case-enum-nested) (return 3))
     42))

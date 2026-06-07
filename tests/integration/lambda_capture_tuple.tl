@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 ; Capturing scalar tuple values in closure environments (#542).
 ; Each case reads scalars out of a captured tuple so the test exercises capture
 ; (not by-value aggregate returns); `main` yields 42 only if every case holds.
@@ -29,7 +31,7 @@
 
 (define (main) : i64
   (begin
-    (unless (case-tuple-immediate) (return 1))
-    (unless (case-tuple-returned) (return 2))
-    (unless (case-tuple-mixed) (return 3))
+    (core/unless (case-tuple-immediate) (return 1))
+    (core/unless (case-tuple-returned) (return 2))
+    (core/unless (case-tuple-mixed) (return 3))
     42))

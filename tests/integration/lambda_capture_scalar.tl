@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
   (f x))
 
@@ -75,11 +77,11 @@
 
 (define (main) : i64
   (begin
-    (unless (case-immediate) (return 1))
-    (unless (case-passed-as-arg) (return 2))
-    (unless (case-mixed-scalars) (return 3))
-    (unless (case-function-capture) (return 4))
-    (unless (case-snapshot) (return 5))
-    (unless (case-nested) (return 6))
-    (unless (case-shadowed-capture) (return 7))
+    (core/unless (case-immediate) (return 1))
+    (core/unless (case-passed-as-arg) (return 2))
+    (core/unless (case-mixed-scalars) (return 3))
+    (core/unless (case-function-capture) (return 4))
+    (core/unless (case-snapshot) (return 5))
+    (core/unless (case-nested) (return 6))
+    (core/unless (case-shadowed-capture) (return 7))
     42))

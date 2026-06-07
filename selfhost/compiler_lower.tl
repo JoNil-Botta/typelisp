@@ -1936,7 +1936,9 @@
         args)]
     (match (ast-expr-unspan callee)
       [(AstExprVar name)
-        (if (and (string-eq (intern-str name) "clone") (not (tc-name-bound? env (intern-str name))))
+        (if (and
+          (string-eq (intern-str name) "clone")
+          (not (tc-name-bound? env (intern-str name))))
           (match args
             [(AstExprCons arg rest)
               (let
@@ -2531,7 +2533,8 @@
   [state : LowerReachState]
   [callee : AstExpr]) : LowerReachState
   (match (ast-expr-unspan callee)
-    [(AstExprVar name) (lower-reach-add-source all-functions names state (intern-str name))]
+    [(AstExprVar name)
+      (lower-reach-add-source all-functions names state (intern-str name))]
     [_ (lower-reach-expr all-functions names state callee)]))
 
 (define (lower-reach-expr
@@ -2545,7 +2548,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
     [(AstExprLiteral _) state]
-    [(AstExprVar name) (lower-reach-add-source all-functions names state (intern-str name))]
+    [(AstExprVar name)
+      (lower-reach-add-source all-functions names state (intern-str name))]
     [(AstExprBinary _ lhs-box rhs-box)
       (let
         [lhs : AstExpr (ast-node-get lhs-box)]
@@ -5007,7 +5011,14 @@
   [result-ty : AstType]) : ResultLowerExpr
   (match (ast-expr-unspan place)
     [(AstExprVar name)
-      (lower-borrow-var-address ctx state env type-env (intern-str name) origin result-ty)]
+      (lower-borrow-var-address
+        ctx
+        state
+        env
+        type-env
+        (intern-str name)
+        origin
+        result-ty)]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -8463,8 +8474,11 @@
         [(ErrTcType message)
           (if (lower-builtin-call-available? ctx env (intern-str name))
             (cond
-              [(string-eq (intern-str name) "array-length") (OkTcType (AstTyI64))]
-              [(or (string-eq (intern-str name) "string-ref") (string-eq (intern-str name) "char-at"))
+              [(string-eq (intern-str name) "array-length")
+                (OkTcType (AstTyI64))]
+              [(or
+                  (string-eq (intern-str name) "string-ref")
+                  (string-eq (intern-str name) "char-at"))
                 (OkTcType (AstTyChar))]
               [(string-eq (intern-str name) "clone")
                 (match args
@@ -9255,7 +9269,13 @@
     [(AstExprInit ty)
       (lower-init-expr ctx state env type-env ty origin expr-ty)]
     [(AstExprVar name)
-      (lower-var-or-nullary-variant ctx state env type-env (intern-str name) expr-ty)]
+      (lower-var-or-nullary-variant
+        ctx
+        state
+        env
+        type-env
+        (intern-str name)
+        expr-ty)]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -14324,7 +14344,10 @@
 (define (spmd-reduce-acc-binop-update [op : AstBinOp] [value : i64]) : i64
   (ast-expr-set
     "0spmd-reduce-acc"
-    (ast-expr-binary op (ast-node-push (AstExprVar (intern "0spmd-reduce-acc"))) value)))
+    (ast-expr-binary
+      op
+      (ast-node-push (AstExprVar (intern "0spmd-reduce-acc")))
+      value)))
 
 ;; Per-iteration accumulator update for a select fold (`min`/`max`): bind `value`
 ;; once into a temp, then keep it when `(<cmp> val acc)` holds, else keep `acc`.
@@ -19349,7 +19372,8 @@
         (lower-global-value names inner))]
     [(AstExprLiteral lit) (OkLowerValue (lower-literal-value lit))]
     [(AstExprVar name)
-      (OkLowerValue (IrValueGlobal (lower-name-cache-resolve names (intern-str name))))]
+      (OkLowerValue
+        (IrValueGlobal (lower-name-cache-resolve names (intern-str name))))]
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
@@ -19522,7 +19546,9 @@
   (ast-expr-call
     (ast-node-push (AstExprVar (intern cleanup-name)))
     (ast-expr-cons
-      (ast-expr-struct-get (ast-node-push (AstExprVar (intern value-name))) field-name)
+      (ast-expr-struct-get
+        (ast-node-push (AstExprVar (intern value-name)))
+        field-name)
       AstExprNil)))
 
 (define (lower-struct-cleanup-field-exprs
@@ -27538,7 +27564,9 @@
           "main"
           AstParamNil
           (AstTyI64)
-          (ast-expr-call (ast-node-push (AstExprVar (intern "helper"))) AstExprNil))
+          (ast-expr-call
+            (ast-node-push (AstExprVar (intern "helper")))
+            AstExprNil))
         (ast-decl-cons
           (ast-decl-def-fn
             "helper"

@@ -565,7 +565,8 @@
         (ast-node-push
           (AstExprUnsafe
             (ast-expr-cons
-              (ast-expr-string-data (ast-node-push (AstExprVar (intern "text"))))
+              (ast-expr-string-data
+                (ast-node-push (AstExprVar (intern "text"))))
               AstExprNil)))
         (ast-expr-cons
           (ast-expr-cast (tltest-text-length-expr) (AstTyI32))

@@ -6932,7 +6932,9 @@
                                           (ast-node-get first-place-box)]
                                         (match (ast-expr-unspan first-place)
                                           [(AstExprVar first-name)
-                                            (if (string-eq (intern-str first-name) "x")
+                                            (if (string-eq
+                                              (intern-str first-name)
+                                              "x")
                                               (match (ast-expr-unspan second)
                                                 [(AstExprBorrow
                                                     _
@@ -8707,7 +8709,8 @@
                                       [unquoted : AstExpr
                                         (ast-node-get unquoted-box)]
                                       (match (ast-expr-unspan unquoted)
-                                        [(AstExprVar name) (string-eq (intern-str name) "e")]
+                                        [(AstExprVar name)
+                                          (string-eq (intern-str name) "e")]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]

@@ -274,7 +274,9 @@
         [func : AstExpr (ast-node-get func-box)]
         (match func
           [(AstExprVar name)
-            (and (string-eq (intern-str name) "not") (lint-single-arg-call? args))]
+            (and
+              (string-eq (intern-str name) "not")
+              (lint-single-arg-call? args))]
           [_ false]))]
     [(AstExprUnary (AstUnNot) _) true]
     [_ false]))

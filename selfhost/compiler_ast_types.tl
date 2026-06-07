@@ -484,7 +484,10 @@
 (define (intern-reset!) : unit
   (begin
     (set! intern-pool-count 0)
-    (string-i64-map-fill-empty intern-map-slots 0 (array-length intern-map-slots))
+    (string-i64-map-fill-empty
+      intern-map-slots
+      0
+      (array-length intern-map-slots))
     (set! intern-map-ready true)))
 
 ;: Intern `name`, returning its stable i64 id. Equal strings map to equal ids.
@@ -497,7 +500,11 @@
     (let
       [capacity : i64 (array-length intern-map-slots)]
       [hash : i64 (hash-string (& name))]
-      (match (string-i64-map-probe-borrowed intern-map-slots capacity (& name) hash)
+      (match (string-i64-map-probe-borrowed
+        intern-map-slots
+        capacity
+        (& name)
+        hash)
         [(StringI64MapProbeFound idx)
           (match (array-ref intern-map-slots idx)
             [(StringI64MapOccupied _ id _) id]
@@ -508,7 +515,10 @@
             [id : i64 intern-pool-count]
             (begin
               (array-set! intern-pool-slots id name)
-              (array-set! intern-map-slots idx (StringI64MapOccupied name id hash))
+              (array-set!
+                intern-map-slots
+                idx
+                (StringI64MapOccupied name id hash))
               (set! intern-pool-count (+ id 1))
               id))]
         [(StringI64MapProbeFull) -1]))))
@@ -1507,7 +1517,8 @@
                           [scrut : AstExpr (ast-node-get scrut-box)]
                           (and
                             (match scrut
-                              [(AstExprVar name) (string-eq (intern-str name) "input")]
+                              [(AstExprVar name)
+                                (string-eq (intern-str name) "input")]
                               [_ false])
                             (compiler-ast-single-arm-box-ok? arms)))]
                       [_ false])
@@ -1542,7 +1553,10 @@
     [nested : i64
       (ast-expr-let
         bindings
-        (ast-expr-if (ast-node-push (AstExprVar (intern "cond"))) match-expr begin-expr))]
+        (ast-expr-if
+          (ast-node-push (AstExprVar (intern "cond")))
+          match-expr
+          begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))
 
 (define (compiler-ast-decl-def-lit-ok?

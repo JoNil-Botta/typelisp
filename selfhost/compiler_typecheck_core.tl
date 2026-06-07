@@ -7034,7 +7034,9 @@
   [bound : TcStringList]) : bool
   (match (ast-expr-unspan func)
     [(AstExprVar var-name)
-      (and (string-eq (intern-str var-name) name) (not (tc-string-list-contains bound name)))]
+      (and
+        (string-eq (intern-str var-name) name)
+        (not (tc-string-list-contains bound name)))]
     [_ false]))
 
 (define (tc-ref-closure-local-uses-ok?
@@ -8855,7 +8857,9 @@
         (tc-expr-uses-free-name? inner name bound))]
     [(AstExprLiteral _) false]
     [(AstExprVar var-name)
-      (and (string-eq (intern-str var-name) name) (not (tc-string-list-contains bound name)))]
+      (and
+        (string-eq (intern-str var-name) name)
+        (not (tc-string-list-contains bound name)))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -9594,7 +9598,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-result-uses-cleanup-owner? inner owners bound))]
-    [(AstExprVar name) (tc-name-is-free-cleanup-owner? owners (intern-str name) bound)]
+    [(AstExprVar name)
+      (tc-name-is-free-cleanup-owner? owners (intern-str name) bound)]
     [(AstExprIf _ then-branch-box else-branch-box)
       (let
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -16767,7 +16772,8 @@
         (ast-expr-spanned (macro-hygiene-expr inner env macro-name depth) span))]
     [(AstExprVar name)
       (ast-node-push
-        (AstExprVar (intern (macro-hygiene-rename-var env macro-name (intern-str name)))))]
+        (AstExprVar
+          (intern (macro-hygiene-rename-var env macro-name (intern-str name)))))]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -18146,9 +18152,9 @@
       (macro-call-callee-name (ast-node-get inner-box))]
     [(AstExprVar name)
       (TcSomeString
-        (if (tc-hygiene-global-name? name)
-          (tc-hygiene-global-base name)
-          name))]
+        (if (tc-hygiene-global-name? (intern-str name))
+          (tc-hygiene-global-base (intern-str name))
+          (intern-str name)))]
     [_ (TcNoString)]))
 
 (define (macro-call-is-expandable?

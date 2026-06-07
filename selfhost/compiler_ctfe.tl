@@ -2794,17 +2794,25 @@
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExprVar name)
       (cond
-        [(or (string-eq (intern-str name) "size-of") (string-eq (intern-str name) "align-of"))
+        [(or
+            (string-eq (intern-str name) "size-of")
+            (string-eq (intern-str name) "align-of"))
           (ctfe-eval-size-align-query (intern-str name) args expr env fuel)]
         [(string-eq (intern-str name) "offset-of")
           (ctfe-eval-offset-query args expr env fuel)]
         [(ctfe-reflection-query-name? (intern-str name))
           (ctfe-eval-reflection-query (intern-str name) args expr env fuel)]
-        [(or (string-eq (intern-str name) "string-eq") (string-eq (intern-str name) "string=?"))
+        [(or
+            (string-eq (intern-str name) "string-eq")
+            (string-eq (intern-str name) "string=?"))
           (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)]
-        [(or (string-eq (intern-str name) "string-append") (string-eq (intern-str name) "string-concat"))
+        [(or
+            (string-eq (intern-str name) "string-append")
+            (string-eq (intern-str name) "string-concat"))
           (ctfe-eval-string-append-call (intern-str name) args expr env fuel)]
-        [(or (string-eq (intern-str name) "string-length") (string-eq (intern-str name) "length"))
+        [(or
+            (string-eq (intern-str name) "string-length")
+            (string-eq (intern-str name) "length"))
           (ctfe-eval-string-length-call (intern-str name) args expr env fuel)]
         [(string-eq (intern-str name) "int->string")
           (ctfe-eval-int-to-string-call args expr env fuel)]
@@ -2816,11 +2824,17 @@
           (ctfe-eval-expr-var-call args expr env fuel)]
         [(string-eq (intern-str name) "expr-splice")
           (ctfe-eval-expr-splice-call args expr env fuel)]
-        [(string-eq (intern-str name) "expr-if") (ctfe-eval-expr-if-call args expr env fuel)]
+        [(string-eq (intern-str name) "expr-if")
+          (ctfe-eval-expr-if-call args expr env fuel)]
         [(ctfe-expr-inspector-name? (intern-str name))
           (ctfe-eval-expr-inspector-call (intern-str name) args expr env fuel)]
         [(ctfe-expr-list-inspector-name? (intern-str name))
-          (ctfe-eval-expr-list-inspector-call (intern-str name) args expr env fuel)]
+          (ctfe-eval-expr-list-inspector-call
+            (intern-str name)
+            args
+            expr
+            env
+            fuel)]
         [else (ctfe-unsupported-form expr)])]
     [_ (ctfe-unsupported-form expr)]))
 
@@ -3196,7 +3210,8 @@
       (OkCtfeQuoteExpr (ast-node-push expr) (ctfe-quote-literal-type lit) fuel)]
     [(AstExprVar name)
       (OkCtfeQuoteExpr
-        (ast-node-push (AstExprVar (intern (ctfe-quote-name env (intern-str name)))))
+        (ast-node-push
+          (AstExprVar (intern (ctfe-quote-name env (intern-str name)))))
         (AstTyExpr)
         fuel)]
     [(AstExprBinary op left-box right-box)
@@ -4075,7 +4090,8 @@
         [_ false])]
     [(AstExprVar a-name)
       (match b
-        [(AstExprVar b-name) (string-eq (intern-str a-name) (intern-str b-name))]
+        [(AstExprVar b-name)
+          (string-eq (intern-str a-name) (intern-str b-name))]
         [_ false])]
     [(AstExprBinary a-op a-l-box a-r-box)
       (let
@@ -5679,7 +5695,9 @@
       (CtfeExpr (ast-node-push (AstExprLiteral (AstLitInt 1))) (AstTyI64))]
     [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "n" int-expr-value)]
     [spliced-int : i64
-      (compiler-ctfe-call1 "expr-splice" (ast-node-push (AstExprVar (intern "n"))))]
+      (compiler-ctfe-call1
+        "expr-splice"
+        (ast-node-push (AstExprVar (intern "n"))))]
     [true-expr : i64
       (compiler-ctfe-call1
         "expr-bool"
@@ -5718,7 +5736,8 @@
         (ast-node-push
           (AstExprBegin
             (ast-expr-cons
-              (ast-expr-unquote-splicing (ast-node-push (AstExprVar (intern "xs"))))
+              (ast-expr-unquote-splicing
+                (ast-node-push (AstExprVar (intern "xs"))))
               AstExprNil))))]
     (and
       (match (compiler-ctfe-eval

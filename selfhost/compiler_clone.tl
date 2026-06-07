@@ -227,7 +227,8 @@
   (if (>= i count)
     AstExprNil
     (ast-expr-cons
-      (clone-call-expr (ast-node-push (AstExprVar (intern (clone-binder-name i)))))
+      (clone-call-expr
+        (ast-node-push (AstExprVar (intern (clone-binder-name i)))))
       (clone-variant-ctor-args count (+ i 1)))))
 
 (define (clone-type-list-len [types : AstTypeList]) : i64
@@ -271,7 +272,9 @@
           [(AstFieldDef fname _ _)
             (ast-expr-cons
               (clone-call-expr
-                (ast-expr-struct-get (ast-node-push (AstExprVar (intern "x"))) fname))
+                (ast-expr-struct-get
+                  (ast-node-push (AstExprVar (intern "x")))
+                  fname))
               (clone-struct-ctor-args rest))]))]))
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.

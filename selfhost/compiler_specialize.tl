@@ -4254,7 +4254,9 @@
     [(AstExprVar name)
       (match (spec-value-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
-          (spec-ctfe-value-to-expr (spec-value-subst-value subs (intern-str name)) expr)]
+          (spec-ctfe-value-to-expr
+            (spec-value-subst-value subs (intern-str name))
+            expr)]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral _) (OkSpecSubExpr (ast-node-push expr))]
@@ -4851,7 +4853,9 @@
               expr
               (string-append
                 "type-valued comptime parameter '"
-                (string-append (intern-str name) "' cannot be used as a runtime value"))))]
+                (string-append
+                  (intern-str name)
+                  "' cannot be used as a runtime value"))))]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral ty)

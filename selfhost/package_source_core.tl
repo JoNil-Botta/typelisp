@@ -93,7 +93,9 @@
 
 (define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
   (if (file-exists? path)
-    (match (compiler-load-parse-manifest-diagnostic path (read-file path))
+    (match (compiler-load-parse-manifest-diagnostic-infer-kind
+      path
+      (read-file path))
       [(ErrCompilerPkgManifestDiagnostic diag)
         (ErrPackageSourceSet
           (package-source-cat3

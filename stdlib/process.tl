@@ -1,8 +1,8 @@
 ;# Process command API surface for TypeLisp (#840).
 ;#
 ;# Defines the canonical process command/output/error data model for selfhost
-;# tools. Runtime process execution is provided by the backend-emitted
-;# `tl_process_output`, `tl_process_start`, and `tl_process_wait` helpers;
+;# tools. Runtime process execution is provided by `process_runtime.tl` through
+;# `tl_process_output`, `tl_process_start`, and `tl_process_wait`;
 ;# unsupported target/runtime combinations return structured errors instead of
 ;# routing through Rust host actions or shell-tokenized command strings.
 ;# Linux execution preserves inherited environment entries except names

@@ -37,7 +37,7 @@
     (& text str)
     (Box (ProcessBorrowedEnvList text))))
 
-;: Borrowed process command data. The backend runtime still receives owned
+;: Borrowed process command data. The process runtime still receives owned
 ;: `ProcessCommand` values; borrowed commands copy at that explicit boundary.
 (defstruct ProcessBorrowedCommand
   (:lifetimes executable argv cwd env stdin)

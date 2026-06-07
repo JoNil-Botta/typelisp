@@ -1933,12 +1933,12 @@
             (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
             (compiler-backend-string-contains? asm "    call WriteFile\n")
             (not (compiler-backend-string-contains? asm "    call _write\n")))]
-        [process-runtime : bool
+        [no-process-runtime : bool
           (backend-and4
-            (compiler-backend-string-contains? asm "    call _lseeki64\n")
-            (compiler-backend-string-contains? asm "    call _read\n")
-            (compiler-backend-string-contains? asm "tl_process_output:\n")
-            true)]
+            (not (compiler-backend-string-contains? asm "    call _lseeki64\n"))
+            (not (compiler-backend-string-contains? asm "    call _read\n"))
+            (not (compiler-backend-string-contains? asm "tl_process_output:\n"))
+            (not (compiler-backend-string-contains? asm "tmpfile:\n")))]
         [string-runtime : bool
           (backend-and8
             (compiler-backend-string-contains? asm "tl_substring:\n")
@@ -1973,7 +1973,7 @@
         (backend-and8
           kernel-io
           true
-          process-runtime
+          no-process-runtime
           string-runtime
           entry-shape
           private-file-handles
@@ -2771,46 +2771,36 @@
       (backend-and4
         (compiler-backend-runtime-helper-inventory-symbol-ok?
           plan
-          "tl_process_output")
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_process_start")
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_process_wait")
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_profile_alloc_total"))
-      (and
+          "tl_profile_alloc_total")
         (compiler-backend-runtime-helper-inventory-symbol-ok?
           plan
           "tl_profile_alloc_live")
-        (and
-          (compiler-backend-runtime-helper-inventory-symbol-ok?
-            plan
-            "tl_profile_alloc_peak")
-          (compiler-backend-runtime-helper-inventory-symbol-ok?
-            plan
-            "tl_profile_alloc_reset_peak"))))
-    (and
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_fs_read_dir_status")
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_profile_alloc_peak")
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          "tl_profile_alloc_reset_peak"))
       (and
         (compiler-backend-runtime-helper-inventory-symbol-ok?
           plan
-          ".L_tl_fs_read_dir")
+          ".L_tl_fs_read_dir_status")
         (and
           (compiler-backend-runtime-helper-inventory-symbol-ok?
             plan
-            ".L_tl_fs_file_kind_status")
-          (and
-            (compiler-backend-runtime-helper-inventory-symbol-ok?
-              plan
-              ".L_tl_fs_file_size_status")
-            (compiler-backend-runtime-helper-inventory-symbol-ok?
-              plan
-              ".L_tl_fs_file_size")))))))
+            ".L_tl_fs_read_dir")
+          (compiler-backend-runtime-helper-inventory-symbol-ok?
+            plan
+            ".L_tl_fs_file_kind_status"))))
+    (and
+      (compiler-backend-runtime-helper-inventory-symbol-ok?
+        plan
+        ".L_tl_fs_file_size_status")
+      (and
+        (compiler-backend-runtime-helper-inventory-symbol-ok?
+          plan
+          ".L_tl_fs_file_size")
+        true))))
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-string-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -2909,6 +2899,20 @@
       true
       true)))
 
+(define (compiler-backend-runtime-helper-inventory-retired-process-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (backend-and4
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_process_output")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_process_start")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_process_wait")
+    true))
+
 (define (compiler-backend-runtime-helper-inventory-retired-io-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (backend-and8
@@ -2996,7 +3000,9 @@
       (compiler-backend-runtime-helper-inventory-retired-file-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-io-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
-      (compiler-backend-runtime-helper-inventory-negative-ok? plan))))
+      (and
+        (compiler-backend-runtime-helper-inventory-retired-process-ok? plan)
+        (compiler-backend-runtime-helper-inventory-negative-ok? plan)))))
 
 (define (compiler-backend-memory-op-ok?) : bool
   (and
@@ -3257,160 +3263,70 @@
 (extern tl_process_wait : (-> i64 i64))
 (define (main) : i64 (+ (tl_process_start 0) (tl_process_wait 0)))")
 
-(define (compiler-backend-process-async-boxed-argv-ok? [asm : String]) : bool
-  (>=
-    (compiler-backend-string-count
-      asm
-      "    movq 16(%r12), %r12\n    movq 0(%r12), %r12\n")
-    2))
+(define (compiler-backend-process-fallback-labels-absent? [asm : String]) : bool
+  (and
+    (backend-and8
+      (not (compiler-backend-string-contains? asm "tl_process_output:\n"))
+      (not (compiler-backend-string-contains? asm "tl_process_start:\n"))
+      (not (compiler-backend-string-contains? asm "tl_process_wait:\n"))
+      (not (compiler-backend-string-contains? asm ".L_tl_process_read_all:\n"))
+      (not (compiler-backend-string-contains? asm ".L_tl_process_exec_marker:"))
+      (not (compiler-backend-string-contains? asm "tmpfile:\n"))
+      (not (compiler-backend-string-contains? asm "_fileno:\n"))
+      (not (compiler-backend-string-contains? asm "_get_osfhandle:\n")))
+    (backend-and4
+      (not (compiler-backend-string-contains? asm "fclose:\n"))
+      (not (compiler-backend-string-contains? asm "__p__environ:\n"))
+      (not (compiler-backend-string-contains? asm "    call _lseeki64\n"))
+      (not (compiler-backend-string-contains? asm "    call _read\n")))))
 
-(define (compiler-backend-process-async-ok?) : bool
-  (match (compiler-backend-emit-source (compiler-backend-process-async-source))
-    [(OkCompilerBackend asm)
-      (let
-        [runtime-labels : bool
-          (backend-and8
-            (compiler-backend-string-contains? asm "tl_process_start:\n")
-            (compiler-backend-string-contains? asm "tl_process_wait:\n")
-            (compiler-backend-string-contains?
-              asm
-              ".L_tl_process_start_child:\n")
-            (compiler-backend-string-contains?
-              asm
-              ".L_tl_process_async_wait_status_ready:\n")
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_process_start\n"))
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_process_wait\n"))
-            (compiler-backend-process-async-boxed-argv-ok? asm)
-            (compiler-backend-string-contains? asm "tl_alloc:\n"))]
-        [runtime-calls : bool
-          (backend-and4
-            (compiler-backend-string-contains?
-              asm
-              "    call tl_process_start\n")
-            (compiler-backend-string-contains? asm "    call tl_process_wait\n")
-            (compiler-backend-string-contains? asm "    movq $57, %rax\n")
-            (compiler-backend-string-contains? asm "    movq $61, %rax\n"))]
-        (and runtime-labels runtime-calls))]
-    [(ErrCompilerBackend _) false]))
+(define (compiler-backend-process-output-fallback-absent-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-process-fallback-labels-absent? asm)
+    (and
+      (compiler-backend-string-contains? asm ".extern tl_process_output\n")
+      (and
+        (compiler-backend-string-contains? asm "    call tl_process_output\n")
+        (not (compiler-backend-string-contains? asm "_tl_tl_process_output"))))))
 
-(define (compiler-backend-process-output-ok?) : bool
+(define (compiler-backend-process-async-fallback-absent-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-process-fallback-labels-absent? asm)
+    (and
+      (backend-and4
+        (compiler-backend-string-contains? asm ".extern tl_process_start\n")
+        (compiler-backend-string-contains? asm ".extern tl_process_wait\n")
+        (compiler-backend-string-contains? asm "    call tl_process_start\n")
+        (compiler-backend-string-contains? asm "    call tl_process_wait\n"))
+      (and
+        (not (compiler-backend-string-contains? asm "_tl_tl_process_start"))
+        (not (compiler-backend-string-contains? asm "_tl_tl_process_wait"))))))
+
+(define (compiler-backend-process-fallback-absent-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-process-output-source))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "tl_process_output:\n")
-        (and
-          (compiler-backend-string-contains? asm "    call tl_process_output\n")
+    [(OkCompilerBackend output-asm)
+      (match (compiler-backend-emit-source
+        (compiler-backend-process-async-source))
+        [(OkCompilerBackend async-asm)
           (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_process_output\n"))
-            (and
-              (not
-                (compiler-backend-string-contains? asm "_tl_tl_process_output"))
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  ".L_tl_process_read_all:\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    ".L_tl_process_exec_marker:")
-                  (and
-                    (compiler-backend-string-contains? asm ".L_tl_envp:\n")
-                    (and
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq $57, %rax\n")
-                      (and
-                        (compiler-backend-string-contains?
-                          asm
-                          "    movq $59, %rax\n")
-                        (and
-                          (compiler-backend-string-contains?
-                            asm
-                            "    movq $61, %rax\n")
-                          (and
-                            (compiler-backend-string-contains?
-                              asm
-                              "    movq $319, %rax\n")
-                            (and
-                              (compiler-backend-string-contains?
-                                asm
-                                "    movq $293, %rax\n")
-                              (and
-                                (compiler-backend-string-contains?
-                                  asm
-                                  "tl_alloc:\n")
-                                (compiler-backend-process-async-ok?))))))))))))))]
+            (compiler-backend-process-output-fallback-absent-asm-ok? output-asm)
+            (compiler-backend-process-async-fallback-absent-asm-ok? async-asm))]
+        [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-windows-process-async-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-process-async-source)
-    (BackendTargetWindows))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "tl_process_start:\n")
-        (and
-          (compiler-backend-string-contains? asm "tl_process_wait:\n")
-          (and
-            (compiler-backend-string-contains?
-              asm
-              "process: async child handles are not supported by this runtime")
-            (and
-              (compiler-backend-string-contains?
-                asm
-                "    call tl_process_start\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    call tl_process_wait\n")
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_process_start\n"))
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        ".extern tl_process_wait\n"))
-                    (compiler-backend-string-contains? asm "tl_alloc:\n"))))))))]
-    [(ErrCompilerBackend _) false]))
-
-(define (compiler-backend-windows-process-output-ok?) : bool
+(define (compiler-backend-windows-process-fallback-absent-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-process-output-source)
     (BackendTargetWindows))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "tl_process_output:\n")
-        (and
-          (compiler-backend-string-contains?
-            asm
-            "process: runtime execution is not supported on this target")
+    [(OkCompilerBackend output-asm)
+      (match (compiler-backend-emit-source-for-target
+        (compiler-backend-process-async-source)
+        (BackendTargetWindows))
+        [(OkCompilerBackend async-asm)
           (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_process_output\n"))
-            (and
-              (not
-                (compiler-backend-string-contains? asm "_tl_tl_process_output"))
-              (and
-                (not (compiler-backend-string-contains? asm "    syscall"))
-                (and
-                  (compiler-backend-string-contains? asm ".L_tl_envp:\n")
-                  (and
-                    (compiler-backend-string-contains? asm "tl_alloc:\n")
-                    (compiler-backend-windows-process-async-ok?))))))))]
+            (compiler-backend-process-output-fallback-absent-asm-ok? output-asm)
+            (compiler-backend-process-async-fallback-absent-asm-ok? async-asm))]
+        [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-env-runtime-source) : String
@@ -5240,8 +5156,8 @@
               (compiler-backend-profile-runtime-split-ok?)))
           (compiler-backend-alloc-runtime-arena-ok?)
           (compiler-backend-region-ok?)
-          (compiler-backend-process-output-ok?)
-          (compiler-backend-windows-process-output-ok?)
+          (compiler-backend-process-fallback-absent-ok?)
+          (compiler-backend-windows-process-fallback-absent-ok?)
           (and
             (compiler-backend-append-file-status-ok?)
             (compiler-backend-private-io-fs-runtime-labels-ok?)))

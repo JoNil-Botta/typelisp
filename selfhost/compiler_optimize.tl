@@ -6034,6 +6034,1216 @@
   (match program
     [(IrProgram _ functions _) (opt-verify-function-list functions)]))
 
+;; --- standalone scalar SSA construction / mem2reg (#2188) ------------------
+;;
+;; This constructor rewrites repeated scalar virtual-register definitions into
+;; single-assignment form and inserts phis at dominance frontiers. It is
+;; deliberately verifier-gated: unsupported shapes leave the function unchanged.
+;; This first slice handles functions without pre-existing phi nodes, which keeps
+;; edge-sensitive phi-input rewriting separate from the lowering-time phis.
+(defenum OptMaybeAstType
+  (OptNoAstType)
+  (OptSomeAstType AstType))
+
+(defenum OptSsaVarTypes
+  (OptSsaVarTypesNil)
+  (OptSsaVarTypesCons i64 AstType (Box OptSsaVarTypes)))
+
+(defenum OptSsaFacts
+  (OptSsaFacts I64I64Map I64I64Map OptSsaVarTypes))
+
+(defenum OptSsaVarBlocks
+  (OptSsaVarBlocksNil)
+  (OptSsaVarBlocksCons i64 OptLabelSet (Box OptSsaVarBlocks)))
+
+(defenum OptSsaPhiSite
+  (OptSsaPhiSite i64 String AstType i64))
+
+(defenum OptSsaPhiSites
+  (OptSsaPhiSitesNil)
+  (OptSsaPhiSitesCons OptSsaPhiSite (Box OptSsaPhiSites)))
+
+(defenum OptSsaPhiInsertState
+  (OptSsaPhiInsertState OptSsaPhiSites i64 OptLabelSet))
+
+(defenum OptSsaRenameEnv
+  (OptSsaRenameNil)
+  (OptSsaRenameCons i64 i64 (Box OptSsaRenameEnv)))
+
+(defenum OptSsaRenameBlock
+  (OptSsaRenameBlock String CompilerIrInstrList))
+
+(defenum OptSsaRenameBlocks
+  (OptSsaRenameBlocksNil)
+  (OptSsaRenameBlocksCons OptSsaRenameBlock (Box OptSsaRenameBlocks)))
+
+(defenum OptSsaBlockOut
+  (OptSsaBlockOut String OptSsaRenameEnv))
+
+(defenum OptSsaBlockOuts
+  (OptSsaBlockOutsNil)
+  (OptSsaBlockOutsCons OptSsaBlockOut (Box OptSsaBlockOuts)))
+
+(defenum OptSsaRenameState
+  (OptSsaRenameState OptSsaRenameBlocks OptSsaBlockOuts i64))
+
+(defenum OptSsaDstResult
+  (OptSsaDstResult i64 OptSsaRenameEnv i64))
+
+(defenum OptSsaInstrResult
+  (OptSsaInstrResult CompilerIrInstr OptSsaRenameEnv i64))
+
+(defenum OptSsaBlockResult
+  (OptSsaBlockResult CompilerIrInstrList OptSsaRenameEnv i64))
+
+(define (opt-ssa-count [counts : I64I64Map] [var : i64]) : i64
+  (match (i64-i64-map-get counts var)
+    [(I64I64MapFound n) n]
+    [(I64I64MapMissing) 0]))
+
+(define (opt-ssa-count-add [counts : I64I64Map] [var : i64]) : I64I64Map
+  (i64-i64-map-put counts var (+ 1 (opt-ssa-count counts var))))
+
+(define (opt-ssa-scalar-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [(AstTyF64) true]
+    [(AstTyF32) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
+    [_ false]))
+
+(define (opt-ssa-var-type-lookup [types : OptSsaVarTypes] [var : i64]) : OptMaybeAstType
+  (match types
+    [(OptSsaVarTypesNil) (OptNoAstType)]
+    [(OptSsaVarTypesCons id ty rest)
+      (if (= id var)
+        (OptSomeAstType ty)
+        (opt-ssa-var-type-lookup (box-get rest) var))]))
+
+(define (opt-ssa-facts-bad-var [facts : OptSsaFacts] [var : i64]) : OptSsaFacts
+  (match facts
+    [(OptSsaFacts counts bad types)
+      (OptSsaFacts counts (opt-used-add bad var) types)]))
+
+(define (opt-ssa-facts-add-def-bad [facts : OptSsaFacts] [var : i64]) : OptSsaFacts
+  (match facts
+    [(OptSsaFacts counts bad types)
+      (OptSsaFacts (opt-ssa-count-add counts var) (opt-used-add bad var) types)]))
+
+(define (opt-ssa-facts-add-def-ty
+  [facts : OptSsaFacts]
+  [var : i64]
+  [ty : AstType]) : OptSsaFacts
+  (match facts
+    [(OptSsaFacts counts bad types)
+      (let
+        [next-counts : I64I64Map (opt-ssa-count-add counts var)]
+        (if (not (opt-ssa-scalar-type? ty))
+          (OptSsaFacts next-counts (opt-used-add bad var) types)
+          (match (opt-ssa-var-type-lookup types var)
+            [(OptNoAstType)
+              (OptSsaFacts
+                next-counts
+                bad
+                (OptSsaVarTypesCons var ty (box types)))]
+            [(OptSomeAstType old)
+              (OptSsaFacts
+                next-counts
+                (if (opt-type-eq old ty)
+                  bad
+                  (opt-used-add bad var))
+                types)])))]))
+
+(define (opt-ssa-facts-add-param
+  [facts : OptSsaFacts]
+  [param : CompilerIrParam]) : OptSsaFacts
+  (match param
+    [(IrParam _ ty var) (opt-ssa-facts-add-def-ty facts var ty)]))
+
+(define (opt-ssa-facts-add-params
+  [params : CompilerIrParamList]
+  [facts : OptSsaFacts]) : OptSsaFacts
+  (match params
+    [(IrParamNil) facts]
+    [(IrParamCons param rest)
+      (opt-ssa-facts-add-params
+        (box-get rest)
+        (opt-ssa-facts-add-param facts param))]))
+
+(define (opt-ssa-facts-add-instr
+  [facts : OptSsaFacts]
+  [instr : CompilerIrInstr]) : OptSsaFacts
+  (match instr
+    [(IrInstrMov dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrLoad dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrCast dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrBinOp dst _ _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrUnOp dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrCall dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrCallIndirect dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrPhi dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrEntryArgc dst) (opt-ssa-facts-add-def-ty facts dst (AstTyI64))]
+    [(IrInstrAddrOf dst src)
+      (opt-ssa-facts-bad-var (opt-ssa-facts-add-def-bad facts dst) src)]
+    [(IrInstrAlloc dst _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrGep dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrLaneId dst _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrSplat dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrMaskNot dst _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrTailMask dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrEntryArgv dst) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrEntryEnvp dst) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrCpuId dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrXgetbv dst _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrSyscall dst _) (opt-ssa-facts-add-def-bad facts dst)]
+    [_ facts]))
+
+(define (opt-ssa-facts-add-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [facts : OptSsaFacts]) : OptSsaFacts
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    facts
+    (opt-ssa-facts-add-instr-seq-from
+      instrs
+      (+ index 1)
+      (opt-ssa-facts-add-instr facts (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-ssa-facts-add-blocks
+  [blocks : CompilerIrBlockList]
+  [facts : OptSsaFacts]) : OptSsaFacts
+  (match blocks
+    [(IrBlockNil) facts]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-ssa-facts-add-blocks
+            (box-get rest)
+            (opt-ssa-facts-add-instr-seq-from instrs 0 facts))])]))
+
+(define (opt-ssa-facts-from-function
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptSsaFacts
+  (opt-ssa-facts-add-blocks
+    blocks
+    (opt-ssa-facts-add-params
+      params
+      (OptSsaFacts
+        (i64-i64-map-with-capacity 64)
+        (i64-i64-map-with-capacity 64)
+        (OptSsaVarTypesNil)))))
+
+(define (opt-ssa-candidate? [facts : OptSsaFacts] [var : i64]) : bool
+  (match facts
+    [(OptSsaFacts counts bad types)
+      (and
+        (> (opt-ssa-count counts var) 1)
+        (and
+          (not (opt-used-contains bad var))
+          (match (opt-ssa-var-type-lookup types var)
+            [(OptSomeAstType _) true]
+            [(OptNoAstType) false])))]))
+
+(define (opt-ssa-any-candidate-types?
+  [facts : OptSsaFacts]
+  [types : OptSsaVarTypes]) : bool
+  (match types
+    [(OptSsaVarTypesNil) false]
+    [(OptSsaVarTypesCons var _ rest)
+      (if (opt-ssa-candidate? facts var)
+        true
+        (opt-ssa-any-candidate-types? facts (box-get rest)))]))
+
+(define (opt-ssa-any-candidate? [facts : OptSsaFacts]) : bool
+  (match facts
+    [(OptSsaFacts _ _ types) (opt-ssa-any-candidate-types? facts types)]))
+
+(define (opt-ssa-var-blocks-add
+  [blocks : OptSsaVarBlocks]
+  [var : i64]
+  [label : String]) : OptSsaVarBlocks
+  (match blocks
+    [(OptSsaVarBlocksNil)
+      (OptSsaVarBlocksCons
+        var
+        (opt-label-add (OptLabelNil) label)
+        (box (OptSsaVarBlocksNil)))]
+    [(OptSsaVarBlocksCons id labels rest)
+      (if (= id var)
+        (OptSsaVarBlocksCons id (opt-label-add labels label) rest)
+        (OptSsaVarBlocksCons
+          id
+          labels
+          (box (opt-ssa-var-blocks-add (box-get rest) var label))))]))
+
+(define (opt-ssa-var-blocks-lookup [blocks : OptSsaVarBlocks] [var : i64]) : OptLabelSet
+  (match blocks
+    [(OptSsaVarBlocksNil) (OptLabelNil)]
+    [(OptSsaVarBlocksCons id labels rest)
+      (if (= id var)
+        labels
+        (opt-ssa-var-blocks-lookup (box-get rest) var))]))
+
+(define (opt-ssa-def-blocks-add-param
+  [facts : OptSsaFacts]
+  [label : String]
+  [defs : OptSsaVarBlocks]
+  [param : CompilerIrParam]) : OptSsaVarBlocks
+  (match param
+    [(IrParam _ _ var)
+      (if (opt-ssa-candidate? facts var)
+        (opt-ssa-var-blocks-add defs var label)
+        defs)]))
+
+(define (opt-ssa-def-blocks-add-params
+  [facts : OptSsaFacts]
+  [label : String]
+  [defs : OptSsaVarBlocks]
+  [params : CompilerIrParamList]) : OptSsaVarBlocks
+  (match params
+    [(IrParamNil) defs]
+    [(IrParamCons param rest)
+      (opt-ssa-def-blocks-add-params
+        facts
+        label
+        (opt-ssa-def-blocks-add-param facts label defs param)
+        (box-get rest))]))
+
+(define (opt-ssa-def-blocks-add-instr
+  [facts : OptSsaFacts]
+  [label : String]
+  [defs : OptSsaVarBlocks]
+  [instr : CompilerIrInstr]) : OptSsaVarBlocks
+  (match (opt-instr-def-var instr)
+    [(OptSomeI64 var)
+      (if (opt-ssa-candidate? facts var)
+        (opt-ssa-var-blocks-add defs var label)
+        defs)]
+    [(OptNoI64) defs]))
+
+(define (opt-ssa-def-blocks-add-instr-seq-from
+  [facts : OptSsaFacts]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    defs
+    (opt-ssa-def-blocks-add-instr-seq-from
+      facts
+      label
+      instrs
+      (+ index 1)
+      (opt-ssa-def-blocks-add-instr
+        facts
+        label
+        defs
+        (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-ssa-def-blocks-add-blocks
+  [facts : OptSsaFacts]
+  [blocks : CompilerIrBlockList]
+  [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
+  (match blocks
+    [(IrBlockNil) defs]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (opt-ssa-def-blocks-add-blocks
+            facts
+            (box-get rest)
+            (opt-ssa-def-blocks-add-instr-seq-from facts label instrs 0 defs))])]))
+
+(define (opt-ssa-def-blocks-from-function
+  [facts : OptSsaFacts]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptSsaVarBlocks
+  (opt-ssa-def-blocks-add-blocks
+    facts
+    blocks
+    (opt-ssa-def-blocks-add-params
+      facts
+      (opt-cfg-entry-label blocks)
+      (OptSsaVarBlocksNil)
+      params)))
+
+(define (opt-ssa-phi-site-exists?
+  [sites : OptSsaPhiSites]
+  [var : i64]
+  [label : String]) : bool
+  (match sites
+    [(OptSsaPhiSitesNil) false]
+    [(OptSsaPhiSitesCons site rest)
+      (match site
+        [(OptSsaPhiSite site-var site-label _ _)
+          (if (and (= site-var var) (string-eq site-label label))
+            true
+            (opt-ssa-phi-site-exists? (box-get rest) var label))])]))
+
+(define (opt-ssa-phi-add-site
+  [state : OptSsaPhiInsertState]
+  [var : i64]
+  [ty : AstType]
+  [label : String]) : OptSsaPhiInsertState
+  (match state
+    [(OptSsaPhiInsertState sites next-var worklist)
+      (if (opt-ssa-phi-site-exists? sites var label)
+        state
+        (OptSsaPhiInsertState
+          (OptSsaPhiSitesCons (OptSsaPhiSite var label ty next-var) (box sites))
+          (+ next-var 1)
+          (opt-label-add worklist label)))]))
+
+(define (opt-ssa-phi-add-frontier
+  [var : i64]
+  [ty : AstType]
+  [frontier : OptLabelSet]
+  [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
+  (match frontier
+    [(OptLabelNil) state]
+    [(OptLabelCons label rest)
+      (opt-ssa-phi-add-frontier
+        var
+        ty
+        (box-get rest)
+        (opt-ssa-phi-add-site state var ty label))]))
+
+(define (opt-ssa-insert-phis-worklist
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [var : i64]
+  [ty : AstType]
+  [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
+  (match state
+    [(OptSsaPhiInsertState sites next-var worklist)
+      (match worklist
+        [(OptLabelNil) state]
+        [(OptLabelCons label rest)
+          (opt-ssa-insert-phis-worklist
+            context
+            blocks
+            var
+            ty
+            (opt-ssa-phi-add-frontier
+              var
+              ty
+              (opt-cfg-dominance-frontier-with-context blocks context label)
+              (OptSsaPhiInsertState sites next-var (box-get rest))))])]))
+
+(define (opt-ssa-insert-phis-for-var
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [defs : OptSsaVarBlocks]
+  [state : OptSsaPhiInsertState]
+  [var : i64]
+  [ty : AstType]) : OptSsaPhiInsertState
+  (match state
+    [(OptSsaPhiInsertState sites next-var _)
+      (opt-ssa-insert-phis-worklist
+        context
+        blocks
+        var
+        ty
+        (OptSsaPhiInsertState
+          sites
+          next-var
+          (opt-ssa-var-blocks-lookup defs var)))]))
+
+(define (opt-ssa-insert-phis-types
+  [facts : OptSsaFacts]
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [defs : OptSsaVarBlocks]
+  [types : OptSsaVarTypes]
+  [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
+  (match types
+    [(OptSsaVarTypesNil) state]
+    [(OptSsaVarTypesCons var ty rest)
+      (opt-ssa-insert-phis-types
+        facts
+        context
+        blocks
+        defs
+        (box-get rest)
+        (if (opt-ssa-candidate? facts var)
+          (opt-ssa-insert-phis-for-var context blocks defs state var ty)
+          state))]))
+
+(define (opt-ssa-insert-phis
+  [facts : OptSsaFacts]
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [frame : i64]
+  [blocks : CompilerIrBlockList]) : OptSsaPhiInsertState
+  (match facts
+    [(OptSsaFacts _ _ types)
+      (opt-ssa-insert-phis-types
+        facts
+        context
+        blocks
+        (opt-ssa-def-blocks-from-function facts params blocks)
+        types
+        (OptSsaPhiInsertState (OptSsaPhiSitesNil) frame (OptLabelNil)))]))
+
+(define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : OptMaybeI64
+  (match env
+    [(OptSsaRenameNil) (OptNoI64)]
+    [(OptSsaRenameCons original current rest)
+      (if (= original var)
+        (OptSomeI64 current)
+        (opt-ssa-env-lookup (box-get rest) var))]))
+
+(define (opt-ssa-env-bind
+  [env : OptSsaRenameEnv]
+  [original : i64]
+  [current : i64]) : OptSsaRenameEnv
+  (OptSsaRenameCons original current (box env)))
+
+(define (opt-ssa-env-from-params
+  [facts : OptSsaFacts]
+  [params : CompilerIrParamList]
+  [env : OptSsaRenameEnv]) : OptSsaRenameEnv
+  (match params
+    [(IrParamNil) env]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ var)
+          (opt-ssa-env-from-params
+            facts
+            (box-get rest)
+            (if (opt-ssa-candidate? facts var)
+              (opt-ssa-env-bind env var var)
+              env))])]))
+
+(define (opt-ssa-env-bind-phis
+  [sites : OptSsaPhiSites]
+  [label : String]
+  [env : OptSsaRenameEnv]) : OptSsaRenameEnv
+  (match sites
+    [(OptSsaPhiSitesNil) env]
+    [(OptSsaPhiSitesCons site rest)
+      (match site
+        [(OptSsaPhiSite var site-label _ phi-var)
+          (opt-ssa-env-bind-phis
+            (box-get rest)
+            label
+            (if (string-eq label site-label)
+              (opt-ssa-env-bind env var phi-var)
+              env))])]))
+
+(define (opt-ssa-rewrite-value
+  [env : OptSsaRenameEnv]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar var)
+      (match (opt-ssa-env-lookup env var)
+        [(OptSomeI64 current) (IrValueVar current)]
+        [(OptNoI64) value])]
+    [_ value]))
+
+(define (opt-ssa-rewrite-maybe-value
+  [env : OptSsaRenameEnv]
+  [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
+  (match value
+    [(IrNoValue) (IrNoValue)]
+    [(IrSomeValue inner) (IrSomeValue (opt-ssa-rewrite-value env inner))]))
+
+(define (opt-ssa-rewrite-value-list
+  [env : OptSsaRenameEnv]
+  [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) (IrValueNil)]
+    [(IrValueCons value rest)
+      (compiler-ir-value-cons
+        (opt-ssa-rewrite-value env value)
+        (opt-ssa-rewrite-value-list env (box-get rest)))]))
+
+(define (opt-ssa-rewrite-call-args-array
+  [env : OptSsaRenameEnv]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set! dst index (opt-ssa-rewrite-value env (array-ref src index)))
+      (opt-ssa-rewrite-call-args-array env src dst (+ index 1)))))
+
+(define (opt-ssa-rewrite-call-args
+  [env : OptSsaRenameEnv]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value) (IrCallArgsOne (opt-ssa-rewrite-value env value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo
+        (opt-ssa-rewrite-value env a)
+        (opt-ssa-rewrite-value env b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-ssa-rewrite-call-args-array env values out 0)
+          (IrCallArgsArray out)))]))
+
+(define (opt-ssa-rename-dst
+  [facts : OptSsaFacts]
+  [env : OptSsaRenameEnv]
+  [next-var : i64]
+  [dst : i64]) : OptSsaDstResult
+  (if (opt-ssa-candidate? facts dst)
+    (OptSsaDstResult
+      next-var
+      (opt-ssa-env-bind env dst next-var)
+      (+ next-var 1))
+    (OptSsaDstResult dst env next-var)))
+
+(define (opt-ssa-rename-instr
+  [facts : OptSsaFacts]
+  [env : OptSsaRenameEnv]
+  [next-var : i64]
+  [instr : CompilerIrInstr]) : OptSsaInstrResult
+  (match instr
+    [(IrInstrMov dst src ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrMov out-dst (opt-ssa-rewrite-value env src) ty)
+            next-env
+            out-next)])]
+    [(IrInstrLoad dst src ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrLoad out-dst (opt-ssa-rewrite-value env src) ty)
+            next-env
+            out-next)])]
+    [(IrInstrCast dst src from-ty to-ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrCast out-dst (opt-ssa-rewrite-value env src) from-ty to-ty)
+            next-env
+            out-next)])]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrBinOp
+              out-dst
+              op
+              (opt-ssa-rewrite-value env lhs)
+              (opt-ssa-rewrite-value env rhs)
+              ty)
+            next-env
+            out-next)])]
+    [(IrInstrUnOp dst op src ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrUnOp out-dst op (opt-ssa-rewrite-value env src) ty)
+            next-env
+            out-next)])]
+    [(IrInstrCall dst name args ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrCall out-dst name (opt-ssa-rewrite-call-args env args) ty)
+            next-env
+            out-next)])]
+    [(IrInstrCallIndirect dst func args ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrCallIndirect
+              out-dst
+              (opt-ssa-rewrite-value env func)
+              (opt-ssa-rewrite-call-args env args)
+              ty)
+            next-env
+            out-next)])]
+    [(IrInstrEntryArgc dst)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult (IrInstrEntryArgc out-dst) next-env out-next)])]
+    [(IrInstrGep dst base offset ty)
+      (OptSsaInstrResult
+        (IrInstrGep
+          dst
+          (opt-ssa-rewrite-value env base)
+          (opt-ssa-rewrite-value env offset)
+          ty)
+        env
+        next-var)]
+    [(IrInstrStorePtr ptr value ty)
+      (OptSsaInstrResult
+        (IrInstrStorePtr
+          (opt-ssa-rewrite-value env ptr)
+          (opt-ssa-rewrite-value env value)
+          ty)
+        env
+        next-var)]
+    [(IrInstrBoundsCheck index length ok-label)
+      (OptSsaInstrResult
+        (IrInstrBoundsCheck
+          (opt-ssa-rewrite-value env index)
+          (opt-ssa-rewrite-value env length)
+          ok-label)
+        env
+        next-var)]
+    [(IrInstrSplat dst value lanes ty)
+      (OptSsaInstrResult
+        (IrInstrSplat dst (opt-ssa-rewrite-value env value) lanes ty)
+        env
+        next-var)]
+    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
+      (OptSsaInstrResult
+        (IrInstrVectorBinOp
+          dst
+          op
+          (opt-ssa-rewrite-value env lhs)
+          (opt-ssa-rewrite-value env rhs)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrVectorReduce dst op src lanes ty)
+      (OptSsaInstrResult
+        (IrInstrVectorReduce dst op (opt-ssa-rewrite-value env src) lanes ty)
+        env
+        next-var)]
+    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
+      (OptSsaInstrResult
+        (IrInstrVectorCompare
+          dst
+          op
+          (opt-ssa-rewrite-value env lhs)
+          (opt-ssa-rewrite-value env rhs)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (OptSsaInstrResult
+        (IrInstrMaskBinOp
+          dst
+          op
+          (opt-ssa-rewrite-value env lhs)
+          (opt-ssa-rewrite-value env rhs)
+          lanes)
+        env
+        next-var)]
+    [(IrInstrMaskNot dst src lanes)
+      (OptSsaInstrResult
+        (IrInstrMaskNot dst (opt-ssa-rewrite-value env src) lanes)
+        env
+        next-var)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (OptSsaInstrResult
+        (IrInstrMaskReduce dst op (opt-ssa-rewrite-value env src) lanes)
+        env
+        next-var)]
+    [(IrInstrSelect dst mask on-true on-false lanes ty)
+      (OptSsaInstrResult
+        (IrInstrSelect
+          dst
+          (opt-ssa-rewrite-value env mask)
+          (opt-ssa-rewrite-value env on-true)
+          (opt-ssa-rewrite-value env on-false)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrVectorLoad dst base index lanes ty)
+      (OptSsaInstrResult
+        (IrInstrVectorLoad
+          dst
+          (opt-ssa-rewrite-value env base)
+          (opt-ssa-rewrite-value env index)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrVectorStore base index value lanes ty)
+      (OptSsaInstrResult
+        (IrInstrVectorStore
+          (opt-ssa-rewrite-value env base)
+          (opt-ssa-rewrite-value env index)
+          (opt-ssa-rewrite-value env value)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrPredicatedStore base index value mask lanes ty)
+      (OptSsaInstrResult
+        (IrInstrPredicatedStore
+          (opt-ssa-rewrite-value env base)
+          (opt-ssa-rewrite-value env index)
+          (opt-ssa-rewrite-value env value)
+          (opt-ssa-rewrite-value env mask)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrPredicatedLoad dst base index mask lanes ty)
+      (OptSsaInstrResult
+        (IrInstrPredicatedLoad
+          dst
+          (opt-ssa-rewrite-value env base)
+          (opt-ssa-rewrite-value env index)
+          (opt-ssa-rewrite-value env mask)
+          lanes
+          ty)
+        env
+        next-var)]
+    [(IrInstrTailMask dst index length lanes)
+      (OptSsaInstrResult
+        (IrInstrTailMask
+          dst
+          (opt-ssa-rewrite-value env index)
+          (opt-ssa-rewrite-value env length)
+          lanes)
+        env
+        next-var)]
+    [(IrInstrCpuId dst leaf subleaf reg-index)
+      (OptSsaInstrResult
+        (IrInstrCpuId
+          dst
+          (opt-ssa-rewrite-value env leaf)
+          (opt-ssa-rewrite-value env subleaf)
+          reg-index)
+        env
+        next-var)]
+    [(IrInstrXgetbv dst index)
+      (OptSsaInstrResult
+        (IrInstrXgetbv dst (opt-ssa-rewrite-value env index))
+        env
+        next-var)]
+    [(IrInstrSyscall dst args)
+      (OptSsaInstrResult
+        (IrInstrSyscall dst (opt-ssa-rewrite-call-args env args))
+        env
+        next-var)]
+    [(IrInstrStore name value ty)
+      (OptSsaInstrResult
+        (IrInstrStore name (opt-ssa-rewrite-value env value) ty)
+        env
+        next-var)]
+    [(IrInstrBranch cond true-label false-label)
+      (OptSsaInstrResult
+        (IrInstrBranch (opt-ssa-rewrite-value env cond) true-label false-label)
+        env
+        next-var)]
+    [(IrInstrReturn maybe)
+      (OptSsaInstrResult
+        (IrInstrReturn (opt-ssa-rewrite-maybe-value env maybe))
+        env
+        next-var)]
+    [(IrInstrTailCall name args ty)
+      (OptSsaInstrResult
+        (IrInstrTailCall name (opt-ssa-rewrite-call-args env args) ty)
+        env
+        next-var)]
+    [(IrInstrAlloc _ _) (OptSsaInstrResult instr env next-var)]
+    [(IrInstrAddrOf _ _) (OptSsaInstrResult instr env next-var)]
+    [(IrInstrLaneId _ _ _) (OptSsaInstrResult instr env next-var)]
+    [(IrInstrEntryArgv _) (OptSsaInstrResult instr env next-var)]
+    [(IrInstrEntryEnvp _) (OptSsaInstrResult instr env next-var)]
+    [(IrInstrJump _) (OptSsaInstrResult instr env next-var)]
+    [(IrInstrPhi _ _ _) (OptSsaInstrResult instr env next-var)]))
+
+(define (opt-ssa-rename-instr-seq-from
+  [facts : OptSsaFacts]
+  [env : OptSsaRenameEnv]
+  [next-var : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptSsaBlockResult
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptSsaBlockResult (IrInstrNil) env next-var)
+    (match (opt-ssa-rename-instr
+      facts
+      env
+      next-var
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptSsaInstrResult instr next-env instr-next)
+        (match (opt-ssa-rename-instr-seq-from
+          facts
+          next-env
+          instr-next
+          instrs
+          (+ index 1))
+          [(OptSsaBlockResult rest out-env out-next)
+            (OptSsaBlockResult
+              (compiler-ir-instr-cons instr rest)
+              out-env
+              out-next)])])))
+
+(define (opt-ssa-rename-blocks-contains?
+  [blocks : OptSsaRenameBlocks]
+  [label : String]) : bool
+  (match blocks
+    [(OptSsaRenameBlocksNil) false]
+    [(OptSsaRenameBlocksCons block rest)
+      (match block
+        [(OptSsaRenameBlock block-label _)
+          (if (string-eq block-label label)
+            true
+            (opt-ssa-rename-blocks-contains? (box-get rest) label))])]))
+
+(define (opt-ssa-rename-blocks-lookup
+  [blocks : OptSsaRenameBlocks]
+  [label : String]) : CompilerIrInstrList
+  (match blocks
+    [(OptSsaRenameBlocksNil) (IrInstrNil)]
+    [(OptSsaRenameBlocksCons block rest)
+      (match block
+        [(OptSsaRenameBlock block-label instrs)
+          (if (string-eq block-label label)
+            instrs
+            (opt-ssa-rename-blocks-lookup (box-get rest) label))])]))
+
+(define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : String]) : OptSsaRenameEnv
+  (match outs
+    [(OptSsaBlockOutsNil) (OptSsaRenameNil)]
+    [(OptSsaBlockOutsCons out rest)
+      (match out
+        [(OptSsaBlockOut out-label env)
+          (if (string-eq out-label label)
+            env
+            (opt-ssa-block-out-lookup (box-get rest) label))])]))
+
+(define (opt-ssa-rename-state-add-block
+  [state : OptSsaRenameState]
+  [label : String]
+  [instrs : CompilerIrInstrList]
+  [env : OptSsaRenameEnv]
+  [next-var : i64]) : OptSsaRenameState
+  (match state
+    [(OptSsaRenameState blocks outs _)
+      (OptSsaRenameState
+        (OptSsaRenameBlocksCons (OptSsaRenameBlock label instrs) (box blocks))
+        (OptSsaBlockOutsCons (OptSsaBlockOut label env) (box outs))
+        next-var)]))
+
+(define (opt-ssa-rename-id
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [facts : OptSsaFacts]
+  [sites : OptSsaPhiSites]
+  [id : i64]
+  [env : OptSsaRenameEnv]
+  [state : OptSsaRenameState]) : OptSsaRenameState
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [label : String (array-ref (struct-get index labels) id)]
+    (match (opt-cfg-find-block blocks label)
+      [(OptNoBlock) state]
+      [(OptSomeBlock block)
+        (match block
+          [(IrBlock _ instrs)
+            (let
+              [entry-env : OptSsaRenameEnv
+                (opt-ssa-env-bind-phis sites label env)]
+              (match (opt-ssa-rename-instr-seq-from
+                facts
+                entry-env
+                (match state
+                  [(OptSsaRenameState _ _ next-var) next-var])
+                instrs
+                0)
+                [(OptSsaBlockResult renamed out-env next-var)
+                  (opt-ssa-rename-children
+                    context
+                    blocks
+                    facts
+                    sites
+                    id
+                    out-env
+                    (opt-ssa-rename-state-add-block
+                      state
+                      label
+                      renamed
+                      out-env
+                      next-var)
+                    0)]))])])))
+
+(define (opt-ssa-rename-children
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [facts : OptSsaFacts]
+  [sites : OptSsaPhiSites]
+  [parent-id : i64]
+  [env : OptSsaRenameEnv]
+  [state : OptSsaRenameState]
+  [child-id : i64]) : OptSsaRenameState
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (>= child-id count)
+      state
+      (let
+        [idom : (Array i64) (struct-get (struct-get context doms) idom)]
+        [next-state : OptSsaRenameState
+          (if (and
+            (not (= child-id parent-id))
+            (and
+              (array-ref (struct-get index reachable) child-id)
+              (= (array-ref idom child-id) parent-id)))
+            (opt-ssa-rename-id context blocks facts sites child-id env state)
+            state)]
+        (opt-ssa-rename-children
+          context
+          blocks
+          facts
+          sites
+          parent-id
+          env
+          next-state
+          (+ child-id 1))))))
+
+(define (opt-ssa-rename-missing-blocks
+  [blocks : CompilerIrBlockList]
+  [facts : OptSsaFacts]
+  [sites : OptSsaPhiSites]
+  [initial-env : OptSsaRenameEnv]
+  [state : OptSsaRenameState]) : OptSsaRenameState
+  (match blocks
+    [(IrBlockNil) state]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [next-state : OptSsaRenameState
+              (match state
+                [(OptSsaRenameState renamed _ next-var)
+                  (if (opt-ssa-rename-blocks-contains? renamed label)
+                    state
+                    (match (opt-ssa-rename-instr-seq-from
+                      facts
+                      (opt-ssa-env-bind-phis sites label initial-env)
+                      next-var
+                      instrs
+                      0)
+                      [(OptSsaBlockResult out out-env out-next)
+                        (opt-ssa-rename-state-add-block
+                          state
+                          label
+                          out
+                          out-env
+                          out-next)]))])]
+            (opt-ssa-rename-missing-blocks
+              (box-get rest)
+              facts
+              sites
+              initial-env
+              next-state))])]))
+
+(define (opt-ssa-rename-function-blocks
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [facts : OptSsaFacts]
+  [sites : OptSsaPhiSites]
+  [frame : i64]
+  [blocks : CompilerIrBlockList]) : OptSsaRenameState
+  (let
+    [initial-env : OptSsaRenameEnv
+      (opt-ssa-env-from-params facts params (OptSsaRenameNil))]
+    [entry-label : String (opt-cfg-entry-label blocks)]
+    (match (opt-cfg-index-id (struct-get context index) entry-label)
+      [(OptSomeI64 entry-id)
+        (opt-ssa-rename-missing-blocks
+          blocks
+          facts
+          sites
+          initial-env
+          (opt-ssa-rename-id
+            context
+            blocks
+            facts
+            sites
+            entry-id
+            initial-env
+            (OptSsaRenameState
+              (OptSsaRenameBlocksNil)
+              (OptSsaBlockOutsNil)
+              frame)))]
+      [(OptNoI64)
+        (OptSsaRenameState (OptSsaRenameBlocksNil) (OptSsaBlockOutsNil) frame)])))
+
+(define (opt-ssa-phi-inputs
+  [preds : OptLabelSet]
+  [outs : OptSsaBlockOuts]
+  [var : i64]) : CompilerIrPhiInputList
+  (match preds
+    [(OptLabelNil) (IrPhiInputNil)]
+    [(OptLabelCons pred rest)
+      (let
+        [env : OptSsaRenameEnv (opt-ssa-block-out-lookup outs pred)]
+        [value : CompilerIrValue
+          (match (opt-ssa-env-lookup env var)
+            [(OptSomeI64 current) (IrValueVar current)]
+            [(OptNoI64) (IrValueVar var)])]
+        (compiler-ir-phi-input-cons
+          value
+          pred
+          (opt-ssa-phi-inputs (box-get rest) outs var)))]))
+
+(define (opt-ssa-phis-for-label
+  [pred-map : OptPredMap]
+  [outs : OptSsaBlockOuts]
+  [sites : OptSsaPhiSites]
+  [label : String]) : CompilerIrInstrList
+  (match sites
+    [(OptSsaPhiSitesNil) (IrInstrNil)]
+    [(OptSsaPhiSitesCons site rest)
+      (let
+        [tail : CompilerIrInstrList
+          (opt-ssa-phis-for-label pred-map outs (box-get rest) label)]
+        (match site
+          [(OptSsaPhiSite var site-label ty phi-var)
+            (if (string-eq site-label label)
+              (compiler-ir-instr-cons
+                (IrInstrPhi
+                  phi-var
+                  (opt-ssa-phi-inputs
+                    (opt-pred-map-lookup pred-map label)
+                    outs
+                    var)
+                  ty)
+                tail)
+              tail)]))]))
+
+(define (opt-ssa-materialize-blocks
+  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [renamed : OptSsaRenameBlocks]
+  [outs : OptSsaBlockOuts]
+  [sites : OptSsaPhiSites]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (let
+            [phis : CompilerIrInstrList
+              (opt-ssa-phis-for-label pred-map outs sites label)]
+            [body : CompilerIrInstrList
+              (opt-ssa-rename-blocks-lookup renamed label)]
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                label
+                (opt-aggregate-instr-list-append phis body))
+              (opt-ssa-materialize-blocks
+                (box-get rest)
+                pred-map
+                renamed
+                outs
+                sites)))])]))
+
+(define (opt-ssa-instr-seq-has-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrPhi _ _ _) true]
+      [_ (opt-ssa-instr-seq-has-phi? instrs (+ index 1))])))
+
+(define (opt-ssa-blocks-have-phi? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (opt-ssa-instr-seq-has-phi? instrs 0)
+            true
+            (opt-ssa-blocks-have-phi? (box-get rest)))])]))
+
+(define (opt-ssa-construct-checked
+  [fallback : CompilerIrFunction]
+  [next : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function next)
+    [(OkCompilerOptimizeVerify) next]
+    [(ErrCompilerOptimizeVerify _) fallback]))
+
+(define (opt-ssa-construct-materialized
+  [fallback : CompilerIrFunction]
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [sites : OptSsaPhiSites]
+  [state : OptSsaRenameState]) : CompilerIrFunction
+  (match state
+    [(OptSsaRenameState renamed outs next-frame)
+      (opt-ssa-construct-checked
+        fallback
+        (IrFunction
+          name
+          params
+          ret-ty
+          next-frame
+          (opt-ssa-materialize-blocks
+            blocks
+            (struct-get context pred-map)
+            renamed
+            outs
+            sites)))]))
+
+(define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (cond
+        [(opt-verify-single-defs? params blocks) func]
+        [(opt-ssa-blocks-have-phi? blocks) func]
+        [else
+          (let
+            [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+            (if (not (opt-ssa-any-candidate? facts))
+              func
+              (let
+                [context : OptCfgContext (opt-cfg-context-build blocks)]
+                [phi-state : OptSsaPhiInsertState
+                  (opt-ssa-insert-phis facts context params frame blocks)]
+                (match phi-state
+                  [(OptSsaPhiInsertState sites phi-next _)
+                    (opt-ssa-construct-materialized
+                      func
+                      name
+                      params
+                      ret-ty
+                      blocks
+                      context
+                      sites
+                      (opt-ssa-rename-function-blocks
+                        context
+                        params
+                        facts
+                        sites
+                        phi-next
+                        blocks))]))))])]))
+
 ;; --- conservative global value numbering / cross-block copies (#1349) -------
 ;;
 ;; This pass is deliberately SSA-gated. If the function verifier cannot prove
@@ -15726,6 +16936,140 @@
     16
     (opt-ssa-loop-blocks)))
 
+(define (opt-ssa-construct-diamond-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "then" "else")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 20) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-ssa-construct-diamond-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_construct_diamond"
+    (opt-ssa-cond-params)
+    (AstTyI64)
+    2
+    (opt-ssa-construct-diamond-blocks)))
+
+(define (opt-ssa-construct-loop-params) : CompilerIrParamList
+  (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 4) (IrParamNil)))
+
+(define (opt-ssa-construct-loop-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 4) "body" "exit")
+          (IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-ssa-construct-loop-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_construct_loop"
+    (opt-ssa-construct-loop-params)
+    (AstTyI64)
+    5
+    (opt-ssa-construct-loop-blocks)))
+
+(define (opt-ssa-construct-mutated-param-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "value" (AstTyI64) 0)
+    (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 1) (IrParamNil))))
+
+(define (opt-ssa-construct-mutated-param-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 1) "then" "else")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 10) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-ssa-construct-mutated-param-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_construct_mutated_param"
+    (opt-ssa-construct-mutated-param-params)
+    (AstTyI64)
+    2
+    (opt-ssa-construct-mutated-param-blocks)))
+
+(define (opt-ssa-construct-address-taken-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAddrOf 2 1)
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 2) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil))))))
+    (IrBlockNil)))
+
+(define (opt-ssa-construct-address-taken-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_construct_address_taken"
+    (IrParamNil)
+    (AstTyI64)
+    3
+    (opt-ssa-construct-address-taken-blocks)))
+
 (define (opt-natural-loop-nested-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -16704,6 +18048,22 @@
       (opt-cfg-index-build (opt-ssa-unreachable-blocks))]
     [unreachable-order : CompilerIrBlockList
       (opt-cfg-reachable-block-order (opt-ssa-unreachable-blocks))]
+    [constructed-diamond : CompilerIrFunction
+      (opt-ssa-construct-function (opt-ssa-construct-diamond-function))]
+    [constructed-diamond-blocks : CompilerIrBlockList
+      (opt-function-blocks constructed-diamond)]
+    [constructed-loop : CompilerIrFunction
+      (opt-ssa-construct-function (opt-ssa-construct-loop-function))]
+    [constructed-loop-blocks : CompilerIrBlockList
+      (opt-function-blocks constructed-loop)]
+    [constructed-param : CompilerIrFunction
+      (opt-ssa-construct-function (opt-ssa-construct-mutated-param-function))]
+    [constructed-param-blocks : CompilerIrBlockList
+      (opt-function-blocks constructed-param)]
+    [address-taken : CompilerIrFunction
+      (opt-ssa-construct-address-taken-function)]
+    [address-taken-out : CompilerIrFunction
+      (opt-ssa-construct-function address-taken)]
     (cond
       [(not
           (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
@@ -16790,6 +18150,16 @@
           (opt-cfg-dominators-match-bitset?
             (opt-natural-loop-irreducible-blocks)))
         35]
+      [(not (opt-verify-ok? (opt-verify-function constructed-diamond))) 36]
+      [(not (= (opt-count-phi-blocks constructed-diamond-blocks) 1)) 37]
+      [(not (= (opt-count-mov-dst-blocks constructed-diamond-blocks 1) 0)) 38]
+      [(not (opt-verify-ok? (opt-verify-function constructed-loop))) 39]
+      [(not (= (opt-count-phi-blocks constructed-loop-blocks) 1)) 40]
+      [(not (= (opt-count-mov-dst-blocks constructed-loop-blocks 1) 0)) 41]
+      [(not (opt-verify-ok? (opt-verify-function constructed-param))) 46]
+      [(not (= (opt-count-phi-blocks constructed-param-blocks) 1)) 47]
+      [(not (= (opt-count-mov-dst-blocks constructed-param-blocks 0) 0)) 48]
+      [(not (opt-function-eq address-taken address-taken-out)) 49]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

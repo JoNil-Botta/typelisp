@@ -5434,6 +5434,41 @@
 (defmacro (late [value : bool]) : bool value)
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-macro-runtime-import-order-source) : String
+  "(define (runtime-touch [text : String]) : unit
+  (when true
+    (unsafe
+      (let [ptr : (Ptr u8) (string-data text)] unit))))
+(module stdlib.core-macros)
+(defmacro (and [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (and ,@(expr-list-tail args))
+       false)))
+(defmacro (or [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool false)
+    `(if ,(expr-list-head args)
+       true
+       (or ,@(expr-list-tail args)))))
+(defmacro (when [condition : bool] [body : unit]) : unit
+  `(if ,condition ,body unit))
+(defmacro (unless [condition : bool] [body : unit]) : unit
+  `(if ,condition unit ,body))
+(export (macro and))
+(export (macro or))
+(export (macro when))
+(export (macro unless))
+(module main)
+(import \"stdlib/core_macros.tl\" module stdlib.core-macros :as core)
+(define (main) : i64
+  (let [value : i64 0]
+    (begin
+      (core/when true (set! value 21))
+      (core/unless false (set! value (+ value 21)))
+      (if (core/and (= value 42) (core/or false true)) value 0))))")
+
 (define (compiler-typecheck-macro-hygiene-capture-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
   `(let ([tmp : i64 1])
@@ -5547,9 +5582,12 @@
         (compiler-typecheck-error-ok?
           (compiler-typecheck-macro-missing-export-source)
           "typecheck: missing macro export hidden/missing")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-late-local-source)
-          "typecheck: local macro late is defined later")))))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-macro-late-local-source)
+            "typecheck: local macro late is defined later")
+          (compiler-typecheck-ok?
+            (compiler-typecheck-macro-runtime-import-order-source)))))))
 
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.

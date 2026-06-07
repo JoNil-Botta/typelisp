@@ -44,7 +44,9 @@ Coverage notes:
 - `core_macros_api.tl` covers explicit import of the stdlib core macro module
   and the qualified `core/when`, `core/unless`, `core/and`, `core/or`, and
   `core/cond` macros. The adjacent `core_macros_cond_*` check fixtures cover
-  post-expansion `core/cond` diagnostics.
+  post-expansion `core/cond` diagnostics, and
+  `core_macros_runtime_import.tl` covers importing core macros beside runtime
+  stdlib modules such as `io`.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,

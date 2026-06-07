@@ -6002,6 +6002,7 @@
   (match instr
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrTailCall _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
     [_ false]))
 
@@ -6038,6 +6039,7 @@
     [(IrInstrCall _ _ args _) (compiler-backend-windows-stack-arg-space args)]
     [(IrInstrCallIndirect _ _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
+    [(IrInstrTailCall _ args _) (compiler-backend-windows-stack-arg-space args)]
     [_ 0]))
 
 (define (compiler-backend-instr-seq-outgoing-stack-space

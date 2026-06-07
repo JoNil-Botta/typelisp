@@ -48,27 +48,6 @@
 (define (package-cache-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
-(define (package-cache-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
-
-(define (package-cache-path-join3 [a : String] [b : String] [c : String]) : String
-  (package-cache-path-join (package-cache-path-join a b) c))
-
-(define (package-cache-path-join4
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]) : String
-  (package-cache-path-join (package-cache-path-join3 a b c) d))
-
-(define (package-cache-path-join5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (package-cache-path-join (package-cache-path-join4 a b c d) e))
-
 (define (package-cache-pin-kind-name [kind : PackageCachePinKind]) : String
   (match kind
     [(PackageCachePinRev) "rev"]
@@ -231,54 +210,58 @@
       out)))
 
 (define (package-cache-unversioned-root [package-root : String]) : String
-  (package-cache-path-join5 package-root "target" "typelisp" "cache" "packages"))
+  (fs-path-join-owned-pair
+    (fs-path-join-owned-pair
+      (fs-path-join-owned-pair
+        (fs-path-join-owned-pair package-root "target")
+        "typelisp")
+      "cache")
+    "packages"))
 
 (define (package-cache-default-root [package-root : String]) : String
-  (package-cache-path-join
+  (fs-path-join-owned-pair
     (package-cache-unversioned-root package-root)
     package-cache-version))
 
 (define (package-cache-entry-url-dir [root : String] [key : PackageCacheKey]) : String
-  (package-cache-path-join3
-    root
-    "git"
+  (fs-path-join-owned-pair
+    (fs-path-join-owned-pair root "git")
     (package-cache-escape-component (struct-get key url))))
 
 (define (package-cache-entry-rev-dir [root : String] [key : PackageCacheKey]) : String
-  (package-cache-path-join (package-cache-entry-url-dir root key) "rev"))
+  (fs-path-join-owned-pair (package-cache-entry-url-dir root key) "rev"))
 
 (define (package-cache-entry-path [root : String] [key : PackageCacheKey]) : String
-  (package-cache-path-join
+  (fs-path-join-owned-pair
     (package-cache-entry-rev-dir root key)
     (package-cache-escape-component (struct-get key commit))))
 
 (define (package-cache-staging-root [root : String]) : String
-  (package-cache-path-join root "_staging"))
+  (fs-path-join-owned-pair root "_staging"))
 
 (define (package-cache-staging-url-dir [root : String] [key : PackageCacheKey]) : String
-  (package-cache-path-join3
-    (package-cache-staging-root root)
-    "git"
+  (fs-path-join-owned-pair
+    (fs-path-join-owned-pair (package-cache-staging-root root) "git")
     (package-cache-escape-component (struct-get key url))))
 
 (define (package-cache-staging-rev-dir [root : String] [key : PackageCacheKey]) : String
-  (package-cache-path-join (package-cache-staging-url-dir root key) "rev"))
+  (fs-path-join-owned-pair (package-cache-staging-url-dir root key) "rev"))
 
 (define (package-cache-staging-path
   [root : String]
   [key : PackageCacheKey]
   [attempt : i64]) : String
-  (package-cache-path-join
+  (fs-path-join-owned-pair
     (package-cache-staging-rev-dir root key)
     (string-append
       (package-cache-escape-component (struct-get key commit))
       (string-append ".tmp." (int->string attempt)))))
 
 (define (package-cache-metadata-path [entry-path : String]) : String
-  (package-cache-path-join entry-path package-cache-metadata-name))
+  (fs-path-join-owned-pair entry-path package-cache-metadata-name))
 
 (define (package-cache-complete-marker-path [entry-path : String]) : String
-  (package-cache-path-join entry-path package-cache-complete-marker-name))
+  (fs-path-join-owned-pair entry-path package-cache-complete-marker-name))
 
 (define (package-cache-metadata-content [key : PackageCacheKey]) : String
   (string-append
@@ -348,7 +331,7 @@
   [root : String]
   [key : PackageCacheKey]) : ResultIoUnit
   (let
-    [git-dir : String (package-cache-path-join root "git")]
+    [git-dir : String (fs-path-join-owned-pair root "git")]
     [url-dir : String (package-cache-entry-url-dir root key)]
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     (package-cache-then-mkdir
@@ -371,7 +354,7 @@
   [key : PackageCacheKey]) : ResultIoUnit
   (let
     [staging-root : String (package-cache-staging-root root)]
-    [git-dir : String (package-cache-path-join staging-root "git")]
+    [git-dir : String (fs-path-join-owned-pair staging-root "git")]
     [url-dir : String (package-cache-staging-url-dir root key)]
     [rev-dir : String (package-cache-staging-rev-dir root key)]
     (package-cache-then-mkdir

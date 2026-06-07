@@ -229,6 +229,7 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-
+stdlib/tests/fs_path_join_many_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-

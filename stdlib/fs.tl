@@ -19,6 +19,8 @@
 ;#     [left : String "target"]
 ;#     [right : String "tool-output.s"]
 ;#     (fs-path-join (& left) (& right))))
+;# (define nested : String
+;#   (fs-path-join-many "target" "typelisp" "cache"))
 ;# ```
 (import "env.tl")
 
@@ -649,6 +651,36 @@
         [left-with-separator : String
           (string-append-borrowed left (& separator))]
         (string-append-borrowed (& left-with-separator) right))]))
+
+;: Join two owned `String` path segments by delegating to `fs-path-join`.
+;:
+;: This helper is the fixed-arity expansion target for `fs-path-join-many`;
+;: call `fs-path-join` directly when the caller already has borrowed text.
+(define (fs-path-join-owned-pair [left : String] [right : String]) : String
+  (fs-path-join (& left) (& right)))
+
+;: Join zero or more owned `String` path segments by chaining pairwise joins.
+;:
+;: This macro is the variadic public spelling because `fs-path-join` remains the
+;: two-argument borrowed function. With no segments it expands to `""`; with one
+;: segment it expands to that segment unchanged.
+(defmacro
+  (fs-path-join-many [segments : String ...])
+  :
+  String
+  (if (expr-list-empty? segments)
+    `""
+    (let
+      [first : Expr (expr-list-head segments)]
+      [rest : ExprList (expr-list-tail segments)]
+      (if (expr-list-empty? rest)
+        first
+        (let
+          [second : Expr (expr-list-head rest)]
+          [tail : ExprList (expr-list-tail rest)]
+          (if (expr-list-empty? tail)
+            `(fs-path-join-owned-pair ,first ,second)
+            `(fs-path-join-many (fs-path-join-owned-pair ,first ,second) ,@tail)))))))
 
 ;: Index of the last path separator in `path`, or `-1` when there is none.
 (define (fs-last-separator-index [path : (& path str)]) : i64

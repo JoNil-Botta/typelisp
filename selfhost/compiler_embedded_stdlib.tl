@@ -67,6 +67,8 @@
 
 (include-str compiler-embedded-stdlib-tests-fs-api "stdlib/tests/fs_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-fs-path-join-many-api "stdlib/tests/fs_path_join_many_api.tl")
+
 (include-str compiler-embedded-stdlib-tests-hash-api "stdlib/tests/hash_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-hashmap-api "stdlib/tests/hashmap_api.tl")
@@ -194,6 +196,9 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-ffi-api)]
     [(string-eq suffix "tests/fs_api.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-fs-api)]
+    [(string-eq suffix "tests/fs_path_join_many_api.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-fs-path-join-many-api)]
     [(string-eq suffix "tests/hash_api.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-hash-api)]
     [(string-eq suffix "tests/hashmap_api.tl")

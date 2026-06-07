@@ -7769,64 +7769,7 @@
   (cond
     [(string-eq name "string-eq") true]
     [(string-eq name "string=?") true]
-    [(string-eq name "string->int") true]
-    [(string-eq name "env-var-exists?") true]
-    [(string-eq name "env-var-value") true]
-    [else (string-eq name "env-path-separator")]))
-
-(define (lower-env-runtime-name [name : String]) : String
-  (cond
-    [(string-eq name "env-var-exists?") "tl_env_var_exists"]
-    [(string-eq name "env-var-value") "tl_env_var_value"]
-    [else "env-path-separator"]))
-
-(define (lower-env-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (if (string-eq name "env-path-separator")
-    (match args
-      [(AstExprNil)
-        (lower-runtime-call-values
-          state
-          (lower-env-runtime-name name)
-          IrValueNil
-          result-ty)]
-      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])
-    (match args
-      [(AstExprCons arg tail)
-        (let
-          [arg : AstExpr (box-get arg)]
-          [tail : AstExprList (box-get tail)]
-          (match tail
-            [(AstExprNil)
-              (lower-one-string-object-runtime-call
-                ctx
-                state
-                env
-                type-env
-                arg
-                (lower-env-runtime-name name)
-                result-ty
-                (string-append
-                  (string-append "lower: " name)
-                  " requires String"))]
-            [_
-              (lower-direct-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]))]
-      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])))
+    [else (string-eq name "string->int")]))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -11193,12 +11136,6 @@
       (lower-string-eq-call ctx state env type-env args result-ty origin)]
     [(string-eq name "string->int")
       (lower-string-to-int-call ctx state env type-env args result-ty origin)]
-    [(or
-        (string-eq name "env-var-exists?")
-        (or
-          (string-eq name "env-var-value")
-          (string-eq name "env-path-separator")))
-      (lower-env-runtime-call ctx state env type-env name args result-ty origin)]
     [else (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
@@ -24166,6 +24103,13 @@
         (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "stdin-eof?") (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "flush-stdout") (set! ok false))
+      (when
+        (lower-bootstrap-runtime-builtin? "env-var-exists?")
+        (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "env-var-value") (set! ok false))
+      (when
+        (lower-bootstrap-runtime-builtin? "env-path-separator")
+        (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "int->string") (set! ok false))
       (when (lower-string-runtime-builtin? "substring") (set! ok false))
       (when (lower-string-runtime-builtin? "string-slice") (set! ok false))

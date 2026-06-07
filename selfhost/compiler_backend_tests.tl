@@ -2705,6 +2705,15 @@
     (compiler-backend-runtime-helper-known? name)
     (compiler-backend-plan-provides? plan name)))
 
+(define (compiler-backend-runtime-helper-inventory-compat-alias-ok?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (and
+    (compiler-backend-plan-provides? plan name)
+    (match (compiler-backend-runtime-helper-owner name)
+      [(BackendRuntimeOwnerCompatibilityAlias) true]
+      [_ false])))
+
 (define (compiler-backend-runtime-helper-inventory-core-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
@@ -2809,16 +2818,16 @@
         "tl_int_to_string"))
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_hash_string")))
 
-(define (compiler-backend-runtime-helper-inventory-stdlib-io-ok?
+(define (compiler-backend-runtime-helper-inventory-env-compat-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (backend-and4
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-compat-alias-ok?
       plan
       "tl_env_var_exists")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-compat-alias-ok?
       plan
       "tl_env_var_value")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-compat-alias-ok?
       plan
       "env-path-separator")
     true))
@@ -2957,7 +2966,7 @@
       (compiler-backend-runtime-helper-inventory-core-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
-      (compiler-backend-runtime-helper-inventory-stdlib-io-ok? plan)
+      (compiler-backend-runtime-helper-inventory-env-compat-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-file-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-io-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
@@ -3422,6 +3431,61 @@
                   asm
                   ".extern tl_env_var_exists\n"))))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-stdlib-env-runtime-source) : String
+  "(module stdlib.env.test)
+(unsafe (extern env-ffi-getenv (:symbol \"getenv\") : (-> (Ptr u8) (Ptr u8))))
+(unsafe (extern env-ffi-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64)))
+(define (env-var-exists? [name : String]) : bool
+  (let
+    [_ : String name]
+    (not (ptr-null? (unsafe (env-ffi-getenv (ptr-null : (Ptr u8))))))))
+(define (env-var-value [name : String]) : String
+  (let
+    [_ : String name]
+    (let
+      [_ : i64 (unsafe (env-ffi-strlen (ptr-null : (Ptr u8))))]
+      \"\")))
+(define (env-path-separator) : String
+  (cfg windows \";\" \":\"))
+(define (main) : i64
+  (let
+    [name : String \"TYPELISP_TEST_ENV\"]
+    (if (env-var-exists? name)
+      (string-length (env-var-value name))
+      (string-length (env-path-separator)))))")
+
+(define (compiler-backend-stdlib-env-runtime-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-stdlib-env-runtime-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".extern getenv\n")
+        (and
+          (compiler-backend-string-contains? asm ".extern strlen\n")
+          (and
+            (not
+              (compiler-backend-string-contains? asm "\ntl_env_var_exists:\n"))
+            (and
+              (not
+                (compiler-backend-string-contains? asm "\ntl_env_var_value:\n"))
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    "_tl_env_path_separator:\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    "tl_env_path_separator:\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-stdlib-env-runtime-ok?) : bool
+  (and
+    (compiler-backend-stdlib-env-runtime-target-ok? (BackendTargetLinux))
+    (compiler-backend-stdlib-env-runtime-target-ok? (BackendTargetWindows))))
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
@@ -5147,7 +5211,9 @@
                             (compiler-backend-string-runtime-ok?)
                             (compiler-backend-shadowed-string-helpers-ok?))
                           (compiler-backend-windows-print-runtime-ok?))
-                        (compiler-backend-env-runtime-ok?)
+                        (and
+                          (compiler-backend-env-runtime-ok?)
+                          (compiler-backend-stdlib-env-runtime-ok?))
                         (compiler-backend-expanded-scalar-regs-ok?)
                         (compiler-backend-regalloc-f64-ok?)
                         (compiler-backend-runtime-coexist-ok?)

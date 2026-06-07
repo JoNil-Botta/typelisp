@@ -12548,6 +12548,17 @@
       [(OkTcUnit) (OkTcType (tc-tag-active-region env resolved))]
       [(ErrTcUnit message) (ErrTcType message)])))
 
+(define (tc-make-array-zero-literal-length? [len : AstExpr]) : bool
+  (match (ast-expr-unspan len)
+    [(AstExprLiteral (AstLitInt value)) (= value 0)]
+    [_ false]))
+
+(define (tc-make-array-requires-element-init? [elem : AstType] [len : AstExpr]) : bool
+  (not
+    (and
+      (tc-make-array-zero-literal-length? len)
+      (not (tc-type-contains-reference? elem)))))
+
 (define (tc-quasiquote-template-list-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12859,12 +12870,20 @@
         [elem : AstType (tc-resolve-type ctx elem-ty)]
         (match (tc-expr ctx env len)
           [(OkTcType len-ty)
-            (if (tc-integer-type? len-ty)
-              (if (tc-dyn-array-elem-supported? env elem)
-                (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))
+            (cond
+              [(not (tc-integer-type? len-ty))
+                (ErrTcType "typecheck: make-array length must be integer")]
+              [(not (tc-dyn-array-elem-supported? env elem))
                 (ErrTcType
-                  "typecheck: make-array element type is not supported"))
-              (ErrTcType "typecheck: make-array length must be integer"))]
+                  "typecheck: make-array element type is not supported")]
+              [(not (tc-make-array-requires-element-init? elem len))
+                (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))]
+              [else
+                (match (tc-init-type-supported ctx env elem)
+                  [(OkTcUnit)
+                    (OkTcType
+                      (tc-tag-active-region env (ast-ty-dyn-array elem)))]
+                  [(ErrTcUnit message) (ErrTcType message)])])]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprArrayRef array-box index-box)
       (let

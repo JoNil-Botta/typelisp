@@ -201,12 +201,78 @@ tl_abort_string:
     call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
     movq %rax, -32(%rbp)
 
+.globl tl_array_fill8
+tl_array_fill8:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $96, %rsp
+    movq %rdi, -8(%rbp)
+    movq %rsi, -16(%rbp)
+    movq %rdx, -24(%rbp)
+.Lf8_entry:
+    movq -8(%rbp), %rax
+    movq %rax, -32(%rbp)
+    movq $0, -48(%rbp)
+.Lf8_while_header.0:
+    movq -48(%rbp), %rax
+    movq -16(%rbp), %r8
+    cmpq %r8, %rax
+    jge .Lf8_while_exit.2
+.Lf8_while_body.1:
+    movq -32(%rbp), %rax
+    movq -48(%rbp), %r8
+    leaq (%rax,%r8,8), %rax
+    movq %rax, -64(%rbp)
+    movq -64(%rbp), %r10
+    movq -24(%rbp), %rax
+    movq %rax, (%r10)
+    movq -48(%rbp), %rax
+    addq $1, %rax
+    movq %rax, -88(%rbp)
+    movq -88(%rbp), %rax
+    movq %rax, -48(%rbp)
+    jmp .Lf8_while_header.0
+.Lf8_while_exit.2:
+    leave
+    ret
+
+.globl tl_array_zero
+tl_array_zero:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $96, %rsp
+    movq %rdi, -8(%rbp)
+    movq %rsi, -16(%rbp)
+.Lf9_entry:
+    movq $0, -32(%rbp)
+.Lf9_while_header.0:
+    movq -32(%rbp), %rax
+    movq -16(%rbp), %r8
+    cmpq %r8, %rax
+    jge .Lf9_while_exit.2
+.Lf9_while_body.1:
+    movq -8(%rbp), %rax
+    movq -32(%rbp), %r8
+    addq %r8, %rax
+    movq %rax, -48(%rbp)
+    movq -48(%rbp), %r10
+    movb $0, (%r10)
+    movq -32(%rbp), %rax
+    addq $1, %rax
+    movq %rax, -88(%rbp)
+    movq -88(%rbp), %rax
+    movq %rax, -32(%rbp)
+    jmp .Lf9_while_header.0
+.Lf9_while_exit.2:
+    leave
+    ret
+
 .globl tl_region_abort
 tl_region_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf8_entry:
+.Lf10_entry:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
@@ -221,7 +287,7 @@ tl_oom_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf9_entry:
+.Lf11_entry:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
@@ -236,7 +302,7 @@ _tl_helper_u2etl_colon_colonhelper:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf10_entry:
+.Lf12_entry:
     movq $38, %rax
     movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
     addq %r8, %rax
@@ -250,7 +316,7 @@ main:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf11_entry:
+.Lf13_entry:
     call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax

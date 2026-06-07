@@ -345,6 +345,132 @@
     [(OkCompilerBackend asm) (compiler-backend-asm-ok? asm)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-object-image-source) : String
+  "(extern foreign-call (:abi c) (:symbol \"foreign_exact\") : (-> i64 i64))
+(define answer : i64 40)
+(define greeting : String \"hi\")
+(define pi : f64 3.5)
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (float-ok) : i64
+  (if (< pi 4.0) 1 0))
+(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    (begin
+      (array-set! items 0 answer)
+      (+ (foreign-call (inc (array-ref items 0))) (float-ok)))))")
+
+(define (compiler-backend-object-image-shape-ok?) : bool
+  (match (compiler-backend-emit-source-object-image
+    (compiler-backend-object-image-source))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        (and
+          (backend-and8
+            (= (compiler-object-section-list-count sections) 4)
+            (>
+              (compiler-object-section-instr-count sections (ObjectSectionText))
+              0)
+            (>
+              (compiler-object-section-data-count sections (ObjectSectionData))
+              0)
+            (>
+              (compiler-object-section-data-count
+                sections
+                (ObjectSectionRodata))
+              0)
+            (compiler-object-symbol-list-contains?
+              symbols
+              "_start"
+              (ObjectSymbolExport)
+              (ObjectSymbolFunction))
+            (compiler-object-symbol-list-contains?
+              symbols
+              "main"
+              (ObjectSymbolExport)
+              (ObjectSymbolFunction))
+            (compiler-object-symbol-list-contains?
+              symbols
+              "_tl_inc"
+              (ObjectSymbolExport)
+              (ObjectSymbolFunction))
+            (compiler-object-symbol-list-contains?
+              symbols
+              "foreign_exact"
+              (ObjectSymbolExtern)
+              (ObjectSymbolFunction)))
+          (and
+            (backend-and8
+              (compiler-object-symbol-list-contains?
+                symbols
+                "tl_alloc"
+                (ObjectSymbolLocal)
+                (ObjectSymbolRuntime))
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionData)
+                "_tl_answer")
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionRodata)
+                (compiler-backend-string-data-label "hi"))
+              (compiler-object-section-contains-label?
+                sections
+                (ObjectSectionRodata)
+                (compiler-backend-string-fat-label "hi"))
+              (compiler-object-section-contains-string?
+                sections
+                (ObjectSectionRodata)
+                "hi")
+              (compiler-object-section-contains-align?
+                sections
+                (ObjectSectionRodata)
+                8)
+              (compiler-object-section-contains-i64?
+                sections
+                (ObjectSectionRodata)
+                2)
+              (compiler-object-section-contains-f64?
+                sections
+                (ObjectSectionRodata)
+                "4.0"))
+            (and
+              (backend-and8
+                (compiler-object-section-contains-call? sections "_tl_inc")
+                (compiler-object-section-contains-call?
+                  sections
+                  "foreign_exact")
+                (compiler-object-relocation-list-contains?
+                  relocs
+                  (ObjectRelocCall)
+                  "_tl_inc")
+                (compiler-object-relocation-list-contains?
+                  relocs
+                  (ObjectRelocCall)
+                  "foreign_exact")
+                (compiler-object-relocation-list-contains?
+                  relocs
+                  (ObjectRelocCall)
+                  "tl_alloc")
+                true
+                true
+                true)
+              (and
+                (compiler-object-relocation-list-contains?
+                  relocs
+                  (ObjectRelocAbs64)
+                  (compiler-backend-string-data-label "hi"))
+                (and
+                  (compiler-object-relocation-list-contains?
+                    relocs
+                    (ObjectRelocRipValue)
+                    "_tl_answer")
+                  (> (compiler-object-relocation-list-count relocs) 5)))))))]
+    [(ErrCompilerBackendObject _) false]))
+
 (define (compiler-backend-implicit-main-source) : String
   "(define token-value : i64 7)")
 
@@ -5066,7 +5192,9 @@
       (compiler-backend-array-access-asm-ok?)
       (compiler-backend-make-array-ok?)
       (compiler-backend-source-ok? (compiler-backend-smoke-source))
-      (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
+      (and
+        (compiler-backend-object-image-shape-ok?)
+        (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))
       (compiler-backend-string-ok?)
       (and
         (compiler-backend-memory-op-ok?)

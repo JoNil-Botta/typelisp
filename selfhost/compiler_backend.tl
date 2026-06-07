@@ -13,6 +13,8 @@
 
 (import "../stdlib/text_buf.tl")
 
+(import "compiler_object.tl")
+
 (import "../stdlib/hashmap.tl")
 
 (import "../stdlib/string.tl")
@@ -173,6 +175,10 @@
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
+
+(defenum ResultCompilerBackendObject
+  (OkCompilerBackendObject CompilerObjectImage)
+  (ErrCompilerBackendObject CompilerDiagnostic))
 
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
@@ -15125,6 +15131,961 @@ tl_string_concat5:
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
           (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message)))])))
 
+(defstruct CompilerBackendObjectParts
+  (text CompilerObjectX64InstrList)
+  (data CompilerObjectDataRecordList)
+  (rodata CompilerObjectDataRecordList)
+  (bss CompilerObjectDataRecordList)
+  (symbols CompilerObjectSymbolList)
+  (relocations CompilerObjectRelocationList))
+
+(define (compiler-backend-object-parts-empty) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    ObjectInstrNil
+    ObjectDataNil
+    ObjectDataNil
+    ObjectDataNil
+    ObjectSymbolNil
+    ObjectRelocationNil))
+
+(define (compiler-backend-object-add-text
+  [parts : CompilerBackendObjectParts]
+  [instr : CompilerObjectX64Instr]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (compiler-object-instr-cons instr (struct-get parts text))
+    (struct-get parts data)
+    (struct-get parts rodata)
+    (struct-get parts bss)
+    (struct-get parts symbols)
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-data
+  [parts : CompilerBackendObjectParts]
+  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (compiler-object-data-cons record (struct-get parts data))
+    (struct-get parts rodata)
+    (struct-get parts bss)
+    (struct-get parts symbols)
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-rodata
+  [parts : CompilerBackendObjectParts]
+  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (struct-get parts data)
+    (compiler-object-data-cons record (struct-get parts rodata))
+    (struct-get parts bss)
+    (struct-get parts symbols)
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-bss
+  [parts : CompilerBackendObjectParts]
+  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (struct-get parts data)
+    (struct-get parts rodata)
+    (compiler-object-data-cons record (struct-get parts bss))
+    (struct-get parts symbols)
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-symbol
+  [parts : CompilerBackendObjectParts]
+  [name : String]
+  [binding : CompilerObjectSymbolBinding]
+  [kind : CompilerObjectSymbolKind]
+  [section : CompilerObjectMaybeSection]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (struct-get parts data)
+    (struct-get parts rodata)
+    (struct-get parts bss)
+    (compiler-object-symbol-cons
+      (ObjectSymbol name binding kind section)
+      (struct-get parts symbols))
+    (struct-get parts relocations)))
+
+(define (compiler-backend-object-add-relocation
+  [parts : CompilerBackendObjectParts]
+  [section : CompilerObjectSectionKind]
+  [site : String]
+  [kind : CompilerObjectRelocationKind]
+  [target : String]) : CompilerBackendObjectParts
+  (CompilerBackendObjectParts
+    (struct-get parts text)
+    (struct-get parts data)
+    (struct-get parts rodata)
+    (struct-get parts bss)
+    (struct-get parts symbols)
+    (compiler-object-relocation-cons
+      (ObjectRelocation section site kind target)
+      (struct-get parts relocations))))
+
+(define (compiler-backend-object-symbol-local-section
+  [parts : CompilerBackendObjectParts]
+  [name : String]
+  [section : CompilerObjectSectionKind]
+  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-symbol
+    parts
+    name
+    (ObjectSymbolLocal)
+    kind
+    (ObjectSomeSection section)))
+
+(define (compiler-backend-object-symbol-export-section
+  [parts : CompilerBackendObjectParts]
+  [name : String]
+  [section : CompilerObjectSectionKind]
+  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-symbol
+    parts
+    name
+    (ObjectSymbolExport)
+    kind
+    (ObjectSomeSection section)))
+
+(define (compiler-backend-object-symbol-extern
+  [parts : CompilerBackendObjectParts]
+  [name : String]
+  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-symbol
+    parts
+    name
+    (ObjectSymbolExtern)
+    kind
+    (ObjectNoSection)))
+
+(define (compiler-backend-object-add-text-relocation
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [kind : CompilerObjectRelocationKind]
+  [target : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-relocation
+    parts
+    (ObjectSectionText)
+    site
+    kind
+    target))
+
+(define (compiler-backend-object-add-data-relocation
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [kind : CompilerObjectRelocationKind]
+  [target : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-relocation
+    parts
+    (ObjectSectionData)
+    site
+    kind
+    target))
+
+(define (compiler-backend-object-add-rodata-relocation
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [kind : CompilerObjectRelocationKind]
+  [target : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-relocation
+    parts
+    (ObjectSectionRodata)
+    site
+    kind
+    target))
+
+(define (compiler-backend-object-value-ref
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [value : CompilerIrValue]) : CompilerBackendObjectParts
+  (match value
+    [(IrValueGlobal name)
+      (let
+        [symbol : String (compiler-backend-user-symbol name)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipValue)
+            symbol)
+          (ObjectX64LoadRip symbol)))]
+    [(IrValueGlobalAddr name)
+      (let
+        [symbol : String (compiler-backend-user-symbol name)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipAddress)
+            symbol)
+          (ObjectX64LoadRipAddress symbol)))]
+    [(IrValueString text)
+      (let
+        [symbol : String (compiler-backend-string-fat-label text)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipAddress)
+            symbol)
+          (ObjectX64LoadRipAddress symbol)))]
+    [(IrValueF64 text)
+      (let
+        [symbol : String (compiler-backend-f64-label text)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipValue)
+            symbol)
+          (ObjectX64LoadRip symbol)))]
+    [(IrValueFunction name)
+      (let
+        [symbol : String (compiler-backend-closure-descriptor-label name)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            site
+            (ObjectRelocRipAddress)
+            symbol)
+          (ObjectX64LoadRipAddress symbol)))]
+    [_ parts]))
+
+(define (compiler-backend-object-call-args
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [args : CompilerIrCallArgs]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (compiler-backend-call-args-count args))
+    parts
+    (compiler-backend-object-call-args
+      (compiler-backend-object-value-ref
+        parts
+        site
+        (compiler-backend-call-arg-at args index))
+      site
+      args
+      (+ index 1))))
+
+(define (compiler-backend-object-maybe-value-ref
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [value : CompilerIrMaybeValue]) : CompilerBackendObjectParts
+  (match value
+    [(IrNoValue) parts]
+    [(IrSomeValue inner) (compiler-backend-object-value-ref parts site inner)]))
+
+(define (compiler-backend-object-phi-inputs
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [inputs : CompilerIrPhiInputList]) : CompilerBackendObjectParts
+  (match inputs
+    [(IrPhiInputNil) parts]
+    [(IrPhiInputCons value _ rest)
+      (compiler-backend-object-phi-inputs
+        (compiler-backend-object-value-ref parts site value)
+        site
+        (box-get rest))]))
+
+(define (compiler-backend-object-instr
+  [parts : CompilerBackendObjectParts]
+  [function : String]
+  [label-scope : String]
+  [instr : CompilerIrInstr]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  (match instr
+    [(IrInstrMov _ src _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function lhs)
+        function
+        rhs)]
+    [(IrInstrUnOp _ _ src _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrCall _ name args _)
+      (let
+        [target : String
+          (compiler-backend-call-symbol-index name plan program-index)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            (compiler-backend-object-call-args parts function args 0)
+            function
+            (ObjectRelocCall)
+            target)
+          (ObjectX64Call target)))]
+    [(IrInstrCallIndirect _ callee args _)
+      (compiler-backend-object-call-args
+        (compiler-backend-object-value-ref parts function callee)
+        function
+        args
+        0)]
+    [(IrInstrTailCall name args _)
+      (let
+        [target : String
+          (compiler-backend-call-symbol-index name plan program-index)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            (compiler-backend-object-call-args parts function args 0)
+            function
+            (ObjectRelocTailCall)
+            target)
+          (ObjectX64TailCall target)))]
+    [(IrInstrStore name value _)
+      (let
+        [symbol : String (compiler-backend-user-symbol name)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            (compiler-backend-object-value-ref parts function value)
+            function
+            (ObjectRelocRipAddress)
+            symbol)
+          (ObjectX64StoreRip symbol)))]
+    [(IrInstrJump target)
+      (let
+        [symbol : String (compiler-backend-asm-label label-scope target)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            parts
+            function
+            (ObjectRelocBranch)
+            symbol)
+          (ObjectX64Jump symbol)))]
+    [(IrInstrBranch cond true-label false-label)
+      (let
+        [true-symbol : String
+          (compiler-backend-asm-label label-scope true-label)]
+        [false-symbol : String
+          (compiler-backend-asm-label label-scope false-label)]
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            (compiler-backend-object-add-text-relocation
+              (compiler-backend-object-value-ref parts function cond)
+              function
+              (ObjectRelocBranch)
+              true-symbol)
+            function
+            (ObjectRelocBranch)
+            false-symbol)
+          (ObjectX64Branch true-symbol false-symbol)))]
+    [(IrInstrReturn value)
+      (compiler-backend-object-maybe-value-ref parts function value)]
+    [(IrInstrPhi _ inputs _)
+      (compiler-backend-object-phi-inputs parts function inputs)]
+    [(IrInstrGep _ base offset _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function base)
+        function
+        offset)]
+    [(IrInstrLoad _ src _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrStorePtr dst src _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function dst)
+        function
+        src)]
+    [(IrInstrBoundsCheck index length _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function index)
+        function
+        length)]
+    [(IrInstrCast _ src _ _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-object-value-ref parts function value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function lhs)
+        function
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function lhs)
+        function
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function lhs)
+        function
+        rhs)]
+    [(IrInstrMaskNot _ src _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-object-value-ref parts function src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref parts function mask)
+          function
+          on-true)
+        function
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function base)
+        function
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref parts function base)
+          function
+          index)
+        function
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref parts function base)
+            function
+            index)
+          function
+          value)
+        function
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref parts function base)
+          function
+          index)
+        function
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function index)
+        function
+        length)]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function leaf)
+        function
+        subleaf)]
+    [(IrInstrXgetbv _ index)
+      (compiler-backend-object-value-ref parts function index)]
+    [(IrInstrSyscall _ args)
+      (compiler-backend-object-call-args parts function args 0)]
+    [_ parts]))
+
+(define (compiler-backend-object-instr-seq
+  [parts : CompilerBackendObjectParts]
+  [function : String]
+  [label-scope : String]
+  [instrs : CompilerIrInstrSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    parts
+    (compiler-backend-object-instr-seq
+      (compiler-backend-object-instr
+        parts
+        function
+        label-scope
+        (compiler-ir-instr-seq-ref instrs index)
+        plan
+        program-index)
+      function
+      label-scope
+      instrs
+      plan
+      program-index
+      (+ index 1))))
+
+(define (compiler-backend-object-blocks
+  [parts : CompilerBackendObjectParts]
+  [function-symbol : String]
+  [label-scope : String]
+  [blocks : CompilerIrBlockList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  (match blocks
+    [(IrBlockNil) parts]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [block-label : String
+              (compiler-backend-asm-label label-scope label)]
+            (compiler-backend-object-blocks
+              (compiler-backend-object-instr-seq
+                (compiler-backend-object-add-text
+                  (compiler-backend-object-symbol-local-section
+                    parts
+                    block-label
+                    (ObjectSectionText)
+                    (ObjectSymbolFunction))
+                  (ObjectX64Label block-label))
+                function-symbol
+                label-scope
+                instrs
+                plan
+                program-index
+                0)
+              function-symbol
+              label-scope
+              (box-get rest)
+              plan
+              program-index))])]))
+
+(define (compiler-backend-object-functions
+  [parts : CompilerBackendObjectParts]
+  [functions : CompilerIrFunctionList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  (match functions
+    [(IrFunctionNil) parts]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ blocks)
+          (let
+            [symbol : String
+              (compiler-backend-function-symbol-index program-index name)]
+            [label-scope : String
+              (compiler-backend-function-label-scope program-index name)]
+            (compiler-backend-object-functions
+              (compiler-backend-object-blocks
+                (compiler-backend-object-add-text
+                  (compiler-backend-object-symbol-export-section
+                    parts
+                    symbol
+                    (ObjectSectionText)
+                    (ObjectSymbolFunction))
+                  (ObjectX64Label symbol))
+                symbol
+                label-scope
+                blocks
+                plan
+                program-index)
+              (box-get rest)
+              plan
+              program-index))])]))
+
+(define (compiler-backend-object-global-value
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [value : CompilerIrValue]) : CompilerBackendObjectParts
+  (match value
+    [(IrValueI64 n) (compiler-backend-object-add-data parts (ObjectDataI64 n))]
+    [(IrValueBool b)
+      (compiler-backend-object-add-data
+        parts
+        (ObjectDataI64
+          (if b
+            1
+            0)))]
+    [(IrValueChar c)
+      (compiler-backend-object-add-data
+        parts
+        (ObjectDataI64 (compiler-backend-char-code c)))]
+    [(IrValueUnit) (compiler-backend-object-add-data parts (ObjectDataI64 0))]
+    [(IrValueF64 text)
+      (compiler-backend-object-add-data parts (ObjectDataF64 text))]
+    [(IrValueString text)
+      (let
+        [symbol : String (compiler-backend-string-fat-label text)]
+        (compiler-backend-object-add-data
+          (compiler-backend-object-add-data-relocation
+            parts
+            site
+            (ObjectRelocAbs64)
+            symbol)
+          (ObjectDataSymbolAddress symbol)))]
+    [(IrValueGlobal name)
+      (let
+        [symbol : String (compiler-backend-user-symbol name)]
+        (compiler-backend-object-add-data
+          (compiler-backend-object-add-data-relocation
+            parts
+            site
+            (ObjectRelocAbs64)
+            symbol)
+          (ObjectDataSymbolAddress symbol)))]
+    [(IrValueGlobalAddr name)
+      (let
+        [symbol : String (compiler-backend-user-symbol name)]
+        (compiler-backend-object-add-data
+          (compiler-backend-object-add-data-relocation
+            parts
+            site
+            (ObjectRelocAbs64)
+            symbol)
+          (ObjectDataSymbolAddress symbol)))]
+    [(IrValueFunction name)
+      (let
+        [symbol : String (compiler-backend-closure-descriptor-label name)]
+        (compiler-backend-object-add-data
+          (compiler-backend-object-add-data-relocation
+            parts
+            site
+            (ObjectRelocAbs64)
+            symbol)
+          (ObjectDataSymbolAddress symbol)))]
+    [_ parts]))
+
+(define (compiler-backend-object-globals
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [globals : CompilerIrGlobalList]) : CompilerBackendObjectParts
+  (match globals
+    [(IrGlobalNil) parts]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal name ty value)
+          (let
+            [symbol : String (compiler-backend-user-symbol name)]
+            (compiler-backend-object-globals
+              (if (compiler-backend-runtime-global? ty value)
+                (compiler-backend-object-add-bss
+                  (compiler-backend-object-add-bss
+                    (compiler-backend-object-symbol-export-section
+                      parts
+                      symbol
+                      (ObjectSectionBss)
+                      (ObjectSymbolData))
+                    (ObjectDataLabel symbol))
+                  (ObjectDataZero 8))
+                (compiler-backend-object-global-value
+                  (compiler-backend-object-add-data
+                    (compiler-backend-object-symbol-export-section
+                      parts
+                      symbol
+                      (ObjectSectionData)
+                      (ObjectSymbolData))
+                    (ObjectDataLabel symbol))
+                  symbol
+                  value))
+              target
+              (box-get rest)))])]))
+
+(define (compiler-backend-object-strings
+  [parts : CompilerBackendObjectParts]
+  [strings : BackendStringList]) : CompilerBackendObjectParts
+  (match strings
+    [(BackendStringNil) parts]
+    [(BackendStringCons text rest)
+      (let
+        [data-symbol : String (compiler-backend-string-data-label text)]
+        [fat-symbol : String (compiler-backend-string-fat-label text)]
+        (compiler-backend-object-strings
+          (compiler-backend-object-add-rodata
+            (compiler-backend-object-add-rodata
+              (compiler-backend-object-add-rodata
+                (compiler-backend-object-add-rodata-relocation
+                  (compiler-backend-object-add-rodata
+                    (compiler-backend-object-symbol-local-section
+                      (compiler-backend-object-add-rodata
+                        (compiler-backend-object-add-rodata
+                          (compiler-backend-object-symbol-local-section
+                            parts
+                            data-symbol
+                            (ObjectSectionRodata)
+                            (ObjectSymbolData))
+                          (ObjectDataLabel data-symbol))
+                        (ObjectDataString text))
+                      fat-symbol
+                      (ObjectSectionRodata)
+                      (ObjectSymbolData))
+                    (ObjectDataAlign 8))
+                  fat-symbol
+                  (ObjectRelocAbs64)
+                  data-symbol)
+                (ObjectDataLabel fat-symbol))
+              (ObjectDataSymbolAddress data-symbol))
+            (ObjectDataI64 (string-length text)))
+          (box-get rest)))]))
+
+(define (compiler-backend-object-floats
+  [parts : CompilerBackendObjectParts]
+  [floats : BackendStringList]) : CompilerBackendObjectParts
+  (match floats
+    [(BackendStringNil) parts]
+    [(BackendStringCons text rest)
+      (let
+        [symbol : String (compiler-backend-f64-label text)]
+        (compiler-backend-object-floats
+          (compiler-backend-object-add-rodata
+            (compiler-backend-object-add-rodata
+              (compiler-backend-object-symbol-local-section
+                parts
+                symbol
+                (ObjectSectionRodata)
+                (ObjectSymbolData))
+              (ObjectDataLabel symbol))
+            (ObjectDataF64 text))
+          (box-get rest)))]))
+
+(define (compiler-backend-object-closure-descriptors
+  [parts : CompilerBackendObjectParts]
+  [names : BackendStringList]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  (match names
+    [(BackendStringNil) parts]
+    [(BackendStringCons name rest)
+      (let
+        [descriptor : String (compiler-backend-closure-descriptor-label name)]
+        [entry : String (compiler-backend-closure-entry-label name)]
+        (compiler-backend-object-closure-descriptors
+          (match (compiler-backend-index-signature program-index name)
+            [(CompilerBackendSomeSignature _ _)
+              (compiler-backend-object-add-rodata
+                (compiler-backend-object-add-rodata
+                  (compiler-backend-object-add-rodata-relocation
+                    (compiler-backend-object-add-rodata
+                      (compiler-backend-object-add-rodata
+                        (compiler-backend-object-symbol-local-section
+                          (compiler-backend-object-symbol-local-section
+                            parts
+                            descriptor
+                            (ObjectSectionRodata)
+                            (ObjectSymbolData))
+                          entry
+                          (ObjectSectionText)
+                          (ObjectSymbolFunction))
+                        (ObjectDataAlign 8))
+                      (ObjectDataLabel descriptor))
+                    descriptor
+                    (ObjectRelocAbs64)
+                    entry)
+                  (ObjectDataSymbolAddress entry))
+                (ObjectDataI64 0))]
+            [(CompilerBackendNoSignature) parts])
+          (box-get rest)
+          program-index))]))
+
+(define (compiler-backend-object-externs
+  [parts : CompilerBackendObjectParts]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]) : CompilerBackendObjectParts
+  (match externs
+    [(IrExternNil) parts]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern _ _ _ link-symbol _ provided)
+          (compiler-backend-object-externs
+            (if provided
+              parts
+              (compiler-backend-object-symbol-extern
+                parts
+                (compiler-backend-link-symbol link-symbol plan)
+                (ObjectSymbolFunction)))
+            (box-get rest)
+            plan)])]))
+
+(define (compiler-backend-object-runtime-symbols-list) : BackendStringList
+  (compiler-backend-string-cons
+    "tl_alloc"
+    (compiler-backend-string-cons
+      "tl_string_eq"
+      (compiler-backend-string-cons
+        "tl_hash_string"
+        (compiler-backend-string-cons
+          "tl_region_mark"
+          (compiler-backend-string-cons
+            "tl_region_reset"
+            (compiler-backend-string-cons
+              "tl_div_abort"
+              (compiler-backend-string-cons "tl_shift_abort" BackendStringNil))))))))
+
+(define (compiler-backend-object-runtime-symbols
+  [parts : CompilerBackendObjectParts]
+  [plan : CompilerBackendRuntimePlan]
+  [names : BackendStringList]) : CompilerBackendObjectParts
+  (match names
+    [(BackendStringNil) parts]
+    [(BackendStringCons name rest)
+      (compiler-backend-object-runtime-symbols
+        (if (compiler-backend-plan-provides? plan name)
+          (compiler-backend-object-symbol-local-section
+            parts
+            name
+            (ObjectSectionText)
+            (ObjectSymbolRuntime))
+          parts)
+        plan
+        (box-get rest))]))
+
+(define (compiler-backend-object-entry-symbols
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]
+  [crt-entry : bool]) : CompilerBackendObjectParts
+  (if emit-entry
+    (match target
+      [(BackendTargetLinux)
+        (if crt-entry
+          parts
+          (compiler-backend-object-symbol-export-section
+            parts
+            "_start"
+            (ObjectSectionText)
+            (ObjectSymbolFunction)))]
+      [(BackendTargetWindows) parts])
+    parts))
+
+(define (compiler-backend-object-image-from-parts
+  [parts : CompilerBackendObjectParts]) : CompilerObjectImage
+  (CompilerObjectImage
+    (compiler-object-section-cons
+      (ObjectSection
+        (ObjectSectionText)
+        ObjectDataNil
+        (compiler-object-instr-list-reverse (struct-get parts text)))
+      (compiler-object-section-cons
+        (ObjectSection
+          (ObjectSectionData)
+          (compiler-object-data-list-reverse (struct-get parts data))
+          ObjectInstrNil)
+        (compiler-object-section-cons
+          (ObjectSection
+            (ObjectSectionRodata)
+            (compiler-object-data-list-reverse (struct-get parts rodata))
+            ObjectInstrNil)
+          (compiler-object-section-cons
+            (ObjectSection
+              (ObjectSectionBss)
+              (compiler-object-data-list-reverse (struct-get parts bss))
+              ObjectInstrNil)
+            ObjectSectionNil))))
+    (compiler-object-symbol-list-reverse (struct-get parts symbols))
+    (compiler-object-relocation-list-reverse (struct-get parts relocations))))
+
+(define (compiler-backend-object-image-after-index
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [_mode : CompilerBackendMode]
+  [entry-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [emit-entry : bool]
+  [crt-entry : bool]) : CompilerObjectImage
+  (let
+    [collections : CompilerBackendProgramCollections
+      (compiler-backend-collect-program-collections program)]
+    [closure-names : BackendStringList
+      (compiler-backend-program-collections-functions collections)]
+    [strings : BackendStringList
+      (compiler-backend-program-collections-strings collections)]
+    [floats : BackendStringList
+      (compiler-backend-program-collections-floats collections)]
+    [seed : CompilerBackendObjectParts
+      (compiler-backend-object-entry-symbols
+        (compiler-backend-object-runtime-symbols
+          (compiler-backend-object-externs
+            (compiler-backend-object-floats
+              (compiler-backend-object-strings
+                (compiler-backend-object-closure-descriptors
+                  (compiler-backend-object-globals
+                    (compiler-backend-object-functions
+                      (compiler-backend-object-parts-empty)
+                      entry-functions
+                      plan
+                      program-index)
+                    target
+                    globals)
+                  closure-names
+                  program-index)
+                strings)
+              floats)
+            externs
+            plan)
+          plan
+          (compiler-backend-object-runtime-symbols-list))
+        target
+        emit-entry
+        crt-entry)]
+    (compiler-backend-object-image-from-parts
+      (compiler-backend-object-add-bss seed (ObjectDataZero 0)))))
+
+(define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendObject
+  (match (compiler-backend-runtime-plan program)
+    [(OkBackendRuntimePlan plan)
+      (if (compiler-backend-target-runtime-ok? target plan)
+        (match program
+          [(IrProgram globals functions externs)
+            (let
+              [entry-functions : CompilerIrFunctionList
+                (compiler-backend-functions-with-implicit-main
+                  functions
+                  emit-entry)]
+              [program-index : CompilerBackendProgramIndex
+                (compiler-backend-program-index-build entry-functions externs)]
+              (match (compiler-backend-validate-function-symbols
+                globals
+                entry-functions
+                externs
+                plan
+                program-index)
+                [(OkCompilerBackendSymbolValidation _)
+                  (OkCompilerBackendObject
+                    (compiler-backend-object-image-after-index
+                      program
+                      target
+                      mode
+                      entry-functions
+                      globals
+                      externs
+                      plan
+                      program-index
+                      emit-entry
+                      crt-entry))]
+                [(ErrCompilerBackendSymbolValidation message)
+                  (ErrCompilerBackendObject message)]))])
+        (ErrCompilerBackendObject
+          (compiler-diagnostic-at-start
+            ""
+            "backend: internal target runtime rejection")))]
+    [(ErrBackendRuntimePlan message)
+      (ErrCompilerBackendObject (compiler-diagnostic-at-start "" message))]))
+
+(define (compiler-backend-emit-program-object-image-target-with-mode
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    false))
+
+(define (compiler-backend-emit-program-object-image-target
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target-with-mode
+    program
+    target
+    (BackendModeScalar)
+    spans
+    emit-entry))
+
+(define (compiler-backend-emit-program-object-image
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target
+    program
+    (BackendTargetLinux)
+    spans
+    true))
+
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -15218,6 +16179,24 @@ tl_string_concat5:
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-with-spans-for-target program spans target)]
     [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
+
+(define (compiler-backend-emit-source-object-image [src : String]) : ResultCompilerBackendObject
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-object-image program spans)]
+    [(ErrCompilerLower diag) (ErrCompilerBackendObject diag)]))
+
+(define (compiler-backend-emit-source-object-image-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackendObject
+  (match (compiler-backend-lower-source-for-target src target)
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-object-image-target
+        program
+        target
+        spans
+        true)]
+    [(ErrCompilerLower diag) (ErrCompilerBackendObject diag)]))
 
 (define (compiler-backend-string-prefix-at?
   [text : String]

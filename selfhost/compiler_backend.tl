@@ -2002,6 +2002,31 @@
     (and (>= c #A') (<= c #Z'))
     (or (and (>= c #a') (<= c #z')) (or (and (>= c #0') (<= c #9')) (= c #_')))))
 
+(define (compiler-backend-export-symbol-head-char? [c : char]) : bool
+  (or (and (>= c #A') (<= c #Z')) (or (and (>= c #a') (<= c #z')) (= c #_'))))
+
+(define (compiler-backend-export-symbol-tail-char? [c : char]) : bool
+  (or (compiler-backend-export-symbol-head-char? c) (and (>= c #0') (<= c #9'))))
+
+(define (compiler-backend-valid-export-symbol? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    [i : i64 1]
+    [valid : bool (> n 0)]
+    (begin
+      (if valid
+        (set!
+          valid
+          (compiler-backend-export-symbol-head-char? (string-ref name 0)))
+        unit)
+      (while (and valid (< i n))
+        (begin
+          (if (compiler-backend-export-symbol-tail-char? (string-ref name i))
+            unit
+            (set! valid false))
+          (set! i (+ i 1))))
+      valid)))
+
 (define (compiler-backend-asm-safe-symbol-flush-run
   [name : String]
   [start : i64]
@@ -5335,6 +5360,22 @@
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
   (ErrCompilerBackendSymbolValidation (compiler-diagnostic-at-start "" message)))
 
+(define (compiler-backend-emits-extern-symbol?
+  [name : String]
+  [link-symbol : String]
+  [provided : bool]
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (not
+    (or
+      provided
+      (or
+        (compiler-backend-fixed-fault-symbol? link-symbol)
+        (or
+          (and
+            (string-eq name link-symbol)
+            (compiler-backend-plan-provides? plan name))
+          (compiler-backend-plan-provides? plan link-symbol))))))
+
 (define (compiler-backend-validate-global-symbols-into
   [globals : CompilerIrGlobalList]
   [seen : StringI64Map]) : ResultCompilerBackendSymbolValidation
@@ -5380,6 +5421,13 @@
                     symbol))]
               [(and
                   (compiler-backend-index-extern-provided? index name)
+                  (not (compiler-backend-valid-export-symbol? symbol)))
+                (compiler-backend-symbol-validation-error
+                  (string-append
+                    "backend: invalid exported function symbol "
+                    symbol))]
+              [(and
+                  (compiler-backend-index-extern-provided? index name)
                   (compiler-backend-runtime-helper-known? symbol))
                 (compiler-backend-symbol-validation-error
                   (string-append
@@ -5392,9 +5440,40 @@
                   index
                   (string-i64-map-put seen symbol 1))]))])]))
 
+(define (compiler-backend-validate-extern-symbols-into
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [seen : StringI64Map]) : ResultCompilerBackendSymbolValidation
+  (match externs
+    [(IrExternNil) (OkCompilerBackendSymbolValidation seen)]
+    [(IrExternCons ext rest)
+      (match ext
+        [(IrExtern name _ _ link-symbol _ provided)
+          (if (compiler-backend-emits-extern-symbol?
+            name
+            link-symbol
+            provided
+            plan)
+            (let
+              [symbol : String (compiler-backend-link-symbol link-symbol plan)]
+              (if (string-i64-map-contains? seen symbol)
+                (compiler-backend-symbol-validation-error
+                  (string-append
+                    "backend: extern symbol collides with emitted symbol "
+                    symbol))
+                (compiler-backend-validate-extern-symbols-into
+                  (box-get rest)
+                  plan
+                  seen)))
+            (compiler-backend-validate-extern-symbols-into
+              (box-get rest)
+              plan
+              seen))])]))
+
 (define (compiler-backend-validate-function-symbols
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
   (match (compiler-backend-validate-global-symbols-into
@@ -5408,11 +5487,18 @@
           2)
         1)))
     [(OkCompilerBackendSymbolValidation seen)
-      (compiler-backend-validate-function-symbols-into
+      (match (compiler-backend-validate-function-symbols-into
         functions
         plan
         index
-        seen)]
+        seen)
+        [(OkCompilerBackendSymbolValidation function-seen)
+          (compiler-backend-validate-extern-symbols-into
+            externs
+            plan
+            function-seen)]
+        [(ErrCompilerBackendSymbolValidation message)
+          (ErrCompilerBackendSymbolValidation message)])]
     [(ErrCompilerBackendSymbolValidation message)
       (ErrCompilerBackendSymbolValidation message)]))
 
@@ -11895,13 +11981,12 @@
     [(IrExternCons item rest)
       (match item
         [(IrExtern name _ _ link-symbol _ provided)
-          (if (or
-            provided
-            (or
-              (and
-                (string-eq name link-symbol)
-                (compiler-backend-plan-provides? plan name))
-              (compiler-backend-plan-provides? plan link-symbol)))
+          (if (not
+            (compiler-backend-emits-extern-symbol?
+              name
+              link-symbol
+              provided
+              plan))
             (compiler-backend-emit-externs-into (box-get rest) plan buf)
             (compiler-backend-emit-externs-into
               (box-get rest)
@@ -16042,6 +16127,7 @@ tl_string_concat5:
                             (match (compiler-backend-validate-function-symbols
                               globals
                               entry-functions
+                              externs
                               plan
                               program-index)
                               [(OkCompilerBackendSymbolValidation _)

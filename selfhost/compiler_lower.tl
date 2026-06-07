@@ -12748,6 +12748,7 @@
           exit-label))]))
 
 (define (lower-make-array-store-init-body
+  [ctx : TcContext]
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [index-var : i64]
@@ -12755,12 +12756,15 @@
   [exit-label : String]
   [elem-ty : AstType]
   [init-value : CompilerIrValue]) : ResultLowerState
-  (match (lower-emit-gep state buf-value (IrValueVar index-var) elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    state
+    buf-value
+    (IrValueVar index-var)
+    elem-ty)
     [(LowerExpr gep-state elem-ptr _)
       (lower-make-array-init-advance
-        (lower-state-emit
-          gep-state
-          (IrInstrStorePtr elem-ptr init-value elem-ty))
+        (lower-array-elem-store-state ctx gep-state elem-ptr init-value elem-ty)
         index-var
         header-label
         exit-label)]))
@@ -12780,16 +12784,20 @@
     [(OkLowerExpr lowered-init)
       (match lowered-init
         [(LowerExpr init-state init-value _)
-          (match (lower-emit-gep
+          (match (lower-emit-elem-addr-gep
+            ctx
             init-state
             buf-value
             (IrValueVar index-var)
             elem-ty)
             [(LowerExpr gep-state elem-ptr _)
               (lower-make-array-init-advance
-                (lower-state-emit
+                (lower-array-elem-store-state
+                  ctx
                   gep-state
-                  (IrInstrStorePtr elem-ptr init-value elem-ty))
+                  elem-ptr
+                  init-value
+                  elem-ty)
                 index-var
                 header-label
                 exit-label)])])]
@@ -12845,6 +12853,7 @@
                 origin))]))]))
 
 (define (lower-make-array-store-init-loop-with-labels
+  [ctx : TcContext]
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -12879,6 +12888,7 @@
                     (IrInstrBranch cond-value body-label exit-label))
                   body-label)]
               (lower-make-array-store-init-body
+                ctx
                 body-start
                 buf-value
                 index-var
@@ -12923,6 +12933,7 @@
                   exit-label)])])])))
 
 (define (lower-make-array-store-init-loop-runtime
+  [ctx : TcContext]
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -12942,6 +12953,7 @@
               "make_array_init_exit")
               [(LowerLabel exit-label-state exit-label)
                 (lower-make-array-store-init-loop-with-labels
+                  ctx
                   exit-label-state
                   buf-value
                   len-i64
@@ -12977,7 +12989,12 @@
       (= (lower-type-size ctx resolved) 8)
       (and
         (not (tc-type-eq resolved (AstTyF64)))
-        (lower-init-default-share-safe? ctx resolved)))))
+        (and
+          ;; #1867: an inline struct/enum value is a pointer to its inline
+          ;; storage; fill8 would replicate that pointer, not the aggregate's
+          ;; bytes. Such elements go through the byte-copy store loop instead.
+          (not (lower-type-inline-struct-or-enum? ctx resolved))
+          (lower-init-default-share-safe? ctx resolved))))))
 
 (define (lower-make-array-zero-fill-supported? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -13038,6 +13055,7 @@
               (if (lower-make-array-fill8-supported? ctx elem-ty)
                 (lower-make-array-fill8 init-state buf-value len-i64 init-value)
                 (lower-make-array-store-init-loop-runtime
+                  ctx
                   init-state
                   buf-value
                   len-i64

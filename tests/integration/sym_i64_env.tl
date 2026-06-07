@@ -5,6 +5,8 @@
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
 (import "sym_i64_env_core.tl")
 
+(import "compiler_intern.tl")
+
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit
   (begin
     (if (= got want)
@@ -122,5 +124,18 @@
             [(NoneI64) 0])
           3
           "chain-z")))
+    ; Intern-id API
+    (let
+      [id : i64 (intern "id-key")]
+      [e : SymI64Env (sym-i64-bind-id (sym-i64-empty) id 88)]
+      (begin
+        (check-true (sym-i64-contains-id e id) "id-key-contains")
+        (check-true (sym-i64-contains e "id-key") "id-key-string-contains")
+        (check-equal
+          (match (sym-i64-lookup-id e id)
+            [(SomeI64 v) v]
+            [(NoneI64) 0])
+          88
+          "id-key-value")))
     (print-string "All sym-i64-env tests passed.\n")
     0))

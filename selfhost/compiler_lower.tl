@@ -571,7 +571,23 @@
     (lower-type-cache-lookup type-cache (tc-hygiene-global-base name))
     (match (sym-i64-lookup env name)
       [(SomeI64 _) (tc-lookup type-env name)]
-      [(NoneI64) (lower-type-cache-lookup type-cache name)])))
+      [(NoneI64)
+        (match (tc-lookup type-env name)
+          [(OkTcType ty) (OkTcType ty)]
+          [(ErrTcType _) (lower-type-cache-lookup type-cache name)])])))
+
+(define (lower-lookup-type-id
+  [type-cache : LowerTypeCache]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name-id : i64]) : ResultTcType
+  (let
+    [name : String (intern-str name-id)]
+    (if (tc-hygiene-global-name? name)
+      (lower-type-cache-lookup type-cache (tc-hygiene-global-base name))
+      (match (sym-i64-lookup-id env name-id)
+        [(SomeI64 _) (tc-lookup type-env name)]
+        [(NoneI64) (lower-lookup-type type-cache env type-env name)]))))
 
 (define (lower-name-env-add-alias-if-free
   [names : LowerNameEnv]
@@ -5747,6 +5763,20 @@
       (OkLowerExpr
         (LowerExpr state (IrValueGlobal (lower-resolve-name state name)) ty))]))
 
+(define (lower-var-id
+  [state : LowerState]
+  [env : SymI64Env]
+  [name-id : i64]
+  [ty : AstType]) : ResultLowerExpr
+  (match (sym-i64-lookup-id env name-id)
+    [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
+    [(NoneI64)
+      (OkLowerExpr
+        (LowerExpr
+          state
+          (IrValueGlobal (lower-resolve-name state (intern-str name-id)))
+          ty))]))
+
 (define (lower-function-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyFunc _ _) true]
@@ -5800,8 +5830,8 @@
   [bound : TcStringList]) : bool
   (match outer-env
     [(SymI64Nil) false]
-    [(SymI64Bind name _ _ _ rest)
-      (if (tc-expr-uses-free-name? body name bound)
+    [(SymI64Bind name-id _ rest)
+      (if (tc-expr-uses-free-name? body (intern-str name-id) bound)
         true
         (lower-lambda-captures-env? (box-get rest) body bound))]))
 
@@ -6363,46 +6393,48 @@
     [(SymI64Nil)
       (OkLowerCapturePlan
         (LowerCapturePlan captures (lower-capture-env-size cursor)))]
-    [(SymI64Bind name var-id _ _ rest)
-      (if (or
-        (lower-capture-list-contains-name? captures name)
-        (not (tc-expr-uses-free-name? body name bound)))
-        (lower-capture-plan-scan
-          ctx
-          (box-get rest)
-          type-env
-          body
-          bound
-          cursor
-          captures
-          origin)
-        (match (tc-lookup type-env name)
-          [(ErrTcType message)
-            (ErrLowerCapturePlan (lower-diagnostic-at-expr origin message))]
-          [(OkTcType found-ty)
-            (let
-              [capture-ty : AstType
-                (tc-type-without-regions (tc-resolve-type ctx found-ty))]
-              (if (lower-supported-capture-type? ctx capture-ty)
-                (let
-                  [slot-ty : AstType (lower-capture-slot-type capture-ty)]
-                  [offset : i64
-                    (lower-align-up cursor (lower-type-align ctx slot-ty))]
-                  (lower-capture-plan-scan
-                    ctx
-                    (box-get rest)
-                    type-env
-                    body
-                    bound
-                    (+ offset (lower-type-size ctx slot-ty))
-                    (LowerCaptureCons
-                      (LowerCapture name var-id capture-ty offset)
-                      (box captures))
-                    origin))
-                (ErrLowerCapturePlan
-                  (lower-diagnostic-at-expr
-                    origin
-                    (lower-capture-support-message ctx capture-ty)))))]))]))
+    [(SymI64Bind name-id var-id rest)
+      (let
+        [name : String (intern-str name-id)]
+        (if (or
+          (lower-capture-list-contains-name? captures name)
+          (not (tc-expr-uses-free-name? body name bound)))
+          (lower-capture-plan-scan
+            ctx
+            (box-get rest)
+            type-env
+            body
+            bound
+            cursor
+            captures
+            origin)
+          (match (tc-lookup type-env name)
+            [(ErrTcType message)
+              (ErrLowerCapturePlan (lower-diagnostic-at-expr origin message))]
+            [(OkTcType found-ty)
+              (let
+                [capture-ty : AstType
+                  (tc-type-without-regions (tc-resolve-type ctx found-ty))]
+                (if (lower-supported-capture-type? ctx capture-ty)
+                  (let
+                    [slot-ty : AstType (lower-capture-slot-type capture-ty)]
+                    [offset : i64
+                      (lower-align-up cursor (lower-type-align ctx slot-ty))]
+                    (lower-capture-plan-scan
+                      ctx
+                      (box-get rest)
+                      type-env
+                      body
+                      bound
+                      (+ offset (lower-type-size ctx slot-ty))
+                      (LowerCaptureCons
+                        (LowerCapture name var-id capture-ty offset)
+                        (box captures))
+                      origin))
+                  (ErrLowerCapturePlan
+                    (lower-diagnostic-at-expr
+                      origin
+                      (lower-capture-support-message ctx capture-ty)))))])))]))
 
 (define (lower-capture-plan
   [ctx : TcContext]
@@ -8453,6 +8485,55 @@
                 (lower-function-value-or-var ctx state env name expr-ty)]))]
         [_ (lower-function-value-or-var ctx state env name expr-ty)])]))
 
+(define (lower-var-or-nullary-variant-id
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name-id : i64]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (sym-i64-lookup-id env name-id)
+    [(SomeI64 _) (lower-var-id state env name-id expr-ty)]
+    [(NoneI64)
+      (let
+        [name : String (intern-str name-id)]
+        (match (tc-type-strip-region expr-ty)
+          [(AstTyEnum _)
+            (let
+              [lookup-name : String
+                (lower-variant-constructor-lookup-name ctx name expr-ty)]
+              [symbols : CompilerSymbols (tc-context-symbols ctx)]
+              [registries : CompilerRegistries (tc-context-registries ctx)]
+              (match (compiler-registries-lookup-variant registries lookup-name)
+                [(SomeI64 handle)
+                  (match (compiler-registries-variant-fields-indexed
+                    symbols
+                    handle)
+                    [(OkAstTypeList fields)
+                      (match fields
+                        [(AstTypeNil)
+                          (lower-construct-enum-with-handle
+                            ctx
+                            state
+                            env
+                            type-env
+                            lookup-name
+                            handle
+                            AstExprNil
+                            expr-ty)]
+                        [_
+                          (lower-function-value-or-var
+                            ctx
+                            state
+                            env
+                            name
+                            expr-ty)])]
+                    [(ErrAstTypeList _)
+                      (lower-function-value-or-var ctx state env name expr-ty)])]
+                [(NoneI64)
+                  (lower-function-value-or-var ctx state env name expr-ty)]))]
+          [_ (lower-function-value-or-var ctx state env name expr-ty)]))]))
+
 (define (lower-call-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -9121,11 +9202,11 @@
         origin
         (tc-literal-type lit))]
     [(AstExprVar name)
-      (match (lower-lookup-type
+      (match (lower-lookup-type-id
         (lower-state-type-cache state)
         env
         type-env
-        (intern-str name))
+        name)
         [(OkTcType expr-ty)
           (lower-expr-with-type
             ctx
@@ -9269,13 +9350,7 @@
     [(AstExprInit ty)
       (lower-init-expr ctx state env type-env ty origin expr-ty)]
     [(AstExprVar name)
-      (lower-var-or-nullary-variant
-        ctx
-        state
-        env
-        type-env
-        (intern-str name)
-        expr-ty)]
+      (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -14632,7 +14707,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-dynamic-array-var env type-env inner))]
     [(AstExprVar name)
-      (match (sym-i64-lookup env (intern-str name))
+      (match (sym-i64-lookup-id env name)
         [(SomeI64 var-id)
           (match (tc-lookup type-env (intern-str name))
             [(OkTcType ty)
@@ -15420,21 +15495,24 @@
   [acc-var : i64]
   [elem-ty : AstType]
   [value-var : i64]) : ResultLowerExpr
-  (lower-expr
-    ctx
-    state
-    (sym-i64-bind
-      (sym-i64-bind env "0spmd-reduce-acc" acc-var)
-      "0spmd-reduce-current"
-      value-var)
-    (tc-bind
-      (tc-bind type-env "0spmd-reduce-acc" elem-ty)
-      "0spmd-reduce-current"
-      elem-ty)
-    (ast-node-get
-      (spmd-reduce-acc-update-expr
-        op
-        (ast-node-push (AstExprVar (intern "0spmd-reduce-current")))))))
+  (let
+    [acc-name-id : i64 (intern "0spmd-reduce-acc")]
+    [current-name-id : i64 (intern "0spmd-reduce-current")]
+    (lower-expr
+      ctx
+      state
+      (sym-i64-bind-id
+        (sym-i64-bind-id env acc-name-id acc-var)
+        current-name-id
+        value-var)
+      (tc-bind
+        (tc-bind type-env "0spmd-reduce-acc" elem-ty)
+        "0spmd-reduce-current"
+        elem-ty)
+      (ast-node-get
+        (spmd-reduce-acc-update-expr
+          op
+          (ast-node-push (AstExprVar current-name-id)))))))
 
 (define (lower-avx2-reduce-ok
   [state : LowerState]
@@ -18495,7 +18573,7 @@
   [callee : AstExpr]) : bool
   (match (ast-expr-unspan callee)
     [(AstExprVar name)
-      (match (sym-i64-lookup env (intern-str name))
+      (match (sym-i64-lookup-id env name)
         [(SomeI64 _) false]
         [(NoneI64)
           (string-eq

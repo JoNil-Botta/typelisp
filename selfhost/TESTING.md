@@ -386,11 +386,12 @@ explicit fallback/skip path is tied to #1662 and #1437.
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
 `stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
 canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
-`typelisp doc --test` for each file with `--stdlib-root`. This gate does not
-use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
-automatically adds doctest coverage. In no-Rust command-tier lanes it runs
-through the compiler selected by `scripts/ci-verify.sh`; runnable
-doctest files are required and executed on both Linux and Windows.
+one `typelisp doc --test --batch <listfile>` process with `--stdlib-root`.
+This gate does not use a hand-maintained file manifest, so adding documented
+TypeLisp source with fenced examples automatically adds doctest coverage. In
+no-Rust command-tier lanes it runs through the compiler selected by
+`scripts/ci-verify.sh`; runnable doctest files are required and executed on both
+Linux and Windows.
 
 ### Repository inline-test gate
 

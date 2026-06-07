@@ -49,6 +49,15 @@ CLI_SURFACE_DOC_PKG="$CLI_SURFACE_DIR/doc-package"
 CLI_SURFACE_CHECK_PKG="$CLI_SURFACE_DIR/check-package"
 CLI_SURFACE_FMTLINT_PKG="$CLI_SURFACE_DIR/fmt-lint-package"
 
+compiler_batch_path() {
+    path=$1
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$path"
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
@@ -474,6 +483,18 @@ assert_active_cli_surface_command() {
             if [ "$HOST_OS" = linux ]; then
                 assert_contains "$package_label" "$WORKDIR/$package_label.out" "extra.tl"
             fi
+            package_label="${label}-batch-test"
+            batch_list="$CLI_SURFACE_DIR/doc-batch.txt"
+            {
+                compiler_batch_path "$CLI_SURFACE_DOC_SRC"
+                compiler_batch_path "$CLI_SURFACE_DOC_PKG/src/main.tl"
+            } > "$batch_list"
+            run_cli_capture "$package_label" "$COMPILER" doc --test --batch "$batch_list" --stdlib-root "$ROOT/stdlib"
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "doc-main.tl"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "main.tl"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Doc tests passed:"
             package_label="${label}-package-missing-output"
             run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg"
             assert_status "$package_label" "$status" 1
@@ -484,6 +505,18 @@ assert_active_cli_surface_command() {
             assert_status "$package_label" "$status" 1
             assert_empty "$package_label" "$WORKDIR/$package_label.out"
             assert_contains "$package_label" "$WORKDIR/$package_label.err" "cannot combine input paths with --manifest-path"
+            package_label="${label}-batch-mixed-input"
+            run_cli_capture "$package_label" "$COMPILER" doc --test --batch "$batch_list" "$CLI_SURFACE_DOC_SRC"
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "cannot combine input paths with --batch"
+            package_label="${label}-batch-empty"
+            empty_batch_list="$CLI_SURFACE_DIR/doc-empty-batch.txt"
+            : > "$empty_batch_list"
+            run_cli_capture "$package_label" "$COMPILER" doc --test --batch "$empty_batch_list"
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "--batch list is empty"
             ;;
         compile)
             asm="$CLI_SURFACE_DIR/compile.s"

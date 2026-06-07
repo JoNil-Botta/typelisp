@@ -5053,8 +5053,8 @@
       (backend-and4
         (compiler-backend-string-contains? asm "main:\n")
         (>= (compiler-backend-string-count asm "    call ") 6)
-        ;; #1867 sret ABI: aggregate args/returns pass by caller slot pointer
-        ;; and inline construction is stack storage -- no arena allocation.
+        ;; #1867 keeps wider aggregates on caller slots; #2386's first slice
+        ;; lets one-word structs stay register-resident. Neither path allocates.
         (= (compiler-backend-alloc-call-count asm) 0)
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]

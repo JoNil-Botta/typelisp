@@ -4327,6 +4327,205 @@
     [(AstTyEnumArgs _ _) true]
     [_ false]))
 
+;; #2386 first slice: integer-only inline structs that fit in one word can stay
+;; packed in a scalar register; wider structs and enums keep the byte-buffer path.
+(define (lower-register-resident-field-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [_ false]))
+
+(define (lower-register-resident-inline-fields?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]) : bool
+  (match fields
+    [(TcInlineFieldLayoutNil) true]
+    [(TcInlineFieldLayoutCons field rest)
+      (and
+        (lower-register-resident-field-type?
+          ctx
+          (tc-inline-field-layout-type field))
+        (lower-register-resident-inline-fields? ctx (box-get rest)))]))
+
+(define (lower-register-resident-struct-layout?
+  [ctx : TcContext]
+  [layout : TcInlineAggregateLayout]) : bool
+  (match layout
+    [(TcInlineStructLayout size _ fields)
+      (and
+        (> size 0)
+        (and (<= size 8) (lower-register-resident-inline-fields? ctx fields)))]
+    [(TcInlineEnumLayout _ _ _) false]))
+
+(define (lower-type-register-resident? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name)
+      (match (tc-inline-aggregate-layout-for ctx name)
+        [(OkTcInlineAggregateLayout layout)
+          (lower-register-resident-struct-layout? ctx layout)]
+        [(ErrTcInlineAggregateLayout _) false])]
+    [(AstTyStructArgs name _)
+      (match (tc-inline-aggregate-layout-for ctx name)
+        [(OkTcInlineAggregateLayout layout)
+          (lower-register-resident-struct-layout? ctx layout)]
+        [(ErrTcInlineAggregateLayout _) false])]
+    [_ false]))
+
+(define (lower-register-resident-slot-type [size : i64]) : AstType
+  (cond
+    [(<= size 1) (AstTyU8)]
+    [(<= size 2) (AstTyU16)]
+    [(<= size 4) (AstTyU32)]
+    [else (AstTyU64)]))
+
+(define (lower-register-resident-mask [size : i64]) : i64
+  (cond
+    [(<= size 1) 255]
+    [(<= size 2) 65535]
+    [(<= size 4) 4294967295]
+    [else -1]))
+
+(define (lower-register-resident-word-from-field
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [field-ty : AstType]
+  [field-size : i64]
+  [offset : i64]) : LowerExpr
+  (match (lower-cast-value state value field-ty (AstTyU64))
+    [(LowerExpr u64-state u64-value _)
+      (let
+        [masked : LowerExpr
+          (if (< field-size 8)
+            (lower-emit-binop
+              u64-state
+              IrBinBitAnd
+              u64-value
+              (IrValueI64 (lower-register-resident-mask field-size))
+              (AstTyU64))
+            (LowerExpr u64-state u64-value (AstTyU64)))]
+        (match masked
+          [(LowerExpr masked-state masked-value _)
+            (if (> offset 0)
+              (lower-emit-binop
+                masked-state
+                IrBinShl
+                masked-value
+                (IrValueI64 (* offset 8))
+                (AstTyU64))
+              (LowerExpr masked-state masked-value (AstTyU64)))]))]))
+
+(define (lower-register-resident-word-to-field
+  [state : LowerState]
+  [word : CompilerIrValue]
+  [result-ty : AstType]
+  [field-size : i64]
+  [offset : i64]) : LowerExpr
+  (let
+    [shifted : LowerExpr
+      (if (> offset 0)
+        (lower-emit-binop
+          state
+          IrBinShr
+          word
+          (IrValueI64 (* offset 8))
+          (AstTyU64))
+        (LowerExpr state word (AstTyU64)))]
+    (match shifted
+      [(LowerExpr shifted-state shifted-value _)
+        (let
+          [masked : LowerExpr
+            (if (< field-size 8)
+              (lower-emit-binop
+                shifted-state
+                IrBinBitAnd
+                shifted-value
+                (IrValueI64 (lower-register-resident-mask field-size))
+                (AstTyU64))
+              (LowerExpr shifted-state shifted-value (AstTyU64)))]
+          (match masked
+            [(LowerExpr masked-state masked-value _)
+              (lower-cast-value masked-state masked-value (AstTyU64) result-ty)]))])))
+
+(define (lower-pack-register-resident-struct-field
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [field : AstFieldDef]
+  [layout : TcInlineAggregateLayout]
+  [acc : CompilerIrValue]) : ResultLowerExpr
+  (match field
+    [(AstFieldDef name ty _)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        [offset : i64 (tc-inline-aggregate-layout-field-offset layout name)]
+        (if (< offset 0)
+          (ErrLowerExpr
+            (lower-diagnostic
+              (string-append "lower: inline struct layout missing field " name)))
+          (match (tc-inline-aggregate-type-layout ctx resolved)
+            [(OkTcLayoutInfo info)
+              (match (lower-register-resident-word-from-field
+                state
+                value
+                resolved
+                (tc-layout-info-size info)
+                offset)
+                [(LowerExpr field-state field-word _)
+                  (OkLowerExpr
+                    (lower-emit-binop
+                      field-state
+                      IrBinBitOr
+                      acc
+                      field-word
+                      (AstTyU64)))])]
+            [(ErrTcLayoutInfo message)
+              (ErrLowerExpr (lower-diagnostic message))])))]))
+
+(define (lower-pack-register-resident-struct-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [values : CompilerIrValueList]
+  [fields : AstFieldDefList]
+  [layout : TcInlineAggregateLayout]
+  [acc : CompilerIrValue]) : ResultLowerExpr
+  (match values
+    [(IrValueNil)
+      (match fields
+        [(AstFieldDefNil) (OkLowerExpr (LowerExpr state acc (AstTyU64)))]
+        [_
+          (ErrLowerExpr (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(IrValueCons value rest-values)
+      (match fields
+        [(AstFieldDefCons field rest-fields)
+          (match (lower-pack-register-resident-struct-field
+            ctx
+            state
+            value
+            field
+            layout
+            acc)
+            [(OkLowerExpr packed)
+              (match packed
+                [(LowerExpr acc-state acc-word _)
+                  (lower-pack-register-resident-struct-values
+                    ctx
+                    acc-state
+                    (box-get rest-values)
+                    (box-get rest-fields)
+                    layout
+                    acc-word)])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstFieldDefNil)
+          (ErrLowerExpr (lower-diagnostic "lower: constructor arity mismatch"))])]))
+
 (define (lower-store-inline-value-at-offset
   [ctx : TcContext]
   [state : LowerState]
@@ -4335,9 +4534,18 @@
   [value : CompilerIrValue]
   [ty : AstType]
   [size : i64]) : LowerState
-  (if (lower-type-inline-struct-or-enum? ctx ty)
-    (lower-copy-bytes state base offset value 0 size)
-    (lower-store-at-offset state base offset value ty)))
+  (if (and
+    (lower-mode-inline-aggregates? (lower-state-mode state))
+    (lower-type-register-resident? ctx ty))
+    (lower-store-at-offset
+      state
+      base
+      offset
+      value
+      (lower-register-resident-slot-type size))
+    (if (lower-type-inline-struct-or-enum? ctx ty)
+      (lower-copy-bytes state base offset value 0 size)
+      (lower-store-at-offset state base offset value ty))))
 
 (define (lower-load-inline-value-at-offset
   [ctx : TcContext]
@@ -4348,10 +4556,19 @@
   [mode : CompilerLowerMode]) : LowerExpr
   (if (and
     (lower-mode-inline-aggregates? mode)
-    (lower-type-inline-struct-or-enum? ctx ty))
-    (match (lower-gep-byte state base offset)
-      [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
-    (lower-load-at-offset state base offset ty)))
+    (lower-type-register-resident? ctx ty))
+    (match (lower-load-at-offset
+      state
+      base
+      offset
+      (lower-register-resident-slot-type (lower-type-size ctx ty)))
+      [(LowerExpr load-state load-value _) (LowerExpr load-state load-value ty)])
+    (if (and
+      (lower-mode-inline-aggregates? mode)
+      (lower-type-inline-struct-or-enum? ctx ty))
+      (match (lower-gep-byte state base offset)
+        [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
+      (lower-load-at-offset state base offset ty))))
 
 (define (lower-inline-aggregate-copy-size [ctx : TcContext] [ty : AstType]) : ResultLowerSize
   (match (tc-inline-aggregate-type-layout ctx ty)
@@ -4398,7 +4615,9 @@
   [ty : AstType]) : bool
   (and
     (lower-mode-inline-aggregates? (lower-state-mode state))
-    (lower-type-contains-inline-aggregate? ctx ty)))
+    (and
+      (lower-type-contains-inline-aggregate? ctx ty)
+      (not (lower-type-register-resident? ctx ty)))))
 
 (define (lower-return-abi-value
   [ctx : TcContext]
@@ -6649,7 +6868,9 @@
       [sret-needed : bool
         (and
           (lower-mode-inline-aggregates? mode)
-          (lower-type-contains-inline-aggregate? ctx ret-ty))]
+          (and
+            (lower-type-contains-inline-aggregate? ctx ret-ty)
+            (not (lower-type-register-resident? ctx ret-ty))))]
       [sret-var : i64
         (if sret-needed
           param-count
@@ -8100,18 +8321,32 @@
     [(OkTcInlineAggregateLayout layout)
       (match layout
         [(TcInlineStructLayout size _ _)
-          (match (lower-reserve-inline-storage state size struct-ty)
-            [(LowerExpr base-state base _)
-              (match (lower-store-inline-struct-values
-                ctx
-                base-state
-                base
-                values
-                fields
-                layout)
-                [(OkLowerState done-state)
-                  (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                [(ErrLowerState message) (ErrLowerExpr message)])])]
+          (if (lower-register-resident-struct-layout? ctx layout)
+            (match (lower-pack-register-resident-struct-values
+              ctx
+              state
+              values
+              fields
+              layout
+              (IrValueI64 0))
+              [(OkLowerExpr packed)
+                (match packed
+                  [(LowerExpr packed-state packed-value _)
+                    (OkLowerExpr
+                      (LowerExpr packed-state packed-value struct-ty))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (match (lower-reserve-inline-storage state size struct-ty)
+              [(LowerExpr base-state base _)
+                (match (lower-store-inline-struct-values
+                  ctx
+                  base-state
+                  base
+                  values
+                  fields
+                  layout)
+                  [(OkLowerState done-state)
+                    (OkLowerExpr (LowerExpr done-state base struct-ty))]
+                  [(ErrLowerState message) (ErrLowerExpr message)])]))]
         [(TcInlineEnumLayout _ _ _)
           (ErrLowerExpr
             (lower-diagnostic
@@ -10153,6 +10388,32 @@
           [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))]
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
+(define (lower-struct-get-addressed-field
+  [ctx : TcContext]
+  [state : LowerState]
+  [receiver-value : CompilerIrValue]
+  [struct-name : String]
+  [offset : i64]
+  [field-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-gep-byte state receiver-value offset)
+    [(LowerExpr ptr-state ptr _)
+      (if (or
+        (and
+          (lower-struct-repr-c? ctx struct-name)
+          (lower-repr-c-inline-field? ctx field-ty))
+        (and
+          (lower-mode-inline-aggregates? (lower-state-mode ptr-state))
+          (lower-type-inline-struct-or-enum? ctx field-ty)))
+        (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
+        (match (lower-state-alloc-var ptr-state)
+          [(LowerAlloc allocated var-id)
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit allocated (IrInstrLoad var-id ptr field-ty))
+                (IrValueVar var-id)
+                result-ty))]))]))
+
 (define (lower-struct-get-named
   [ctx : TcContext]
   [state : LowerState]
@@ -10168,25 +10429,45 @@
     [(OkLowerFieldInfo info)
       (match info
         [(LowerFieldInfo offset field-ty)
-          (match (lower-gep-byte state receiver-value offset)
-            [(LowerExpr ptr-state ptr _)
-              (if (or
-                (and
-                  (lower-struct-repr-c? ctx struct-name)
-                  (lower-repr-c-inline-field? ctx field-ty))
-                (and
-                  (lower-mode-inline-aggregates? (lower-state-mode ptr-state))
-                  (lower-type-inline-struct-or-enum? ctx field-ty)))
-                (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
-                (match (lower-state-alloc-var ptr-state)
-                  [(LowerAlloc allocated var-id)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-state-emit
-                          allocated
-                          (IrInstrLoad var-id ptr field-ty))
-                        (IrValueVar var-id)
-                        result-ty))]))])])]
+          (if (and
+            (lower-mode-inline-aggregates? (lower-state-mode state))
+            (lower-type-register-resident? ctx (AstTyStruct struct-name)))
+            (match (tc-inline-aggregate-type-layout ctx field-ty)
+              [(OkTcLayoutInfo field-info)
+                (OkLowerExpr
+                  (lower-register-resident-word-to-field
+                    state
+                    receiver-value
+                    result-ty
+                    (tc-layout-info-size field-info)
+                    offset))]
+              [(ErrTcLayoutInfo message)
+                (ErrLowerExpr (lower-diagnostic message))])
+            (if (and
+              (lower-mode-inline-aggregates? (lower-state-mode state))
+              (and
+                (lower-type-register-resident? ctx field-ty)
+                (not
+                  (and
+                    (lower-struct-repr-c? ctx struct-name)
+                    (lower-repr-c-inline-field? ctx field-ty)))))
+              (match (lower-load-inline-value-at-offset
+                ctx
+                state
+                receiver-value
+                offset
+                field-ty
+                (lower-state-mode state))
+                [(LowerExpr load-state load-value _)
+                  (OkLowerExpr (LowerExpr load-state load-value result-ty))])
+              (lower-struct-get-addressed-field
+                ctx
+                state
+                receiver-value
+                struct-name
+                offset
+                field-ty
+                result-ty)))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get
@@ -17924,7 +18205,9 @@
           (lower-mode-inline-aggregates? mode)
           (and
             (not (lower-global-init-function? logical-name))
-            (lower-type-contains-inline-aggregate? ctx ret-ty)))]
+            (and
+              (lower-type-contains-inline-aggregate? ctx ret-ty)
+              (not (lower-type-register-resident? ctx ret-ty)))))]
       [sret-var : i64
         (if sret-needed
           param-count
@@ -20785,6 +21068,25 @@
             (set! i (+ i 1)))))
       sum)))")
 
+(define (compiler-lower-inline-small-struct-register-source) : String
+  "(defstruct Color (r u8) (g u8) (b u8) (a u8))
+(defstruct Palette (base i64) (color Color) (tail i64))
+(define (make-color) : Color
+  (Color (cast 5 : u8) (cast 7 : u8) (cast 11 : u8) (cast 13 : u8)))
+(define (id-color [c : Color]) : Color c)
+(define (sum-color [c : Color]) : i64
+  (+
+    (cast (struct-get c r) : i64)
+    (+
+      (cast (struct-get c g) : i64)
+      (+ (cast (struct-get c b) : i64) (cast (struct-get c a) : i64)))))
+(define (make-palette [c : Color]) : Palette
+  (Palette 100 c 200))
+(define (palette-green [p : Palette]) : i64
+  (cast (struct-get (struct-get p color) g) : i64))
+(define (main) : i64
+  (+ (sum-color (id-color (make-color))) (palette-green (make-palette (make-color)))))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-struct-source))
     [(OkCompilerLower program _)
@@ -20883,6 +21185,79 @@
             (> (lower-test-function-branch-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-small-struct-register-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-inline-small-struct-register-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (= (lower-test-function-alloc-count functions "make-color") 0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-addr-of-count functions "make-color")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-store-ptr-count functions "make-color")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "make-color"
+                  IrBinBitOr)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "make-color"
+                  IrBinShl)
+                0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-load-count functions "sum-color") 0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "sum-color"
+                  IrBinBitAnd)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "sum-color"
+                  IrBinShr)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-load-count functions "palette-green")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "palette-green"
+                  IrBinShr)
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -20892,9 +21267,11 @@
         (compiler-lower-inline-boxed-recursive-shape-ok?)
         (and
           (compiler-lower-inline-hot-loop-struct-shape-ok?)
-          (compiler-lower-error-ok?
-            (compiler-lower-inline-recursive-error-source)
-            "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge"))))))
+          (and
+            (compiler-lower-inline-small-struct-register-shape-ok?)
+            (compiler-lower-error-ok?
+              (compiler-lower-inline-recursive-error-source)
+              "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (:generated point-family Point \"i64-i64\")

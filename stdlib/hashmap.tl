@@ -178,38 +178,47 @@
   [index : i64]
   [steps : i64]
   [first-tombstone : i64]) : StringI64MapProbe
-  (if (>= steps capacity)
-    (if (>= first-tombstone 0)
-      (StringI64MapProbeAbsent first-tombstone)
-      (StringI64MapProbeFull))
-    (match (array-ref slots index)
-      [(StringI64MapEmpty)
-        (StringI64MapProbeAbsent
-          (string-i64-map-insert-slot first-tombstone index))]
-      [(StringI64MapTombstone)
-        (string-i64-map-probe-borrowed-from
-          slots
-          capacity
-          key
-          hash
-          (string-i64-map-next-index index capacity)
-          (+ steps 1)
-          (if (>= first-tombstone 0)
-            first-tombstone
-            index))]
-      [(StringI64MapOccupied slot-key _ slot-hash)
-        (if (if (= slot-hash hash)
-          (hash-key-string-eq? (& slot-key) key)
-          false)
-          (StringI64MapProbeFound index)
-          (string-i64-map-probe-borrowed-from
-            slots
-            capacity
-            key
-            hash
-            (string-i64-map-next-index index capacity)
-            (+ steps 1)
-            first-tombstone))])))
+  (let
+    [cursor : i64 index]
+    [walked : i64 steps]
+    [first : i64 first-tombstone]
+    (begin
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(StringI64MapEmpty)
+            (return
+              (StringI64MapProbeAbsent
+                (string-i64-map-insert-slot first cursor)))]
+          [(StringI64MapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (if (< first 0)
+                  (set! first cursor)
+                  unit)
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(StringI64MapOccupied slot-key _ slot-hash)
+            (if (if (= slot-hash hash)
+              (hash-key-string-eq? (& slot-key) key)
+              false)
+              (return (StringI64MapProbeFound cursor))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (if (>= first 0)
+        (StringI64MapProbeAbsent first)
+        (StringI64MapProbeFull)))))
 
 ;: Probe `slots` for a borrowed string key with a precomputed `hash`.
 (define (string-i64-map-probe-borrowed

@@ -3231,22 +3231,27 @@
 (define (compiler-load-parse-manifest-diagnostic
   [path : String]
   [source : String]) : ResultCompilerPkgManifestDiagnostic
-  (match (lex-spanned-result source)
-    [(ErrSpannedTokens err)
-      (ErrCompilerPkgManifestDiagnostic
-        (compiler-load-manifest-source-error-diagnostic path err))]
-    [(OkSpannedTokens toks)
-      (match (read-spanned-result toks)
-        [(ErrSpannedSexpr err)
-          (ErrCompilerPkgManifestDiagnostic
-            (compiler-load-manifest-source-error-diagnostic path err))]
-        [(OkSpannedSexpr form)
-          (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
-            [(OkCompilerPkgManifest manifest)
-              (OkCompilerPkgManifestDiagnostic manifest)]
-            [(ErrCompilerPkgManifest message)
-              (ErrCompilerPkgManifestDiagnostic
-                (compiler-load-manifest-validation-diagnostic path form message))])])]))
+  (begin
+    (sp-node-pool-reset!)
+    (match (lex-spanned-result source)
+      [(ErrSpannedTokens err)
+        (ErrCompilerPkgManifestDiagnostic
+          (compiler-load-manifest-source-error-diagnostic path err))]
+      [(OkSpannedTokens toks)
+        (match (read-spanned-result toks)
+          [(ErrSpannedSexpr err)
+            (ErrCompilerPkgManifestDiagnostic
+              (compiler-load-manifest-source-error-diagnostic path err))]
+          [(OkSpannedSexpr form)
+            (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
+              [(OkCompilerPkgManifest manifest)
+                (OkCompilerPkgManifestDiagnostic manifest)]
+              [(ErrCompilerPkgManifest message)
+                (ErrCompilerPkgManifestDiagnostic
+                  (compiler-load-manifest-validation-diagnostic
+                    path
+                    form
+                    message))])])])))
 
 ;: Parse a manifest source string into a structured manifest. This compatibility
 ;: wrapper keeps existing in-memory parser callers and message-only tests stable.

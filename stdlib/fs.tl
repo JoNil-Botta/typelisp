@@ -567,30 +567,38 @@
 (define fs-file-kind-other-code : i64
   -3)
 
+;: Private result tuple for a filesystem metadata probe.
 (defstruct FsFileMetadataProbe
   (status i64)
   (kind i64)
   (size i64))
 
+;: Byte size of the Windows `WIN32_FILE_ATTRIBUTE_DATA` buffer.
 (define fs-windows-file-attribute-data-size : i64
   40)
 
+;: Windows file attribute bit that marks a directory.
 (define fs-windows-file-attribute-directory : i64
   16)
 
+;: Byte offset of `dwFileAttributes` in `WIN32_FILE_ATTRIBUTE_DATA`.
 (define fs-windows-file-attributes-offset : i64
   0)
 
+;: Byte offset of `nFileSizeHigh` in `WIN32_FILE_ATTRIBUTE_DATA`.
 (define fs-windows-file-size-high-offset : i64
   28)
 
+;: Byte offset of `nFileSizeLow` in `WIN32_FILE_ATTRIBUTE_DATA`.
 (define fs-windows-file-size-low-offset : i64
   32)
 
+;: Read a `u32` field from a metadata buffer at a byte offset.
 (define (fs-metadata-read-u32-at [base : (MutPtr u8)] [offset : i64]) : u32
   (unsafe
     (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr u32)))))
 
+;: Read an `i64` field from a metadata buffer at a byte offset.
 (define (fs-metadata-read-i64-at [base : (MutPtr u8)] [offset : i64]) : i64
   (unsafe
     (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr i64)))))
@@ -735,6 +743,7 @@
               (fs-windows-file-size-from-data dataptr)
               0)))))))
 
+;: Probe path metadata and return status, kind sentinel, and regular-file size.
 (define (fs-file-metadata-probe [path : String]) : FsFileMetadataProbe
   (let
     [path-bytes : (Array u8) (io-c-string path)]

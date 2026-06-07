@@ -4991,6 +4991,7 @@
                           (match idx-lowered
                             [(LowerExpr idx-state idx-value _)
                               (match (lower-array-element-addr
+                                ctx
                                 idx-state
                                 arr-value
                                 idx-value
@@ -5023,6 +5024,7 @@
                             (match idx-lowered
                               [(LowerExpr idx-state idx-value _)
                                 (match (lower-fixed-array-element-addr
+                                  ctx
                                   idx-state
                                   arr-value
                                   idx-value
@@ -7426,7 +7428,13 @@
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
         [size : i64 (lower-type-size ctx resolved)]
         (if (> size 0)
-          (match (lower-load-at-offset state src offset resolved)
+          (match (lower-load-inline-value-at-offset
+            ctx
+            state
+            src
+            offset
+            resolved
+            (lower-state-mode state))
             [(LowerExpr load-state field-value _)
               (match (lower-clone-dispatch
                 ctx
@@ -7440,12 +7448,14 @@
                     [(LowerExpr clone-state clone-value _)
                       (lower-clone-type-list
                         ctx
-                        (lower-store-at-offset
+                        (lower-store-inline-value-at-offset
+                          ctx
                           clone-state
                           dst
                           offset
                           clone-value
-                          resolved)
+                          resolved
+                          size)
                         env
                         type-env
                         src
@@ -7505,7 +7515,13 @@
     (let
       [offset : i64 (* index elem-size)]
       (if (> elem-size 0)
-        (match (lower-load-at-offset state src offset elem-ty)
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          src
+          offset
+          elem-ty
+          (lower-state-mode state))
           [(LowerExpr load-state elem-value _)
             (match (lower-clone-dispatch
               ctx
@@ -7519,12 +7535,14 @@
                   [(LowerExpr clone-state clone-value _)
                     (lower-clone-fixed-array-elems
                       ctx
-                      (lower-store-at-offset
+                      (lower-store-inline-value-at-offset
+                        ctx
                         clone-state
                         dst
                         offset
                         clone-value
-                        elem-ty)
+                        elem-ty
+                        elem-size)
                       env
                       type-env
                       src
@@ -7601,6 +7619,7 @@
           exit-label))]))
 
 (define (lower-clone-dynarray-store-and-advance
+  [ctx : TcContext]
   [state : LowerState]
   [new-buf : CompilerIrValue]
   [index-var : i64]
@@ -7608,12 +7627,20 @@
   [exit-label : String]
   [clone-value : CompilerIrValue]
   [elem-ty : AstType]) : ResultLowerState
-  (match (lower-emit-gep state new-buf (IrValueVar index-var) elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    state
+    new-buf
+    (IrValueVar index-var)
+    elem-ty)
     [(LowerExpr dst-gep-state dst-ptr _)
       (lower-clone-dynarray-advance
-        (lower-state-emit
+        (lower-array-elem-store-state
+          ctx
           dst-gep-state
-          (IrInstrStorePtr dst-ptr clone-value elem-ty))
+          dst-ptr
+          clone-value
+          elem-ty)
         index-var
         header-label
         exit-label)]))
@@ -7629,9 +7656,20 @@
   [header-label : String]
   [exit-label : String]
   [elem-ty : AstType]) : ResultLowerState
-  (match (lower-emit-gep state old-buf (IrValueVar index-var) elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    state
+    old-buf
+    (IrValueVar index-var)
+    elem-ty)
     [(LowerExpr src-gep-state src-ptr _)
-      (match (lower-emit-load src-gep-state src-ptr elem-ty)
+      (match (lower-load-inline-value-at-offset
+        ctx
+        src-gep-state
+        src-ptr
+        0
+        elem-ty
+        (lower-state-mode src-gep-state))
         [(LowerExpr load-state elem-value _)
           (match (lower-clone-dispatch
             ctx
@@ -7644,6 +7682,7 @@
               (match cloned
                 [(LowerExpr clone-state clone-value _)
                   (lower-clone-dynarray-store-and-advance
+                    ctx
                     clone-state
                     new-buf
                     index-var
@@ -12456,10 +12495,34 @@
         bounds-ok-state
         (IrInstrBoundsCheck index length bounds-ok-label))]))
 
+;; #1867: address an array element, striding by the element's full inline size.
+;; For an inline struct/enum element the backend's GEP scale
+;; (compiler-backend-type-size) is still 8, so pre-multiply the index by
+;; lower-type-size (the real inline size, matching make-array's element buffer)
+;; and GEP at byte granularity (u8). Scalars and pointer-slot handles keep the
+;; type-scaled GEP (correct, since their backend size is right).
+(define (lower-emit-elem-addr-gep
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [idx-off : CompilerIrValue]
+  [elem-ty : AstType]) : LowerExpr
+  (if (lower-type-inline-struct-or-enum? ctx elem-ty)
+    (match (lower-emit-binop
+      state
+      IrBinMul
+      idx-off
+      (IrValueI64 (lower-type-size ctx elem-ty))
+      (AstTyI64))
+      [(LowerExpr mul-state byte-off _)
+        (lower-emit-gep mul-state base byte-off (AstTyU8))])
+    (lower-emit-gep state base idx-off elem-ty)))
+
 ;; Tail of `lower-array-element-addr`: after the explicit bounds check, load the
-;; buffer pointer (fat offset 0, a raw U64 address) and `Gep` it by the index,
-;; scaled by the element type, to the element address.
+;; buffer pointer (fat offset 0, a raw U64 address) and Gep it by the index to
+;; the element address (striding by the real inline element size).
 (define (lower-array-element-addr-finish
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-off : CompilerIrValue]
@@ -12468,12 +12531,13 @@
     [(LowerExpr buf-gep-state buf-gep _)
       (match (lower-emit-load buf-gep-state buf-gep (AstTyU64))
         [(LowerExpr buf-state buf-val _)
-          (lower-emit-gep buf-state buf-val idx-off elem-ty)])]))
+          (lower-emit-elem-addr-gep ctx buf-state buf-val idx-off elem-ty)])]))
 
 ;; Compute the address of element `idx-value` in dynamic array `arr-value`,
 ;; emitting an unsigned bounds check (negative indices wrap large and also
 ;; fail). Returns the element pointer as an `elem-ty`-typed value.
 (define (lower-array-element-addr
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
@@ -12490,6 +12554,7 @@
                   (match (lower-emit-cast s4 len-val (AstTyI64) (AstTyU64))
                     [(LowerExpr s5 len-u _)
                       (lower-array-element-addr-finish
+                        ctx
                         (lower-emit-bounds-check s5 idx-u len-u)
                         arr-value
                         idx-off
@@ -12499,6 +12564,7 @@
 ;; length, then Gep directly from the array handle without loading dynamic-array
 ;; fat fields.
 (define (lower-fixed-array-element-addr
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
@@ -12509,7 +12575,8 @@
     [(LowerExpr s1 idx-u _)
       (match (lower-emit-cast s1 idx-value idx-ty (AstTyI64))
         [(LowerExpr s2 idx-off _)
-          (lower-emit-gep
+          (lower-emit-elem-addr-gep
+            ctx
             (lower-emit-bounds-check s2 idx-u (IrValueI64 elem-count))
             arr-value
             idx-off
@@ -13236,6 +13303,7 @@
                                       (tc-resolve-type ctx container-ty))
                                       [(AstTyDynArray _)
                                         (match (lower-array-element-addr
+                                          ctx
                                           idx-state
                                           arr-value
                                           idx-value
@@ -13249,6 +13317,7 @@
                                               elem-ir-ty)])]
                                       [(AstTyArray _ elem-count)
                                         (match (lower-fixed-array-element-addr
+                                          ctx
                                           idx-state
                                           arr-value
                                           idx-value
@@ -13354,6 +13423,7 @@
                                               (tc-resolve-type ctx container-ty))
                                               [(AstTyDynArray _)
                                                 (match (lower-array-element-addr
+                                                  ctx
                                                   value-state
                                                   arr-value
                                                   idx-value
@@ -13375,6 +13445,7 @@
                                                         (AstTyUnit)))])]
                                               [(AstTyArray _ elem-count)
                                                 (match (lower-fixed-array-element-addr
+                                                  ctx
                                                   value-state
                                                   arr-value
                                                   idx-value
@@ -15150,6 +15221,7 @@
   [array-var : i64]
   [elem-ty : AstType]) : ResultLowerExpr
   (match (lower-array-element-addr
+    ctx
     state
     (IrValueVar array-var)
     (IrValueVar index-var)

@@ -266,6 +266,7 @@ end
 case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
+contains|_tl_compiler_backend_u2etl_colon_coloncompiler_backend_emit_program_object_image:
 contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
 contains|_tl_compiler_backend_runtime_windows_alloc_functions:
 contains|_tl_compiler_backend_runtime_fs_functions:
@@ -280,6 +281,7 @@ not-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
+decision|selfhost/compiler_object.tl|structured object-image data model (#2308): main-less, imported by selfhost/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
 decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct

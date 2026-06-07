@@ -1996,9 +1996,8 @@
   "(defstruct Raw (:repr c) (x i64))
 (define (main) : Raw (init : Raw))")
 
-(define (compiler-typecheck-init-empty-enum-source) : String
-  "(defenum Empty)
-(define (main) : Empty (init : Empty))")
+(define (compiler-typecheck-init-reference-source) : String
+  "(define (main [n : i64]) : (& n i64) (init : (& n i64)))")
 
 (define (compiler-typecheck-init-cleanup-owning-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -2013,15 +2012,15 @@
     (and
       (compiler-typecheck-error-ok?
         (compiler-typecheck-init-function-source)
-        "typecheck: init unsupported type (-> i64)")
+        "typecheck: init unsupported type (->  i64)")
       (and
         (compiler-typecheck-error-ok?
           (compiler-typecheck-init-repr-c-source)
           "typecheck: init supports only default-layout structs")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-init-empty-enum-source)
-            "typecheck: init requires enum with at least one variant")
+            (compiler-typecheck-init-reference-source)
+            "typecheck: init unsupported type (& n i64)")
           (compiler-typecheck-error-ok?
             (compiler-typecheck-init-cleanup-owning-source)
             "typecheck: init does not support cleanup-owning aggregate FileHandle"))))))

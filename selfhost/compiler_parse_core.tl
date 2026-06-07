@@ -578,7 +578,7 @@
   249)
 
 (define (compiler-parse-tag-expr-init) : i64
-  254)
+  288)
 
 (define (compiler-parse-tag-expr-spmd-reduce) : i64
   250)

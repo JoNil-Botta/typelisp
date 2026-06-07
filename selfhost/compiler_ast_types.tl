@@ -803,7 +803,7 @@
     [(AstExprWithRegion _ _) 25]
     [(AstExprWithEscape _ _) 48]
     [(AstExprTypeLiteral _) 26]
-    [(AstExprInit _) 60]
+    [(AstExprInit _) 61]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
     [(AstExprTry _) 29]

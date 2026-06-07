@@ -21962,6 +21962,43 @@
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-lower-package-owned-symbol-source) : String
+  "(define (runtime-helper) : i64 1)
+(define (app-helper) : i64 41)
+(define (main) : i64 (+ (runtime-helper) (app-helper)))")
+
+(define (compiler-lower-package-owned-symbol-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/runtime.tl"
+    (ast-decl-path-cons
+      "app/src/main.tl"
+      (ast-decl-path-cons "" AstDeclPathNil))))
+
+(define (compiler-lower-package-owned-symbols-ok?) : bool
+  (match (parse-ast-source (compiler-lower-package-owned-symbol-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        ""
+        program
+        (compiler-lower-package-owned-symbol-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (and
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/runtime.tl::runtime-helper")
+                (and
+                  (lower-test-function-defined? functions "main")
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      "app/src/main.tl::app-helper")
+                    1)))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-lower-module-qualified-source) : String
   "(module left)
 (define same : i64 20)
@@ -24661,6 +24698,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-symbols-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-package-owned-symbols-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-qualified-ok?)

@@ -2172,6 +2172,7 @@
           opt-level
           mode
           manifest-dir
+          name
           (struct-get manifest deps)
           emit-entry
           crt-entry)

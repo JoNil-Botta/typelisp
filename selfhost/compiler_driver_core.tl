@@ -617,6 +617,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerDriver
   (compiler-driver-emit-package-file-with-target-roots-level-and-crt
@@ -626,6 +627,7 @@
     stdlib-roots
     opt-level
     manifest-dir
+    package-owner
     deps
     emit-entry
     false))
@@ -637,6 +639,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
@@ -648,6 +651,7 @@
     opt-level
     (BackendModeScalar)
     manifest-dir
+    package-owner
     deps
     emit-entry
     crt-entry))
@@ -688,19 +692,21 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (match (compiler-driver-load-package-file-with-runtime
+  (match (compiler-driver-load-package-file-with-runtime-owned
     input-path
     target
     stdlib-roots
     manifest-dir
+    package-owner
     deps
     emit-entry)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths-mode
-        input-path
+        ""
         (ast-program decls)
         paths
         (compiler-driver-lower-mode-for-target target mode))
@@ -768,6 +774,35 @@
         manifest-dir
         deps
         cfgs))))
+
+(define (compiler-driver-load-package-file-with-runtime-owned
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerLoadWithPaths
+  (match (compiler-driver-load-package-file-with-runtime
+    input-path
+    target
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry)
+    [(OkCompilerLoadWithPaths decls paths modules seen)
+      (OkCompilerLoadWithPaths
+        decls
+        (compiler-load-package-owned-paths-for-decls
+          package-owner
+          manifest-dir
+          stdlib-roots
+          input-path
+          decls
+          paths)
+        modules
+        seen)]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
   (string-append

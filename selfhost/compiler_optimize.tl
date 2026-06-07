@@ -11208,6 +11208,16 @@
   (count i64)
   (edges (Array OptSlotList)))
 
+(defstruct OptSccResult
+  (scc-of (Array i64))
+  (order (Array i64)))
+
+(defenum OptSccDiscoverState
+  (OptSccDiscoverState i64 i64))
+
+(defenum OptSccPopState
+  (OptSccPopState i64 i64))
+
 (defenum OptReachState
   (OptReachState StringI64Map OptStringSet))
 
@@ -11408,6 +11418,208 @@
     (opt-slot-list-contains?
       (array-ref (struct-get graph edges) from-slot)
       to-slot)))
+
+(define (opt-scc-set-low-min!
+  [lowlink : (Array i64)]
+  [slot : i64]
+  [candidate : i64]) : unit
+  (let
+    [old : i64 (array-ref lowlink slot)]
+    (if (< candidate old)
+      (array-set! lowlink slot candidate)
+      unit)))
+
+(define (opt-scc-next-child-from
+  [slots : OptSlotList]
+  [after : i64]
+  [best : i64]) : i64
+  (match slots
+    [(OptSlotNil) best]
+    [(OptSlotCons slot rest)
+      (opt-scc-next-child-from
+        (box-get rest)
+        after
+        (if (and (> slot after) (or (< best 0) (< slot best)))
+          slot
+          best))]))
+
+(define (opt-scc-next-child [graph : OptCallGraph] [slot : i64] [after : i64]) : i64
+  (if (or (< slot 0) (>= slot (struct-get graph count)))
+    (- 0 1)
+    (opt-scc-next-child-from
+      (array-ref (struct-get graph edges) slot)
+      after
+      (- 0 1))))
+
+(define (opt-scc-discover!
+  [slot : i64]
+  [indices : (Array i64)]
+  [lowlink : (Array i64)]
+  [on-stack : (Array bool)]
+  [node-stack : (Array i64)]
+  [node-stack-len : i64]
+  [next-index : i64]) : OptSccDiscoverState
+  (begin
+    (array-set! indices slot next-index)
+    (array-set! lowlink slot next-index)
+    (array-set! on-stack slot true)
+    (array-set! node-stack node-stack-len slot)
+    (OptSccDiscoverState (+ next-index 1) (+ node-stack-len 1))))
+
+(define (opt-scc-frame-push!
+  [frame-slots : (Array i64)]
+  [frame-nexts : (Array i64)]
+  [frame-len : i64]
+  [slot : i64]) : i64
+  (begin
+    (array-set! frame-slots frame-len slot)
+    (array-set! frame-nexts frame-len (- 0 1))
+    (+ frame-len 1)))
+
+(define (opt-scc-pop-component!
+  [node-stack : (Array i64)]
+  [node-stack-len : i64]
+  [on-stack : (Array bool)]
+  [scc-of : (Array i64)]
+  [root : i64]
+  [scc-id : i64]) : OptSccPopState
+  (let
+    [len : i64 node-stack-len]
+    [done : bool false]
+    [members : i64 0]
+    (begin
+      (while (not done)
+        (let
+          [next-len : i64 (- len 1)]
+          [slot : i64 (array-ref node-stack next-len)]
+          (begin
+            (set! len next-len)
+            (array-set! on-stack slot false)
+            (array-set! scc-of slot scc-id)
+            (set! members (+ members 1))
+            (if (= slot root)
+              (set! done true)
+              unit))))
+      (OptSccPopState len members))))
+
+(define (opt-scc-copy-order [source : (Array i64)] [count : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! out index (array-ref source index))
+          (set! index (+ index 1))))
+      out)))
+
+(define (opt-scc-compute [graph : OptCallGraph]) : OptSccResult
+  (let
+    [count : i64 (struct-get graph count)]
+    [indices : (Array i64) (make-array i64 count)]
+    [lowlink : (Array i64) (make-array i64 count)]
+    [on-stack : (Array bool) (make-array bool count)]
+    [scc-of : (Array i64) (make-array i64 count)]
+    [node-stack : (Array i64) (make-array i64 count)]
+    [frame-slots : (Array i64) (make-array i64 count)]
+    [frame-nexts : (Array i64) (make-array i64 count)]
+    [order-scratch : (Array i64) (make-array i64 count)]
+    [root : i64 0]
+    [next-index : i64 0]
+    [node-stack-len : i64 0]
+    [frame-len : i64 0]
+    [scc-count : i64 0]
+    (begin
+      (opt-cfg-fill-i64! indices count (- 0 1))
+      (opt-cfg-fill-i64! lowlink count (- 0 1))
+      (opt-cfg-fill-bool! on-stack count false)
+      (opt-cfg-fill-i64! scc-of count (- 0 1))
+      (opt-cfg-fill-i64! order-scratch count (- 0 1))
+      (while (< root count)
+        (begin
+          (if (= (array-ref indices root) (- 0 1))
+            (begin
+              (match (opt-scc-discover!
+                root
+                indices
+                lowlink
+                on-stack
+                node-stack
+                node-stack-len
+                next-index)
+                [(OptSccDiscoverState next stack-len)
+                  (begin
+                    (set! next-index next)
+                    (set! node-stack-len stack-len))])
+              (set!
+                frame-len
+                (opt-scc-frame-push! frame-slots frame-nexts frame-len root))
+              (while (> frame-len 0)
+                (let
+                  [frame-index : i64 (- frame-len 1)]
+                  [slot : i64 (array-ref frame-slots frame-index)]
+                  [child : i64
+                    (opt-scc-next-child
+                      graph
+                      slot
+                      (array-ref frame-nexts frame-index))]
+                  (if (>= child 0)
+                    (begin
+                      (array-set! frame-nexts frame-index child)
+                      (if (= (array-ref indices child) (- 0 1))
+                        (begin
+                          (match (opt-scc-discover!
+                            child
+                            indices
+                            lowlink
+                            on-stack
+                            node-stack
+                            node-stack-len
+                            next-index)
+                            [(OptSccDiscoverState next stack-len)
+                              (begin
+                                (set! next-index next)
+                                (set! node-stack-len stack-len))])
+                          (set!
+                            frame-len
+                            (opt-scc-frame-push!
+                              frame-slots
+                              frame-nexts
+                              frame-len
+                              child)))
+                        (if (array-ref on-stack child)
+                          (opt-scc-set-low-min!
+                            lowlink
+                            slot
+                            (array-ref indices child))
+                          unit)))
+                    (begin
+                      (if (= (array-ref lowlink slot) (array-ref indices slot))
+                        (match (opt-scc-pop-component!
+                          node-stack
+                          node-stack-len
+                          on-stack
+                          scc-of
+                          slot
+                          scc-count)
+                          [(OptSccPopState stack-len _)
+                            (begin
+                              (set! node-stack-len stack-len)
+                              (array-set! order-scratch scc-count scc-count)
+                              (set! scc-count (+ scc-count 1)))])
+                        unit)
+                      (set! frame-len (- frame-len 1))
+                      (if (> frame-len 0)
+                        (let
+                          [parent : i64 (array-ref frame-slots (- frame-len 1))]
+                          (opt-scc-set-low-min!
+                            lowlink
+                            parent
+                            (array-ref lowlink slot)))
+                        unit))))))
+            unit)
+          (set! root (+ root 1))))
+      (OptSccResult scc-of (opt-scc-copy-order order-scratch scc-count)))))
 
 ;; Devirtualize syntactically known function values before program-level
 ;; inlining, so the existing direct-call inliner can see them.
@@ -15420,6 +15632,130 @@
       [(not (opt-callgraph-test-edge? index graph "rec_odd" "rec_even")) false]
       [(not (= (opt-callgraph-test-edge-count index graph "lonely") 0)) false]
       [else true])))
+
+(define (opt-scc-result-component [result : OptSccResult] [slot : i64]) : i64
+  (array-ref (struct-get result scc-of) slot))
+
+(define (opt-scc-component-size [result : OptSccResult] [scc-id : i64]) : i64
+  (let
+    [scc-of : (Array i64) (struct-get result scc-of)]
+    [count : i64 (array-length scc-of)]
+    [slot : i64 0]
+    [size : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (if (= (array-ref scc-of slot) scc-id)
+            (set! size (+ size 1))
+            unit)
+          (set! slot (+ slot 1))))
+      size)))
+
+(define (opt-scc-order-position [result : OptSccResult] [scc-id : i64]) : i64
+  (let
+    [order : (Array i64) (struct-get result order)]
+    [count : i64 (array-length order)]
+    [index : i64 0]
+    [position : i64 (- 0 1)]
+    (begin
+      (while (and (< index count) (< position 0))
+        (begin
+          (if (= (array-ref order index) scc-id)
+            (set! position index)
+            unit)
+          (set! index (+ index 1))))
+      position)))
+
+(define (opt-scc-before? [result : OptSccResult] [left : i64] [right : i64]) : bool
+  (let
+    [left-pos : i64 (opt-scc-order-position result left)]
+    [right-pos : i64 (opt-scc-order-position result right)]
+    (and (>= left-pos 0) (and (>= right-pos 0) (< left-pos right-pos)))))
+
+(define (opt-scc-self-recursive-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-test-function-named "self" (opt-callgraph-tail-instrs "self"))
+    (compiler-ir-function-cons
+      (opt-test-function-named "leaf" (opt-callgraph-return-instrs))
+      IrFunctionNil)))
+
+(define (compiler-optimize-scc-self-recursive-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList (opt-scc-self-recursive-functions)]
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [graph : OptCallGraph (opt-callgraph-build index)]
+    [result : OptSccResult (opt-scc-compute graph)]
+    [self-slot : i64 (opt-callgraph-test-slot index "self")]
+    [leaf-slot : i64 (opt-callgraph-test-slot index "leaf")]
+    [self-scc : i64 (opt-scc-result-component result self-slot)]
+    [leaf-scc : i64 (opt-scc-result-component result leaf-slot)]
+    (cond
+      [(not (opt-callgraph-has-edge? graph self-slot self-slot)) false]
+      [(< self-scc 0) false]
+      [(< leaf-scc 0) false]
+      [(= self-scc leaf-scc) false]
+      [(not (= (opt-scc-component-size result self-scc) 1)) false]
+      [(not (= (opt-scc-component-size result leaf-scc) 1)) false]
+      [else true])))
+
+(define (compiler-optimize-scc-mutual-recursive-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList (opt-callgraph-recursive-functions)]
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [graph : OptCallGraph (opt-callgraph-build index)]
+    [result : OptSccResult (opt-scc-compute graph)]
+    [even-slot : i64 (opt-callgraph-test-slot index "rec_even")]
+    [odd-slot : i64 (opt-callgraph-test-slot index "rec_odd")]
+    [lonely-slot : i64 (opt-callgraph-test-slot index "lonely")]
+    [even-scc : i64 (opt-scc-result-component result even-slot)]
+    [odd-scc : i64 (opt-scc-result-component result odd-slot)]
+    [lonely-scc : i64 (opt-scc-result-component result lonely-slot)]
+    (cond
+      [(< even-scc 0) false]
+      [(not (= even-scc odd-scc)) false]
+      [(= even-scc lonely-scc) false]
+      [(not (= (opt-scc-component-size result even-scc) 2)) false]
+      [(not (= (opt-scc-component-size result lonely-scc) 1)) false]
+      [else true])))
+
+(define (compiler-optimize-scc-reverse-topo-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList (opt-callgraph-acyclic-functions)]
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [graph : OptCallGraph (opt-callgraph-build index)]
+    [result : OptSccResult (opt-scc-compute graph)]
+    [order : (Array i64) (struct-get result order)]
+    [main-scc : i64
+      (opt-scc-result-component result (opt-callgraph-test-slot index "main"))]
+    [a-scc : i64
+      (opt-scc-result-component result (opt-callgraph-test-slot index "a"))]
+    [b-scc : i64
+      (opt-scc-result-component result (opt-callgraph-test-slot index "b"))]
+    [c-scc : i64
+      (opt-scc-result-component result (opt-callgraph-test-slot index "c"))]
+    [address-scc : i64
+      (opt-scc-result-component
+        result
+        (opt-callgraph-test-slot index "address_taken"))]
+    (cond
+      [(not (= (array-length order) 5)) false]
+      [(not (= (array-ref order 0) b-scc)) false]
+      [(not (= (array-ref order 1) c-scc)) false]
+      [(not (= (array-ref order 2) a-scc)) false]
+      [(not (= (array-ref order 3) main-scc)) false]
+      [(not (= (array-ref order 4) address-scc)) false]
+      [(not (opt-scc-before? result b-scc c-scc)) false]
+      [(not (opt-scc-before? result c-scc a-scc)) false]
+      [(not (opt-scc-before? result a-scc main-scc)) false]
+      [(not (opt-scc-before? result b-scc main-scc)) false]
+      [else true])))
+
+(define (compiler-optimize-scc-self-test) : i64
+  (cond
+    [(not (compiler-optimize-scc-self-recursive-ok?)) 1]
+    [(not (compiler-optimize-scc-mutual-recursive-ok?)) 2]
+    [(not (compiler-optimize-scc-reverse-topo-ok?)) 3]
+    [else 42]))
 
 (define (compiler-optimize-callgraph-self-test) : i64
   (if (compiler-optimize-callgraph-acyclic-ok?)

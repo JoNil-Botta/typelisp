@@ -1,8 +1,6 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import "../stdlib/io.tl")
 
-(import "../stdlib/arena.tl")
-
 (import "compiler_parse_core.tl")
 
 (import "compiler_diagnostic.tl")
@@ -877,59 +875,22 @@
     expected-module
     (compiler-cfg-empty)))
 
-(define (compiler-load-parse-result-escape
-  [enclosing : i64]
-  [parse-head : i64]
-  [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
-  (match result
-    [(OkAstProgramDiagnostic program)
-      (begin
-        (unsafe
-          (arena-set! enclosing))
-        (let
-          [escaped-program : AstProgram (clone program)]
-          (begin
-            (unsafe
-              (arena-destroy parse-head))
-            (OkAstProgramDiagnostic escaped-program))))]
-    [(ErrAstProgramDiagnostic diag)
-      (begin
-        (unsafe
-          (arena-set! enclosing))
-        (let
-          [escaped-diag : CompilerDiagnostic (clone diag)]
-          (begin
-            (unsafe
-              (arena-destroy parse-head))
-            (ErrAstProgramDiagnostic escaped-diag))))]))
-
-;; Direct-parse small files to avoid clone cost; large files use a scratch arena
-;; to keep cold self-build peak memory below the 500 MB target.
-(define (compiler-load-direct-parse-source-limit) : i64
-  1000000000)
-
-(define (compiler-load-parse-source-diagnostic-escaped
-  [path : String]
-  [source : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
-  (let
-    [enclosing : i64 (arena-current)]
-    [parse-arena : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! parse-arena))
-      (compiler-load-parse-result-escape
-        enclosing
-        (arena-current)
-        (parse-ast-source-diagnostic-with-cfg path source cfgs)))))
-
+;; Parse a module source directly in the active (program-lifetime) arena.
+;;
+;; A scratch-arena variant used to parse large files into a throwaway arena and
+;; `clone` the result back out to cap cold self-build peak memory. That cannot
+;; work with the flat-node AST: `AstExpr`/`AstType`/`SpannedSexpr` nodes live in
+;; persistent GLOBAL pools, not the active arena, so destroying the scratch arena
+;; left the cloned program pointing at pool slots whose backing list/string data
+;; had been freed -- a segfault on the next self-build. The scratch path was
+;; already disabled (its size threshold was raised past any real input); it has
+;; now been removed. Recovering its memory benefit needs pool-aware reclamation
+;; (e.g. truncating the node pools after escaping), not arena destruction.
 (define (compiler-load-parse-source-diagnostic-escaping
   [path : String]
   [source : String]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
-  (if (<= (string-length source) (compiler-load-direct-parse-source-limit))
-    (parse-ast-source-diagnostic-with-cfg path source cfgs)
-    (compiler-load-parse-source-diagnostic-escaped path source cfgs)))
+  (parse-ast-source-diagnostic-with-cfg path source cfgs))
 
 (define (compiler-load-parse-file-diagnostic-escaping
   [path : String]

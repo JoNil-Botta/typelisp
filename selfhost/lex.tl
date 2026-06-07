@@ -1034,13 +1034,32 @@
     [col : i64 (index-col src idx)]
     (SourceError message (SourceSpan line col line col))))
 
+;; Reusable spanned-token buffer. The per-source token array is sized to the
+;; SOURCE BYTE COUNT (a safe upper bound on the token count, since each token
+;; spans >= 1 byte), but only ~1/4 of those slots ever hold a token -- and with
+;; direct module parsing those over-sized arrays were never freed, so they
+;; accumulated to a large share of cold self-build peak memory. Every caller
+;; consumes the token array immediately (lex -> read -> parse, sequentially per
+;; module), so a single program-lifetime buffer can back them all: it is filled
+;; afresh on each lex and never aliased across two live token streams. Sources
+;; larger than the buffer fall back to a one-off array (correct, just unpooled),
+;; so the fixed size needs no growth path.
+(define lex-spanned-token-buffer-cap : i64
+  1310720)
+
+(define lex-spanned-token-buffer : (Array SpannedToken)
+  (make-array SpannedToken lex-spanned-token-buffer-cap))
+
 ;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
 ;; start-index pair of arrays, then materialize `count + 1` spanned tokens
 ;; (including the trailing TEnd).
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
   (let
     [cap : i64 (+ (string-length src) 1)]
-    [stoks : (Array SpannedToken) (make-array SpannedToken cap)]
+    [stoks : (Array SpannedToken)
+      (if (<= cap lex-spanned-token-buffer-cap)
+        lex-spanned-token-buffer
+        (make-array SpannedToken cap))]
     (match (lex-into-spanned-tokens-result src stoks)
       [(OkLexIntoSpanned count) (OkSpannedTokens stoks)]
       [(ErrLexIntoSpanned err) (ErrSpannedTokens err)])))

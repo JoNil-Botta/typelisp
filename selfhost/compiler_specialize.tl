@@ -1010,10 +1010,39 @@
           buf
           "(define ("
           prefix
-          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+          "-power-two-capacity? [capacity : i64]) : bool\n"))
       (set!
         buf
-        (gen-tb3 buf "  (% (" prefix "-hash-normalize hash) capacity))\n"))
+        (gen-tb2
+          buf
+          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-normalized-bucket-index\n  [hash : i64]\n  [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  (if (" prefix "-power-two-capacity? capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "    (bit-and hash (- capacity 1))\n    (% hash capacity)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb3 buf "  (" prefix "-normalized-bucket-index\n"))
+      (set! buf (gen-tb3 buf "    (" prefix "-hash-normalize hash)\n"))
+      (set! buf (gen-tb2 buf "    capacity))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -1021,7 +1050,12 @@
           "(define ("
           prefix
           "-next-index [index : i64] [capacity : i64]) : i64\n"))
-      (set! buf (gen-tb2 buf "  (% (+ index 1) capacity))\n" ""))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [next : i64 (+ index 1)]\n    (if (>= next capacity)\n      0\n      next)))\n"
+          ""))
       (set!
         buf
         (gen-tb3
@@ -1142,7 +1176,7 @@
           buf
           "      slots\n      capacity\n      key\n      hash\n      ("
           prefix
-          "-bucket-index hash capacity)\n"))
+          "-normalized-bucket-index hash capacity)\n"))
       (set! buf (gen-tb2 buf "      0\n      -1)))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe\n"))
       (set!
@@ -1480,7 +1514,7 @@
           buf
           "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
           prefix
-          "-bucket-index hash capacity)]\n"))
+          "-normalized-bucket-index hash capacity)]\n"))
       (set!
         buf
         (gen-tb5
@@ -1809,10 +1843,39 @@
           buf
           "(define ("
           prefix
-          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+          "-power-two-capacity? [capacity : i64]) : bool\n"))
       (set!
         buf
-        (gen-tb3 buf "  (% (" prefix "-hash-normalize hash) capacity))\n"))
+        (gen-tb2
+          buf
+          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-normalized-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  (if (" prefix "-power-two-capacity? capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "    (bit-and hash (- capacity 1))\n    (% hash capacity)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb3 buf "  (" prefix "-normalized-bucket-index\n"))
+      (set! buf (gen-tb3 buf "    (" prefix "-hash-normalize hash)\n"))
+      (set! buf (gen-tb2 buf "    capacity))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -1820,7 +1883,12 @@
           "(define ("
           prefix
           "-next-index [index : i64] [capacity : i64]) : i64\n"))
-      (set! buf (gen-tb2 buf "  (% (+ index 1) capacity))\n" ""))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [next : i64 (+ index 1)]\n    (if (>= next capacity)\n      0\n      next)))\n"
+          ""))
       (set!
         buf
         (gen-tb3
@@ -1920,7 +1988,7 @@
           buf
           "      slots\n      capacity\n      key\n      hash\n      ("
           prefix
-          "-bucket-index hash capacity)\n"))
+          "-normalized-bucket-index hash capacity)\n"))
       (set!
         buf
         (gen-tb4
@@ -2251,7 +2319,7 @@
           buf
           "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
           prefix
-          "-bucket-index hash capacity)]\n"))
+          "-normalized-bucket-index hash capacity)]\n"))
       (set!
         buf
         (gen-tb5

@@ -7397,9 +7397,6 @@
     (ErrTcUnit message)
     OkTcUnit))
 
-(define (tc-spmd-masked-if-unimplemented-message) : String
-  "typecheck: SPMD masked if is recognized but lowering is not implemented")
-
 (define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
   (ErrTcUnit
     (string-append "typecheck: SPMD masked if does not support " detail)))
@@ -7705,7 +7702,9 @@
         [(OkTcUnit)
           (match (tc-spmd-masked-if-expr ctx env spmd-env else-branch)
             [(OkTcUnit)
-              (ErrTcSpmdExprInfo (tc-spmd-masked-if-unimplemented-message))]
+              (match (tc-type-strip-region expr-ty)
+                [(AstTyUnit) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+                [_ (tc-spmd-finish expr-ty TcSpmdVarying spmd-env)])]
             [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])]
         [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])]
     [(ErrTcUnit message) (ErrTcSpmdExprInfo message)]))

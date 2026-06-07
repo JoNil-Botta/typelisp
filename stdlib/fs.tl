@@ -159,12 +159,10 @@
   (define (fs-windows-mkdir [path : (Ptr u8)]) : i32
     (if (= (fs-win-create-directory path 0) (cast 0 : i32))
       (begin
-        (unsafe
-          (ptr-write!
-            (io-windows-errno-location)
-            (if (= (fs-win-get-last-error) (cast 183 : i32))
-              (cast 17 : i32)
-              (cast 2 : i32))))
+        (io-set-error-code
+          (if (= (fs-win-get-last-error) (cast 183 : i32))
+            17
+            2))
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -174,8 +172,7 @@
   (define (fs-windows-unlink [path : (Ptr u8)]) : i32
     (if (= (fs-win-delete-file path) (cast 0 : i32))
       (begin
-        (unsafe
-          (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+        (io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -185,8 +182,7 @@
   (define (fs-windows-rmdir [path : (Ptr u8)]) : i32
     (if (= (fs-win-remove-directory path) (cast 0 : i32))
       (begin
-        (unsafe
-          (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+        (io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -218,8 +214,7 @@
       (fs-win-move-file-ex source destination (cast 1 : i32))
       (cast 0 : i32))
       (begin
-        (unsafe
-          (ptr-write! (io-windows-errno-location) (cast 2 : i32)))
+        (io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 

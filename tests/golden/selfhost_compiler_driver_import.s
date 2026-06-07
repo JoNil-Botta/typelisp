@@ -397,17 +397,6 @@ tl_arena_destroy:
     pop %rbx
     ret
 
-    .globl __errno_location
-__errno_location:
-    leaq tl_errno(%rip), %rax
-    ret
-
-    .data
-    .balign 4
-tl_errno:
-    .long 0
-    .text
-
 _start:
     movq (%rsp), %rax
     movq %rax, .L_tl_argc(%rip)

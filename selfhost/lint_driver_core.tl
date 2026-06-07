@@ -18,12 +18,8 @@
 
 ;; Parsed lint CLI config: input paths, stdlib roots, and whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present).
-(defenum SelfhostLintPathList
-  (SelfhostLintPathNil)
-  (SelfhostLintPathCons String (Box SelfhostLintPathList)))
-
 (defenum SelfhostLintConfig
-  (SelfhostLintFileConfig SelfhostLintPathList StringVec bool)
+  (SelfhostLintFileConfig StringVec StringVec bool)
   (SelfhostLintPackageConfig String bool StringVec bool))
 
 (defenum ResultSelfhostLintConfig
@@ -33,35 +29,13 @@
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (selfhost-lint-path-list-empty? [paths : SelfhostLintPathList]) : bool
-  (match paths
-    [(SelfhostLintPathNil) true]
-    [(SelfhostLintPathCons _ _) false]))
-
-(define (selfhost-lint-path-list-append
-  [paths : SelfhostLintPathList]
-  [path : String]) : SelfhostLintPathList
-  (match paths
-    [(SelfhostLintPathNil)
-      (SelfhostLintPathCons path (box SelfhostLintPathNil))]
-    [(SelfhostLintPathCons head rest)
-      (SelfhostLintPathCons
-        head
-        (box (selfhost-lint-path-list-append (box-get rest) path)))]))
-
-(define (selfhost-lint-path-list-count [paths : SelfhostLintPathList]) : i64
-  (match paths
-    [(SelfhostLintPathNil) 0]
-    [(SelfhostLintPathCons _ rest)
-      (+ 1 (selfhost-lint-path-list-count (box-get rest)))]))
-
 (define (selfhost-lint-config-finish
-  [input-paths : SelfhostLintPathList]
+  [input-paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]
   [enforcing : bool]) : ResultSelfhostLintConfig
-  (if (selfhost-lint-path-list-empty? input-paths)
+  (if (string-vec-is-empty? input-paths)
     (OkSelfhostLintConfig
       (SelfhostLintPackageConfig
         manifest-path
@@ -77,7 +51,7 @@
 (define (selfhost-lint-parse-options
   [idx : i64]
   [count : i64]
-  [input-paths : SelfhostLintPathList]
+  [input-paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]
@@ -134,7 +108,7 @@
           (selfhost-lint-parse-options
             (+ idx 1)
             count
-            (selfhost-lint-path-list-append input-paths current)
+            (string-vec-push input-paths current)
             manifest-path
             has-manifest
             stdlib-roots
@@ -145,7 +119,7 @@
   (selfhost-lint-parse-options
     start
     count
-    SelfhostLintPathNil
+    (string-vec-new)
     ""
     false
     (string-vec-new)
@@ -393,31 +367,47 @@
           (print-error (compiler-diagnostic-render diag))
           1)])))
 
-(define (selfhost-lint-files
-  [input-paths : SelfhostLintPathList]
+(define (selfhost-lint-files-from
+  [input-paths : StringVec]
+  [index : i64]
   [stdlib-roots : StringVec]
   [enforcing : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (match input-paths
-    [(SelfhostLintPathNil) status]
-    [(SelfhostLintPathCons input-path rest)
-      (let
-        [file-status : i64
-          (begin
-            (if print-headers
-              (print-string
-                (string-append "--- " (string-append input-path "\n")))
-              unit)
-            (selfhost-lint-file input-path stdlib-roots enforcing))]
-        (selfhost-lint-files
-          (box-get rest)
-          stdlib-roots
-          enforcing
-          print-headers
-          (if (= status 0)
-            file-status
-            status)))]))
+  (if (>= index (string-vec-len input-paths))
+    status
+    (let
+      [input-path : String (string-vec-get input-paths index "")]
+      [file-status : i64
+        (begin
+          (if print-headers
+            (print-string
+              (string-append "--- " (string-append input-path "\n")))
+            unit)
+          (selfhost-lint-file input-path stdlib-roots enforcing))]
+      (selfhost-lint-files-from
+        input-paths
+        (+ index 1)
+        stdlib-roots
+        enforcing
+        print-headers
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (selfhost-lint-files
+  [input-paths : StringVec]
+  [stdlib-roots : StringVec]
+  [enforcing : bool]
+  [print-headers : bool]
+  [status : i64]) : i64
+  (selfhost-lint-files-from
+    input-paths
+    0
+    stdlib-roots
+    enforcing
+    print-headers
+    status))
 
 (define (selfhost-lint-package-files
   [input-paths : StringList]
@@ -473,7 +463,7 @@
             input-paths
             stdlib-roots
             enforcing
-            (> (selfhost-lint-path-list-count input-paths) 1)
+            (> (string-vec-len input-paths) 1)
             0)]
         [(SelfhostLintPackageConfig
             manifest-path

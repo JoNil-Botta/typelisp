@@ -249,6 +249,20 @@
     ;; negative hash is normalized into [0, modulus) first: -1 -> 2147483646,
     ;; and 2147483646 % 4 = 2.
     (assert-i64-eq (string-i64-map-bucket-index -1 4) 2 "bucket negative")
+    (assert-true
+      (string-i64-map-power-two-capacity? 8)
+      "power-of-two capacity recognized")
+    (assert-false
+      (string-i64-map-power-two-capacity? 10)
+      "non-power-of-two capacity rejected")
+    (assert-i64-eq
+      (string-i64-map-normalized-bucket-index 13 8)
+      5
+      "normalized bucket masks power-of-two capacity")
+    (assert-i64-eq
+      (string-i64-map-normalized-bucket-index 13 10)
+      3
+      "normalized bucket falls back to modulo")
     (assert-i64-eq (string-i64-map-next-index 3 4) 0 "next wraps 3 -> 0")
     (assert-i64-eq (string-i64-map-next-index 1 4) 2 "next 1 -> 2")
     ;; --- zero / one capacity ---

@@ -26,8 +26,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `io.tl` while the compatibility wrapper keeps the owned `String` API.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
-  target-cfg-derived `env-path-separator` wrappers. Import it with
-  `(import "stdlib/env.tl")`.
+  target-cfg-derived `env-path-separator` wrappers. Environment names are
+  marshalled through a local C-string helper before calling the C `getenv` and
+  `strlen` FFI boundary; the local helper is kept here because the compiler
+  loader imports `env.tl` while stdlib roots are still being discovered. Import
+  it with `(import "stdlib/env.tl")`.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
   wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
   `cpu-runs-avx512f?` report an ISA as runnable only
@@ -91,6 +94,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers and
   weighted-index selection for selfhost tools, plus an OS-entropy seed source.
   Import it with `(import "stdlib/random.tl")`.
+- `runtime.tl`: always-linked runtime prelude. Holds the fault/abort handlers
+  (out-of-bounds, divide-by-zero, shift) the backend emits checks against, plus
+  the low-level OS write/exit primitives they use, as TypeLisp exported under
+  fixed symbols via `(:export-symbol …)` (#2143/#2142). Imported implicitly into
+  every executable; programs do not import it by hand.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
   including append/concat, substring, equality, integer rendering, and integer parsing
   helpers. Import it with `(import "stdlib/string.tl")`.
@@ -166,13 +174,13 @@ names so runtime-plan additions must be assigned an owner first.
   `.L_tl_file_write_status`, `.L_tl_file_flush_status`,
   `.L_tl_file_read_chunk_bytes`, `.L_tl_file_read_chunk_eof`,
   `.L_tl_read_stdin_line`, `.L_tl_read_stdin_bytes`, `.L_tl_stdin_eof`,
-  `.L_tl_flush_stdout`, `tl_env_var_exists`, `tl_env_var_value`,
-  `env-path-separator`. String migrations are tracked by #2036/#2037; env
-  migration is tracked by #1729.
+  `.L_tl_flush_stdout`. String migrations are tracked by #2036/#2037.
 - **Compatibility alias:** legacy public spellings that remain only so existing
   extern callers link: `tl_print_err`, `tl_print_str`, `tl_print_string`,
   `tl_print_char`, `tl_print_f64`, `.L_tl_arg_count`, `tl_arg_count`,
-  `.L_tl_arg`, `tl_arg`.
+  `.L_tl_arg`, `tl_arg`, `tl_env_var_exists`, `tl_env_var_value`,
+  `env-path-separator`. Normal source builds should import `stdlib/env.tl`
+  instead; these env symbols are retained for explicit legacy extern callers.
 - **Deprecated/delete candidate:** no current runtime-plan symbols are in this
   category. Add symbols here only with a linked removal owner.
 

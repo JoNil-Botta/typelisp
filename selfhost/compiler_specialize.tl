@@ -488,8 +488,8 @@
   (match decl
     [(AstDeclDef name _ _) (SpecSomeString name)]
     [(AstDeclDefFn name _ _ _ _) (SpecSomeString name)]
-    [(AstDeclDefEnum name _) (SpecSomeString name)]
-    [(AstDeclDefEnumLifetimes name _ _) (SpecSomeString name)]
+    [(AstDeclDefEnum name _ _) (SpecSomeString name)]
+    [(AstDeclDefEnumLifetimes name _ _ _) (SpecSomeString name)]
     [(AstDeclDefStruct name _ _ _) (SpecSomeString name)]
     [(AstDeclDefStructLifetimes name _ _ _ _) (SpecSomeString name)]
     [(AstDeclComptimeDecl _ inner-box)
@@ -603,14 +603,64 @@
         [(AstStructCleanupFn b-name) (string-eq a-name b-name)]
         [_ false])]))
 
+(define (gen-enum-cleanup-eq? [a : AstEnumCleanup] [b : AstEnumCleanup]) : bool
+  (match a
+    [(AstEnumNoCleanup)
+      (match b
+        [(AstEnumNoCleanup) true]
+        [_ false])]
+    [(AstEnumCleanupFn a-name)
+      (match b
+        [(AstEnumCleanupFn b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (gen-variant-payload-cleanup-eq?
+  [a : AstVariantPayloadCleanup]
+  [b : AstVariantPayloadCleanup]) : bool
+  (match a
+    [(AstVariantPayloadNoCleanup)
+      (match b
+        [(AstVariantPayloadNoCleanup) true]
+        [_ false])]
+    [(AstVariantPayloadCleanupFn a-name)
+      (match b
+        [(AstVariantPayloadCleanupFn b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstVariantPayloadOwnedCleanup)
+      (match b
+        [(AstVariantPayloadOwnedCleanup) true]
+        [_ false])]))
+
+(define (gen-variant-payload-cleanup-list-eq?
+  [a : AstVariantPayloadCleanupList]
+  [b : AstVariantPayloadCleanupList]) : bool
+  (match a
+    [(AstVariantPayloadCleanupNil)
+      (match b
+        [(AstVariantPayloadCleanupNil) true]
+        [_ false])]
+    [(AstVariantPayloadCleanupCons a-head a-rest)
+      (let
+        [a-rest : AstVariantPayloadCleanupList (box-get a-rest)]
+        (match b
+          [(AstVariantPayloadCleanupCons b-head b-rest)
+            (let
+              [b-rest : AstVariantPayloadCleanupList (box-get b-rest)]
+              (and
+                (gen-variant-payload-cleanup-eq? a-head b-head)
+                (gen-variant-payload-cleanup-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
 (define (gen-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
   (match a
-    [(AstVariantDef a-name a-payloads)
+    [(AstVariantDef a-name a-payloads a-cleanups)
       (match b
-        [(AstVariantDef b-name b-payloads)
+        [(AstVariantDef b-name b-payloads b-cleanups)
           (and
             (string-eq a-name b-name)
-            (ctfe-type-list-eq a-payloads b-payloads))])]))
+            (and
+              (ctfe-type-list-eq a-payloads b-payloads)
+              (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups)))])]))
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
   (match a
@@ -673,21 +723,25 @@
                       (gen-expr-eq? a-body b-body)
                       (gen-fn-export-eq? a-export b-export))))))]
           [_ false]))]
-    [(AstDeclDefEnum a-name a-variants)
+    [(AstDeclDefEnum a-name a-cleanup a-variants)
       (match b
-        [(AstDeclDefEnum b-name b-variants)
+        [(AstDeclDefEnum b-name b-cleanup b-variants)
           (and
             (string-eq a-name b-name)
-            (gen-variant-list-eq? a-variants b-variants))]
+            (and
+              (gen-enum-cleanup-eq? a-cleanup b-cleanup)
+              (gen-variant-list-eq? a-variants b-variants)))]
         [_ false])]
-    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-variants)
+    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
       (match b
-        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-variants)
+        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
           (and
             (string-eq a-name b-name)
             (and
               (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
-              (gen-variant-list-eq? a-variants b-variants)))]
+              (and
+                (gen-enum-cleanup-eq? a-cleanup b-cleanup)
+                (gen-variant-list-eq? a-variants b-variants))))]
         [_ false])]
     [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
       (match b
@@ -1010,10 +1064,39 @@
           buf
           "(define ("
           prefix
-          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+          "-power-two-capacity? [capacity : i64]) : bool\n"))
       (set!
         buf
-        (gen-tb3 buf "  (% (" prefix "-hash-normalize hash) capacity))\n"))
+        (gen-tb2
+          buf
+          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-normalized-bucket-index\n  [hash : i64]\n  [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  (if (" prefix "-power-two-capacity? capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "    (bit-and hash (- capacity 1))\n    (% hash capacity)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb3 buf "  (" prefix "-normalized-bucket-index\n"))
+      (set! buf (gen-tb3 buf "    (" prefix "-hash-normalize hash)\n"))
+      (set! buf (gen-tb2 buf "    capacity))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -1021,7 +1104,12 @@
           "(define ("
           prefix
           "-next-index [index : i64] [capacity : i64]) : i64\n"))
-      (set! buf (gen-tb2 buf "  (% (+ index 1) capacity))\n" ""))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [next : i64 (+ index 1)]\n    (if (>= next capacity)\n      0\n      next)))\n"
+          ""))
       (set!
         buf
         (gen-tb3
@@ -1142,7 +1230,7 @@
           buf
           "      slots\n      capacity\n      key\n      hash\n      ("
           prefix
-          "-bucket-index hash capacity)\n"))
+          "-normalized-bucket-index hash capacity)\n"))
       (set! buf (gen-tb2 buf "      0\n      -1)))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe\n"))
       (set!
@@ -1480,7 +1568,7 @@
           buf
           "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
           prefix
-          "-bucket-index hash capacity)]\n"))
+          "-normalized-bucket-index hash capacity)]\n"))
       (set!
         buf
         (gen-tb5
@@ -1809,10 +1897,39 @@
           buf
           "(define ("
           prefix
-          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+          "-power-two-capacity? [capacity : i64]) : bool\n"))
       (set!
         buf
-        (gen-tb3 buf "  (% (" prefix "-hash-normalize hash) capacity))\n"))
+        (gen-tb2
+          buf
+          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-normalized-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  (if (" prefix "-power-two-capacity? capacity)\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "    (bit-and hash (- capacity 1))\n    (% hash capacity)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb3 buf "  (" prefix "-normalized-bucket-index\n"))
+      (set! buf (gen-tb3 buf "    (" prefix "-hash-normalize hash)\n"))
+      (set! buf (gen-tb2 buf "    capacity))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -1820,7 +1937,12 @@
           "(define ("
           prefix
           "-next-index [index : i64] [capacity : i64]) : i64\n"))
-      (set! buf (gen-tb2 buf "  (% (+ index 1) capacity))\n" ""))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (let\n    [next : i64 (+ index 1)]\n    (if (>= next capacity)\n      0\n      next)))\n"
+          ""))
       (set!
         buf
         (gen-tb3
@@ -1920,7 +2042,7 @@
           buf
           "      slots\n      capacity\n      key\n      hash\n      ("
           prefix
-          "-bucket-index hash capacity)\n"))
+          "-normalized-bucket-index hash capacity)\n"))
       (set!
         buf
         (gen-tb4
@@ -2251,7 +2373,7 @@
           buf
           "  [hash : i64]) : unit\n  (if (<= capacity 0)\n    unit\n    (let\n      [cursor : i64 ("
           prefix
-          "-bucket-index hash capacity)]\n"))
+          "-normalized-bucket-index hash capacity)]\n"))
       (set!
         buf
         (gen-tb5

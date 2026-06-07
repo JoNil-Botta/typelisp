@@ -451,6 +451,29 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+UNSAFE_REACH="$WORKDIR/unsafe-import-reach"
+mkdir -p "$UNSAFE_REACH"
+cat > "$UNSAFE_REACH/lib.tl" <<'EOF'
+(define (unsafe-helper [x : i64]) : i64 (+ x 1))
+(unsafe
+  (define (unsafe-entry [x : i64]) : i64 (unsafe-helper x)))
+EOF
+cat > "$UNSAFE_REACH/main.tl" <<'EOF'
+(import "lib.tl")
+(define (main) : i64 (unsafe (unsafe-entry 41)))
+EOF
+UNSAFE_REACH_TARGET=windows-x86_64
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    UNSAFE_REACH_TARGET=$HOST_TARGET
+fi
+run_cmd unsafe-import-reach-compile "$COMPILER" compile "$UNSAFE_REACH/main.tl" --target "$UNSAFE_REACH_TARGET" -o "$UNSAFE_REACH/main.s" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+    assert_contains "$out" "Generated:"
+fi
+assert_contains "$UNSAFE_REACH/main.s" "main:"
+
 echo "[public-tools] CLI command matrix and diagnostics"
 CLI_MATRIX="$WORKDIR/cli-matrix"
 mkdir -p "$CLI_MATRIX"
@@ -1468,6 +1491,27 @@ EOF
     assert_success
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
+
+    run_cmd lint-multi "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_ladder.tl"
+    assert_success
+    assert_stderr_empty
+    lint_clean_display=$(native_arg_path "$WORKDIR/lint_clean.tl")
+    lint_ladder_display=$(native_arg_path "$WORKDIR/lint_ladder.tl")
+    assert_contains "$out" "--- $lint_clean_display"
+    assert_contains "$out" "--- $lint_ladder_display"
+    assert_contains "$out" "lint_ladder.tl:"
+    assert_contains "$out" "lint: 0 finding(s)"
+    assert_contains "$out" "lint: 1 finding(s)"
+    lint_multi_clean_line=$(grep -nF -- "--- $lint_clean_display" "$out" | head -n 1 | cut -d: -f1)
+    lint_multi_ladder_line=$(grep -nF -- "--- $lint_ladder_display" "$out" | head -n 1 | cut -d: -f1)
+    if [ "$lint_multi_clean_line" -ge "$lint_multi_ladder_line" ]; then
+        fail "lint multi-file output did not preserve input path order"
+    fi
+
+    run_cmd lint-files-manifest "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_ladder.tl" --manifest-path typelisp.pkg
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "cannot combine input paths with --manifest-path"
 
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
     run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint

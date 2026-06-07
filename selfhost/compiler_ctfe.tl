@@ -256,7 +256,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name payloads)
+          [(AstVariantDef name payloads _)
             (CtfeReflectVariantCons
               (CtfeReflectVariant name payloads)
               (box (ctfe-reflect-variant-list-from-variants rest)))]))]))
@@ -331,7 +331,7 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (let
               [key : String
                 (if (= (string-length module) 0)
@@ -347,7 +347,7 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
-          [(AstDeclDefEnumLifetimes name _ variants)
+          [(AstDeclDefEnumLifetimes name _ _ variants)
             (let
               [key : String
                 (if (= (string-length module) 0)
@@ -399,7 +399,7 @@
                       rest
                       module
                       (ctfe-reflect-info-add-names infos info name module)))]
-                [(AstDeclDefEnum name variants)
+                [(AstDeclDefEnum name _ variants)
                   (let
                     [key : String
                       (if (= (string-length module) 0)
@@ -415,7 +415,7 @@
                       rest
                       module
                       (ctfe-reflect-info-add-names infos info name module)))]
-                [(AstDeclDefEnumLifetimes name _ variants)
+                [(AstDeclDefEnumLifetimes name _ _ variants)
                   (let
                     [key : String
                       (if (= (string-length module) 0)

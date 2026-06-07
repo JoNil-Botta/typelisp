@@ -600,6 +600,21 @@
         cleanup-name
         (lower-decl-logical-name entry-path decl-path module cleanup-name))]))
 
+(define (lower-name-env-add-enum-cleanup-in-module
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [cleanup : AstEnumCleanup]) : LowerNameEnv
+  (match cleanup
+    [(AstEnumNoCleanup) names]
+    [(AstEnumCleanupFn cleanup-name)
+      (lower-name-env-add-module-binding
+        names
+        module
+        cleanup-name
+        (lower-decl-logical-name entry-path decl-path module cleanup-name))]))
+
 (define (lower-name-env-add-local-struct-cleanup
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
@@ -608,6 +623,19 @@
   (match cleanup
     [(AstStructNoCleanup) names]
     [(AstStructCleanupFn cleanup-name)
+      (LowerNameBind
+        cleanup-name
+        (lower-current-decl-logical-name-cache name-cache module cleanup-name)
+        (box names))]))
+
+(define (lower-name-env-add-local-enum-cleanup
+  [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
+  [module : String]
+  [cleanup : AstEnumCleanup]) : LowerNameEnv
+  (match cleanup
+    [(AstEnumNoCleanup) names]
+    [(AstEnumCleanupFn cleanup-name)
       (LowerNameBind
         cleanup-name
         (lower-current-decl-logical-name-cache name-cache module cleanup-name)
@@ -780,6 +808,20 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
+    [(AstDeclDefEnum _ cleanup _)
+      (lower-name-env-add-enum-cleanup-in-module
+        names
+        entry-path
+        decl-path
+        module
+        cleanup)]
+    [(AstDeclDefEnumLifetimes _ _ cleanup _)
+      (lower-name-env-add-enum-cleanup-in-module
+        names
+        entry-path
+        decl-path
+        module
+        cleanup)]
     [(AstDeclDefStruct _ _ cleanup _)
       (lower-name-env-add-struct-cleanup-in-module
         names
@@ -1213,6 +1255,10 @@
         name
         (lower-current-decl-logical-name-cache name-cache module name)
         (box names))]
+    [(AstDeclDefEnum _ cleanup _)
+      (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
+    [(AstDeclDefEnumLifetimes _ _ cleanup _)
+      (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
     [(AstDeclDefStruct _ _ cleanup _)
       (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
     [(AstDeclDefStructLifetimes _ _ _ cleanup _)
@@ -1243,7 +1289,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (match (lower-module-local-type-env-bind-qualified
               top-env
               env
@@ -1271,8 +1317,38 @@
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclExtern name _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
-    [(AstDeclDefEnum _ variants)
-      (lower-module-local-type-env-add-variants top-env env module variants)]
+    [(AstDeclDefEnum _ cleanup variants)
+      (match (lower-module-local-type-env-add-variants
+        top-env
+        env
+        module
+        variants)
+        [(OkTcEnv next-env)
+          (match cleanup
+            [(AstEnumNoCleanup) (OkTcEnv next-env)]
+            [(AstEnumCleanupFn cleanup-name)
+              (lower-module-local-type-env-bind-qualified
+                top-env
+                next-env
+                module
+                cleanup-name)])]
+        [(ErrTcEnv message) (ErrTcEnv message)])]
+    [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+      (match (lower-module-local-type-env-add-variants
+        top-env
+        env
+        module
+        variants)
+        [(OkTcEnv next-env)
+          (match cleanup
+            [(AstEnumNoCleanup) (OkTcEnv next-env)]
+            [(AstEnumCleanupFn cleanup-name)
+              (lower-module-local-type-env-bind-qualified
+                top-env
+                next-env
+                module
+                cleanup-name)])]
+        [(ErrTcEnv message) (ErrTcEnv message)])]
     [(AstDeclDefStruct name _ cleanup _)
       (match (lower-module-local-type-env-bind-qualified
         top-env
@@ -1401,6 +1477,24 @@
     items
     (LowerStringCons name (box items))))
 
+(define (lower-function-logical-name-from-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [decl : AstDecl]) : TcMaybeString
+  (match decl
+    [(AstDeclDefFn name _ _ _ _)
+      (TcSomeString (lower-decl-logical-name entry-path decl-path module name))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-function-logical-name-from-decl
+          entry-path
+          decl-path
+          module
+          inner))]
+    [_ (TcNoString)]))
+
 (define (lower-function-set-from-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -1431,23 +1525,20 @@
               entry-path
               next-module
               out)]
-          [(AstDeclDefFn name _ _ _ _)
-            (lower-function-set-from-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              (string-i64-map-put
-                out
-                (lower-decl-logical-name entry-path decl-path module name)
-                1))]
           [_
             (lower-function-set-from-decls-in-module
               rest
               rest-paths
               entry-path
               module
-              out)]))]))
+              (match (lower-function-logical-name-from-decl
+                entry-path
+                decl-path
+                module
+                decl)
+                [(TcSomeString logical-name)
+                  (string-i64-map-put out logical-name 1)]
+                [(TcNoString) out]))]))]))
 
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
@@ -1511,7 +1602,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (lower-clone-root-add-variant-list
               ctx
               decls
@@ -1531,7 +1622,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefEnum decl-name variants)
+          [(AstDeclDefEnum decl-name _ variants)
             (if (string-eq decl-name name)
               (lower-clone-root-add-variant-list ctx decls able roots variants)
               (lower-clone-root-add-named-deps ctx rest able roots name))]
@@ -2768,6 +2859,26 @@
     [(AstExprSyscall args)
       (lower-reach-expr-list all-functions names state args)]))
 
+(define (lower-reach-global-decl
+  [all-functions : StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [decl : AstDecl]) : LowerReachState
+  (match decl
+    [(AstDeclDef _ _ expr-box)
+      (let
+        [expr : AstExpr (box-get expr-box)]
+        (lower-reach-expr all-functions names state expr))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-global-decl all-functions names state inner))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-global-decl all-functions names state inner))]
+    [_ state]))
+
 (define (lower-reach-global-decls
   [all-functions : StringI64Map]
   [names : LowerNameCache]
@@ -2778,29 +2889,11 @@
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDef _ _ expr-box)
-            (let
-              [expr : AstExpr (box-get expr-box)]
-              (lower-reach-global-decls
-                all-functions
-                names
-                (lower-reach-expr all-functions names state expr)
-                rest))]
-          [(AstDeclComptimeDecl _ inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (lower-reach-global-decls
-                all-functions
-                names
-                (match inner
-                  [(AstDeclDef _ _ expr-box)
-                    (let
-                      [expr : AstExpr (box-get expr-box)]
-                      (lower-reach-expr all-functions names state expr))]
-                  [_ state])
-                rest))]
-          [_ (lower-reach-global-decls all-functions names state rest)]))]))
+        (lower-reach-global-decls
+          all-functions
+          names
+          (lower-reach-global-decl all-functions names state decl)
+          rest))]))
 
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
@@ -3183,6 +3276,25 @@
     (string-i64-map-contains? reachable logical-name)
     (string-i64-map-contains? dispatch-variants logical-name)))
 
+(define (lower-decl-kept-by-reach-or-dispatch?
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]
+  [decl : AstDecl]) : bool
+  (match (lower-function-logical-name-from-decl
+    entry-path
+    decl-path
+    module
+    decl)
+    [(TcSomeString logical-name)
+      (lower-function-kept-by-reach-or-dispatch?
+        reachable
+        dispatch-variants
+        logical-name)]
+    [(TcNoString) true]))
+
 (define (lower-filter-reachable-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -3217,11 +3329,14 @@
                 next-module
                 reachable
                 dispatch-variants))]
-          [(AstDeclDefFn name _ _ _ _)
-            (if (lower-function-kept-by-reach-or-dispatch?
+          [_
+            (if (lower-decl-kept-by-reach-or-dispatch?
+              entry-path
+              decl-path
+              module
               reachable
               dispatch-variants
-              (lower-decl-logical-name entry-path decl-path module name))
+              decl)
               (ast-decl-cons
                 decl
                 (lower-filter-reachable-decls-in-module
@@ -3231,16 +3346,6 @@
                   module
                   reachable
                   dispatch-variants))
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                reachable
-                dispatch-variants))]
-          [_
-            (ast-decl-cons
-              decl
               (lower-filter-reachable-decls-in-module
                 rest
                 rest-paths
@@ -3283,11 +3388,14 @@
                 next-module
                 reachable
                 dispatch-variants))]
-          [(AstDeclDefFn name _ _ _ _)
-            (if (lower-function-kept-by-reach-or-dispatch?
+          [_
+            (if (lower-decl-kept-by-reach-or-dispatch?
+              entry-path
+              decl-path
+              module
               reachable
               dispatch-variants
-              (lower-decl-logical-name entry-path decl-path module name))
+              decl)
               (ast-decl-path-cons
                 decl-path
                 (lower-filter-reachable-paths-in-module
@@ -3297,16 +3405,6 @@
                   module
                   reachable
                   dispatch-variants))
-              (lower-filter-reachable-paths-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                reachable
-                dispatch-variants))]
-          [_
-            (ast-decl-path-cons
-              decl-path
               (lower-filter-reachable-paths-in-module
                 rest
                 rest-paths
@@ -3335,6 +3433,83 @@
           names
           state
           (clone-helper-name name)))]))
+
+;; Functions with an `(:export-symbol …)` declaration (#2143) publish a fixed
+;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
+;; backend-emitted bounds/division/shift checks call the runtime-prelude
+;; handlers). Seed every exported function as a reachability root so the prune
+;; keeps it and its transitive callees even with no IR caller.
+(define (lower-reach-add-export-root-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]
+  [decl : AstDecl]) : LowerReachState
+  (match decl
+    [(AstDeclDefFn name _ _ _ export)
+      (match export
+        [(AstFnExport _)
+          (lower-reach-add-logical
+            all-functions
+            state
+            (lower-decl-logical-name entry-path decl-path module name))]
+        [(AstFnNoExport) state])]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-reach-add-export-root-decl
+          entry-path
+          decl-path
+          module
+          all-functions
+          state
+          inner))]
+    [_ state]))
+
+(define (lower-reach-add-export-roots-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [module : String]
+  [all-functions : StringI64Map]
+  [state : LowerReachState]) : LowerReachState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) (box-get path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-reach-add-export-roots-in-module
+              rest
+              rest-paths
+              entry-path
+              next-module
+              all-functions
+              state)]
+          [_
+            (lower-reach-add-export-roots-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              all-functions
+              (lower-reach-add-export-root-decl
+                entry-path
+                decl-path
+                module
+                all-functions
+                state
+                decl))]))]))
 
 (define (lower-prune-unreachable-functions-with-clone-roots
   [entry-path : String]
@@ -3377,12 +3552,18 @@
                   all-functions
                   name-cache
                   clone-roots
-                  (lower-reach-add-logical
+                  (lower-reach-add-export-roots-in-module
+                    decls
+                    paths
+                    entry-path
+                    ""
                     all-functions
-                    (LowerReachState
-                      (string-i64-map-with-capacity 8192)
-                      LowerStringNil)
-                    "main")))
+                    (lower-reach-add-logical
+                      all-functions
+                      (LowerReachState
+                        (string-i64-map-with-capacity 8192)
+                        LowerStringNil)
+                      "main"))))
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram
@@ -3866,7 +4047,7 @@
 
 (define (lower-variant-storage-size [ctx : TcContext] [variant : AstVariantDef]) : i64
   (match variant
-    [(AstVariantDef _ fields) (lower-variant-fields-storage-size ctx fields)]))
+    [(AstVariantDef _ fields _) (lower-variant-fields-storage-size ctx fields)]))
 
 (define (lower-nullary-variant-object-name
   [enum-name : String]
@@ -3886,7 +4067,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef variant-name fields)
+          [(AstVariantDef variant-name fields _)
             (let
               [next : CompilerIrGlobalList
                 (match fields
@@ -4423,7 +4604,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (and
               (lower-supported-reference-type-list-subst-with-stack?
                 ctx
@@ -6019,7 +6200,7 @@
                               next-label))
                           variant-label)]
                       (match variant
-                        [(AstVariantDef _ fields)
+                        [(AstVariantDef _ fields _)
                           (match (lower-capture-snapshot-type-list
                             ctx
                             branch-state
@@ -7594,64 +7775,7 @@
   (cond
     [(string-eq name "string-eq") true]
     [(string-eq name "string=?") true]
-    [(string-eq name "string->int") true]
-    [(string-eq name "env-var-exists?") true]
-    [(string-eq name "env-var-value") true]
-    [else (string-eq name "env-path-separator")]))
-
-(define (lower-env-runtime-name [name : String]) : String
-  (cond
-    [(string-eq name "env-var-exists?") "tl_env_var_exists"]
-    [(string-eq name "env-var-value") "tl_env_var_value"]
-    [else "env-path-separator"]))
-
-(define (lower-env-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (if (string-eq name "env-path-separator")
-    (match args
-      [(AstExprNil)
-        (lower-runtime-call-values
-          state
-          (lower-env-runtime-name name)
-          IrValueNil
-          result-ty)]
-      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])
-    (match args
-      [(AstExprCons arg tail)
-        (let
-          [arg : AstExpr (box-get arg)]
-          [tail : AstExprList (box-get tail)]
-          (match tail
-            [(AstExprNil)
-              (lower-one-string-object-runtime-call
-                ctx
-                state
-                env
-                type-env
-                arg
-                (lower-env-runtime-name name)
-                result-ty
-                (string-append
-                  (string-append "lower: " name)
-                  " requires String"))]
-            [_
-              (lower-direct-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]))]
-      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])))
+    [else (string-eq name "string->int")]))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -11018,12 +11142,6 @@
       (lower-string-eq-call ctx state env type-env args result-ty origin)]
     [(string-eq name "string->int")
       (lower-string-to-int-call ctx state env type-env args result-ty origin)]
-    [(or
-        (string-eq name "env-var-exists?")
-        (or
-          (string-eq name "env-var-value")
-          (string-eq name "env-path-separator")))
-      (lower-env-runtime-call ctx state env type-env name args result-ty origin)]
     [else (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
@@ -17768,7 +17886,7 @@
               dispatch-variants
               mode
               module)]
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (lower-decls-in-module
               ctx
               top-env
@@ -17788,7 +17906,7 @@
               dispatch-variants
               mode
               module)]
-          [(AstDeclDefEnumLifetimes name _ variants)
+          [(AstDeclDefEnumLifetimes name _ _ variants)
             (lower-decls-in-module
               ctx
               top-env
@@ -20132,6 +20250,523 @@
         (lower-test-instr-store-global-count instr name)
         (lower-test-instrs-store-global-count (box-get rest) name))]))
 
+(define (lower-test-instr-seq-phi-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-phi-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-load-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-load-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-branch-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-branch-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-bounds-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-bounds-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-return-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-return-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-call-count
+  [instrs : CompilerIrInstrSeq]
+  [name : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-call-count (array-ref slots index) name)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-call-before?
+  [instrs : CompilerIrInstrSeq]
+  [first : String]
+  [second : String]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [seen-first : bool false]
+    [done : bool false]
+    [result : bool false]
+    (begin
+      (while (and (< index count) (not done))
+        (let
+          [instr : CompilerIrInstr (array-ref slots index)]
+          (begin
+            (if (lower-test-instr-call-name? instr second)
+              (begin
+                (set! result seen-first)
+                (set! done true))
+              (if (lower-test-instr-call-name? instr first)
+                (set! seen-first true)
+                unit))
+            (set! index (+ index 1)))))
+      result)))
+
+(define (lower-test-instr-seq-cpuid-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-cpuid-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-xgetbv-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-xgetbv-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-indirect-call-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-indirect-call-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-indirect-unit-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-indirect-unit-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-return-function-count
+  [instrs : CompilerIrInstrSeq]
+  [function-name : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-return-function-count
+                (array-ref slots index)
+                function-name)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-indirect-callee-function-count
+  [instrs : CompilerIrInstrSeq]
+  [function-name : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-indirect-callee-function-count
+                (array-ref slots index)
+                function-name)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-call-arg-function-count
+  [instrs : CompilerIrInstrSeq]
+  [call-name : String]
+  [function-name : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-call-arg-function-count
+                (array-ref slots index)
+                call-name
+                function-name)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-tail-call-count
+  [instrs : CompilerIrInstrSeq]
+  [name : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-tail-call-count (array-ref slots index) name)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-store-ptr-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-store-ptr-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-alloc-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-alloc-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-addr-of-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-addr-of-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-load-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-vector-load-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-binop-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-binop-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-reduce-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-reduce-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-store-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-store-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-predicated-load-count
+  [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-predicated-load-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-predicated-store-count
+  [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-predicated-store-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-tail-mask-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-tail-mask-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-shape-count
+  [instrs : CompilerIrInstrSeq]
+  [lanes : i64]
+  [elem-ty : AstType]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-shape-count
+                (array-ref slots index)
+                lanes
+                elem-ty)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-u64-mov-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-u64-mov-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-binop-op-count
+  [instrs : CompilerIrInstrSeq]
+  [op : CompilerIrBinOp]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-binop-op-count (array-ref slots index) op)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-cast-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-cast-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-store-global-count
+  [instrs : CompilerIrInstrSeq]
+  [name : String]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-store-global-count (array-ref slots index) name)))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
@@ -20139,7 +20774,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-phi-count (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-phi-count instrs)
             (lower-test-blocks-phi-count (box-get rest)))])]))
 
 (define (lower-test-blocks-load-count [blocks : CompilerIrBlockList]) : i64
@@ -20149,8 +20784,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-load-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-load-count instrs)
             (lower-test-blocks-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-branch-count [blocks : CompilerIrBlockList]) : i64
@@ -20160,8 +20794,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-branch-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-branch-count instrs)
             (lower-test-blocks-branch-count (box-get rest)))])]))
 
 (define (lower-test-blocks-bounds-count [blocks : CompilerIrBlockList]) : i64
@@ -20171,8 +20804,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-bounds-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-bounds-count instrs)
             (lower-test-blocks-bounds-count (box-get rest)))])]))
 
 (define (lower-test-blocks-return-count [blocks : CompilerIrBlockList]) : i64
@@ -20182,8 +20814,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-return-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-return-count instrs)
             (lower-test-blocks-return-count (box-get rest)))])]))
 
 (define (lower-test-blocks-call-count
@@ -20195,9 +20826,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-call-count
-              (compiler-ir-instr-seq-to-list instrs)
-              name)
+            (lower-test-instr-seq-call-count instrs name)
             (lower-test-blocks-call-count (box-get rest) name))])]))
 
 (define (lower-test-blocks-call-before?
@@ -20209,11 +20838,7 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (lower-test-instrs-call-before?
-            (compiler-ir-instr-seq-to-list instrs)
-            first
-            second
-            false)
+          (if (lower-test-instr-seq-call-before? instrs first second)
             true
             (lower-test-blocks-call-before? (box-get rest) first second))])]))
 
@@ -20224,8 +20849,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-cpuid-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-cpuid-count instrs)
             (lower-test-blocks-cpuid-count (box-get rest)))])]))
 
 (define (lower-test-blocks-xgetbv-count [blocks : CompilerIrBlockList]) : i64
@@ -20235,8 +20859,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-xgetbv-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-xgetbv-count instrs)
             (lower-test-blocks-xgetbv-count (box-get rest)))])]))
 
 (define (lower-test-blocks-indirect-call-count [blocks : CompilerIrBlockList]) : i64
@@ -20246,8 +20869,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-indirect-call-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-indirect-call-count instrs)
             (lower-test-blocks-indirect-call-count (box-get rest)))])]))
 
 (define (lower-test-blocks-indirect-unit-count [blocks : CompilerIrBlockList]) : i64
@@ -20257,8 +20879,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-indirect-unit-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-indirect-unit-count instrs)
             (lower-test-blocks-indirect-unit-count (box-get rest)))])]))
 
 (define (lower-test-blocks-return-function-count
@@ -20270,9 +20891,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-return-function-count
-              (compiler-ir-instr-seq-to-list instrs)
-              function-name)
+            (lower-test-instr-seq-return-function-count instrs function-name)
             (lower-test-blocks-return-function-count
               (box-get rest)
               function-name))])]))
@@ -20286,8 +20905,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-indirect-callee-function-count
-              (compiler-ir-instr-seq-to-list instrs)
+            (lower-test-instr-seq-indirect-callee-function-count
+              instrs
               function-name)
             (lower-test-blocks-indirect-callee-function-count
               (box-get rest)
@@ -20303,8 +20922,8 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-call-arg-function-count
-              (compiler-ir-instr-seq-to-list instrs)
+            (lower-test-instr-seq-call-arg-function-count
+              instrs
               call-name
               function-name)
             (lower-test-blocks-call-arg-function-count
@@ -20321,9 +20940,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-tail-call-count
-              (compiler-ir-instr-seq-to-list instrs)
-              name)
+            (lower-test-instr-seq-tail-call-count instrs name)
             (lower-test-blocks-tail-call-count (box-get rest) name))])]))
 
 (define (lower-test-blocks-store-ptr-count [blocks : CompilerIrBlockList]) : i64
@@ -20333,8 +20950,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-store-ptr-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-store-ptr-count instrs)
             (lower-test-blocks-store-ptr-count (box-get rest)))])]))
 
 (define (lower-test-blocks-alloc-count [blocks : CompilerIrBlockList]) : i64
@@ -20344,8 +20960,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-alloc-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-alloc-count instrs)
             (lower-test-blocks-alloc-count (box-get rest)))])]))
 
 (define (lower-test-blocks-addr-of-count [blocks : CompilerIrBlockList]) : i64
@@ -20355,8 +20970,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-addr-of-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-addr-of-count instrs)
             (lower-test-blocks-addr-of-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-load-count [blocks : CompilerIrBlockList]) : i64
@@ -20366,8 +20980,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-load-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-vector-load-count instrs)
             (lower-test-blocks-vector-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-binop-count [blocks : CompilerIrBlockList]) : i64
@@ -20377,8 +20990,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-binop-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-vector-binop-count instrs)
             (lower-test-blocks-vector-binop-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-reduce-count [blocks : CompilerIrBlockList]) : i64
@@ -20388,8 +21000,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-reduce-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-vector-reduce-count instrs)
             (lower-test-blocks-vector-reduce-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-store-count [blocks : CompilerIrBlockList]) : i64
@@ -20399,8 +21010,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-store-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-vector-store-count instrs)
             (lower-test-blocks-vector-store-count (box-get rest)))])]))
 
 (define (lower-test-blocks-predicated-load-count [blocks : CompilerIrBlockList]) : i64
@@ -20410,8 +21020,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-predicated-load-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-predicated-load-count instrs)
             (lower-test-blocks-predicated-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-predicated-store-count
@@ -20422,8 +21031,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-predicated-store-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-predicated-store-count instrs)
             (lower-test-blocks-predicated-store-count (box-get rest)))])]))
 
 (define (lower-test-blocks-tail-mask-count [blocks : CompilerIrBlockList]) : i64
@@ -20433,8 +21041,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-tail-mask-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-tail-mask-count instrs)
             (lower-test-blocks-tail-mask-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-shape-count
@@ -20447,10 +21054,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-vector-shape-count
-              (compiler-ir-instr-seq-to-list instrs)
-              lanes
-              elem-ty)
+            (lower-test-instr-seq-vector-shape-count instrs lanes elem-ty)
             (lower-test-blocks-vector-shape-count (box-get rest) lanes elem-ty))])]))
 
 (define (lower-test-blocks-u64-mov-count [blocks : CompilerIrBlockList]) : i64
@@ -20460,8 +21064,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-u64-mov-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-u64-mov-count instrs)
             (lower-test-blocks-u64-mov-count (box-get rest)))])]))
 
 (define (lower-test-blocks-binop-op-count
@@ -20473,9 +21076,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-binop-op-count
-              (compiler-ir-instr-seq-to-list instrs)
-              op)
+            (lower-test-instr-seq-binop-op-count instrs op)
             (lower-test-blocks-binop-op-count (box-get rest) op))])]))
 
 (define (lower-test-blocks-cast-count [blocks : CompilerIrBlockList]) : i64
@@ -20485,8 +21086,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-cast-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-cast-count instrs)
             (lower-test-blocks-cast-count (box-get rest)))])]))
 
 (define (lower-test-blocks-store-global-count
@@ -20498,9 +21098,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-store-global-count
-              (compiler-ir-instr-seq-to-list instrs)
-              name)
+            (lower-test-instr-seq-store-global-count instrs name)
             (lower-test-blocks-store-global-count (box-get rest) name))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
@@ -21540,6 +22138,59 @@
         (lower-test-instr-gep-offset-count instr want)
         (lower-test-instrs-gep-offset-count (box-get rest) want))]))
 
+(define (lower-test-instr-seq-i64-mov-count
+  [instrs : CompilerIrInstrSeq]
+  [want : i64]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-i64-mov-count (array-ref slots index) want)))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-binop-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-binop-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-gep-offset-count
+  [instrs : CompilerIrInstrSeq]
+  [want : i64]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-gep-offset-count (array-ref slots index) want)))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-blocks-i64-mov-count
   [blocks : CompilerIrBlockList]
   [want : i64]) : i64
@@ -21549,9 +22200,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-i64-mov-count
-              (compiler-ir-instr-seq-to-list instrs)
-              want)
+            (lower-test-instr-seq-i64-mov-count instrs want)
             (lower-test-blocks-i64-mov-count (box-get rest) want))])]))
 
 (define (lower-test-blocks-binop-count [blocks : CompilerIrBlockList]) : i64
@@ -21561,8 +22210,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-binop-count
-              (compiler-ir-instr-seq-to-list instrs))
+            (lower-test-instr-seq-binop-count instrs)
             (lower-test-blocks-binop-count (box-get rest)))])]))
 
 (define (lower-test-blocks-gep-offset-count
@@ -21574,9 +22222,7 @@
       (match block
         [(IrBlock _ instrs)
           (+
-            (lower-test-instrs-gep-offset-count
-              (compiler-ir-instr-seq-to-list instrs)
-              want)
+            (lower-test-instr-seq-gep-offset-count instrs want)
             (lower-test-blocks-gep-offset-count (box-get rest) want))])]))
 
 (define (lower-test-function-i64-mov-count
@@ -23498,6 +24144,13 @@
         (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "stdin-eof?") (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "flush-stdout") (set! ok false))
+      (when
+        (lower-bootstrap-runtime-builtin? "env-var-exists?")
+        (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "env-var-value") (set! ok false))
+      (when
+        (lower-bootstrap-runtime-builtin? "env-path-separator")
+        (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "int->string") (set! ok false))
       (when (lower-string-runtime-builtin? "substring") (set! ok false))
       (when (lower-string-runtime-builtin? "string-slice") (set! ok false))
@@ -23805,6 +24458,22 @@
             (if (string-eq found name)
               true
               (lower-test-decl-list-defines? rest name))]
+          [(AstDeclComptimeDecl _ inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (if (lower-test-decl-list-defines?
+                (ast-decl-cons inner AstDeclNil)
+                name)
+                true
+                (lower-test-decl-list-defines? rest name)))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (if (lower-test-decl-list-defines?
+                (ast-decl-cons inner AstDeclNil)
+                name)
+                true
+                (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
 (define (compiler-lower-ast-dce-program) : AstProgram
@@ -23852,6 +24521,13 @@
           (AstTyI64)
           (AstExprLiteral (AstLitInt 9)))
         AstDeclNil))))
+
+(define (compiler-lower-unsafe-ast-dce-source) : String
+  "(define (main) : i64 (unsafe (unsafe-entry)))
+(define (unsafe-helper) : i64 41)
+(unsafe (define (unsafe-entry) : i64 (unsafe-helper)))
+(define (dead-helper) : i64 0)
+(unsafe (define (dead-unsafe) : i64 (dead-helper)))")
 
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
@@ -23917,6 +24593,45 @@
                                   (=
                                     (lower-test-decl-list-count no-main-kept)
                                     2)))))))]))])])])))
+
+(define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : AstDeclList]) : bool
+  (and
+    (= (lower-test-decl-list-count kept) 3)
+    (and
+      (lower-test-decl-list-defines? kept "main")
+      (and
+        (lower-test-decl-list-defines? kept "unsafe-helper")
+        (and
+          (lower-test-decl-list-defines? kept "unsafe-entry")
+          (and
+            (not (lower-test-decl-list-defines? kept "dead-helper"))
+            (not (lower-test-decl-list-defines? kept "dead-unsafe"))))))))
+
+(define (compiler-lower-unsafe-ast-dce-ok?) : bool
+  (match (parse-ast-source (compiler-lower-unsafe-ast-dce-source))
+    [(OkAstProgram program)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [names : LowerNameEnv
+              (lower-name-env-from-decls
+                decls
+                AstDeclPathNil
+                "entry.tl"
+                LowerNameNil)]
+            [pruned : LowerPrunedProgram
+              (lower-prune-unreachable-functions
+                "entry.tl"
+                program
+                AstDeclPathNil
+                names)]
+            (match pruned
+              [(LowerPrunedProgram kept-program _)
+                (match kept-program
+                  [(AstProgram kept-box)
+                    (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
@@ -24054,6 +24769,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ast-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-unsafe-ast-dce-ok?)
         unit
         (set! ok false))
       ok)))

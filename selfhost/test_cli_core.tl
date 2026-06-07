@@ -908,12 +908,16 @@
         (if (string-i64-map-contains? names name)
           (tltest-reach-mark-expr expr names)
           names))]
-    [(AstDeclDefFn name _ _ body-box _)
+    [(AstDeclDefFn name _ _ body-box export)
       (let
         [body : AstExpr (box-get body-box)]
-        (if (string-i64-map-contains? names name)
-          (tltest-reach-mark-expr body names)
-          names))]
+        (match export
+          [(AstFnExport _)
+            (tltest-reach-mark-expr body (tltest-reach-mark-name names name))]
+          [(AstFnNoExport)
+            (if (string-i64-map-contains? names name)
+              (tltest-reach-mark-expr body names)
+              names)]))]
     [(AstDeclDefMacro _ _ _ _) names]
     [(AstDeclUnsafe inner-box)
       (let
@@ -961,7 +965,10 @@
 (define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
   (match decl
     [(AstDeclDef name _ _) (string-i64-map-contains? names name)]
-    [(AstDeclDefFn name _ _ _ _) (string-i64-map-contains? names name)]
+    [(AstDeclDefFn name _ _ _ export)
+      (match export
+        [(AstFnExport _) true]
+        [(AstFnNoExport) (string-i64-map-contains? names name)])]
     [(AstDeclExtern name _ _) (string-i64-map-contains? names name)]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
@@ -1191,17 +1198,35 @@
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
     (match (lower-compiler-program-with-decl-paths source program paths)
       [(OkCompilerLower ir spans)
-        (match (optimize-program-with-spans-and-level ir spans opt-level)
-          [(CompilerOptimizedProgram optimized optimized-spans)
-            (match (compiler-backend-emit-program-with-spans-for-target
-              optimized
-              optimized-spans
-              target)
-              [(OkCompilerBackend asm)
-                (match (source-tool-write-file
+        (match (compiler-driver-emit-lowered-with-level
+          source
+          ir
+          spans
+          target
+          true
+          opt-level)
+          [(OkCompilerDriver asm)
+            (match (source-tool-write-file
+              asm-path
+              (source-tool-augment-assembly-for-target asm target)
+              "test: failed to write assembly artifact")
+              [(SourceToolCommandErr message)
+                (begin
+                  (print-error message)
+                  (source-tool-clean-temp
+                    temp-dir
+                    asm-path
+                    obj-path
+                    bin-path
+                    true)
+                  1)]
+              [(SourceToolCommandOk)
+                (match (source-tool-assemble-and-link
+                  target
                   asm-path
-                  asm
-                  "test: failed to write assembly artifact")
+                  obj-path
+                  bin-path
+                  (source-tool-link-inputs-empty))
                   [(SourceToolCommandErr message)
                     (begin
                       (print-error message)
@@ -1213,76 +1238,54 @@
                         true)
                       1)]
                   [(SourceToolCommandOk)
-                    (match (source-tool-assemble-and-link
-                      target
-                      asm-path
-                      obj-path
+                    (match (source-tool-run-executable
                       bin-path
-                      (source-tool-link-inputs-empty))
-                      [(SourceToolCommandErr message)
+                      target
+                      (process-args-empty))
+                      [(OkProcessOutput output)
+                        (let
+                          [status : i64 (process-output-status output)]
+                          (begin
+                            (source-tool-forward-output output)
+                            (if (= status 0)
+                              unit
+                              (tltest-report-child-status output))
+                            (source-tool-clean-temp
+                              temp-dir
+                              asm-path
+                              obj-path
+                              bin-path
+                              true)
+                            ;; A failed test executable (including one that
+                            ;; panics/aborts, which exits 134) is a test
+                            ;; FAILURE, not a host crash: report the raw
+                            ;; status above, but exit cleanly with 1 so CI
+                            ;; does not retry it as a transient #1204 segfault.
+                            (if (= status 0)
+                              0
+                              1)))]
+                      [(ErrProcessOutput error)
                         (begin
-                          (print-error message)
+                          (print-error
+                            (string-append
+                              (string-append
+                                "Error: failed to run test executable '"
+                                bin-path)
+                              (string-append
+                                "': "
+                                (process-error-message error))))
                           (source-tool-clean-temp
                             temp-dir
                             asm-path
                             obj-path
                             bin-path
                             true)
-                          1)]
-                      [(SourceToolCommandOk)
-                        (match (source-tool-run-executable
-                          bin-path
-                          target
-                          (process-args-empty))
-                          [(OkProcessOutput output)
-                            (let
-                              [status : i64 (process-output-status output)]
-                              (begin
-                                (source-tool-forward-output output)
-                                (if (= status 0)
-                                  unit
-                                  (tltest-report-child-status output))
-                                (source-tool-clean-temp
-                                  temp-dir
-                                  asm-path
-                                  obj-path
-                                  bin-path
-                                  true)
-                                ;; A failed test executable (including one that
-                                ;; panics/aborts, which exits 134) is a test
-                                ;; FAILURE, not a host crash: report the raw
-                                ;; status above, but exit cleanly with 1 so CI
-                                ;; does not retry it as a transient #1204 segfault.
-                                (if (= status 0)
-                                  0
-                                  1)))]
-                          [(ErrProcessOutput error)
-                            (begin
-                              (print-error
-                                (string-append
-                                  (string-append
-                                    "Error: failed to run test executable '"
-                                    bin-path)
-                                  (string-append
-                                    "': "
-                                    (process-error-message error))))
-                              (source-tool-clean-temp
-                                temp-dir
-                                asm-path
-                                obj-path
-                                bin-path
-                                true)
-                              1)])])])]
-              [(ErrCompilerBackend diag)
-                (begin
-                  (print-error (compiler-diagnostic-render diag))
-                  (source-tool-clean-temp
-                    temp-dir
-                    asm-path
-                    obj-path
-                    bin-path
-                    true)
-                  1)])])]
+                          1)])])])]
+          [(ErrCompilerDriver diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+              1)])]
       [(ErrCompilerLower diag)
         (begin
           (print-error (compiler-diagnostic-render diag))
@@ -1539,13 +1542,13 @@
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
-  (match (compiler-load-package-file-with-paths-and-roots-cfg
+  (match (compiler-driver-load-package-file-with-runtime
     source
-    (sym-i64-empty)
+    backend-target
     roots
     manifest-dir
     deps
-    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+    true)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match test-mode
         [(TestModeCheck) (tltest-package-integration-check source decls paths)]
@@ -1568,13 +1571,13 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
-    (match (compiler-load-package-file-with-paths-and-roots-cfg
+    (match (compiler-driver-load-package-file-with-runtime
       source
-      (sym-i64-empty)
+      backend-target
       roots
       manifest-dir
       deps
-      (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+      true)
       [(OkCompilerLoadWithPaths decls paths _ _)
         (tltest-package-run-one
           source
@@ -1755,9 +1758,8 @@
             (print-error (tltest-unknown-target target))
             1)]
         [(OkSourceToolTarget backend-target)
-          (match (compiler-load-file-with-paths-and-roots-cfg
+          (match (compiler-driver-load-file-with-runtime
             source
-            (sym-i64-empty)
             roots
             (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
             [(OkCompilerLoadWithPaths decls paths _ _)

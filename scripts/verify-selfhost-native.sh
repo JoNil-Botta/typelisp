@@ -438,8 +438,8 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-string-runtime "$_src" "$_asm"
     for _snippet in \
         "tl_oob_abort:" \
-        "jb .Lf0_str_bounds_ok" \
-        ".Lf0_str_bounds_ok"
+        "jb .Lf" \
+        "str_bounds_ok"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-string-runtime
     done

@@ -133,7 +133,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ field-types)
+          [(AstVariantDef _ field-types _)
             (if (clone-field-type-list-able? field-types names)
               (clone-variant-list-able? rest names)
               false)]))]))
@@ -165,7 +165,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (clone-fixpoint-step
               rest
               names
@@ -189,7 +189,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefEnum name _)
+          [(AstDeclDefEnum name _ _)
             (clone-all-type-names rest (clone-name-set-insert acc name))]
           [(AstDeclDefStruct name _ _ _)
             (clone-all-type-names rest (clone-name-set-insert acc name))]
@@ -239,7 +239,7 @@
 ;; One match arm: [(V f...) (V (clone f)...)], or [(V) (V)] for nullary variants.
 (define (clone-variant-arm [variant : AstVariantDef]) : AstMatchArm
   (match variant
-    [(AstVariantDef vname field-types)
+    [(AstVariantDef vname field-types _)
       (let
         [count : i64 (clone-type-list-len field-types)]
         (ast-match-arm
@@ -294,11 +294,11 @@
 ; nil-ctor name, cons-ctor name
 (define (clone-variant-field-count [v : AstVariantDef]) : i64
   (match v
-    [(AstVariantDef _ field-types) (clone-type-list-len field-types)]))
+    [(AstVariantDef _ field-types _) (clone-type-list-len field-types)]))
 
 (define (clone-variant-name [v : AstVariantDef]) : String
   (match v
-    [(AstVariantDef name _) name]))
+    [(AstVariantDef name _ _) name]))
 
 (define (clone-type-is-name? [ty : AstType] [name : String]) : bool
   (match ty
@@ -321,7 +321,7 @@
 ;; (the `(Cons element Self)` or `(Cons element (Box Self))` shape).
 (define (clone-variant-cons-tail-self? [v : AstVariantDef] [self-name : String]) : bool
   (match v
-    [(AstVariantDef _ field-types)
+    [(AstVariantDef _ field-types _)
       (match field-types
         [(AstTypeCons _ tail)
           (let
@@ -341,7 +341,7 @@
   [v : AstVariantDef]
   [self-name : String]) : bool
   (match v
-    [(AstVariantDef _ field-types)
+    [(AstVariantDef _ field-types _)
       (match field-types
         [(AstTypeCons _ tail)
           (let
@@ -550,7 +550,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (clone-generate-decls
               rest
               able
@@ -626,7 +626,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (clone-root-add-variants
               decls
               able
@@ -645,7 +645,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefEnum decl-name variants)
+          [(AstDeclDefEnum decl-name _ variants)
             (if (string-eq decl-name name)
               (clone-root-add-variants decls able roots variants)
               (clone-root-add-name-deps decls rest able roots name))]

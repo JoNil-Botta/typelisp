@@ -153,6 +153,13 @@
   (OkTcStructDecl TcStructDecl)
   (ErrTcStructDecl String))
 
+(defenum TcEnumDecl
+  (TcEnumDecl AstEnumCleanup AstVariantDefList))
+
+(defenum ResultTcEnumDecl
+  (OkTcEnumDecl TcEnumDecl)
+  (ErrTcEnumDecl String))
+
 (defenum TcLayoutInfo
   (TcLayoutInfo i64 i64))
 
@@ -815,6 +822,9 @@
 (define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
   (tc-fn1 struct-ty (AstTyUnit)))
 
+(define (tc-enum-cleanup-function-type [enum-ty : AstType]) : AstType
+  (tc-fn1 enum-ty (AstTyUnit)))
+
 (define (tc-bind-struct-cleanup-module-name
   [env : TcTypeEnv]
   [module : String]
@@ -829,6 +839,20 @@
         cleanup-name
         (tc-struct-cleanup-function-type struct-ty))]))
 
+(define (tc-bind-enum-cleanup-module-name
+  [env : TcTypeEnv]
+  [module : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind-module-name
+        env
+        module
+        cleanup-name
+        (tc-enum-cleanup-function-type enum-ty))]))
+
 (define (tc-bind-struct-cleanup-local
   [env : TcTypeEnv]
   [cleanup : AstStructCleanup]
@@ -837,6 +861,15 @@
     [(AstStructNoCleanup) env]
     [(AstStructCleanupFn cleanup-name)
       (tc-bind env cleanup-name (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-enum-cleanup-local
+  [env : TcTypeEnv]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind env cleanup-name (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-bind-struct-cleanup-alias
   [env : TcTypeEnv]
@@ -850,6 +883,19 @@
         env
         (compiler-symbol-module-key alias cleanup-name)
         (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-enum-cleanup-alias
+  [env : TcTypeEnv]
+  [alias : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind
+        env
+        (compiler-symbol-module-key alias cleanup-name)
+        (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
@@ -2461,11 +2507,11 @@
             (tc-nominal-owner-name-list rest target index next-module)]
           [(AstDeclTest _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclDefEnum name _)
+          [(AstDeclDefEnum name _ _)
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclDefEnumLifetimes name _ _)
+          [(AstDeclDefEnumLifetimes name _ _ _)
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
@@ -2481,11 +2527,11 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum name _)
+                [(AstDeclDefEnum name _ _)
                   (if (= target index)
                     (OkTcString (compiler-symbol-module-key module name))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDeclDefEnumLifetimes name _ _)
+                [(AstDeclDefEnumLifetimes name _ _ _)
                   (if (= target index)
                     (OkTcString (compiler-symbol-module-key module name))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
@@ -2623,8 +2669,8 @@
 
 (define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
   (match decl
-    [(AstDeclDefEnum _ _) (OkTcLifetimeList AstLifetimeNil)]
-    [(AstDeclDefEnumLifetimes _ lifetimes _) (OkTcLifetimeList lifetimes)]
+    [(AstDeclDefEnum _ _ _) (OkTcLifetimeList AstLifetimeNil)]
+    [(AstDeclDefEnumLifetimes _ lifetimes _ _) (OkTcLifetimeList lifetimes)]
     [(AstDeclDefStruct _ _ _ _) (OkTcLifetimeList AstLifetimeNil)]
     [(AstDeclDefStructLifetimes _ lifetimes _ _ _) (OkTcLifetimeList lifetimes)]
     [_ (ErrTcLifetimeList "typecheck: nominal type not found")]))
@@ -2779,7 +2825,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (match (tc-source-type-list-policy-ok ctx fields)
               [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
@@ -2857,7 +2903,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (match (tc-source-type-list-lifetimes-policy-ok ctx params fields)
               [(OkTcUnit)
                 (tc-source-variant-list-lifetimes-policy-ok ctx params rest)]
@@ -3286,11 +3332,11 @@
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstDeclDefEnum name variants)
+    [(AstDeclDefEnum name _ variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
         [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
+    [(AstDeclDefEnumLifetimes name lifetimes _ variants)
       (if (tc-lifetime-list-duplicates? lifetimes)
         (ErrTcUnit "typecheck: duplicate lifetime parameter")
         (match (tc-source-variant-list-lifetimes-policy-ok
@@ -4356,7 +4402,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name fields)
+          [(AstVariantDef name fields _)
             (let
               [scoped-enum : String
                 (compiler-symbol-module-key module enum-name)]
@@ -4424,22 +4470,44 @@
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefEnum name variants)
-      (tc-bind-enum-variants-in-module
-        (tc-context-with-module ctx module)
-        env
-        module
-        name
-        AstLifetimeNil
-        variants)]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
-      (tc-bind-enum-variants-in-module
-        (tc-context-with-module ctx module)
-        env
-        module
-        name
-        lifetimes
-        variants)]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [scoped-name : String (compiler-symbol-module-key module name)]
+        [enum-ty : AstType (AstTyEnum scoped-name)]
+        (match (tc-bind-enum-variants-in-module
+          (tc-context-with-module ctx module)
+          env
+          module
+          name
+          AstLifetimeNil
+          variants)
+          [(OkTcEnv with-variants)
+            (OkTcEnv
+              (tc-bind-enum-cleanup-module-name
+                with-variants
+                module
+                cleanup
+                enum-ty))]
+          [(ErrTcEnv message) (ErrTcEnv message)]))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [scoped-name : String (compiler-symbol-module-key module name)]
+        [enum-ty : AstType (AstTyEnumArgs scoped-name lifetimes)]
+        (match (tc-bind-enum-variants-in-module
+          (tc-context-with-module ctx module)
+          env
+          module
+          name
+          lifetimes
+          variants)
+          [(OkTcEnv with-variants)
+            (OkTcEnv
+              (tc-bind-enum-cleanup-module-name
+                with-variants
+                module
+                cleanup
+                enum-ty))]
+          [(ErrTcEnv message) (ErrTcEnv message)]))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
         [scoped-name : String (compiler-symbol-module-key module name)]
@@ -4531,7 +4599,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name fields)
+          [(AstVariantDef name fields _)
             (tc-bind-enum-variant-aliases
               ctx
               (tc-bind
@@ -4597,24 +4665,37 @@
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefEnum name variants)
-      (OkTcEnv
-        (tc-bind-enum-variant-aliases
-          (tc-context-with-module ctx module)
-          env
-          alias
-          (compiler-symbol-module-key module name)
-          AstLifetimeNil
-          variants))]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
-      (OkTcEnv
-        (tc-bind-enum-variant-aliases
-          (tc-context-with-module ctx module)
-          env
-          alias
-          (compiler-symbol-module-key module name)
-          lifetimes
-          variants))]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [enum-ty : AstType (AstTyEnum (compiler-symbol-module-key module name))]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-alias
+            (tc-bind-enum-variant-aliases
+              (tc-context-with-module ctx module)
+              env
+              alias
+              (compiler-symbol-module-key module name)
+              AstLifetimeNil
+              variants)
+            alias
+            cleanup
+            enum-ty)))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [enum-ty : AstType
+          (AstTyEnumArgs (compiler-symbol-module-key module name) lifetimes)]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-alias
+            (tc-bind-enum-variant-aliases
+              (tc-context-with-module ctx module)
+              env
+              alias
+              (compiler-symbol-module-key module name)
+              lifetimes
+              variants)
+            alias
+            cleanup
+            enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
         [struct-ty : AstType
@@ -4789,7 +4870,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name fields)
+          [(AstVariantDef name fields _)
             (tc-bind-enum-variants-local
               ctx
               (tc-bind
@@ -4840,24 +4921,35 @@
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefEnum name variants)
-      (OkTcEnv
-        (tc-bind-enum-variants-local
-          ctx
-          env
-          name
-          (compiler-symbol-module-key module name)
-          AstLifetimeNil
-          variants))]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
-      (OkTcEnv
-        (tc-bind-enum-variants-local
-          ctx
-          env
-          name
-          (compiler-symbol-module-key module name)
-          lifetimes
-          variants))]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [enum-ty : AstType (AstTyEnum (compiler-symbol-module-key module name))]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-local
+            (tc-bind-enum-variants-local
+              ctx
+              env
+              name
+              (compiler-symbol-module-key module name)
+              AstLifetimeNil
+              variants)
+            cleanup
+            enum-ty)))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [enum-ty : AstType
+          (AstTyEnumArgs (compiler-symbol-module-key module name) lifetimes)]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-local
+            (tc-bind-enum-variants-local
+              ctx
+              env
+              name
+              (compiler-symbol-module-key module name)
+              lifetimes
+              variants)
+            cleanup
+            enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
         [struct-ty : AstType
@@ -8533,13 +8625,13 @@
         (match decl
           [(AstDeclModule next-module)
             (tc-program-enum-variants-list-in-module rest enum-name next-module)]
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (if (or
               (string-eq name enum-name)
               (string-eq (compiler-symbol-module-key module name) enum-name))
               (OkAstVariantDefList variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDeclDefEnumLifetimes name _ variants)
+          [(AstDeclDefEnumLifetimes name _ _ variants)
             (if (or
               (string-eq name enum-name)
               (string-eq (compiler-symbol-module-key module name) enum-name))
@@ -8549,7 +8641,7 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum name variants)
+                [(AstDeclDefEnum name _ variants)
                   (if (or
                     (string-eq name enum-name)
                     (string-eq
@@ -8560,7 +8652,7 @@
                       rest
                       enum-name
                       module))]
-                [(AstDeclDefEnumLifetimes name _ variants)
+                [(AstDeclDefEnumLifetimes name _ _ variants)
                   (if (or
                     (string-eq name enum-name)
                     (string-eq
@@ -8596,8 +8688,8 @@
           (compiler-symbol-handle-index handle))
           [(OkAstDecl decl)
             (match decl
-              [(AstDeclDefEnum _ variants) (OkAstVariantDefList variants)]
-              [(AstDeclDefEnumLifetimes _ _ variants)
+              [(AstDeclDefEnum _ _ variants) (OkAstVariantDefList variants)]
+              [(AstDeclDefEnumLifetimes _ _ _ variants)
                 (OkAstVariantDefList variants)]
               [_
                 (ErrAstVariantDefList
@@ -8804,6 +8896,31 @@
           (ErrTcStructDecl
             (string-append "typecheck: unknown struct " struct-name))])]))
 
+(define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
+  (match ctx
+    [(TcContext _ symbols _ _)
+      (match (compiler-symbols-lookup-type symbols enum-name)
+        [(SomeI64 handle)
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defenum))
+            (match (compiler-symbols-decl-at-index
+              symbols
+              (compiler-symbol-handle-index handle))
+              [(OkAstDecl decl)
+                (match decl
+                  [(AstDeclDefEnum _ cleanup variants)
+                    (OkTcEnumDecl (TcEnumDecl cleanup variants))]
+                  [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+                    (OkTcEnumDecl (TcEnumDecl cleanup variants))]
+                  [_
+                    (ErrTcEnumDecl
+                      "typecheck: enum symbol owner is not an enum")])]
+              [(ErrAstDecl message) (ErrTcEnumDecl message)])
+            (ErrTcEnumDecl (string-append "typecheck: unknown enum " enum-name)))]
+        [(NoneI64)
+          (ErrTcEnumDecl (string-append "typecheck: unknown enum " enum-name))])]))
+
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
   (match stack
     [(TcStringNil) ""]
@@ -8868,7 +8985,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (match (tc-inline-aggregate-type-list-finite-ok ctx fields stack)
               [(OkTcUnit)
                 (tc-inline-aggregate-variants-finite-ok ctx rest stack)]
@@ -9122,7 +9239,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef variant-name fields)
+          [(AstVariantDef variant-name fields _)
             (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
               [(OkTcInlinePayloadFieldsLayout payload-layout)
                 (match payload-layout
@@ -9548,7 +9665,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclDefEnum name _)
+          [(AstDeclDefEnum name _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9557,7 +9674,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclDefEnumLifetimes name _ _)
+          [(AstDeclDefEnumLifetimes name _ _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9588,7 +9705,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
-                [(AstDeclDefEnum name _)
+                [(AstDeclDefEnum name _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9597,7 +9714,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
-                [(AstDeclDefEnumLifetimes name _ _)
+                [(AstDeclDefEnumLifetimes name _ _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9800,9 +9917,9 @@
         (match tail
           [(AstVariantDefCons second AstVariantDefNil)
             (match first
-              [(AstVariantDef first-name first-fields)
+              [(AstVariantDef first-name first-fields _)
                 (match second
-                  [(AstVariantDef second-name second-fields)
+                  [(AstVariantDef second-name second-fields _)
                     (tc-result-info-two-variants
                       ctx
                       enum-name
@@ -9931,18 +10048,18 @@
               [template : AstDecl (box-get template-box)]
               (if (= target index)
                 (match template
-                  [(AstDeclDefEnum name _)
+                  [(AstDeclDefEnum name _ _)
                     (OkTcString (compiler-symbol-module-key module name))]
-                  [(AstDeclDefEnumLifetimes name _ _)
+                  [(AstDeclDefEnumLifetimes name _ _ _)
                     (OkTcString (compiler-symbol-module-key module name))]
                   [_ (ErrTcString "typecheck: variant owner is not enum")])
                 (tc-variant-owner-name-list rest target (+ index 1) module)))]
           [_
             (if (= target index)
               (match decl
-                [(AstDeclDefEnum name _)
+                [(AstDeclDefEnum name _ _)
                   (OkTcString (compiler-symbol-module-key module name))]
-                [(AstDeclDefEnumLifetimes name _ _)
+                [(AstDeclDefEnumLifetimes name _ _ _)
                   (OkTcString (compiler-symbol-module-key module name))]
                 [_ (ErrTcString "typecheck: variant owner is not enum")])
               (tc-variant-owner-name-list rest target (+ index 1) module))]))]))
@@ -10542,7 +10659,7 @@
         (match rest
           [(AstVariantDefNil)
             (match variant
-              [(AstVariantDef name _)
+              [(AstVariantDef name _ _)
                 (tc-variant-name-matches? ctx enum-name variant-name name)])]
           [_ false]))]
     [_ false]))
@@ -10665,7 +10782,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (and
               (tc-match-arms-cover-variant? ctx arms enum-name name)
               (tc-enum-variants-covered? ctx enum-name rest arms))]))]))
@@ -12393,7 +12510,9 @@
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name : String]) : TcMovedSet
   (tc-moved-remove-prefix
-    (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
+    (tc-moved-remove
+      (tc-moved-remove (tc-moved-remove set name) (tc-moved-partial-key name))
+      (tc-moved-path-key name))
     (tc-moved-path-key (string-append name "."))))
 
 (define (tc-moved-any-path-with-prefix-loop?
@@ -13795,6 +13914,818 @@
     body)
     [(OkTcMove _) OkTcUnit]
     [(ErrTcMove message) (ErrTcUnit message)]))
+
+;; --- lexical immutable-borrow conflict checker (#1050) ----------------------
+;;
+;; Immutable borrows are lexical in this staged model: `begin` keeps borrows
+;; live, while `let`, `with-arena`, resource `with`, lambdas, and individual
+;; match arms bound their own borrow additions. The checker reuses the move
+;; path encoding so whole roots, fields, tuple elements, and fixed-array literal
+;; elements share the same ancestor/descendant conflict policy as moved paths.
+(defenum TcBorrowCheckResult
+  (OkTcBorrowCheck TcMovedSet)
+  (ErrTcBorrowCheck String))
+
+(defenum TcBorrowCheckBindings
+  (OkTcBorrowCheckBindings TcTypeEnv TcMovedSet TcMovedSet)
+  (ErrTcBorrowCheckBindings String))
+
+(defenum TcBorrowCheckResourceBindings
+  (OkTcBorrowCheckResourceBindings TcTypeEnv TcMovedSet TcMovedSet)
+  (ErrTcBorrowCheckResourceBindings String))
+
+(define (tc-borrow-check-move-message [path : String]) : String
+  (string-append
+    (string-append "typecheck: cannot move borrowed place `" path)
+    "`"))
+
+(define (tc-borrow-check-assign-message [path : String]) : String
+  (string-append
+    (string-append "typecheck: cannot assign to borrowed place `" path)
+    "`"))
+
+(define (tc-borrow-check-local-place-path
+  [locals : TcMovedSet]
+  [expr : AstExpr]) : TcMaybeString
+  (match (tc-move-root-projection-var expr)
+    [(TcSomeString root)
+      (if (tc-moved-contains? locals root)
+        (match (tc-move-direct-root-base-path expr)
+          [(TcSomeString path) (TcSomeString path)]
+          [(TcNoString) (TcSomeString root)])
+        (TcNoString))]
+    [(TcNoString) (TcNoString)]))
+
+(define (tc-borrow-check-add-place
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [place : AstExpr]) : TcMovedSet
+  (match (tc-borrow-check-local-place-path locals place)
+    [(TcSomeString path) (tc-moved-add borrowed (tc-moved-path-key path))]
+    [(TcNoString) borrowed]))
+
+(define (tc-borrow-check-move-conflict [borrowed : TcMovedSet] [path : String]) : ResultTcUnit
+  (if (tc-moved-path-conflict? borrowed path)
+    (ErrTcUnit (tc-borrow-check-move-message path))
+    OkTcUnit))
+
+(define (tc-borrow-check-assign-conflict
+  [borrowed : TcMovedSet]
+  [path : String]) : ResultTcUnit
+  (if (tc-moved-path-conflict? borrowed path)
+    (ErrTcUnit (tc-borrow-check-assign-message path))
+    OkTcUnit))
+
+(define (tc-borrow-check-after-consuming-place
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [expr : AstExpr]) : TcBorrowCheckResult
+  (match (tc-borrow-check-local-place-path locals expr)
+    [(TcSomeString path)
+      (match (tc-borrow-check-move-conflict borrowed path)
+        [(OkTcUnit) (OkTcBorrowCheck borrowed)]
+        [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
+    [(TcNoString) (OkTcBorrowCheck borrowed)]))
+
+(define (tc-borrow-check-after-consuming-value
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [expr : AstExpr]
+  [target-ty : AstType]) : TcBorrowCheckResult
+  (if (tc-type-consuming-by-value-now? ctx target-ty)
+    (tc-borrow-check-after-consuming-place locals borrowed expr)
+    (OkTcBorrowCheck borrowed)))
+
+(define (tc-borrow-check-after-bind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [init : AstExpr]) : TcBorrowCheckResult
+  (match (tc-move-bare-var init)
+    [(TcSomeString name)
+      (if (and
+        (tc-moved-contains? locals name)
+        (tc-move-var-move-only? env name))
+        (match (tc-borrow-check-move-conflict borrowed name)
+          [(OkTcUnit) (OkTcBorrowCheck borrowed)]
+          [(ErrTcUnit message) (ErrTcBorrowCheck message)])
+        (OkTcBorrowCheck borrowed))]
+    [(TcNoString)
+      (match (tc-expr ctx env init)
+        [(OkTcType init-ty)
+          (if (tc-type-consuming-by-value-now? ctx init-ty)
+            (tc-borrow-check-after-consuming-place locals borrowed init)
+            (OkTcBorrowCheck borrowed))]
+        [(ErrTcType _) (OkTcBorrowCheck borrowed)])]))
+
+(define (tc-borrow-check-assignment
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [name : String]) : ResultTcUnit
+  (if (tc-moved-contains? locals name)
+    (tc-borrow-check-assign-conflict borrowed name)
+    OkTcUnit))
+
+(define (tc-borrow-check-array-set-conflict
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [array : AstExpr]
+  [index : AstExpr]) : ResultTcUnit
+  (match (tc-move-root-projection-var array)
+    [(TcSomeString root)
+      (if (tc-moved-contains? locals root)
+        (match (tc-move-array-set-path array index)
+          [(TcSomeString path) (tc-borrow-check-assign-conflict borrowed path)]
+          [(TcNoString) (tc-borrow-check-assign-conflict borrowed root)])
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
+
+(define (tc-borrow-check-root-mutation-conflict
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [place : AstExpr]) : ResultTcUnit
+  (match (tc-move-root-projection-var place)
+    [(TcSomeString root)
+      (if (tc-moved-contains? locals root)
+        (tc-borrow-check-assign-conflict borrowed root)
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
+
+(define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
+  (match names
+    [(TcStringNil) locals]
+    [(TcStringCons name rest)
+      (tc-borrow-check-add-names (tc-moved-add locals name) (box-get rest))]))
+
+(define (tc-borrow-check-pattern-locals
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]
+  [locals : TcMovedSet]) : TcMovedSet
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyEnum _)
+      (match pattern
+        [(AstPatVariant _ patterns-box)
+          (let
+            [patterns : AstPatternList (box-get patterns-box)]
+            (tc-borrow-check-add-names
+              locals
+              (tc-pattern-list-add-bound-names patterns TcStringNil)))]
+        [_ locals])]
+    [(AstTyEnumArgs _ _)
+      (match pattern
+        [(AstPatVariant _ patterns-box)
+          (let
+            [patterns : AstPatternList (box-get patterns-box)]
+            (tc-borrow-check-add-names
+              locals
+              (tc-pattern-list-add-bound-names patterns TcStringNil)))]
+        [_ locals])]
+    [_
+      (tc-borrow-check-add-names
+        locals
+        (tc-pattern-add-bound-names pattern TcStringNil))]))
+
+(define (tc-borrow-check-exprs-with-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : TcBorrowCheckResult
+  (match exprs
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkTcBorrowCheck borrowed)]
+        [_ (ErrTcBorrowCheck "typecheck: arity mismatch")])]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (box-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (box-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-borrow-check-expr ctx env locals borrowed head-expr)
+                [(OkTcBorrowCheck borrowed1)
+                  (match (tc-borrow-check-after-consuming-value
+                    ctx
+                    locals
+                    borrowed1
+                    head-expr
+                    ty)
+                    [(OkTcBorrowCheck borrowed2)
+                      (tc-borrow-check-exprs-with-types
+                        ctx
+                        env
+                        locals
+                        borrowed2
+                        rest
+                        rest-types)]
+                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(AstTypeNil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+
+(define (tc-borrow-check-exprs
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [exprs : AstExprList]) : TcBorrowCheckResult
+  (match exprs
+    [(AstExprNil) (OkTcBorrowCheck borrowed)]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (box-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-borrow-check-expr ctx env locals borrowed head)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-exprs ctx env locals borrowed1 rest)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]))
+
+(define (tc-borrow-check-let-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [bindings : AstLetBindingList]) : TcBorrowCheckBindings
+  (match bindings
+    [(AstLetBindingNil) (OkTcBorrowCheckBindings env locals borrowed)]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-borrow-check-expr ctx env locals borrowed init)
+                [(OkTcBorrowCheck borrowed1)
+                  (match (tc-borrow-check-after-bind
+                    ctx
+                    env
+                    locals
+                    borrowed1
+                    init)
+                    [(OkTcBorrowCheck borrowed2)
+                      (tc-borrow-check-let-bindings
+                        ctx
+                        (tc-bind
+                          env
+                          name
+                          (tc-move-binding-type ctx env maybe-ty init))
+                        (tc-moved-add locals name)
+                        (tc-moved-remove-root-state borrowed2 name)
+                        rest)]
+                    [(ErrTcBorrowCheck message)
+                      (ErrTcBorrowCheckBindings message)])]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheckBindings message)]))]))]))
+
+(define (tc-borrow-check-resource-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [bindings : AstResourceBindingList]) : TcBorrowCheckResourceBindings
+  (match bindings
+    [(AstResourceBindingNil)
+      (OkTcBorrowCheckResourceBindings env locals borrowed)]
+    [(AstResourceBindingCons binding rest)
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding name init-box _)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-borrow-check-expr ctx env locals borrowed init)
+                [(OkTcBorrowCheck borrowed1)
+                  (match (tc-borrow-check-after-bind
+                    ctx
+                    env
+                    locals
+                    borrowed1
+                    init)
+                    [(OkTcBorrowCheck borrowed2)
+                      (match (tc-expr ctx env init)
+                        [(OkTcType init-ty)
+                          (tc-borrow-check-resource-bindings
+                            ctx
+                            (tc-bind
+                              (tc-bind-cleanup-owner env name)
+                              name
+                              (tc-type-without-regions init-ty))
+                            (tc-moved-add locals name)
+                            (tc-moved-remove-root-state borrowed2 name)
+                            rest)]
+                        [(ErrTcType message)
+                          (ErrTcBorrowCheckResourceBindings message)])]
+                    [(ErrTcBorrowCheck message)
+                      (ErrTcBorrowCheckResourceBindings message)])]
+                [(ErrTcBorrowCheck message)
+                  (ErrTcBorrowCheckResourceBindings message)]))]))]))
+
+(define (tc-borrow-check-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : TcBorrowCheckResult
+  (match arms
+    [(AstMatchArmNil) (OkTcBorrowCheck borrowed)]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (tc-borrow-check-expr
+                    ctx
+                    arm-env
+                    (tc-borrow-check-pattern-locals
+                      ctx
+                      scrut-ty
+                      pattern
+                      (tc-moved-clone locals))
+                    (tc-moved-clone borrowed)
+                    body)
+                    [(OkTcBorrowCheck _)
+                      (tc-borrow-check-arms
+                        ctx
+                        env
+                        locals
+                        borrowed
+                        scrut-ty
+                        rest)]
+                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                [(ErrTcEnv message) (ErrTcBorrowCheck message)]))]))]))
+
+(define (tc-borrow-check-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [expr : AstExpr]) : TcBorrowCheckResult
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprLiteral _) (OkTcBorrowCheck borrowed)]
+    [(AstExprVar _) (OkTcBorrowCheck borrowed)]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed left)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 right)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed func)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-move-call-param-types ctx env func)
+              [(OkTcTypeList params)
+                (tc-borrow-check-exprs-with-types
+                  ctx
+                  env
+                  locals
+                  borrowed1
+                  args
+                  params)]
+              [(ErrTcTypeList _)
+                (tc-borrow-check-exprs ctx env locals borrowed1 args)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed cond)
+          [(OkTcBorrowCheck borrowedc)
+            (match (tc-borrow-check-expr
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone borrowedc)
+              then-branch)
+              [(OkTcBorrowCheck _)
+                (match (tc-borrow-check-expr
+                  ctx
+                  env
+                  (tc-moved-clone locals)
+                  (tc-moved-clone borrowedc)
+                  else-branch)
+                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowedc)]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-borrow-check-let-bindings
+          ctx
+          env
+          (tc-moved-clone locals)
+          (tc-moved-clone borrowed)
+          bindings)
+          [(OkTcBorrowCheckBindings env2 locals2 borrowed2)
+            (match (tc-borrow-check-expr ctx env2 locals2 borrowed2 body)
+              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheckBindings message) (ErrTcBorrowCheck message)]))]
+    [(AstExprLambda params _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-borrow-check-expr
+          ctx
+          (tc-bind-params ctx env params)
+          (tc-move-params-locals params (tc-moved-clone locals))
+          (tc-moved-empty)
+          body)
+          [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprTuple exprs)
+      (match (tc-expr-list-types ctx env exprs)
+        [(OkTcTypeList types)
+          (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
+        [(ErrTcTypeList _)
+          (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
+    [(AstExprTupleRef inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprArray exprs)
+      (match (tc-expr-list-types ctx env exprs)
+        [(OkTcTypeList types)
+          (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
+        [(ErrTcTypeList _)
+          (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
+    [(AstExprMakeArray _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed array)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 index)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed array)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-expr ctx env locals borrowed1 index)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-expr ctx env locals borrowed2 value)
+                  [(OkTcBorrowCheck borrowed3)
+                    (match (tc-borrow-check-after-bind
+                      ctx
+                      env
+                      locals
+                      borrowed3
+                      value)
+                      [(OkTcBorrowCheck borrowed4)
+                        (match (tc-borrow-check-array-set-conflict
+                          locals
+                          borrowed4
+                          array
+                          index)
+                          [(OkTcUnit) (OkTcBorrowCheck borrowed4)]
+                          [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
+                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed array)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-expr ctx env locals borrowed1 value)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-after-bind
+                  ctx
+                  env
+                  locals
+                  borrowed2
+                  value)
+                  [(OkTcBorrowCheck borrowed3)
+                    (match (tc-borrow-check-root-mutation-conflict
+                      locals
+                      borrowed3
+                      array)
+                      [(OkTcUnit) (OkTcBorrowCheck borrowed3)]
+                      [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed str)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 index)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed cond)
+          [(OkTcBorrowCheck borrowedc)
+            (match (tc-borrow-check-expr
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone borrowedc)
+              body)
+              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowedc)]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprBegin exprs) (tc-borrow-check-exprs ctx env locals borrowed exprs)]
+    [(AstExprUnsafe exprs)
+      (tc-borrow-check-exprs ctx env locals borrowed exprs)]
+    [(AstExprSet name rhs-box)
+      (let
+        [rhs : AstExpr (box-get rhs-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed rhs)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-after-bind ctx env locals borrowed1 rhs)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-assignment locals borrowed2 name)
+                  [(OkTcUnit) (OkTcBorrowCheck borrowed2)]
+                  [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprBorrow _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-place ctx env inner)
+              [(OkTcBorrowPlace _)
+                (OkTcBorrowCheck
+                  (tc-borrow-check-add-place locals borrowed1 inner))]
+              [(ErrTcBorrowPlace message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprMatch scrut-box arms)
+      (let
+        [scrut : AstExpr (box-get scrut-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed scrut)
+          [(OkTcBorrowCheck borroweds)
+            (match (tc-expr ctx env scrut)
+              [(OkTcType scrut-ty)
+                (tc-borrow-check-arms ctx env locals borroweds scrut-ty arms)]
+              [(ErrTcType message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed start)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-expr ctx env locals borrowed1 end)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-expr
+                  ctx
+                  (tc-bind env index (tc-resolve-type ctx index-ty))
+                  (tc-moved-add (tc-moved-clone locals) index)
+                  (tc-moved-remove-root-state (tc-moved-clone borrowed2) index)
+                  body)
+                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed2)]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprSpmdReduce _ _ _ a-box b-box c-box d-box)
+      (let
+        [a : AstExpr (box-get a-box)]
+        [b : AstExpr (box-get b-box)]
+        [c : AstExpr (box-get c-box)]
+        [d : AstExpr (box-get d-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed a)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-expr ctx env locals borrowed1 b)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-expr ctx env locals borrowed2 c)
+                  [(OkTcBorrowCheck borrowed3)
+                    (tc-borrow-check-expr ctx env locals borrowed3 d)]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprStructGet inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprWithRegion _ exprs)
+      (match (tc-borrow-check-exprs
+        ctx
+        env
+        locals
+        (tc-moved-clone borrowed)
+        exprs)
+        [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+    [(AstExprWithEscape scratch-box exprs)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed scratch)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-exprs
+              ctx
+              env
+              locals
+              (tc-moved-clone borrowed1)
+              exprs)
+              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprWithResource bindings exprs)
+      (match (tc-borrow-check-resource-bindings
+        ctx
+        env
+        locals
+        (tc-moved-clone borrowed)
+        bindings)
+        [(OkTcBorrowCheckResourceBindings body-env body-locals body-borrowed)
+          (match (tc-borrow-check-exprs
+            ctx
+            body-env
+            body-locals
+            body-borrowed
+            exprs)
+            [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+        [(ErrTcBorrowCheckResourceBindings message) (ErrTcBorrowCheck message)])]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprTypeLiteral _) (OkTcBorrowCheck borrowed)]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprQuote _) (OkTcBorrowCheck borrowed)]
+    [(AstExprQuasiquote _) (OkTcBorrowCheck borrowed)]
+    [(AstExprUnquote _) (OkTcBorrowCheck borrowed)]
+    [(AstExprUnquoteSplicing _) (OkTcBorrowCheck borrowed)]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-current-return-type env)
+              [(OkTcType return-ty)
+                (tc-borrow-check-after-consuming-value
+                  ctx
+                  locals
+                  borrowed1
+                  inner
+                  return-ty)]
+              [(ErrTcType _) (OkTcBorrowCheck borrowed1)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprPtrNull _) (OkTcBorrowCheck borrowed)]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprPtrRead inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed ptr)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 value)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed ptr)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 offset)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprPtrCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprPtrToInt inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprIntToPtr inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed ptr)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 len)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprProgramArgc) (OkTcBorrowCheck borrowed)]
+    [(AstExprProgramArgv) (OkTcBorrowCheck borrowed)]
+    [(AstExprProgramEnvp) (OkTcBorrowCheck borrowed)]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-borrow-check-expr ctx env locals borrowed index))]
+    [(AstExprSyscall args) (tc-borrow-check-exprs ctx env locals borrowed args)]))
+
+(define (tc-borrow-check-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (match (tc-borrow-check-expr
+    ctx
+    env
+    (tc-move-params-locals params (tc-moved-empty))
+    (tc-moved-empty)
+    body)
+    [(OkTcBorrowCheck _) OkTcUnit]
+    [(ErrTcBorrowCheck message) (ErrTcUnit message)]))
 
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;;
@@ -15546,6 +16477,27 @@
         [(ErrTcStructDecl _) false])]
     [_ false]))
 
+(define (tc-cleanup-owning-enum-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum enum-name)
+      (match (tc-enum-decl ctx enum-name)
+        [(OkTcEnumDecl decl)
+          (match decl
+            [(TcEnumDecl cleanup _) (ast-enum-cleanup? cleanup)])]
+        [(ErrTcEnumDecl _) false])]
+    [(AstTyEnumArgs enum-name _)
+      (match (tc-enum-decl ctx enum-name)
+        [(OkTcEnumDecl decl)
+          (match decl
+            [(TcEnumDecl cleanup _) (ast-enum-cleanup? cleanup)])]
+        [(ErrTcEnumDecl _) false])]
+    [_ false]))
+
+(define (tc-cleanup-owning-aggregate-type? [ctx : TcContext] [ty : AstType]) : bool
+  (or
+    (tc-cleanup-owning-struct-type? ctx ty)
+    (tc-cleanup-owning-enum-type? ctx ty)))
+
 (define (tc-struct-field-cleanup-outside-message
   [struct-name : String]
   [field-name : String]) : String
@@ -15628,7 +16580,7 @@
       (let
         [resolved-ty : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
         [field-cleanup-owning : bool
-          (tc-cleanup-owning-struct-type? ctx resolved-ty)]
+          (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
         (if (not (ast-struct-cleanup? struct-cleanup))
           (if (ast-field-cleanup? field-cleanup)
             (ErrTcUnit
@@ -15702,6 +16654,237 @@
       (ErrTcUnit (tc-struct-cleanup-repr-c-message struct-name))
       (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
 
+(define (tc-enum-cleanup-fn-mismatch-message
+  [enum-name : String]
+  [cleanup-name : String]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3 " cleanup function " cleanup-name " type mismatch")))
+
+(define (tc-enum-payload-cleanup-outside-message
+  [enum-name : String]
+  [variant-name : String]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      " has payload cleanup metadata but enum is not cleanup-owning")))
+
+(define (tc-enum-payload-cleanup-owning-without-owned-message
+  [enum-name : String]
+  [variant-name : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      (tc-cat3
+        " stores cleanup-owning type "
+        (tc-type-render ty)
+        " without :owned"))))
+
+(define (tc-enum-payload-owned-non-cleanup-message
+  [enum-name : String]
+  [variant-name : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      (tc-cat3
+        " uses :owned but type "
+        (tc-type-render ty)
+        " is not cleanup-owning"))))
+
+(define (tc-enum-payload-cleanup-fn-mismatch-message
+  [enum-name : String]
+  [variant-name : String]
+  [cleanup-name : String]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      (tc-cat3 " cleanup function " cleanup-name " type mismatch"))))
+
+(define (tc-check-enum-cleanup-fn
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : ResultTcUnit
+  (match cleanup
+    [(AstEnumNoCleanup) OkTcUnit]
+    [(AstEnumCleanupFn cleanup-name)
+      (match (tc-lookup-visible ctx env cleanup-name)
+        [(OkTcType cleanup-ty)
+          (tc-expect
+            cleanup-ty
+            (tc-fn1 (tc-type-without-regions enum-ty) (AstTyUnit))
+            (tc-enum-cleanup-fn-mismatch-message enum-name cleanup-name))]
+        [(ErrTcType message) (ErrTcUnit message)])]))
+
+(define (tc-check-enum-payload-cleanup-fn
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [variant-name : String]
+  [cleanup-name : String]
+  [payload-ty : AstType]) : ResultTcUnit
+  (match (tc-lookup-visible ctx env cleanup-name)
+    [(OkTcType cleanup-ty)
+      (tc-expect
+        cleanup-ty
+        (tc-fn1 (tc-type-without-regions payload-ty) (AstTyUnit))
+        (tc-enum-payload-cleanup-fn-mismatch-message
+          enum-name
+          variant-name
+          cleanup-name))]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
+(define (tc-check-cleanup-enum-payloads
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [variant-name : String]
+  [enum-cleanup : AstEnumCleanup]
+  [payloads : AstTypeList]
+  [payload-cleanups : AstVariantPayloadCleanupList]) : ResultTcUnit
+  (match payloads
+    [(AstTypeNil)
+      (match payload-cleanups
+        [(AstVariantPayloadCleanupNil) OkTcUnit]
+        [_ (ErrTcUnit "typecheck: malformed enum payload cleanup metadata")])]
+    [(AstTypeCons payload-box rest-payloads-box)
+      (match payload-cleanups
+        [(AstVariantPayloadCleanupCons payload-cleanup rest-cleanups-box)
+          (let
+            [payload-ty : AstType (box-get payload-box)]
+            [resolved-ty : AstType
+              (tc-type-strip-region (tc-resolve-type ctx payload-ty))]
+            [rest-payloads : AstTypeList (box-get rest-payloads-box)]
+            [rest-cleanups : AstVariantPayloadCleanupList
+              (box-get rest-cleanups-box)]
+            [payload-cleanup-owning : bool
+              (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
+            [step : ResultTcUnit
+              (if (not (ast-enum-cleanup? enum-cleanup))
+                (if (ast-variant-payload-cleanup? payload-cleanup)
+                  (ErrTcUnit
+                    (tc-enum-payload-cleanup-outside-message
+                      enum-name
+                      variant-name))
+                  (if payload-cleanup-owning
+                    (ErrTcUnit
+                      (tc-enum-payload-cleanup-owning-without-owned-message
+                        enum-name
+                        variant-name
+                        resolved-ty))
+                    OkTcUnit))
+                (match payload-cleanup
+                  [(AstVariantPayloadOwnedCleanup)
+                    (if payload-cleanup-owning
+                      OkTcUnit
+                      (ErrTcUnit
+                        (tc-enum-payload-owned-non-cleanup-message
+                          enum-name
+                          variant-name
+                          resolved-ty)))]
+                  [(AstVariantPayloadCleanupFn cleanup-name)
+                    (if payload-cleanup-owning
+                      (ErrTcUnit
+                        (tc-enum-payload-cleanup-owning-without-owned-message
+                          enum-name
+                          variant-name
+                          resolved-ty))
+                      (tc-check-enum-payload-cleanup-fn
+                        ctx
+                        env
+                        enum-name
+                        variant-name
+                        cleanup-name
+                        resolved-ty))]
+                  [(AstVariantPayloadNoCleanup)
+                    (if payload-cleanup-owning
+                      (ErrTcUnit
+                        (tc-enum-payload-cleanup-owning-without-owned-message
+                          enum-name
+                          variant-name
+                          resolved-ty))
+                      OkTcUnit)]))]
+            (match step
+              [(OkTcUnit)
+                (tc-check-cleanup-enum-payloads
+                  ctx
+                  env
+                  enum-name
+                  variant-name
+                  enum-cleanup
+                  rest-payloads
+                  rest-cleanups)]
+              [(ErrTcUnit message) (ErrTcUnit message)]))]
+        [_ (ErrTcUnit "typecheck: malformed enum payload cleanup metadata")])]))
+
+(define (tc-check-cleanup-enum-variant
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [variant : AstVariantDef]) : ResultTcUnit
+  (match variant
+    [(AstVariantDef variant-name payloads payload-cleanups)
+      (tc-check-cleanup-enum-payloads
+        ctx
+        env
+        enum-name
+        variant-name
+        cleanup
+        payloads
+        payload-cleanups)]))
+
+(define (tc-check-cleanup-enum-variants
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match (tc-check-cleanup-enum-variant ctx env enum-name cleanup variant)
+          [(OkTcUnit)
+            (tc-check-cleanup-enum-variants ctx env enum-name cleanup rest)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]))
+
+(define (tc-check-cleanup-enum-decl
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (let
+    [enum-name : String
+      (compiler-symbol-module-key (tc-context-module ctx) name)]
+    [enum-ty : AstType
+      (match lifetimes
+        [(AstLifetimeNil) (AstTyEnum enum-name)]
+        [_ (AstTyEnumArgs enum-name lifetimes)])]
+    (match (tc-check-enum-cleanup-fn ctx env enum-name cleanup enum-ty)
+      [(OkTcUnit)
+        (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]
+      [(ErrTcUnit message) (ErrTcUnit message)])))
+
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -15758,7 +16941,10 @@
                   (tc-resolve-type ctx ret)
                   got
                   "return value")
-                  [(OkTcUnit) (tc-move-check-body ctx env params body)]
+                  [(OkTcUnit)
+                    (match (tc-move-check-body ctx env params body)
+                      [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
+                      [(ErrTcUnit message) (ErrTcUnit message)])]
                   [(ErrTcUnit message) (ErrTcUnit message)])]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
@@ -15771,6 +16957,16 @@
       (match (tc-dispatch-decl-type ctx name variants)
         [(OkTcType _) OkTcUnit]
         [(ErrTcType message) (ErrTcUnit message)])]
+    [(AstDeclDefEnum name cleanup variants)
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        name
+        AstLifetimeNil
+        cleanup
+        variants)]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (tc-check-cleanup-enum-decl ctx top-env name lifetimes cleanup variants)]
     [(AstDeclDefStruct name repr cleanup fields)
       (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
     [(AstDeclDefStructLifetimes name _ repr cleanup fields)

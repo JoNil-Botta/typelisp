@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 ; Capturing String and dynamic-array values in closure environments (#435).
 ; Each case reads a scalar out of a captured aggregate so the test exercises
 ; capture (not aggregate returns); `main` yields 42 only if every case holds.
@@ -46,9 +48,9 @@
 
 (define (main) : i64
   (begin
-    (unless (case-string-immediate) (return 1))
-    (unless (case-string-returned) (return 2))
-    (unless (case-dynarray-returned) (return 3))
-    (unless (case-dynarray-elem) (return 4))
-    (unless (case-mixed) (return 5))
+    (core/unless (case-string-immediate) (return 1))
+    (core/unless (case-string-returned) (return 2))
+    (core/unless (case-dynarray-returned) (return 3))
+    (core/unless (case-dynarray-elem) (return 4))
+    (core/unless (case-mixed) (return 5))
     42))

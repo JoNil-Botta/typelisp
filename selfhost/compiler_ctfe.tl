@@ -2475,7 +2475,46 @@
     (string-eq name "expr-list-empty?")
     (or
       (string-eq name "expr-list-length")
-      (or (string-eq name "expr-list-head") (string-eq name "expr-list-tail")))))
+      (or
+        (string-eq name "expr-list-head")
+        (or (string-eq name "expr-list-tail") (string-eq name "expr-list-nth"))))))
+
+(define (ctfe-eval-expr-list-nth-call
+  [list-arg : AstExpr]
+  [index-arg : AstExpr]
+  [rest : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match rest
+    [(AstExprNil)
+      (match (compiler-ctfe-eval list-arg env fuel)
+        [(OkCtfe value list-fuel)
+          (match value
+            [(CtfeExprList nodes)
+              (match (ctfe-eval-i64-arg
+                index-arg
+                expr
+                env
+                list-fuel
+                "expr-list-nth")
+                [(ErrCtfeI64Arg d) (ErrCtfe d)]
+                [(OkCtfeI64Arg index index-fuel)
+                  (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "expr-list-nth index out of range"))
+                    (OkCtfe
+                      (CtfeExpr (ctfe-expr-list-nth nodes index) (AstTyExpr))
+                      index-fuel))])]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr expr "expr-list-nth expects ExprList"))])]
+        [(ErrCtfe diag) (ErrCtfe diag)])]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "expr-list-nth expects exactly two args"))]))
 
 (define (ctfe-eval-expr-inspector-call
   [name : String]
@@ -2556,46 +2595,61 @@
       (let
         [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprNil)
-            (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
-                (match value
-                  [(CtfeExprList nodes)
-                    (cond
-                      [(string-eq name "expr-list-empty?")
-                        (OkCtfe
-                          (CtfeBool (ctfe-expr-list-empty? nodes))
-                          arg-fuel)]
-                      [(string-eq name "expr-list-length")
-                        (OkCtfe
-                          (CtfeI64 (ctfe-expr-list-length nodes))
-                          arg-fuel)]
-                      [(ctfe-expr-list-empty? nodes)
-                        (ErrCtfe
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            (string-append name " expects non-empty ExprList")))]
-                      [(string-eq name "expr-list-head")
-                        (OkCtfe
-                          (CtfeExpr (ctfe-expr-list-head nodes) (AstTyExpr))
-                          arg-fuel)]
-                      [(string-eq name "expr-list-tail")
-                        (OkCtfe
-                          (CtfeExprList (ctfe-expr-list-tail nodes))
-                          arg-fuel)]
-                      [else (ctfe-unsupported-form expr)])]
-                  [_
-                    (ErrCtfe
-                      (ctfe-diagnostic-at-expr
-                        expr
-                        (string-append name " expects ExprList")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
-          [_
-            (ErrCtfe
-              (ctfe-diagnostic-at-expr
+        (if (string-eq name "expr-list-nth")
+          (match rest
+            [(AstExprCons index-arg nth-rest)
+              (ctfe-eval-expr-list-nth-call
+                arg
+                (box-get index-arg)
+                (box-get nth-rest)
                 expr
-                (string-append name " expects exactly one arg")))]))]
+                env
+                fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-list-nth expects exactly two args"))])
+          (match rest
+            [(AstExprNil)
+              (match (compiler-ctfe-eval arg env fuel)
+                [(OkCtfe value arg-fuel)
+                  (match value
+                    [(CtfeExprList nodes)
+                      (cond
+                        [(string-eq name "expr-list-empty?")
+                          (OkCtfe
+                            (CtfeBool (ctfe-expr-list-empty? nodes))
+                            arg-fuel)]
+                        [(string-eq name "expr-list-length")
+                          (OkCtfe
+                            (CtfeI64 (ctfe-expr-list-length nodes))
+                            arg-fuel)]
+                        [(ctfe-expr-list-empty? nodes)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              (string-append name " expects non-empty ExprList")))]
+                        [(string-eq name "expr-list-head")
+                          (OkCtfe
+                            (CtfeExpr (ctfe-expr-list-head nodes) (AstTyExpr))
+                            arg-fuel)]
+                        [(string-eq name "expr-list-tail")
+                          (OkCtfe
+                            (CtfeExprList (ctfe-expr-list-tail nodes))
+                            arg-fuel)]
+                        [else (ctfe-unsupported-form expr)])]
+                    [_
+                      (ErrCtfe
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          (string-append name " expects ExprList")))])]
+                [(ErrCtfe diag) (ErrCtfe diag)])]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (string-append name " expects exactly one arg")))])))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
@@ -4817,6 +4871,14 @@
         tail)]
     [_ AstExprNil]))
 
+(define (ctfe-expr-list-nth [lst : AstExprList] [index : i64]) : AstExpr
+  (match lst
+    [(AstExprCons head tail)
+      (if (= index 0)
+        (box-get head)
+        (ctfe-expr-list-nth (box-get tail) (- index 1)))]
+    [_ (AstExprLiteral (AstLitUnit))]))
+
 ;; --- folding ----------------------------------------------------------------
 ;; Convert a folded compile-time value into the AST literal that lowering then
 ;; materializes through the ordinary literal path. Expr / ExprList values are
@@ -5453,7 +5515,11 @@
             (not (ctfe-expr-list-empty? lst1))
             (and
               (ctfe-expr-eq (ctfe-expr-list-head lst1) a)
-              (ctfe-expr-eq (ctfe-expr-list-head (ctfe-expr-list-tail lst1)) b))))))))
+              (and
+                (ctfe-expr-eq
+                  (ctfe-expr-list-head (ctfe-expr-list-tail lst1))
+                  b)
+                (ctfe-expr-eq (ctfe-expr-list-nth lst1 1) b)))))))))
 
 (define (compiler-ctfe-expr-list-fold-sketch-ok?)
   :

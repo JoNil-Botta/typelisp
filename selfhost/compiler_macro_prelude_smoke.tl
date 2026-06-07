@@ -30,6 +30,7 @@
       (core/when false (set! value 1000))
       (core/unless false (set! value (* value 6)))
       (core/unless true (set! value 1000))
+      (set! value (core/cond false 1000 (= value 42) value 1000))
       value)))
 
 (define (main) : i64

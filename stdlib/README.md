@@ -46,7 +46,7 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   forms. Import it with
   `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` and call
   exported macros through the alias, such as `core/when`, `core/unless`,
-  `core/and`, and `core/or`.
+  `core/and`, `core/or`, and `core/cond`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, and coarse file-kind

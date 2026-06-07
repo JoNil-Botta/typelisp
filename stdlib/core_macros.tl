@@ -17,6 +17,7 @@
 ;#       (core/or false true)
 ;#       (core/when true (set! value 21))
 ;#       (core/unless false (set! value (+ value 21)))
+;#       (set! value (core/cond false 0 true value value))
 ;#       value)))
 ;# ```
 (module stdlib.core-macros)
@@ -73,6 +74,30 @@
     unit
     ,body))
 
+;: Flat conditional expression macro.
+;:
+;: Arguments are `test result` pairs followed by a final fallback expression,
+;: for example `(core/cond test1 value1 test2 value2 fallback)`. Conditions and
+;: results are captured as `Expr` operands; the expanded `if` chain performs the
+;: ordinary post-expansion bool/result typechecking.
+(defmacro
+  (cond [args : Expr ...])
+  :
+  Expr
+  (let
+    [arity : i64 (expr-list-length args)]
+    (cond
+      [(< arity 3) (expr-var "core-cond-invalid-arity")]
+      [(= (* (/ arity 2) 2) arity) (expr-var "core-cond-invalid-arity")]
+      [(= arity 3)
+        `(if ,(expr-list-nth args 0)
+          ,(expr-list-nth args 1)
+          ,(expr-list-nth args 2))]
+      [else
+        `(if ,(expr-list-nth args 0)
+          ,(expr-list-nth args 1)
+          (cond ,@(expr-list-tail (expr-list-tail args))))])))
+
 (export (macro and))
 
 (export (macro or))
@@ -80,3 +105,5 @@
 (export (macro when))
 
 (export (macro unless))
+
+(export (macro cond))

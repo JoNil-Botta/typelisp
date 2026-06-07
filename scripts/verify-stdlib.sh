@@ -257,6 +257,8 @@ stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/core_macros_api.tl|pass|-
+stdlib/tests/core_macros_cond_non_bool.tl|fail|typecheck: if condition must be bool
+stdlib/tests/core_macros_cond_branch_mismatch.tl|fail|typecheck: if branches must match
 stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/borrowed_str_gate.tl|pass|-

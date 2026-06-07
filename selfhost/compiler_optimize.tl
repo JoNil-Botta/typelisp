@@ -8661,7 +8661,8 @@
 ;; counter (the same per-function sequential scheme lowering uses), callee bodies
 ;; are walked in list order, and callees are resolved through the deterministic
 ;; OptFunctionIndex. Param var ids (0..nparams-1) are substituted with the call's
-;; argument values; other callee var ids are shifted by the caller's var count.
+;; argument values; other callee var ids are compacted by subtracting the dead
+;; read-only param slots before shifting by the caller's var count.
 ;; ---------------------------------------------------------------------------
 (defenum OptInlineState
   (OptInlineState CompilerIrInstrList i64))
@@ -8740,12 +8741,16 @@
   [callee : CompilerIrFunction]
   [caller-name : String]) : bool
   (match callee
-    [(IrFunction cname cparams _ _ cblocks)
+    [(IrFunction cname cparams _ cvars cblocks)
       (if (string-eq cname caller-name)
         false
-        (if (opt-inline-params-sequential? cparams 0)
-          (opt-inline-single-block-ok? cblocks (opt-inline-param-count cparams))
-          false))]))
+        (let
+          [np : i64 (opt-inline-param-count cparams)]
+          (if (opt-inline-params-sequential? cparams 0)
+            (if (>= cvars np)
+              (opt-inline-single-block-ok? cblocks np)
+              false)
+            false)))]))
 
 (define (opt-inline-arity-ok? [args : CompilerIrCallArgs] [np : i64]) : bool
   (match args
@@ -8753,6 +8758,12 @@
     [(IrCallArgsOne _) (= np 1)]
     [(IrCallArgsTwo _ _) (= np 2)]
     [(IrCallArgsArray arr) (= np (array-length arr))]))
+
+(define (opt-inline-rebase-var [id : i64] [np : i64] [base : i64]) : i64
+  (+ base (- id np)))
+
+(define (opt-inline-frame-growth [frame : i64] [np : i64]) : i64
+  (- frame np))
 
 (define (opt-inline-clone-arg-at [sa : CompilerIrCallArgs] [id : i64]) : CompilerIrValue
   (match sa
@@ -8773,7 +8784,7 @@
     [(IrValueVar id)
       (if (< id np)
         (opt-inline-clone-arg-at sa id)
-        (IrValueVar (+ id base)))]
+        (IrValueVar (opt-inline-rebase-var id np base)))]
     [(IrValueGlobal name) (IrValueGlobal (clone name))]
     [(IrValueGlobalAddr name) (IrValueGlobalAddr (clone name))]
     [(IrValueFunction name) (IrValueFunction (clone name))]
@@ -8819,36 +8830,36 @@
   (match instr
     [(IrInstrMov dst src ty)
       (IrInstrMov
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         (clone ty))]
     [(IrInstrGep dst b o ty)
       (IrInstrGep
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value b sa np base)
         (opt-inline-remap-value o sa np base)
         (clone ty))]
     [(IrInstrLoad dst src ty)
       (IrInstrLoad
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         (clone ty))]
     [(IrInstrCast dst src from to)
       (IrInstrCast
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         (clone from)
         (clone to))]
     [(IrInstrBinOp dst op lhs rhs ty)
       (IrInstrBinOp
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         op
         (opt-inline-remap-value lhs sa np base)
         (opt-inline-remap-value rhs sa np base)
         (clone ty))]
     [(IrInstrUnOp dst op src ty)
       (IrInstrUnOp
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         op
         (opt-inline-remap-value src sa np base)
         (clone ty))]
@@ -8864,13 +8875,13 @@
         (clone ty))]
     [(IrInstrCall dst name a ty)
       (IrInstrCall
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         (clone name)
         (opt-inline-remap-args a sa np base)
         (clone ty))]
     [(IrInstrCallIndirect dst callee a ty)
       (IrInstrCallIndirect
-        (+ dst base)
+        (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value callee sa np base)
         (opt-inline-remap-args a sa np base)
         (clone ty))]
@@ -8957,7 +8968,7 @@
                       cargs
                       np
                       vars)
-                    (+ vars cvars))
+                    (+ vars (opt-inline-frame-growth cvars np)))
                   (OptInlineState
                     (compiler-ir-instr-cons
                       (IrInstrCall dst cname cargs cret)
@@ -11915,6 +11926,100 @@
 (define (opt-function-frame [func : CompilerIrFunction]) : i64
   (match func
     [(IrFunction _ _ _ frame _) frame]))
+
+(define (opt-inline-frame-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "left" (AstTyI64) 0)
+    (compiler-ir-param-cons (IrParam "right" (AstTyI64) 1) IrParamNil)))
+
+(define (opt-inline-frame-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_add"
+    (opt-inline-frame-params)
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-frame-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 10) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 32) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "inline_add"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (opt-inline-frame-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-frame-caller)
+    (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
+
+(define (opt-inline-count-binop-dst [instrs : CompilerIrInstrList] [dst : i64]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrBinOp d _ _ _ _)
+            (if (= d dst)
+              1
+              0)]
+          [_ 0])
+        (opt-inline-count-binop-dst (box-get rest) dst))]))
+
+(define (opt-inline-mov-dst-src?
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [src : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueVar s) _)
+          (if (and (= d dst) (= s src))
+            true
+            (opt-inline-mov-dst-src? (box-get rest) dst src))]
+        [_ (opt-inline-mov-dst-src? (box-get rest) dst src)])]))
+
+(define (compiler-optimize-inline-self-test) : i64
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-frame-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [instrs : CompilerIrInstrList (opt-function-first-instrs main)]
+          (cond
+            [(not (= (opt-function-frame main) 4)) 1]
+            [(not (= (compiler-ir-instr-list-count instrs) 5)) 2]
+            [(not (= (opt-inline-count-binop-dst instrs 3) 1)) 3]
+            [(not (= (opt-inline-count-binop-dst instrs 5) 0)) 4]
+            [(not (opt-inline-mov-dst-src? instrs 2 3)) 5]
+            [else 42]))]
+      [(OptNoFunction) 6])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

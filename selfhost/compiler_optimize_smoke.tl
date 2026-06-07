@@ -38,6 +38,7 @@
     (unless (= (compiler-optimize-induction-self-test) 42) (return 1))
     (unless (= (compiler-optimize-ssa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-level-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-inline-self-test) 42) (return 1))
     (unless (= (compiler-optimize-fixed-point-self-test) 42) (return 1))
     (unless (= (compiler-optimize-tailrec-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-dce-self-test) 42) (return 1))

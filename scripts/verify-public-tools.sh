@@ -1469,6 +1469,27 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
+    run_cmd lint-multi "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_ladder.tl"
+    assert_success
+    assert_stderr_empty
+    lint_clean_display=$(native_arg_path "$WORKDIR/lint_clean.tl")
+    lint_ladder_display=$(native_arg_path "$WORKDIR/lint_ladder.tl")
+    assert_contains "$out" "--- $lint_clean_display"
+    assert_contains "$out" "--- $lint_ladder_display"
+    assert_contains "$out" "lint_ladder.tl:"
+    assert_contains "$out" "lint: 0 finding(s)"
+    assert_contains "$out" "lint: 1 finding(s)"
+    lint_multi_clean_line=$(grep -nF -- "--- $lint_clean_display" "$out" | head -n 1 | cut -d: -f1)
+    lint_multi_ladder_line=$(grep -nF -- "--- $lint_ladder_display" "$out" | head -n 1 | cut -d: -f1)
+    if [ "$lint_multi_clean_line" -ge "$lint_multi_ladder_line" ]; then
+        fail "lint multi-file output did not preserve input path order"
+    fi
+
+    run_cmd lint-files-manifest "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_ladder.tl" --manifest-path typelisp.pkg
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "cannot combine input paths with --manifest-path"
+
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
     run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint
     assert_failure

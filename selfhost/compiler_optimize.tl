@@ -8493,6 +8493,25 @@
 (define (opt-loop-body-contains-id? [body : OptLoopBody] [id : i64]) : bool
   (opt-loop-body-member-array-contains-id? (struct-get body members) id))
 
+(define (opt-loop-body-current-blocks-from
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (let
+            [tail : CompilerIrBlockList
+              (opt-loop-body-current-blocks-from body index (box-get rest))]
+            (match (opt-cfg-index-id index label)
+              [(OptSomeI64 id)
+                (if (opt-loop-body-contains-id? body id)
+                  (compiler-ir-block-cons block tail)
+                  tail)]
+              [(OptNoI64) tail]))])]))
+
 (define (opt-natural-loop-header [loop : OptNaturalLoop]) : String
   (match loop
     [(OptNaturalLoop header _ _ _) header]))
@@ -8514,6 +8533,15 @@
 
 (define (opt-natural-loop-body-contains-id? [loop : OptNaturalLoop] [id : i64]) : bool
   (opt-loop-body-contains-id? (opt-natural-loop-body-info loop) id))
+
+(define (opt-natural-loop-current-body-blocks
+  [index : OptCfgIndex]
+  [loop : OptNaturalLoop]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-loop-body-current-blocks-from
+    (opt-natural-loop-body-info loop)
+    index
+    blocks))
 
 (define (opt-natural-loop-preheader [loop : OptNaturalLoop]) : OptLoopPreheader
   (match loop
@@ -8785,6 +8813,9 @@
 (defenum OptLicmBlocksResult
   (OptLicmBlocksResult CompilerIrBlockList CompilerIrInstrList I64I64Map bool))
 
+(define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
+  (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
+
 (define (opt-licm-collect-defs-instrs
   [instrs : CompilerIrInstrList]
   [set : I64I64Map]) : I64I64Map
@@ -8816,20 +8847,16 @@
   (opt-licm-collect-defs-instr-seq-from instrs 0 set))
 
 (define (opt-licm-collect-defs-blocks
-  [body : OptLabelSet]
   [blocks : CompilerIrBlockList]
   [set : I64I64Map]) : I64I64Map
   (match blocks
     [(IrBlockNil) set]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(IrBlock _ instrs)
           (opt-licm-collect-defs-blocks
-            body
             (box-get rest)
-            (if (opt-label-contains body label)
-              (opt-licm-collect-defs-instr-seq instrs set)
-              set))])]))
+            (opt-licm-collect-defs-instr-seq instrs set))])]))
 
 (define (opt-licm-value-invariant?
   [loop-defs : I64I64Map]
@@ -8928,8 +8955,7 @@
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from loop-defs instrs 0 hoisted))
 
-(define (opt-licm-filter-blocks
-  [body : OptLabelSet]
+(define (opt-licm-filter-body-blocks
   [loop-defs : I64I64Map]
   [blocks : CompilerIrBlockList]
   [hoisted : I64I64Map]) : OptLicmBlocksResult
@@ -8938,37 +8964,47 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (if (opt-label-contains body label)
-            (match (opt-licm-filter-instr-seq loop-defs instrs hoisted)
-              [(OptLicmInstrsResult kept moved next-hoisted block-changed)
-                (match (opt-licm-filter-blocks
-                  body
-                  loop-defs
-                  (box-get rest)
-                  next-hoisted)
-                  [(OptLicmBlocksResult
-                      rest-blocks
-                      rest-moved
-                      final-hoisted
-                      rest-changed)
-                    (OptLicmBlocksResult
-                      (compiler-ir-block-cons
-                        (compiler-ir-block label kept)
-                        rest-blocks)
-                      (opt-aggregate-instr-list-append moved rest-moved)
-                      final-hoisted
-                      (or block-changed rest-changed))])])
-            (match (opt-licm-filter-blocks
-              body
-              loop-defs
-              (box-get rest)
-              hoisted)
-              [(OptLicmBlocksResult rest-blocks moved final-hoisted changed)
-                (OptLicmBlocksResult
-                  (compiler-ir-block-cons block rest-blocks)
-                  moved
-                  final-hoisted
-                  changed)]))])]))
+          (match (opt-licm-filter-instr-seq loop-defs instrs hoisted)
+            [(OptLicmInstrsResult kept moved next-hoisted block-changed)
+              (match (opt-licm-filter-body-blocks
+                loop-defs
+                (box-get rest)
+                next-hoisted)
+                [(OptLicmBlocksResult
+                    rest-blocks
+                    rest-moved
+                    final-hoisted
+                    rest-changed)
+                  (OptLicmBlocksResult
+                    (compiler-ir-block-cons
+                      (compiler-ir-block label kept)
+                      rest-blocks)
+                    (opt-aggregate-instr-list-append moved rest-moved)
+                    final-hoisted
+                    (or block-changed rest-changed))])])])]))
+
+(define (opt-licm-replace-body-blocks
+  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match body-blocks
+    [(IrBlockNil) blocks]
+    [(IrBlockCons replacement replacement-rest)
+      (match blocks
+        [(IrBlockNil) (IrBlockNil)]
+        [(IrBlockCons block rest)
+          (match block
+            [(IrBlock label _)
+              (match replacement
+                [(IrBlock replacement-label _)
+                  (if (string-eq label replacement-label)
+                    (compiler-ir-block-cons
+                      replacement
+                      (opt-licm-replace-body-blocks
+                        (box-get rest)
+                        (box-get replacement-rest)))
+                    (compiler-ir-block-cons
+                      block
+                      (opt-licm-replace-body-blocks (box-get rest) body-blocks)))])])])]))
 
 (define (opt-licm-insert-before-terminator
   [hoisted : CompilerIrInstrList]
@@ -9030,40 +9066,49 @@
             (opt-licm-insert-preheader-blocks preheader hoisted (box-get rest)))])]))
 
 (define (opt-licm-apply-loop
+  [index : OptCfgIndex]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : CompilerIrBlockList
   (match (opt-natural-loop-preheader loop)
     [(OptSomeLoopPreheader preheader)
       (let
-        [body : OptLabelSet (opt-natural-loop-body loop)]
+        [body-blocks : CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks index loop blocks)]
+        [map-capacity : i64 (opt-licm-body-map-capacity body-blocks)]
         [loop-defs : I64I64Map
           (opt-licm-collect-defs-blocks
-            body
-            blocks
-            (i64-i64-map-with-capacity 64))]
-        (match (opt-licm-filter-blocks
-          body
+            body-blocks
+            (i64-i64-map-with-capacity map-capacity))]
+        (match (opt-licm-filter-body-blocks
           loop-defs
-          blocks
-          (i64-i64-map-with-capacity 64))
-          [(OptLicmBlocksResult filtered hoisted _ changed)
+          body-blocks
+          (i64-i64-map-with-capacity map-capacity))
+          [(OptLicmBlocksResult filtered-body hoisted _ changed)
             (if changed
-              (opt-licm-insert-preheader-blocks preheader hoisted filtered)
+              (opt-licm-insert-preheader-blocks
+                preheader
+                hoisted
+                (opt-licm-replace-body-blocks blocks filtered-body))
               blocks)]))]
     [(OptNoLoopPreheader) blocks]))
 
 (define (opt-licm-apply-loops
+  [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match loops
     [(OptNaturalLoopNil) blocks]
     [(OptNaturalLoopCons loop rest)
-      (opt-licm-apply-loops (box-get rest) (opt-licm-apply-loop blocks loop))]))
+      (opt-licm-apply-loops
+        index
+        (box-get rest)
+        (opt-licm-apply-loop index blocks loop))]))
 
 (define (opt-licm-blocks-with-context
   [context : OptCfgContext]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-apply-loops
+    (struct-get context index)
     (opt-cfg-natural-loops-with-context blocks context)
     blocks))
 
@@ -9812,8 +9857,7 @@
               (let
                 [loop-defs : I64I64Map
                   (opt-licm-collect-defs-blocks
-                    body
-                    blocks
+                    (opt-natural-loop-body-blocks loop)
                     (i64-i64-map-with-capacity 64))]
                 (match (opt-induction-find-derived-blocks
                   fact

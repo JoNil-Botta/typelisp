@@ -1461,18 +1461,34 @@ Defines a named function.
 - Recursion is supported.
 - Varargs are **not** supported.
 
-### 4.3 `(extern name [metadata...] : (-> args ... ret))` - external symbol
+### 4.3 `extern` - external symbol
 
 Declares an external function to link against. The name is a TypeLisp
 identifier used for source lookup. The legacy form `(extern name : type)`
 defaults to target C ABI and uses `name` as the external linker symbol.
 
+The preferred function-head form writes fixed parameters directly on the extern
+head and uses the return type after `:`:
+
+```lisp test=ignore name=extern-function-head-varargs reason="requires current selfhost parser"
+(extern (printf [fmt : (Ptr u8)] ...) (:symbol "printf") : i32)
+(extern (sumf [count : i64] [value : ...f64]) (:symbol "sumf") : i32)
+```
+
+In a function-head extern, bare `...` marks an open C varargs tail. A bracketed
+parameter whose type is `...T` marks a typed C varargs tail; every variadic call
+argument must typecheck as `T`. The marker must be final, and the fixed argument
+count is derived from its position. The marker is not included in the declared
+fixed function type.
+
 Metadata may appear before `:`:
 
 - `(:abi c)` selects the C ABI. Unknown ABI names are rejected.
-- `(:abi c-varargs fixed-count)` selects the target C varargs ABI. The
+- `(:abi c-varargs fixed-count)` selects the target C varargs ABI for the
+  legacy type-form declaration. The
   `fixed-count` value is the number of non-variadic leading parameters in the
-  declared extern signature.
+  declared extern signature. It remains accepted for compatibility, but must
+  not be combined with a function-head varargs marker.
 - `(:symbol "exact_name")` supplies the external linker symbol independently of
   the local TypeLisp name.
 - `(:link-lib "name")` adds a native library input for source `build`/`run`.
@@ -1504,10 +1520,11 @@ Raw pointer signatures do not make the pointer safe: nullability, validity,
 aliasing, lifetime, mutability, and target ABI correctness remain the caller and
 callee's contract.
 
-For `c-varargs` externs, the backend emits the extra platform call setup needed
-by the C ABI: SysV x86_64 sets `%al` to the vector-register argument count, and
-Windows x64 duplicates variadic floating-point register arguments into the
-corresponding integer argument registers.
+For `c-varargs` externs, including function-head varargs declarations, the
+backend emits the extra platform call setup needed by the C ABI: SysV x86_64
+sets `%al` to the vector-register argument count, and Windows x64 duplicates
+variadic floating-point register arguments into the corresponding integer
+argument registers.
 
 Example:
 ```lisp test=check name=extern-declaration
@@ -4684,6 +4701,11 @@ defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" type expr+ ")"
 macro-operand ::= "[" ident ":" type "]"
                 | "[" ident ":" type "..." "]"      ; variadic final operand only
 extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
+                | "(" "extern" extern-head extern-meta* ":" type ")"
+extern-head   ::= "(" ident extern-param* extern-varargs? ")"
+extern-param  ::= "[" ident ":" type "]"
+extern-varargs ::= "..."
+                | "[" ident ":" "..." ident "]"
 extern-meta   ::= "(" ":abi" "c" ")"
                 | "(" ":abi" "c-varargs" integer ")"
                 | "(" ":symbol" string ")"

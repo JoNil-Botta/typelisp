@@ -5549,8 +5549,27 @@
           (if (or (string-eq name extern-name) (string-eq name link-symbol))
             (match abi
               [(AstExternAbiCVarargs fixed-count) fixed-count]
+              [(AstExternAbiCVarargsOpen fixed-count) fixed-count]
+              [(AstExternAbiCVarargsTyped fixed-count _) fixed-count]
               [_ -1])
             (compiler-backend-extern-varargs-fixed-count (box-get rest) name))])]))
+
+(define (compiler-backend-dynamic-extern-varargs-fixed-count
+  [externs : CompilerIrExternList]
+  [name : String]) : i64
+  (match externs
+    [(IrExternNil) -1]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name _ abi link-symbol _ _)
+          (if (or (string-eq name extern-name) (string-eq name link-symbol))
+            (match abi
+              [(AstExternAbiCVarargsOpen fixed-count) fixed-count]
+              [(AstExternAbiCVarargsTyped fixed-count _) fixed-count]
+              [_ -1])
+            (compiler-backend-dynamic-extern-varargs-fixed-count
+              (box-get rest)
+              name))])]))
 
 (define (compiler-backend-varargs-linux-vector-count
   [types : AstTypeList]
@@ -5636,6 +5655,83 @@
   (match (compiler-backend-index-signature index name)
     [(CompilerBackendSomeSignature param-types _) param-types]
     [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
+
+(define (compiler-backend-call-actual-type
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [value : CompilerIrValue]) : AstType
+  (match (compiler-backend-value-type types global-types value)
+    [(CompilerRegSomeType ty) ty]
+    [(CompilerRegNoType) (AstTyI64)]))
+
+(define (compiler-backend-call-actual-param-types-from
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]
+  [fixed-types : AstTypeList]
+  [fixed-count : i64]
+  [index : i64]) : AstTypeList
+  (if (>= index (compiler-backend-call-args-count args))
+    AstTypeNil
+    (if (< index fixed-count)
+      (match fixed-types
+        [(AstTypeCons ty rest)
+          (ast-type-cons
+            (box-get ty)
+            (compiler-backend-call-actual-param-types-from
+              types
+              global-types
+              args
+              (box-get rest)
+              fixed-count
+              (+ index 1)))]
+        [(AstTypeNil)
+          (ast-type-cons
+            (compiler-backend-call-actual-type
+              types
+              global-types
+              (compiler-backend-call-arg-at args index))
+            (compiler-backend-call-actual-param-types-from
+              types
+              global-types
+              args
+              AstTypeNil
+              fixed-count
+              (+ index 1)))])
+      (ast-type-cons
+        (compiler-backend-call-actual-type
+          types
+          global-types
+          (compiler-backend-call-arg-at args index))
+        (compiler-backend-call-actual-param-types-from
+          types
+          global-types
+          args
+          fixed-types
+          fixed-count
+          (+ index 1))))))
+
+(define (compiler-backend-call-param-types-for-call
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [index : CompilerBackendProgramIndex]) : AstTypeList
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-call-param-types-index name index)]
+    [fixed-count : i64
+      (compiler-backend-dynamic-extern-varargs-fixed-count externs name)]
+    (if (< fixed-count 0)
+      param-types
+      (compiler-backend-call-actual-param-types-from
+        types
+        global-types
+        args
+        param-types
+        fixed-count
+        0))))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
@@ -6404,6 +6500,8 @@
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -6412,7 +6510,13 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-call-param-types-index name program-index)]
+      (compiler-backend-call-param-types-for-call
+        name
+        args
+        types
+        global-types
+        externs
+        program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target
@@ -7116,7 +7220,13 @@
                   ty)))
             (let
               [param-types : AstTypeList
-                (compiler-backend-call-param-types-index name program-index)]
+                (compiler-backend-call-param-types-for-call
+                  name
+                  args
+                  types
+                  global-types
+                  externs
+                  program-index)]
               [call-space : i64
                 (compiler-backend-call-arg-space target args param-types)]
               (match (compiler-backend-emit-call-args
@@ -7181,6 +7291,8 @@
           args
           ty
           assignments
+          types
+          global-types
           vars
           plan
           functions
@@ -8025,6 +8137,8 @@
   [name : String]
   [args : CompilerIrCallArgs]
   [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
@@ -8033,7 +8147,13 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-call-param-types-index name program-index)]
+      (compiler-backend-call-param-types-for-call
+        name
+        args
+        types
+        global-types
+        externs
+        program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target
@@ -8383,6 +8503,8 @@
                                 name
                                 args
                                 assignments
+                                types
+                                global-types
                                 vars
                                 plan
                                 functions

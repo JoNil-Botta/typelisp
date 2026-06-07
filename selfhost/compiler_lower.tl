@@ -10876,6 +10876,19 @@
       (lower-direct-call-values args-state env name values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
+(define (lower-direct-call-param-types
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [params : AstTypeList]) : ResultTcTypeList
+  (match (tc-call-extern-abi-for-name ctx name)
+    [(TcSomeExternAbi abi)
+      (if (tc-call-dynamic-c-varargs-abi? abi)
+        (tc-call-extern-varargs-params ctx type-env args params abi)
+        (OkTcTypeList params))]
+    [(TcNoExternAbi) (OkTcTypeList params)]))
+
 (define (lower-direct-call
   [ctx : TcContext]
   [state : LowerState]
@@ -10889,29 +10902,32 @@
     [(OkTcType fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(AstTyFunc param-types _)
-          (if (lower-c-abi-extern-call? ctx state env name)
-            (lower-direct-c-abi-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              (tc-resolve-type-list ctx param-types)
-              result-ty
-              origin)
-            (lower-direct-call-from-args
-              (lower-args-as
-                ctx
-                state
-                env
-                type-env
-                args
-                (tc-resolve-type-list ctx param-types))
-              env
-              name
-              result-ty
-              origin))]
+          (match (lower-direct-call-param-types
+            ctx
+            type-env
+            name
+            args
+            (tc-resolve-type-list ctx param-types))
+            [(OkTcTypeList call-param-types)
+              (if (lower-c-abi-extern-call? ctx state env name)
+                (lower-direct-c-abi-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  call-param-types
+                  result-ty
+                  origin)
+                (lower-direct-call-from-args
+                  (lower-args-as ctx state env type-env args call-param-types)
+                  env
+                  name
+                  result-ty
+                  origin))]
+            [(ErrTcTypeList message)
+              (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
         [_
           (lower-direct-call-from-args
             (lower-args ctx state env type-env args)

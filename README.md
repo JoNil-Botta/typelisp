@@ -167,6 +167,7 @@ stdlib-macro migration of parser-owned core forms remains separate.
 (defstruct Pair (fst i64) (snd i64))
 (extern foreign-add : (-> i64 i64 i64))
 (extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
+(extern (printf [fmt : (Ptr u8)] ...) (:symbol "printf") : i32)
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
@@ -181,7 +182,9 @@ separately, but source that needs recursive aggregates should use explicit
 `extern` defaults to the target C ABI with the linker symbol equal to the local
 name. `(:symbol "...")` can bind a local TypeLisp declaration to an exact
 foreign linker symbol without applying the `_tl_` prefix used for ordinary
-TypeLisp declarations.
+TypeLisp declarations. C varargs externs can use a function-head declaration:
+bare `...` accepts any C ABI value tail and `[arg : ...T]` requires every
+variadic argument to have type `T`.
 
 The compiler still uses the legacy flat import model: imported
 definitions merge into one top-level namespace. The module direction is

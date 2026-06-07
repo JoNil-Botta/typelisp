@@ -2862,36 +2862,72 @@
   "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
 (extern bad (:abi c) (:symbol \"bad_enum_args_return\") : (-> i64 (RefOption n)))")
 
+(define (compiler-typecheck-extern-head-varargs-open-source) : String
+  "(extern (printf [fmt : (Ptr u8)] ...) (:symbol \"printf\") : i32)
+(define (main [fmt : (Ptr u8)]) : i64
+  (cast (printf fmt 1 2.0) : i64))")
+
+(define (compiler-typecheck-extern-head-varargs-typed-source) : String
+  "(extern (sumf [count : i64] [value : ...f64]) (:symbol \"sumf\") : i32)
+(define (main) : i64
+  (cast (sumf 2 1.0 2.0) : i64))")
+
+(define (compiler-typecheck-extern-head-varargs-typed-mismatch-source) : String
+  "(extern (sumf [count : i64] [value : ...f64]) (:symbol \"sumf\") : i32)
+(define (main) : i64
+  (cast (sumf 1 true) : i64))")
+
+(define (compiler-typecheck-extern-head-varargs-tail-enum-source) : String
+  "(defenum ResultI64 (OkI64 i64))
+(extern (bad [count : i64] [value : ...ResultI64]) (:symbol \"bad\") : i64)")
+
+(define (compiler-typecheck-extern-head-varargs-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-head-varargs-open-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-extern-head-varargs-typed-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
+          "typecheck: argument type mismatch")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-extern-head-varargs-tail-enum-source)
+          "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64")))))
+
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-abi-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-extern-abi-tuple-source)
-        "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
+      (compiler-typecheck-extern-head-varargs-tests-ok?)
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-extern-abi-array-source)
-          "typecheck: extern ABI c does not support parameter type (Array i64 2)")
+          (compiler-typecheck-extern-abi-tuple-source)
+          "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-extern-abi-f32-source)
-            "typecheck: extern ABI c does not support parameter type f32")
+            (compiler-typecheck-extern-abi-array-source)
+            "typecheck: extern ABI c does not support parameter type (Array i64 2)")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-extern-abi-enum-param-source)
-              "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")
+              (compiler-typecheck-extern-abi-f32-source)
+              "typecheck: extern ABI c does not support parameter type f32")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-extern-abi-enum-return-source)
-                "typecheck: extern ABI c does not support enum aggregate return type ResultI64")
+                (compiler-typecheck-extern-abi-enum-param-source)
+                "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-extern-abi-enum-args-param-source)
-                  "typecheck: extern ABI c does not support enum aggregate parameter type (RefOption n)")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-extern-abi-enum-args-return-source)
-                  "typecheck: extern ABI c does not support enum aggregate return type (RefOption n)")))))))))
+                  (compiler-typecheck-extern-abi-enum-return-source)
+                  "typecheck: extern ABI c does not support enum aggregate return type ResultI64")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-extern-abi-enum-args-param-source)
+                    "typecheck: extern ABI c does not support enum aggregate parameter type (RefOption n)")
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-extern-abi-enum-args-return-source)
+                    "typecheck: extern ABI c does not support enum aggregate return type (RefOption n)"))))))))))
 
 (define (compiler-typecheck-reference-local-source) : String
   "(define (take [r : (& n i64)]) : unit unit)

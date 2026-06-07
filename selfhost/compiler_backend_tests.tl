@@ -722,9 +722,9 @@
 (define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
   (backend-cat3
     "(extern tl_alloc : (-> i64 (MutPtr u8)))
-(extern snprintf (:abi c-varargs 3) (:symbol \""
+(extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [value : ...f64]) (:symbol \""
     symbol
-    "\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
+    "\") : i32)
 
 (define (write-byte! [p : (MutPtr u8)] [offset : i64] [value : i64]) : unit
   (unsafe

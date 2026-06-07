@@ -141,7 +141,9 @@
 
 (defenum AstExternAbi
   (AstExternAbiC)
-  (AstExternAbiCVarargs i64))
+  (AstExternAbiCVarargs i64)
+  (AstExternAbiCVarargsOpen i64)
+  (AstExternAbiCVarargsTyped i64 AstType))
 
 (defenum AstExternLinkInput
   (AstExternLinkLib String)
@@ -920,17 +922,228 @@
 (define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
   (match abi
     [(AstExternAbiC) true]
-    [(AstExternAbiCVarargs _) true]))
+    [(AstExternAbiCVarargs _) true]
+    [(AstExternAbiCVarargsOpen _) true]
+    [(AstExternAbiCVarargsTyped _ _) true]))
 
 (define (ast-extern-abi-c-varargs? [abi : AstExternAbi]) : bool
   (match abi
     [(AstExternAbiC) false]
-    [(AstExternAbiCVarargs _) true]))
+    [(AstExternAbiCVarargs _) true]
+    [(AstExternAbiCVarargsOpen _) true]
+    [(AstExternAbiCVarargsTyped _ _) true]))
 
 (define (ast-extern-abi-varargs-fixed-count [abi : AstExternAbi]) : i64
   (match abi
     [(AstExternAbiC) 0]
-    [(AstExternAbiCVarargs fixed-count) fixed-count]))
+    [(AstExternAbiCVarargs fixed-count) fixed-count]
+    [(AstExternAbiCVarargsOpen fixed-count) fixed-count]
+    [(AstExternAbiCVarargsTyped fixed-count _) fixed-count]))
+
+(define (ast-extern-abi-c-varargs-open? [abi : AstExternAbi]) : bool
+  (match abi
+    [(AstExternAbiCVarargsOpen _) true]
+    [_ false]))
+
+(define (ast-extern-abi-c-varargs-typed? [abi : AstExternAbi]) : bool
+  (match abi
+    [(AstExternAbiCVarargsTyped _ _) true]
+    [_ false]))
+
+(define (ast-extern-abi-varargs-tail-type [abi : AstExternAbi]) : AstType
+  (match abi
+    [(AstExternAbiCVarargsTyped _ ty) ty]
+    [_ (AstTyUnit)]))
+
+(define (ast-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
+  (match a
+    [(AstLifetimeNil)
+      (match b
+        [(AstLifetimeNil) true]
+        [_ false])]
+    [(AstLifetimeCons a-head a-rest)
+      (match b
+        [(AstLifetimeCons b-head b-rest)
+          (and
+            (string-eq a-head b-head)
+            (ast-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (ast-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
+  (match a
+    [(AstTypeNil)
+      (match b
+        [(AstTypeNil) true]
+        [_ false])]
+    [(AstTypeCons a-head a-rest)
+      (match b
+        [(AstTypeCons b-head b-rest)
+          (and
+            (ast-type-eq? (box-get a-head) (box-get b-head))
+            (ast-type-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (ast-type-eq? [a : AstType] [b : AstType]) : bool
+  (match a
+    [(AstTyI64)
+      (match b
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstTyI32)
+      (match b
+        [(AstTyI32) true]
+        [_ false])]
+    [(AstTyI16)
+      (match b
+        [(AstTyI16) true]
+        [_ false])]
+    [(AstTyI8)
+      (match b
+        [(AstTyI8) true]
+        [_ false])]
+    [(AstTyU64)
+      (match b
+        [(AstTyU64) true]
+        [_ false])]
+    [(AstTyU32)
+      (match b
+        [(AstTyU32) true]
+        [_ false])]
+    [(AstTyU16)
+      (match b
+        [(AstTyU16) true]
+        [_ false])]
+    [(AstTyU8)
+      (match b
+        [(AstTyU8) true]
+        [_ false])]
+    [(AstTyF64)
+      (match b
+        [(AstTyF64) true]
+        [_ false])]
+    [(AstTyF32)
+      (match b
+        [(AstTyF32) true]
+        [_ false])]
+    [(AstTyBool)
+      (match b
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstTyChar)
+      (match b
+        [(AstTyChar) true]
+        [_ false])]
+    [(AstTyString)
+      (match b
+        [(AstTyString) true]
+        [_ false])]
+    [(AstTyStr)
+      (match b
+        [(AstTyStr) true]
+        [_ false])]
+    [(AstTyUnit)
+      (match b
+        [(AstTyUnit) true]
+        [_ false])]
+    [(AstTyNever)
+      (match b
+        [(AstTyNever) true]
+        [_ false])]
+    [(AstTyExpr)
+      (match b
+        [(AstTyExpr) true]
+        [_ false])]
+    [(AstTyExprList)
+      (match b
+        [(AstTyExprList) true]
+        [_ false])]
+    [(AstTyFunc a-args a-ret)
+      (match b
+        [(AstTyFunc b-args b-ret)
+          (and
+            (ast-type-list-eq? a-args b-args)
+            (ast-type-eq? (box-get a-ret) (box-get b-ret)))]
+        [_ false])]
+    [(AstTyTuple a-elems)
+      (match b
+        [(AstTyTuple b-elems) (ast-type-list-eq? a-elems b-elems)]
+        [_ false])]
+    [(AstTyArray a-elem a-len)
+      (match b
+        [(AstTyArray b-elem b-len)
+          (and (= a-len b-len) (ast-type-eq? (box-get a-elem) (box-get b-elem)))]
+        [_ false])]
+    [(AstTyDynArray a-elem)
+      (match b
+        [(AstTyDynArray b-elem)
+          (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [_ false])]
+    [(AstTyBox a-elem)
+      (match b
+        [(AstTyBox b-elem) (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [_ false])]
+    [(AstTyRegion a-region a-inner)
+      (match b
+        [(AstTyRegion b-region b-inner)
+          (and
+            (string-eq a-region b-region)
+            (ast-type-eq? (box-get a-inner) (box-get b-inner)))]
+        [_ false])]
+    [(AstTyRef a-lifetime a-inner)
+      (match b
+        [(AstTyRef b-lifetime b-inner)
+          (and
+            (string-eq a-lifetime b-lifetime)
+            (ast-type-eq? (box-get a-inner) (box-get b-inner)))]
+        [_ false])]
+    [(AstTyMutRef a-lifetime a-inner)
+      (match b
+        [(AstTyMutRef b-lifetime b-inner)
+          (and
+            (string-eq a-lifetime b-lifetime)
+            (ast-type-eq? (box-get a-inner) (box-get b-inner)))]
+        [_ false])]
+    [(AstTyEnum a-name)
+      (match b
+        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyEnumArgs a-name a-lifetimes)
+      (match b
+        [(AstTyEnumArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
+        [_ false])]
+    [(AstTyStruct a-name)
+      (match b
+        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyStructArgs a-name a-lifetimes)
+      (match b
+        [(AstTyStructArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
+        [_ false])]
+    [(AstTyVar a-name)
+      (match b
+        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVarArgs a-name a-lifetimes)
+      (match b
+        [(AstTyVarArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
+        [_ false])]
+    [(AstTyPtr a-elem)
+      (match b
+        [(AstTyPtr b-elem) (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [_ false])]
+    [(AstTyMutPtr a-elem)
+      (match b
+        [(AstTyMutPtr b-elem) (ast-type-eq? (box-get a-elem) (box-get b-elem))]
+        [_ false])]))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
   (match a
@@ -941,6 +1154,17 @@
     [(AstExternAbiCVarargs afixed)
       (match b
         [(AstExternAbiCVarargs bfixed) (= afixed bfixed)]
+        [_ false])]
+    [(AstExternAbiCVarargsOpen afixed)
+      (match b
+        [(AstExternAbiCVarargsOpen bfixed) (= afixed bfixed)]
+        [_ false])]
+    [(AstExternAbiCVarargsTyped afixed _)
+      (match b
+        [(AstExternAbiCVarargsTyped bfixed bty)
+          (and
+            (= afixed bfixed)
+            (ast-type-eq? (ast-extern-abi-varargs-tail-type a) bty))]
         [_ false])]))
 
 (define (ast-extern-link-input-eq?

@@ -15425,6 +15425,18 @@
         (TcSomeString value)
         (macro-hygiene-env-lookup (box-get rest) name))]))
 
+(define (macro-canonical-name [module : String] [name : String]) : String
+  (compiler-symbol-module-key module name))
+
+(define (macro-hygiene-global-base-name [macro-name : String] [base : String]) : String
+  (if (and
+    (tc-name-qualified? macro-name)
+    (and
+      (not (tc-name-qualified? base))
+      (string-eq base (tc-qualified-name-base macro-name))))
+    (compiler-symbol-module-key (tc-qualified-name-module macro-name) base)
+    base))
+
 (define (macro-hygiene-fresh-local
   [macro-name : String]
   [depth : i64]
@@ -15435,13 +15447,18 @@
       (int->string depth)
       (string-append "$" (string-append macro-name (string-append "$" base))))))
 
-(define (macro-hygiene-rename-var [env : MacroHygieneEnv] [name : String]) : String
+(define (macro-hygiene-rename-var
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [name : String]) : String
   (if (tc-hygiene-template-name? name)
     (let
       [base : String (tc-hygiene-template-base name)]
       (match (macro-hygiene-env-lookup env base)
         [(TcSomeString renamed) renamed]
-        [(TcNoString) (tc-hygiene-global-name base)]))
+        [(TcNoString)
+          (tc-hygiene-global-name
+            (macro-hygiene-global-base-name macro-name base))]))
     name))
 
 (define (macro-hygiene-bind-name
@@ -15633,7 +15650,8 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (ast-expr-spanned (macro-hygiene-expr inner env macro-name depth) span))]
-    [(AstExprVar name) (AstExprVar (macro-hygiene-rename-var env name))]
+    [(AstExprVar name)
+      (AstExprVar (macro-hygiene-rename-var env macro-name name))]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (box-get left-box)]
@@ -15737,7 +15755,7 @@
       (let
         [rhs : AstExpr (box-get rhs-box)]
         (ast-expr-set
-          (macro-hygiene-rename-var env name)
+          (macro-hygiene-rename-var env macro-name name)
           (macro-hygiene-expr rhs env macro-name depth)))]
     [(AstExprAnn inner-box ty)
       (let
@@ -16062,7 +16080,12 @@
         decls
         (compiler-symbol-handle-index handle))
         [(MacroSomeDecl macro-name params ret body)
-          (OkMacroCallDecl (MacroSomeDecl macro-name params ret body))]
+          (OkMacroCallDecl
+            (MacroSomeDecl
+              (macro-canonical-name target-module base)
+              params
+              ret
+              body))]
         [(MacroNoDecl)
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr
@@ -16140,7 +16163,14 @@
                   decls
                   (compiler-symbol-handle-index handle))
                   [(MacroSomeDecl macro-name params ret body)
-                    (OkMacroCallDecl (MacroSomeDecl macro-name params ret body))]
+                    (OkMacroCallDecl
+                      (MacroSomeDecl
+                        (macro-canonical-name
+                          (tc-context-module ctx)
+                          lookup-name)
+                        params
+                        ret
+                        body))]
                   [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])
                 (ErrMacroCallDecl
                   (ctfe-diagnostic-at-expr

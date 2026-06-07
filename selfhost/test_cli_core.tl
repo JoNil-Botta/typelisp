@@ -1487,19 +1487,33 @@
   [idx : i64]
   [n : i64]
   [line-open : bool]) : bool
-  (if (>= idx n)
-    false
-    (let
-      [c : char (string-ref source idx)]
-      (cond
-        [(and line-open (tltest-source-line-break? c))
-          (tltest-source-has-inline-tests-from source (+ idx 1) n true)]
-        [(and line-open (tltest-source-prefix-space? c))
-          (tltest-source-has-inline-tests-from source (+ idx 1) n true)]
-        [(and line-open (tltest-inline-marker-at? source idx n)) true]
-        [(tltest-source-line-break? c)
-          (tltest-source-has-inline-tests-from source (+ idx 1) n true)]
-        [else (tltest-source-has-inline-tests-from source (+ idx 1) n false)]))))
+  (let
+    [i : i64 idx]
+    [open : bool line-open]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (let
+          [c : char (string-ref source i)]
+          (cond
+            [(and open (tltest-source-line-break? c))
+              (begin
+                (set! i (+ i 1))
+                (set! open true))]
+            [(and open (tltest-source-prefix-space? c))
+              (begin
+                (set! i (+ i 1))
+                (set! open true))]
+            [(and open (tltest-inline-marker-at? source i n)) (set! found true)]
+            [(tltest-source-line-break? c)
+              (begin
+                (set! i (+ i 1))
+                (set! open true))]
+            [else
+              (begin
+                (set! i (+ i 1))
+                (set! open false))])))
+      found)))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
   (let

@@ -783,8 +783,8 @@ run_linux_backend_fixtures() {
     done
     assert_not_contains "$_raw_ptr_asm" "# TODO" backend-raw-pointer
     # This direct backend fixture bypasses the driver-owned runtime prelude.
-    # Provide a freestanding link-only abort target for bounds-check calls; the
-    # happy-path fixture must not execute it.
+    # Provide freestanding support for the runtime calls this fixture can emit.
+    # The abort path must not execute in the happy-path fixture.
     cat > "$_raw_ptr_abort_asm" <<'EOF'
     .text
     .globl tl_oob_abort
@@ -792,6 +792,30 @@ tl_oob_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
+
+    .globl tl_array_zero
+tl_array_zero:
+    testq %rsi, %rsi
+    jle .L_tl_array_zero_done
+.L_tl_array_zero_loop:
+    movb $0, (%rdi)
+    addq $1, %rdi
+    subq $1, %rsi
+    jg .L_tl_array_zero_loop
+.L_tl_array_zero_done:
+    ret
+
+    .globl tl_array_fill8
+tl_array_fill8:
+    testq %rsi, %rsi
+    jle .L_tl_array_fill8_done
+.L_tl_array_fill8_loop:
+    movq %rdx, (%rdi)
+    addq $8, %rdi
+    subq $1, %rsi
+    jg .L_tl_array_fill8_loop
+.L_tl_array_fill8_done:
+    ret
 EOF
     as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
     as "$_raw_ptr_abort_asm" -o "$_raw_ptr_abort_obj"

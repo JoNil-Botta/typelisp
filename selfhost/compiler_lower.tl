@@ -1569,7 +1569,7 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (lower-clone-root-add-type-list
           ctx
@@ -1671,11 +1671,11 @@
       [(AstTyTuple elems)
         (lower-clone-root-add-type-list ctx decls able roots elems)]
       [(AstTyArray elem _)
-        (lower-clone-root-add-type ctx decls able roots (box-get elem))]
+        (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
       [(AstTyDynArray elem)
-        (lower-clone-root-add-type ctx decls able roots (box-get elem))]
+        (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
       [(AstTyBox elem)
-        (lower-clone-root-add-type ctx decls able roots (box-get elem))]
+        (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
       [(AstTyEnum name) (lower-clone-root-add-named ctx decls able roots name)]
       [(AstTyStruct name)
         (lower-clone-root-add-named ctx decls able roots name)]
@@ -3997,7 +3997,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (lower-type-size ctx (box-get inner))]
+    [(AstTyRegion _ inner) (lower-type-size ctx (ty-node-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
@@ -4034,7 +4034,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (lower-type-align ctx (box-get inner))]
+    [(AstTyRegion _ inner) (lower-type-align ctx (ty-node-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
@@ -4052,7 +4052,7 @@
     [(AstTypeNil) cursor]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -4406,7 +4406,7 @@
 (define (lower-str-ref-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx (box-get inner)))
+      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
         [(AstTyStr) true]
         [_ false])]
     [_ false]))
@@ -4567,9 +4567,9 @@
     [(AstTyChar) true]
     [(AstTyStr) true]
     [(AstTyArray elem-ty _)
-      (not (tc-type-contains-reference? (box-get elem-ty)))]
+      (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
     [(AstTyDynArray elem-ty)
-      (not (tc-type-contains-reference? (box-get elem-ty)))]
+      (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
     [_ false]))
 
 (define (lower-borrow-place-value-reference? [ctx : TcContext] [ty : AstType]) : bool
@@ -4586,7 +4586,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (and
           (lower-supported-reference-type-with-stack? ctx head stack)
@@ -4601,7 +4601,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (and
           (lower-supported-reference-type-with-stack?
@@ -4711,15 +4711,21 @@
       true
       (match resolved
         [(AstTyRef _ inner)
-          (lower-supported-reference-referent-type? ctx (box-get inner))]
+          (lower-supported-reference-referent-type? ctx (ty-node-get inner))]
         [(AstTyMutRef _ inner)
-          (lower-supported-reference-referent-type? ctx (box-get inner))]
+          (lower-supported-reference-referent-type? ctx (ty-node-get inner))]
         [(AstTyTuple elems)
           (lower-supported-reference-type-list-with-stack? ctx elems stack)]
         [(AstTyArray elem _)
-          (lower-supported-reference-type-with-stack? ctx (box-get elem) stack)]
+          (lower-supported-reference-type-with-stack?
+            ctx
+            (ty-node-get elem)
+            stack)]
         [(AstTyBox elem)
-          (lower-supported-reference-type-with-stack? ctx (box-get elem) stack)]
+          (lower-supported-reference-type-with-stack?
+            ctx
+            (ty-node-get elem)
+            stack)]
         [(AstTyStructArgs name lifetimes)
           (lower-supported-reference-struct-args-with-stack?
             ctx
@@ -4733,7 +4739,10 @@
             lifetimes
             stack)]
         [(AstTyRegion _ inner)
-          (lower-supported-reference-type-with-stack? ctx (box-get inner) stack)]
+          (lower-supported-reference-type-with-stack?
+            ctx
+            (ty-node-get inner)
+            stack)]
         [_ false]))))
 
 (define (lower-supported-reference-type? [ctx : TcContext] [ty : AstType]) : bool
@@ -4940,7 +4949,7 @@
                                 arr-value
                                 idx-value
                                 idx-ty
-                                (tc-type-without-regions (box-get elem-ty)))
+                                (tc-type-without-regions (ty-node-get elem-ty)))
                                 [(LowerExpr addr-state elem-ptr _)
                                   (OkLowerExpr
                                     (LowerExpr addr-state elem-ptr result-ty))])])]
@@ -4951,7 +4960,7 @@
         [(AstTyArray elem-ty elem-count)
           (let
             [fixed-elem-ty : AstType
-              (tc-type-without-regions (box-get elem-ty))]
+              (tc-type-without-regions (ty-node-get elem-ty))]
             (match (lower-expr ctx state env type-env arr)
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
@@ -5054,7 +5063,9 @@
     (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)
     (match (tc-type-strip-region (tc-resolve-type ctx expr-ty))
       [(AstTyRef _ referent-ty)
-        (if (lower-supported-reference-referent-type? ctx (box-get referent-ty))
+        (if (lower-supported-reference-referent-type?
+          ctx
+          (ty-node-get referent-ty))
           (lower-borrow-place-address
             ctx
             state
@@ -5066,7 +5077,9 @@
           (ErrLowerExpr
             (lower-diagnostic-at-expr origin (lower-reference-support-message))))]
       [(AstTyMutRef _ referent-ty)
-        (if (lower-supported-reference-referent-type? ctx (box-get referent-ty))
+        (if (lower-supported-reference-referent-type?
+          ctx
+          (ty-node-get referent-ty))
           (lower-borrow-place-address
             ctx
             state
@@ -5098,7 +5111,7 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let
-            [ty : AstType (box-get ty)]
+            [ty : AstType (ty-node-get ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -5223,7 +5236,7 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let
-            [ty : AstType (box-get ty)]
+            [ty : AstType (ty-node-get ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -5394,7 +5407,7 @@
         (match types
           [(AstTypeCons ty rest-types)
             (let
-              [ty : AstType (box-get ty)]
+              [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [default-offset : i64
@@ -5792,7 +5805,7 @@
       (match (tc-expr ctx type-env lambda-expr)
         [(OkTcType ty)
           (match (tc-type-strip-region ty)
-            [(AstTyFunc _ ret) (OkTcType (box-get ret))]
+            [(AstTyFunc _ ret) (OkTcType (ty-node-get ret))]
             [_ (ErrTcType "lower: lambda did not typecheck as a function")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
@@ -5891,7 +5904,7 @@
         ctx
         state
         value
-        (tc-type-without-regions (box-get elem-ty))
+        (tc-type-without-regions (ty-node-get elem-ty))
         ty)]
     [(AstTyTuple elem-tys)
       (lower-capture-snapshot-tuple-value
@@ -5909,7 +5922,7 @@
         env
         type-env
         value
-        (tc-type-without-regions (box-get elem-ty))
+        (tc-type-without-regions (ty-node-get elem-ty))
         count
         ty)]
     [(AstTyStruct name)
@@ -6022,7 +6035,7 @@
     [(AstTypeNil) (OkLowerState state)]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -6838,14 +6851,14 @@
             (match types
               [(AstTypeCons hidden-ty type-rest)
                 (let
-                  [hidden-ty : AstType (box-get hidden-ty)]
+                  [hidden-ty : AstType (ty-node-get hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
                   (match hidden-ty
                     [(AstTyVar hidden-name)
                       (match type-rest
                         [(AstTypeCons cleanup-ty end)
                           (let
-                            [cleanup-ty : AstType (box-get cleanup-ty)]
+                            [cleanup-ty : AstType (ty-node-get cleanup-ty)]
                             [end : AstTypeList (box-get end)]
                             (match cleanup-ty
                               [(AstTyVar cleanup-name)
@@ -6902,14 +6915,14 @@
             (match types
               [(AstTypeCons hidden-ty type-rest)
                 (let
-                  [hidden-ty : AstType (box-get hidden-ty)]
+                  [hidden-ty : AstType (ty-node-get hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
                   (match hidden-ty
                     [(AstTyVar hidden-name)
                       (match type-rest
                         [(AstTypeCons cleanup-ty end)
                           (let
-                            [cleanup-ty : AstType (box-get cleanup-ty)]
+                            [cleanup-ty : AstType (ty-node-get cleanup-ty)]
                             [end : AstTypeList (box-get end)]
                             (match cleanup-ty
                               [(AstTyVar cleanup-name)
@@ -7332,7 +7345,7 @@
     [(AstTypeNil) (OkLowerState state)]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -7785,7 +7798,7 @@
           env
           type-env
           value
-          (tc-type-without-regions (box-get elem-ty))
+          (tc-type-without-regions (ty-node-get elem-ty))
           count
           clone-ty)]
       [(AstTyDynArray elem-ty)
@@ -7795,7 +7808,7 @@
           env
           type-env
           value
-          (tc-type-without-regions (box-get elem-ty))
+          (tc-type-without-regions (ty-node-get elem-ty))
           clone-ty)]
       [(AstTyBox elem-ty)
         (lower-clone-box-value
@@ -7804,7 +7817,7 @@
           env
           type-env
           value
-          (tc-type-without-regions (box-get elem-ty))
+          (tc-type-without-regions (ty-node-get elem-ty))
           clone-ty)]
       [(AstTyEnum name) (lower-clone-named state env name value clone-ty)]
       [(AstTyStruct name) (lower-clone-named state env name value clone-ty)]
@@ -7857,7 +7870,7 @@
         (match types
           [(AstTypeCons expected rest-types)
             (let
-              [expected : AstType (box-get expected)]
+              [expected : AstType (ty-node-get expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -8191,7 +8204,7 @@
     [(AstTypeNil) AstExprNil]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (ast-expr-cons
           (ast-expr-init head)
@@ -8336,7 +8349,7 @@
             state
             env
             type-env
-            (box-get elem)
+            (ty-node-get elem)
             (IrValueI64 0)
             (AstTyI64)
             (AstExprLiteral (AstLitInt 0))
@@ -8347,7 +8360,7 @@
             state
             env
             type-env
-            (AstExprInit (box-get elem))
+            (AstExprInit (ty-node-get elem))
             expr-ty)]
         [(AstTyTuple elems)
           (lower-tuple
@@ -8368,7 +8381,7 @@
               state
               env
               type-env
-              (lower-init-expr-list-repeat (box-get elem) count)
+              (lower-init-expr-list-repeat (ty-node-get elem) count)
               expr-ty
               origin))]
         [(AstTyStruct name)
@@ -8443,7 +8456,8 @@
           (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
             [(AstTyFunc _ ret)
               (OkTcType
-                (tc-type-without-regions (tc-resolve-type ctx (box-get ret))))]
+                (tc-type-without-regions
+                  (tc-resolve-type ctx (ty-node-get ret))))]
             [(AstTyEnum _) (OkTcType (tc-type-without-regions fn-ty))]
             [_ (ErrTcType "lower: call result type is not fast-pathable")])]
         [(ErrTcType message)
@@ -8485,7 +8499,8 @@
             (match fn-ty
               [(AstTyFunc _ ret)
                 (OkTcType
-                  (tc-type-without-regions (tc-resolve-type ctx (box-get ret))))]
+                  (tc-type-without-regions
+                    (tc-resolve-type ctx (ty-node-get ret))))]
               [_ (ErrTcType "lower: call result type is not fast-pathable")])]
           [(ErrTcType message) (ErrTcType message)]))]
     [_ (ErrTcType "lower: call result type is not fast-pathable")]))
@@ -8826,13 +8841,13 @@
                 (lower-projected-result-type-fast
                   ctx
                   array-ty
-                  (box-get elem-ty)))]
+                  (ty-node-get elem-ty)))]
             [(AstTyDynArray elem-ty)
               (OkTcType
                 (lower-projected-result-type-fast
                   ctx
                   array-ty
-                  (box-get elem-ty)))]
+                  (ty-node-get elem-ty)))]
             [_ (ErrTcType "lower: array-ref result type is not fast-pathable")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
@@ -8894,7 +8909,7 @@
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstTyBox inner-ty)
           (OkTcType
-            (lower-projected-result-type-fast ctx box-ty (box-get inner-ty)))]
+            (lower-projected-result-type-fast ctx box-ty (ty-node-get inner-ty)))]
         [_ (ErrTcType "lower: box-get result type is not fast-pathable")])]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -9702,7 +9717,7 @@
                                         var-id
                                         ptr-value
                                         offset-value
-                                        (box-get elem-ty))
+                                        (ty-node-get elem-ty))
                                       origin)
                                     (IrValueVar var-id)
                                     expr-ty))])]
@@ -9717,7 +9732,7 @@
                                         var-id
                                         ptr-value
                                         offset-value
-                                        (box-get elem-ty))
+                                        (ty-node-get elem-ty))
                                       origin)
                                     (IrValueVar var-id)
                                     expr-ty))])]
@@ -9914,7 +9929,7 @@
                     (let
                       [actual-ty : AstType
                         (tc-type-without-regions
-                          (tc-resolve-type ctx (box-get ret-ty)))]
+                          (tc-resolve-type ctx (ty-node-get ret-ty)))]
                       [expected-resolved : AstType
                         (tc-type-without-regions
                           (tc-resolve-type ctx expected-ty))]
@@ -10074,7 +10089,7 @@
         (lower-diagnostic "lower: tuple-ref index out of range"))]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -10111,7 +10126,7 @@
             (ErrLowerState (lower-diagnostic "lower: tuple arity mismatch"))]
           [(AstTypeCons ty rest-types)
             (let
-              [ty : AstType (box-get ty)]
+              [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [offset : i64
@@ -10233,8 +10248,8 @@
   (match (tc-resolve-type ctx result-ty)
     [(AstTyArray elem-ty count)
       (let
-        [resolved-elem : AstType (tc-resolve-type ctx (box-get elem-ty))]
-        [elem-size : i64 (lower-type-size ctx (box-get elem-ty))]
+        [resolved-elem : AstType (tc-resolve-type ctx (ty-node-get elem-ty))]
+        [elem-size : i64 (lower-type-size ctx (ty-node-get elem-ty))]
         [storage-size : i64
           (lower-align-up
             (if (= (* count elem-size) 0)
@@ -10726,7 +10741,7 @@
         (match types
           [(AstTypeCons expected rest-types)
             (let
-              [expected : AstType (box-get expected)]
+              [expected : AstType (ty-node-get expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -12411,7 +12426,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (if (lower-init-default-share-safe? ctx head)
           (lower-init-default-share-safe-type-list? ctx rest)
@@ -14602,7 +14617,7 @@
                 [(AstTyDynArray elem-ty)
                   (LowerSomeArrayVar
                     var-id
-                    (tc-type-without-regions (box-get elem-ty)))]
+                    (tc-type-without-regions (ty-node-get elem-ty)))]
                 [_ LowerNoArrayVar])]
             [(ErrTcType _) LowerNoArrayVar])]
         [NoneI64 LowerNoArrayVar])]
@@ -19035,9 +19050,9 @@
     [(AstTyEnum _) true]
     [(AstTyTuple elems) (lower-type-list-contains-inline-aggregate? ctx elems)]
     [(AstTyArray elem _)
-      (lower-type-contains-inline-aggregate? ctx (box-get elem))]
+      (lower-type-contains-inline-aggregate? ctx (ty-node-get elem))]
     [(AstTyRegion _ inner)
-      (lower-type-contains-inline-aggregate? ctx (box-get inner))]
+      (lower-type-contains-inline-aggregate? ctx (ty-node-get inner))]
     [_ false]))
 
 (define (lower-type-list-contains-inline-aggregate?
@@ -19047,7 +19062,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         (or
           (lower-type-contains-inline-aggregate? ctx ty)
@@ -19084,7 +19099,7 @@
 (define (lower-supported-function-return-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-resolve-type ctx ty)
     [(AstTyRegion _ inner)
-      (lower-supported-function-return-type? ctx (box-get inner))]
+      (lower-supported-function-return-type? ctx (ty-node-get inner))]
     [_ true]))
 
 (define (lower-logical-name-has-suffix?
@@ -19102,7 +19117,7 @@
 (define (lower-stdlib-hash-string-param? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx (box-get inner)))
+      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
         [(AstTyStr) true]
         [_ false])]
     [_ false]))
@@ -19658,7 +19673,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (tc-type-without-regions ty)
@@ -19677,7 +19692,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (box-get ty)]
+        [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam
@@ -19997,7 +20012,7 @@
   (match fn-ty
     [(AstTyFunc param-types ret-box)
       (let
-        [ret-ty : AstType (tc-type-without-regions (box-get ret-box))]
+        [ret-ty : AstType (tc-type-without-regions (ty-node-get ret-box))]
         [clean-param-types : AstTypeList
           (lower-dispatch-type-list-without-regions param-types)]
         [param-count : i64 (lower-dispatch-param-type-count clean-param-types)]

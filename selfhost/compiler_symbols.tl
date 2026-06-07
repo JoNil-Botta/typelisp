@@ -2796,7 +2796,7 @@
       (match types
         [(AstTypeCons ty rest)
           (let
-            [ty : AstType (box-get ty)]
+            [ty : AstType (ty-node-get ty)]
             [rest : AstTypeList (box-get rest)]
             (match rest
               [(AstTypeNil)

@@ -379,25 +379,78 @@
     (compiler-ir-clone-phi-input-list-acc inputs IrPhiInputNil)
     IrPhiInputNil))
 
+;; Deep-clone a (flattened) AstType into the CURRENT arena. The builtin
+;; clone$AstType copies the i64 ty-pool child ids verbatim, which only SHARES the
+;; source's ty-pool nodes. That breaks the per-function optimizer arena escape
+;; (#1633): a type pushed during optimization lives in the scratch arena, so a
+;; shared id dangles once the scratch is rewound. Re-pushing each child here puts
+;; the cloned subtree's nodes in the (enclosing) arena current during the escape
+;; clone, so the escaped function owns valid type nodes after the rewind.
+;; Variants without i64 children (nullary, and the String/lifetime-carrying named
+;; types) have no ty-pool ids, so the builtin clone is correct for them.
+(define (compiler-ir-clone-type [ty : AstType]) : AstType
+  (match ty
+    [(AstTyFunc args ret)
+      (AstTyFunc
+        (compiler-ir-clone-type-list args)
+        (ty-node-push (compiler-ir-clone-type (ty-node-get ret))))]
+    [(AstTyTuple elems) (AstTyTuple (compiler-ir-clone-type-list elems))]
+    [(AstTyArray elem len)
+      (AstTyArray
+        (ty-node-push (compiler-ir-clone-type (ty-node-get elem)))
+        len)]
+    [(AstTyDynArray elem)
+      (AstTyDynArray (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+    [(AstTyBox elem)
+      (AstTyBox (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+    [(AstTyRegion region inner)
+      (AstTyRegion
+        (clone region)
+        (ty-node-push (compiler-ir-clone-type (ty-node-get inner))))]
+    [(AstTyRef region inner)
+      (AstTyRef
+        (clone region)
+        (ty-node-push (compiler-ir-clone-type (ty-node-get inner))))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef
+        (clone region)
+        (ty-node-push (compiler-ir-clone-type (ty-node-get inner))))]
+    [(AstTyPtr elem)
+      (AstTyPtr (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+    [(AstTyMutPtr elem)
+      (AstTyMutPtr (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+    [_ (clone ty)]))
+
+(define (compiler-ir-clone-type-list [tys : AstTypeList]) : AstTypeList
+  (match tys
+    [(AstTypeNil) (AstTypeNil)]
+    [(AstTypeCons head tail)
+      (AstTypeCons
+        (ty-node-push (compiler-ir-clone-type (ty-node-get head)))
+        (box (compiler-ir-clone-type-list (box-get tail))))]))
+
 (define (compiler-ir-clone-instr [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(IrInstrMov dst src ty)
-      (IrInstrMov dst (compiler-ir-clone-value src) (clone ty))]
-    [(IrInstrAlloc dst ty) (IrInstrAlloc dst (clone ty))]
+      (IrInstrMov dst (compiler-ir-clone-value src) (compiler-ir-clone-type ty))]
+    [(IrInstrAlloc dst ty) (IrInstrAlloc dst (compiler-ir-clone-type ty))]
     [(IrInstrAddrOf dst src) (IrInstrAddrOf dst src)]
     [(IrInstrGep dst base offset ty)
       (IrInstrGep
         dst
         (compiler-ir-clone-value base)
         (compiler-ir-clone-value offset)
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrLoad dst src ty)
-      (IrInstrLoad dst (compiler-ir-clone-value src) (clone ty))]
+      (IrInstrLoad
+        dst
+        (compiler-ir-clone-value src)
+        (compiler-ir-clone-type ty))]
     [(IrInstrStorePtr dst src ty)
       (IrInstrStorePtr
         (compiler-ir-clone-value dst)
         (compiler-ir-clone-value src)
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrBoundsCheck index length label)
       (IrInstrBoundsCheck
         (compiler-ir-clone-value index)
@@ -407,20 +460,29 @@
       (IrInstrCast
         dst
         (compiler-ir-clone-value src)
-        (clone from-ty)
-        (clone to-ty))]
+        (compiler-ir-clone-type from-ty)
+        (compiler-ir-clone-type to-ty))]
     [(IrInstrBinOp dst op lhs rhs ty)
       (IrInstrBinOp
         dst
         op
         (compiler-ir-clone-value lhs)
         (compiler-ir-clone-value rhs)
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrUnOp dst op src ty)
-      (IrInstrUnOp dst op (compiler-ir-clone-value src) (clone ty))]
-    [(IrInstrLaneId dst lane ty) (IrInstrLaneId dst lane (clone ty))]
+      (IrInstrUnOp
+        dst
+        op
+        (compiler-ir-clone-value src)
+        (compiler-ir-clone-type ty))]
+    [(IrInstrLaneId dst lane ty)
+      (IrInstrLaneId dst lane (compiler-ir-clone-type ty))]
     [(IrInstrSplat dst value lanes ty)
-      (IrInstrSplat dst (compiler-ir-clone-value value) lanes (clone ty))]
+      (IrInstrSplat
+        dst
+        (compiler-ir-clone-value value)
+        lanes
+        (compiler-ir-clone-type ty))]
     [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
       (IrInstrVectorBinOp
         dst
@@ -428,14 +490,14 @@
         (compiler-ir-clone-value lhs)
         (compiler-ir-clone-value rhs)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrVectorReduce dst op src lanes ty)
       (IrInstrVectorReduce
         dst
         op
         (compiler-ir-clone-value src)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrVectorCompare dst op lhs rhs lanes ty)
       (IrInstrVectorCompare
         dst
@@ -443,7 +505,7 @@
         (compiler-ir-clone-value lhs)
         (compiler-ir-clone-value rhs)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (IrInstrMaskBinOp
         dst
@@ -462,21 +524,21 @@
         (compiler-ir-clone-value then-value)
         (compiler-ir-clone-value else-value)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrVectorLoad dst base index lanes ty)
       (IrInstrVectorLoad
         dst
         (compiler-ir-clone-value base)
         (compiler-ir-clone-value index)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrVectorStore base index value lanes ty)
       (IrInstrVectorStore
         (compiler-ir-clone-value base)
         (compiler-ir-clone-value index)
         (compiler-ir-clone-value value)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrPredicatedStore base index value mask lanes ty)
       (IrInstrPredicatedStore
         (compiler-ir-clone-value base)
@@ -484,7 +546,7 @@
         (compiler-ir-clone-value value)
         (compiler-ir-clone-value mask)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrPredicatedLoad dst base index mask lanes ty)
       (IrInstrPredicatedLoad
         dst
@@ -492,7 +554,7 @@
         (compiler-ir-clone-value index)
         (compiler-ir-clone-value mask)
         lanes
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrTailMask dst index len lanes)
       (IrInstrTailMask
         dst
@@ -517,20 +579,23 @@
         dst
         (clone name)
         (compiler-ir-clone-call-args args)
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrCallIndirect dst callee args ty)
       (IrInstrCallIndirect
         dst
         (compiler-ir-clone-value callee)
         (compiler-ir-clone-call-args args)
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         (clone name)
         (compiler-ir-clone-call-args args)
-        (clone ty))]
+        (compiler-ir-clone-type ty))]
     [(IrInstrStore name value ty)
-      (IrInstrStore (clone name) (compiler-ir-clone-value value) (clone ty))]
+      (IrInstrStore
+        (clone name)
+        (compiler-ir-clone-value value)
+        (compiler-ir-clone-type ty))]
     [(IrInstrJump label) (IrInstrJump (clone label))]
     [(IrInstrBranch cond true-label false-label)
       (IrInstrBranch
@@ -540,7 +605,10 @@
     [(IrInstrReturn value)
       (IrInstrReturn (compiler-ir-clone-maybe-value value))]
     [(IrInstrPhi dst inputs ty)
-      (IrInstrPhi dst (compiler-ir-clone-phi-input-list inputs) (clone ty))]))
+      (IrInstrPhi
+        dst
+        (compiler-ir-clone-phi-input-list inputs)
+        (compiler-ir-clone-type ty))]))
 
 (define (compiler-ir-clone-instr-list-acc
   [instrs : CompilerIrInstrList]
@@ -619,7 +687,7 @@
 
 (define (compiler-ir-clone-param [param : CompilerIrParam]) : CompilerIrParam
   (match param
-    [(IrParam name ty id) (IrParam (clone name) (clone ty) id)]))
+    [(IrParam name ty id) (IrParam (clone name) (compiler-ir-clone-type ty) id)]))
 
 (define (compiler-ir-clone-param-list-acc
   [params : CompilerIrParamList]
@@ -684,7 +752,10 @@
 (define (compiler-ir-clone-global [global : CompilerIrGlobal]) : CompilerIrGlobal
   (match global
     [(IrGlobal name ty value)
-      (IrGlobal (clone name) (clone ty) (compiler-ir-clone-value value))]))
+      (IrGlobal
+        (clone name)
+        (compiler-ir-clone-type ty)
+        (compiler-ir-clone-value value))]))
 
 (define (compiler-ir-clone-global-list-acc
   [globals : CompilerIrGlobalList]
@@ -716,7 +787,7 @@
     [(IrExtern name ty abi symbol links provided)
       (IrExtern
         (clone name)
-        (clone ty)
+        (compiler-ir-clone-type ty)
         (clone abi)
         (clone symbol)
         (clone links)
@@ -763,7 +834,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (compiler-ir-type-render head)
@@ -819,39 +890,45 @@
         (compiler-ir-type-list-render args)
         (string-append
           " "
-          (string-append (compiler-ir-type-render (box-get ret)) ")")))]
+          (string-append (compiler-ir-type-render (ty-node-get ret)) ")")))]
     [(AstTyTuple elems)
       (compiler-ir-cat3 "(Tuple " (compiler-ir-type-list-render elems) ")")]
     [(AstTyArray elem count)
       (compiler-ir-cat3
         "(Array "
-        (compiler-ir-type-render (box-get elem))
+        (compiler-ir-type-render (ty-node-get elem))
         (compiler-ir-cat3 " " (int->string count) ")"))]
     [(AstTyDynArray elem)
-      (compiler-ir-cat3 "(Array " (compiler-ir-type-render (box-get elem)) ")")]
+      (compiler-ir-cat3
+        "(Array "
+        (compiler-ir-type-render (ty-node-get elem))
+        ")")]
     [(AstTyBox elem)
-      (compiler-ir-cat3 "(Box " (compiler-ir-type-render (box-get elem)) ")")]
+      (compiler-ir-cat3
+        "(Box "
+        (compiler-ir-type-render (ty-node-get elem))
+        ")")]
     [(AstTyRegion region inner)
       (compiler-ir-cat3
         "(Region "
         region
         (string-append
           " "
-          (string-append (compiler-ir-type-render (box-get inner)) ")")))]
+          (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
     [(AstTyRef region inner)
       (compiler-ir-cat3
         "(& "
         region
         (string-append
           " "
-          (string-append (compiler-ir-type-render (box-get inner)) ")")))]
+          (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
     [(AstTyMutRef region inner)
       (compiler-ir-cat3
         "(&mut "
         region
         (string-append
           " "
-          (string-append (compiler-ir-type-render (box-get inner)) ")")))]
+          (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
     [(AstTyEnum name) name]
     [(AstTyEnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
@@ -862,9 +939,15 @@
     [(AstTyVarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyPtr elem)
-      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-render (box-get elem)) ")")]
+      (compiler-ir-cat3
+        "(Ptr "
+        (compiler-ir-type-render (ty-node-get elem))
+        ")")]
     [(AstTyMutPtr elem)
-      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-render (box-get elem)) ")")]))
+      (compiler-ir-cat3
+        "(MutPtr "
+        (compiler-ir-type-render (ty-node-get elem))
+        ")")]))
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
@@ -1895,7 +1978,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head tail)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [tail : AstTypeList (box-get tail)]
         (compiler-ir-cat3
           " "
@@ -1927,40 +2010,43 @@
         "(->"
         (compiler-ir-type-list-name args)
         " "
-        (compiler-ir-cat3 (compiler-ir-type-name (box-get ret)) ")" ""))]
+        (compiler-ir-cat3 (compiler-ir-type-name (ty-node-get ret)) ")" ""))]
     [(AstTyTuple elems)
       (compiler-ir-cat3 "(Tuple" (compiler-ir-type-list-name elems) ")")]
     [(AstTyArray elem count)
       (compiler-ir-cat5
         "(Array "
-        (compiler-ir-type-name (box-get elem))
+        (compiler-ir-type-name (ty-node-get elem))
         " "
         (int->string count)
         ")")]
     [(AstTyDynArray elem)
-      (compiler-ir-cat3 "(Array " (compiler-ir-type-name (box-get elem)) ")")]
+      (compiler-ir-cat3
+        "(Array "
+        (compiler-ir-type-name (ty-node-get elem))
+        ")")]
     [(AstTyBox elem)
-      (compiler-ir-cat3 "(Box " (compiler-ir-type-name (box-get elem)) ")")]
+      (compiler-ir-cat3 "(Box " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyRegion region inner)
       (compiler-ir-cat5
         "(in "
         region
         " "
-        (compiler-ir-type-name (box-get inner))
+        (compiler-ir-type-name (ty-node-get inner))
         ")")]
     [(AstTyRef region inner)
       (compiler-ir-cat5
         "(& "
         region
         " "
-        (compiler-ir-type-name (box-get inner))
+        (compiler-ir-type-name (ty-node-get inner))
         ")")]
     [(AstTyMutRef region inner)
       (compiler-ir-cat5
         "(&mut "
         region
         " "
-        (compiler-ir-type-name (box-get inner))
+        (compiler-ir-type-name (ty-node-get inner))
         ")")]
     [(AstTyEnum name) name]
     [(AstTyEnumArgs name lifetimes)
@@ -1972,9 +2058,12 @@
     [(AstTyVarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyPtr elem)
-      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name (box-get elem)) ")")]
+      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-name (box-get elem)) ")")]))
+      (compiler-ir-cat3
+        "(MutPtr "
+        (compiler-ir-type-name (ty-node-get elem))
+        ")")]))
 
 (define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String
   (compiler-ir-cat5

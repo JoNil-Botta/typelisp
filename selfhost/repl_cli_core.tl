@@ -156,7 +156,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (box-get head)]
+        [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           " "
@@ -201,7 +201,7 @@
           (repl-type-list-render-spaced args)
           (string-append
             " "
-            (string-append (repl-type-render (box-get ret)) ")"))))]
+            (string-append (repl-type-render (ty-node-get ret)) ")"))))]
     [(AstTyTuple elems)
       (string-append
         "(Tuple"
@@ -210,24 +210,24 @@
       (string-append
         "(Array "
         (string-append
-          (repl-type-render (box-get elem))
+          (repl-type-render (ty-node-get elem))
           (string-append " " (string-append (int->string count) ")"))))]
     [(AstTyDynArray elem)
       (string-append
         "(Array "
-        (string-append (repl-type-render (box-get elem)) ")"))]
+        (string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyBox elem)
       (string-append
         "(Box "
-        (string-append (repl-type-render (box-get elem)) ")"))]
+        (string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyPtr elem)
       (string-append
         "(Ptr "
-        (string-append (repl-type-render (box-get elem)) ")"))]
+        (string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyMutPtr elem)
       (string-append
         "(MutPtr "
-        (string-append (repl-type-render (box-get elem)) ")"))]
+        (string-append (repl-type-render (ty-node-get elem)) ")"))]
     [(AstTyRef region inner)
       (string-append
         "(& "
@@ -235,7 +235,7 @@
           region
           (string-append
             " "
-            (string-append (repl-type-render (box-get inner)) ")"))))]
+            (string-append (repl-type-render (ty-node-get inner)) ")"))))]
     [(AstTyMutRef region inner)
       (string-append
         "(&mut "
@@ -243,7 +243,7 @@
           region
           (string-append
             " "
-            (string-append (repl-type-render (box-get inner)) ")"))))]
+            (string-append (repl-type-render (ty-node-get inner)) ")"))))]
     [(AstTyRegion region inner)
       (string-append
         "(in "
@@ -251,7 +251,7 @@
           region
           (string-append
             " "
-            (string-append (repl-type-render (box-get inner)) ")"))))]
+            (string-append (repl-type-render (ty-node-get inner)) ")"))))]
     [(AstTyEnum name) name]
     [(AstTyEnumArgs name lifetimes)
       (string-append

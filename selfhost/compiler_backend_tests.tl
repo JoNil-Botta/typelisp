@@ -4917,20 +4917,27 @@
   "(define (own-alloc) (:export-symbol \"tl_alloc\") : i64 1)
 (define (main) : i64 (own-alloc))")
 
+(define (compiler-backend-export-symbol-main-source) : String
+  "(define (main) (:export-symbol \"tl_not_main\") : i64 0)")
+
 (define (compiler-backend-export-symbol-diagnostics-ok?) : bool
-  (backend-and4
+  (and
+    (backend-and4
+      (compiler-backend-error-ok?
+        (compiler-backend-duplicate-export-symbol-source)
+        "backend: duplicate emitted function symbol dup_export")
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-function-collision-source)
+        "backend: duplicate emitted function symbol _tl_normal")
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-global-collision-source)
+        "backend: duplicate emitted function symbol _tl_normal")
+      (compiler-backend-error-ok?
+        (compiler-backend-export-symbol-runtime-collision-source)
+        "backend: exported function symbol collides with runtime symbol tl_alloc"))
     (compiler-backend-error-ok?
-      (compiler-backend-duplicate-export-symbol-source)
-      "backend: duplicate emitted function symbol dup_export")
-    (compiler-backend-error-ok?
-      (compiler-backend-export-symbol-function-collision-source)
-      "backend: duplicate emitted function symbol _tl_normal")
-    (compiler-backend-error-ok?
-      (compiler-backend-export-symbol-global-collision-source)
-      "backend: duplicate emitted function symbol _tl_normal")
-    (compiler-backend-error-ok?
-      (compiler-backend-export-symbol-runtime-collision-source)
-      "backend: exported function symbol collides with runtime symbol tl_alloc")))
+      (compiler-backend-export-symbol-main-source)
+      "backend: main cannot use :export-symbol")))
 
 (define (compiler-backend-export-symbol-tests-ok?) : bool
   (and

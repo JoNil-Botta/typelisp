@@ -977,7 +977,8 @@ contains|_tl_tltest_run_harness_in_temp:
 contains|_tl_tltest_invalid_opt_level:
 contains|_tl_source_tool_assemble_and_link:
 contains|_tl_source_tool_run_executable:
-contains|_tl_optimize_program_with_level:
+contains|_tl_optimize_program_with_spans_and_level:
+contains|_tl_opt_inline_program_functions_with_spans:
 contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
 contains|could not find typelisp.pkg
 contains|TypeLisp package tests passed:

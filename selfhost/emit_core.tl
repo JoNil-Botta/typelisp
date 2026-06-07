@@ -1,4 +1,6 @@
 ;; emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "ast_types.tl")
@@ -142,7 +144,7 @@
     [(= k 10) "\\n"]
     [(= k 9) "\\t"]
     [(= k 13) "\\r"]
-    [(and (>= k 32) (<= k 126)) (substring text idx 1)]
+    [(core/and (>= k 32) (<= k 126)) (substring text idx 1)]
     [else (octal-escape k)]))
 
 (define (escape-string [text : String]) : String

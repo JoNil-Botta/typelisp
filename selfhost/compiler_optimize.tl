@@ -8720,6 +8720,15 @@
 (defenum OptInlineBlocks
   (OptInlineBlocks CompilerIrBlockList i64))
 
+(defenum OptInlineSpanState
+  (OptInlineSpanState CompilerIrInstrList i64 CompilerSourceSpans))
+
+(defenum OptInlineSpanBlocks
+  (OptInlineSpanBlocks CompilerIrBlockList i64 CompilerSourceSpans))
+
+(defenum OptInlineSpanProgram
+  (OptInlineSpanProgram CompilerIrFunctionList CompilerSourceSpans))
+
 (define (opt-inline-max-body) : i64
   8)
 
@@ -8972,6 +8981,90 @@
             (opt-inline-clone-instr instr sa np base)
             (opt-inline-expand-instrs (box-get rest) dst ret sa np base))])]))
 
+;; Span policy for inlined clones: prefer the callee instruction's original
+;; source span under the clone's new caller/value key. If the callee instruction
+;; has no recorded span (notably the synthetic return->mov), use the call-site
+;; span so the cloned instruction still points at useful user code.
+(define (opt-inline-record-clone-span
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [caller : String]
+  [call-instr : CompilerIrInstr]
+  [callee : String]
+  [callee-instr : CompilerIrInstr]
+  [cloned : CompilerIrInstr]) : CompilerSourceSpans
+  (match (compiler-source-spans-lookup-instr source-spans callee callee-instr)
+    [(CompilerSomeSourceSpan span)
+      (compiler-source-spans-insert-instr out caller cloned span)]
+    [(CompilerNoSourceSpan)
+      (match (compiler-source-spans-lookup-instr source-spans caller call-instr)
+        [(CompilerSomeSourceSpan span)
+          (compiler-source-spans-insert-instr out caller cloned span)]
+        [(CompilerNoSourceSpan) out])]))
+
+(define (opt-inline-expand-instrs-with-spans
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [ret : AstType]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]
+  [caller : String]
+  [call-instr : CompilerIrInstr]
+  [callee : String]) : OptInlineSpanState
+  (match instrs
+    [(IrInstrNil) (OptInlineSpanState IrInstrNil base out-spans)]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil)
+          (let
+            [moved : CompilerIrInstr
+              (opt-inline-return->mov instr dst ret sa np base)]
+            [next-spans : CompilerSourceSpans
+              (opt-inline-record-clone-span
+                source-spans
+                out-spans
+                caller
+                call-instr
+                callee
+                instr
+                moved)]
+            (OptInlineSpanState
+              (compiler-ir-instr-cons moved IrInstrNil)
+              base
+              next-spans))]
+        [_
+          (let
+            [cloned : CompilerIrInstr (opt-inline-clone-instr instr sa np base)]
+            [next-spans : CompilerSourceSpans
+              (opt-inline-record-clone-span
+                source-spans
+                out-spans
+                caller
+                call-instr
+                callee
+                instr
+                cloned)]
+            (match (opt-inline-expand-instrs-with-spans
+              (box-get rest)
+              dst
+              ret
+              sa
+              np
+              base
+              source-spans
+              next-spans
+              caller
+              call-instr
+              callee)
+              [(OptInlineSpanState rest-instrs next-vars final-spans)
+                (OptInlineSpanState
+                  (compiler-ir-instr-cons cloned rest-instrs)
+                  next-vars
+                  final-spans)]))])]))
+
 (define (opt-inline-single-block-instrs [blocks : CompilerIrBlockList]) : CompilerIrInstrList
   (match blocks
     [(IrBlockCons block _)
@@ -9032,6 +9125,58 @@
             vars)])]
     [_ (OptInlineState (compiler-ir-instr-cons instr IrInstrNil) vars)]))
 
+(define (opt-inline-try-with-spans
+  [instr : CompilerIrInstr]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanState
+  (match instr
+    [(IrInstrCall dst cname cargs cret)
+      (match (opt-inline-lookup-inlinable index cname func-name)
+        [(OptSomeFunction callee)
+          (match callee
+            [(IrFunction _ cparams _ cvars cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (opt-inline-arity-ok? cargs np)
+                  (match (opt-inline-expand-instrs-with-spans
+                    (opt-inline-single-block-instrs cblocks)
+                    dst
+                    cret
+                    cargs
+                    np
+                    vars
+                    source-spans
+                    out-spans
+                    func-name
+                    instr
+                    cname)
+                    [(OptInlineSpanState expanded _ next-spans)
+                      (OptInlineSpanState
+                        expanded
+                        (+ vars (opt-inline-frame-growth cvars np))
+                        next-spans)])
+                  (OptInlineSpanState
+                    (compiler-ir-instr-cons
+                      (IrInstrCall dst cname cargs cret)
+                      IrInstrNil)
+                    vars
+                    out-spans)))])]
+        [(OptNoFunction)
+          (OptInlineSpanState
+            (compiler-ir-instr-cons
+              (IrInstrCall dst cname cargs cret)
+              IrInstrNil)
+            vars
+            out-spans)])]
+    [_
+      (OptInlineSpanState
+        (compiler-ir-instr-cons instr IrInstrNil)
+        vars
+        out-spans)]))
+
 (define (opt-inline-walk-instrs
   [instrs : CompilerIrInstrList]
   [index : OptFunctionIndex]
@@ -9045,6 +9190,37 @@
           (match (opt-inline-walk-instrs (box-get rest) index func-name vars2)
             [(OptInlineState rest-list vars3)
               (OptInlineState (opt-inline-append expanded rest-list) vars3)])])]))
+
+(define (opt-inline-walk-instrs-with-spans
+  [instrs : CompilerIrInstrList]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanState
+  (match instrs
+    [(IrInstrNil) (OptInlineSpanState IrInstrNil vars out-spans)]
+    [(IrInstrCons instr rest)
+      (match (opt-inline-try-with-spans
+        instr
+        index
+        func-name
+        vars
+        source-spans
+        out-spans)
+        [(OptInlineSpanState expanded vars2 spans2)
+          (match (opt-inline-walk-instrs-with-spans
+            (box-get rest)
+            index
+            func-name
+            vars2
+            source-spans
+            spans2)
+            [(OptInlineSpanState rest-list vars3 spans3)
+              (OptInlineSpanState
+                (opt-inline-append expanded rest-list)
+                vars3
+                spans3)])])]))
 
 (define (opt-inline-blocks
   [blocks : CompilerIrBlockList]
@@ -9070,6 +9246,41 @@
                       rest-blocks)
                     vars3)])])])]))
 
+(define (opt-inline-blocks-with-spans
+  [blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [func-name : String]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanBlocks
+  (match blocks
+    [(IrBlockNil) (OptInlineSpanBlocks IrBlockNil vars out-spans)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label seq)
+          (match (opt-inline-walk-instrs-with-spans
+            (compiler-ir-instr-seq-to-list seq)
+            index
+            func-name
+            vars
+            source-spans
+            out-spans)
+            [(OptInlineSpanState new-instrs vars2 spans2)
+              (match (opt-inline-blocks-with-spans
+                (box-get rest)
+                index
+                func-name
+                vars2
+                source-spans
+                spans2)
+                [(OptInlineSpanBlocks rest-blocks vars3 spans3)
+                  (OptInlineSpanBlocks
+                    (compiler-ir-block-cons
+                      (compiler-ir-block label new-instrs)
+                      rest-blocks)
+                    vars3
+                    spans3)])])])]))
+
 (define (opt-inline-function
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]) : CompilerIrFunction
@@ -9078,6 +9289,27 @@
       (match (opt-inline-blocks blocks index name vars)
         [(OptInlineBlocks new-blocks new-vars)
           (IrFunction name params ret new-vars new-blocks)])]))
+
+(define (opt-inline-function-with-spans
+  [func : CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanProgram
+  (match func
+    [(IrFunction name params ret vars blocks)
+      (match (opt-inline-blocks-with-spans
+        blocks
+        index
+        name
+        vars
+        source-spans
+        out-spans)
+        [(OptInlineSpanBlocks new-blocks new-vars next-spans)
+          (OptInlineSpanProgram
+            (compiler-ir-function-cons
+              (IrFunction name params ret new-vars new-blocks)
+              IrFunctionNil)
+            next-spans)])]))
 
 (define (opt-inline-function-list
   [functions : CompilerIrFunctionList]
@@ -9088,6 +9320,29 @@
       (compiler-ir-function-cons
         (opt-inline-function func index)
         (opt-inline-function-list (box-get rest) index))]))
+
+(define (opt-inline-function-list-with-spans
+  [functions : CompilerIrFunctionList]
+  [index : OptFunctionIndex]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanProgram
+  (match functions
+    [(IrFunctionNil) (OptInlineSpanProgram IrFunctionNil out-spans)]
+    [(IrFunctionCons func rest)
+      (match (opt-inline-function-with-spans func index source-spans out-spans)
+        [(OptInlineSpanProgram one spans2)
+          (match (opt-inline-function-list-with-spans
+            (box-get rest)
+            index
+            source-spans
+            spans2)
+            [(OptInlineSpanProgram tail spans3)
+              (match one
+                [(IrFunctionCons head _)
+                  (OptInlineSpanProgram
+                    (compiler-ir-function-cons head tail)
+                    spans3)]
+                [(IrFunctionNil) (OptInlineSpanProgram tail spans3)])])])]))
 
 ;; Inline small single-block leaf callees across the whole program. Only at opt
 ;; level 2 (the register-allocated quality build).
@@ -9100,6 +9355,21 @@
       [devirt : CompilerIrFunctionList
         (opt-devirt-known-function-list functions)]
       (opt-inline-function-list devirt (opt-function-index-build devirt)))))
+
+(define (opt-inline-program-functions-with-spans
+  [functions : CompilerIrFunctionList]
+  [level : i64]
+  [spans : CompilerSourceSpans]) : OptInlineSpanProgram
+  (if (< level 2)
+    (OptInlineSpanProgram functions spans)
+    (let
+      [devirt : CompilerIrFunctionList
+        (opt-devirt-known-function-list functions)]
+      (opt-inline-function-list-with-spans
+        devirt
+        (opt-function-index-build devirt)
+        spans
+        spans))))
 
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
@@ -9742,11 +10012,45 @@
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [level : i64]) : CompilerOptimizedProgram
-  (let
-    [optimized : CompilerIrProgram (optimize-program-with-level program level)]
-    (CompilerOptimizedProgram
-      optimized
-      (opt-remap-spans-program spans optimized))))
+  (match program
+    [(IrProgram globals functions externs)
+      (if (= level 0)
+        (CompilerOptimizedProgram
+          program
+          (opt-remap-spans-program spans program))
+        (begin
+          (cfg compile-profile (compiler-opt-profile-start))
+          (match (opt-inline-program-functions-with-spans functions level spans)
+            [(OptInlineSpanProgram reachable-functions inline-spans)
+              (begin
+                (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
+                (cfg compile-profile (compiler-opt-profile-start))
+                (let
+                  [optimized-functions : CompilerIrFunctionList
+                    (optimize-function-list-with-level
+                      reachable-functions
+                      level)]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-finish "functions"))
+                    (cfg compile-profile (compiler-opt-profile-start))
+                    (let
+                      [final-functions : CompilerIrFunctionList
+                        (opt-prune-unreachable-functions
+                          globals
+                          optimized-functions
+                          externs)]
+                      (let
+                        [optimized : CompilerIrProgram
+                          (IrProgram globals final-functions externs)]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-opt-profile-finish "post_prune"))
+                          (CompilerOptimizedProgram
+                            optimized
+                            (opt-remap-spans-program inline-spans optimized))))))))])))]))
 
 (define (optimize-program-with-spans
   [program : CompilerIrProgram]
@@ -10110,10 +10414,125 @@
           (opt-span-lookup-ok? optimized-spans "main" first 51 9)
           (opt-span-lookup-ok? optimized-spans "main" rewritten 61 11))])))
 
+(define (opt-inline-span-callee-call) : CompilerIrInstr
+  (IrInstrCall 1 "opaque" (IrCallArgsOne (IrValueVar 0)) (AstTyI64)))
+
+(define (opt-inline-span-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_span"
+    (compiler-ir-param-cons (IrParam "value" (AstTyI64) 0) IrParamNil)
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (opt-inline-span-callee-call)
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-span-caller-call) : CompilerIrInstr
+  (IrInstrCall 0 "inline_span" (IrCallArgsOne (IrValueI64 7)) (AstTyI64)))
+
+(define (opt-inline-span-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (opt-inline-span-caller-call)
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-span-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (opt-inline-span-caller)
+      (compiler-ir-function-cons (opt-inline-span-callee) IrFunctionNil))
+    IrExternNil))
+
+(define (compiler-optimize-spans-inline-callee-ok?) : bool
+  (let
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (opt-spans-base)
+          "inline_span"
+          (opt-inline-span-callee-call)
+          (opt-test-span 71 13))
+        "main"
+        (opt-inline-span-caller-call)
+        (opt-test-span 81 15))]
+    [cloned-call : CompilerIrInstr
+      (IrInstrCall 1 "opaque" (IrCallArgsOne (IrValueI64 7)) (AstTyI64))]
+    (match (optimize-program-with-spans-and-level
+      (opt-inline-span-program)
+      spans
+      2)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (opt-span-lookup-ok? optimized-spans "main" cloned-call 71 13)])))
+
+(define (compiler-optimize-spans-inline-fallback-ok?) : bool
+  (let
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (opt-spans-base)
+        "main"
+        (opt-inline-span-caller-call)
+        (opt-test-span 91 17))]
+    [cloned-call : CompilerIrInstr
+      (IrInstrCall 1 "opaque" (IrCallArgsOne (IrValueI64 7)) (AstTyI64))]
+    (match (optimize-program-with-spans-and-level
+      (opt-inline-span-program)
+      spans
+      2)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (opt-span-lookup-ok? optimized-spans "main" cloned-call 91 17)])))
+
+(define (compiler-optimize-spans-non-inline-call-ok?) : bool
+  (let
+    [call : CompilerIrInstr
+      (IrInstrCall 1 "opaque" (IrCallArgsOne (IrValueI64 5)) (AstTyI64))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        call
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+          IrInstrNil))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (opt-spans-base)
+        "main"
+        call
+        (opt-test-span 101 19))]
+    (match (optimize-program-with-spans-and-level
+      (opt-spans-program instrs)
+      spans
+      2)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (opt-span-lookup-ok? optimized-spans "main" call 101 19)])))
+
 (define (compiler-optimize-spans-self-test) : i64
   (if (and
     (compiler-optimize-spans-dce-ok?)
-    (and (compiler-optimize-spans-fold-ok?) (compiler-optimize-spans-cse-ok?)))
+    (and
+      (compiler-optimize-spans-fold-ok?)
+      (and
+        (compiler-optimize-spans-cse-ok?)
+        (and
+          (compiler-optimize-spans-inline-callee-ok?)
+          (and
+            (compiler-optimize-spans-inline-fallback-ok?)
+            (compiler-optimize-spans-non-inline-call-ok?))))))
     42
     1))
 

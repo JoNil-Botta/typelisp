@@ -3950,14 +3950,17 @@
           labels)
         (opt-cfg-successor-targets-known-in-blocks? (box-get rest) labels))]))
 
-(define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
+(define (opt-cfg-predecessors-scan
+  [blocks : CompilerIrBlockList]
+  [label : String]) : OptLabelSet
   (match blocks
     [(IrBlockNil) (OptLabelNil)]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock block-label _)
           (let
-            [tail : OptLabelSet (opt-cfg-predecessors (box-get rest) label)]
+            [tail : OptLabelSet
+              (opt-cfg-predecessors-scan (box-get rest) label)]
             (if (opt-label-contains
               (opt-cfg-block-successors-with-next
                 block
@@ -3965,6 +3968,9 @@
               label)
               (opt-label-add tail block-label)
               tail))])]))
+
+(define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
+  (opt-cfg-index-predecessors (opt-cfg-index-build blocks) label))
 
 (define (opt-cfg-filter-blocks-by-labels
   [labels : OptLabelSet]
@@ -4075,51 +4081,132 @@
               entry-label
               all-reachable))])]))
 
-;; Predecessor map (#perf): the dominator fixpoint previously recomputed every
-;; block's predecessors with opt-cfg-predecessors (an O(blocks*instrs) rescan of
-;; the whole function) once per block per iteration, making dominators
-;; O(blocks^3 * instrs) and the opt-level-3 optimizer pathologically slow on the
-;; large self-host functions. The predecessor relation is loop-invariant, so we
-;; build it ONCE (one pass over the edges, O(edges)) into a label->index hashmap
-;; plus an array of predecessor label-sets, and the fixpoint then looks
-;; predecessors up in O(1).
-(defstruct OptPredMap
+;; CFG index (#2175): integer block ids are assigned in block-list order and
+;; reused for successor/predecessor CSR rows, reachability, and RPO. Existing
+;; callers still consume OptLabelSet adapters, but each CFG snapshot is indexed
+;; once and rebuilt only after block-list-mutating optimization passes.
+(defenum OptI64List
+  (OptI64Nil)
+  (OptI64Cons i64 (Box OptI64List)))
+
+(defstruct OptCfgCsr
+  (offsets (Array i64))
+  (edges (Array i64)))
+
+(defstruct OptCfgIndex
   (ids StringI64Map)
-  (preds (Array OptLabelSet)))
+  (labels (Array String))
+  (succs OptCfgCsr)
+  (preds OptCfgCsr)
+  (reachable (Array bool))
+  (reach-count i64)
+  (rpo (Array i64)))
+
+(defstruct OptPredMap
+  (index OptCfgIndex))
 
 (define (opt-pred-map-capacity [count : i64]) : i64
   (if (< count 4)
     8
     (* count 2)))
 
-(define (opt-pred-map-build-ids
+(define (opt-cfg-index-fill-labels!
   [blocks : CompilerIrBlockList]
   [ids : StringI64Map]
+  [labels : (Array String)]
   [index : i64]) : StringI64Map
   (match blocks
     [(IrBlockNil) ids]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label _)
-          (opt-pred-map-build-ids
-            (box-get rest)
-            (string-i64-map-put ids label index)
-            (+ index 1))])]))
+          (begin
+            (array-set! labels index label)
+            (opt-cfg-index-fill-labels!
+              (box-get rest)
+              (string-i64-map-put ids label index)
+              labels
+              (+ index 1)))])]))
 
-(define (opt-pred-map-fill-empty! [preds : (Array OptLabelSet)] [count : i64]) : unit
+(define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
+  (match items
+    [(OptI64Nil) false]
+    [(OptI64Cons head rest)
+      (if (= head value)
+        true
+        (opt-i64-list-contains? (box-get rest) value))]))
+
+(define (opt-i64-list-add [items : OptI64List] [value : i64]) : OptI64List
+  (if (opt-i64-list-contains? items value)
+    items
+    (OptI64Cons value (box items))))
+
+(define (opt-i64-list-reverse-onto [items : OptI64List] [acc : OptI64List]) : OptI64List
+  (match items
+    [(OptI64Nil) acc]
+    [(OptI64Cons head rest)
+      (opt-i64-list-reverse-onto (box-get rest) (OptI64Cons head (box acc)))]))
+
+(define (opt-i64-list-reverse [items : OptI64List]) : OptI64List
+  (opt-i64-list-reverse-onto items (OptI64Nil)))
+
+(define (opt-i64-list-count [items : OptI64List]) : i64
+  (match items
+    [(OptI64Nil) 0]
+    [(OptI64Cons _ rest) (+ 1 (opt-i64-list-count (box-get rest)))]))
+
+(define (opt-i64-list-fill-edges!
+  [items : OptI64List]
+  [edges : (Array i64)]
+  [index : i64]) : i64
+  (match items
+    [(OptI64Nil) index]
+    [(OptI64Cons head rest)
+      (begin
+        (array-set! edges index head)
+        (opt-i64-list-fill-edges! (box-get rest) edges (+ index 1)))]))
+
+(define (opt-cfg-row-list-total
+  [rows : (Array OptI64List)]
+  [count : i64]
+  [index : i64]
+  [total : i64]) : i64
+  (if (>= index count)
+    total
+    (opt-cfg-row-list-total
+      rows
+      count
+      (+ index 1)
+      (+ total (opt-i64-list-count (array-ref rows index))))))
+
+(define (opt-cfg-i64-list-array-fill-empty!
+  [rows : (Array OptI64List)]
+  [count : i64]) : unit
   (let
     [i : i64 0]
     (begin
       (while (< i count)
         (begin
-          (array-set! preds i (OptLabelNil))
+          (array-set! rows i (OptI64Nil))
           (set! i (+ i 1))))
       unit)))
 
-(define (opt-pred-map-add-succs!
-  [preds : (Array OptLabelSet)]
+(define (opt-cfg-index-label-set-to-ids
+  [labels : OptLabelSet]
+  [ids : StringI64Map]) : OptI64List
+  (match labels
+    [(OptLabelNil) (OptI64Nil)]
+    [(OptLabelCons label rest)
+      (let
+        [tail : OptI64List (opt-cfg-index-label-set-to-ids (box-get rest) ids)]
+        (match (string-i64-map-get ids label)
+          [(StringI64MapFound idx) (OptI64Cons idx (box tail))]
+          [(StringI64MapMissing) tail]))]))
+
+(define (opt-cfg-index-add-pred-edges!
+  [pred-rows : (Array OptI64List)]
   [ids : StringI64Map]
-  [label : String]
+  [source-id : i64]
   [succs : OptLabelSet]) : unit
   (match succs
     [(OptLabelNil) unit]
@@ -4127,47 +4214,278 @@
       (begin
         (match (string-i64-map-get ids s)
           [(StringI64MapFound idx)
-            (array-set! preds idx (opt-label-add (array-ref preds idx) label))]
+            (array-set!
+              pred-rows
+              idx
+              (opt-i64-list-add (array-ref pred-rows idx) source-id))]
           [(StringI64MapMissing) unit])
-        (opt-pred-map-add-succs! preds ids label (box-get rest)))]))
+        (opt-cfg-index-add-pred-edges! pred-rows ids source-id (box-get rest)))]))
 
-(define (opt-pred-map-fill!
+(define (opt-cfg-index-fill-rows!
   [blocks : CompilerIrBlockList]
   [ids : StringI64Map]
-  [preds : (Array OptLabelSet)]) : unit
+  [succ-rows : (Array OptI64List)]
+  [pred-rows : (Array OptI64List)]
+  [index : i64]) : unit
   (match blocks
     [(IrBlockNil) unit]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock label _)
-          (begin
-            (opt-pred-map-add-succs!
-              preds
-              ids
-              label
+        [(IrBlock _ _)
+          (let
+            [succs : OptLabelSet
               (opt-cfg-block-successors-with-next
                 block
-                (opt-cfg-entry-label (box-get rest))))
-            (opt-pred-map-fill! (box-get rest) ids preds))])]))
+                (opt-cfg-entry-label (box-get rest)))]
+            (begin
+              (array-set!
+                succ-rows
+                index
+                (opt-cfg-index-label-set-to-ids succs ids))
+              (opt-cfg-index-add-pred-edges! pred-rows ids index succs)
+              (opt-cfg-index-fill-rows!
+                (box-get rest)
+                ids
+                succ-rows
+                pred-rows
+                (+ index 1))))])]))
 
-(define (opt-pred-map-build [blocks : CompilerIrBlockList]) : OptPredMap
+(define (opt-cfg-csr-fill-rows!
+  [rows : (Array OptI64List)]
+  [count : i64]
+  [offsets : (Array i64)]
+  [edges : (Array i64)]
+  [row : i64]
+  [edge-index : i64]) : unit
+  (if (>= row count)
+    (array-set! offsets count edge-index)
+    (let
+      [next-edge : i64
+        (opt-i64-list-fill-edges!
+          (opt-i64-list-reverse (array-ref rows row))
+          edges
+          edge-index)]
+      (begin
+        (array-set! offsets row edge-index)
+        (opt-cfg-csr-fill-rows! rows count offsets edges (+ row 1) next-edge)))))
+
+(define (opt-cfg-csr-build [rows : (Array OptI64List)] [count : i64]) : OptCfgCsr
+  (let
+    [edge-count : i64 (opt-cfg-row-list-total rows count 0 0)]
+    [offsets : (Array i64) (make-array i64 (+ count 1))]
+    [edges : (Array i64) (make-array i64 edge-count)]
+    (begin
+      (opt-cfg-csr-fill-rows! rows count offsets edges 0 0)
+      (OptCfgCsr offsets edges))))
+
+(define (opt-cfg-fill-bool!
+  [values : (Array bool)]
+  [count : i64]
+  [value : bool]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! values i value)
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-cfg-fill-i64! [values : (Array i64)] [count : i64] [value : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! values i value)
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-cfg-index-dfs-edges!
+  [succs : OptCfgCsr]
+  [reachable : (Array bool)]
+  [postorder : (Array i64)]
+  [edge : i64]
+  [end : i64]
+  [post-count : i64]) : i64
+  (if (>= edge end)
+    post-count
+    (opt-cfg-index-dfs-edges!
+      succs
+      reachable
+      postorder
+      (+ edge 1)
+      end
+      (opt-cfg-index-dfs-postorder!
+        succs
+        reachable
+        postorder
+        (array-ref (struct-get succs edges) edge)
+        post-count))))
+
+(define (opt-cfg-index-dfs-postorder!
+  [succs : OptCfgCsr]
+  [reachable : (Array bool)]
+  [postorder : (Array i64)]
+  [id : i64]
+  [post-count : i64]) : i64
+  (if (array-ref reachable id)
+    post-count
+    (let
+      [edge : i64 (array-ref (struct-get succs offsets) id)]
+      [end : i64 (array-ref (struct-get succs offsets) (+ id 1))]
+      [next-count : i64
+        (begin
+          (array-set! reachable id true)
+          (opt-cfg-index-dfs-edges!
+            succs
+            reachable
+            postorder
+            edge
+            end
+            post-count))]
+      (begin
+        (array-set! postorder next-count id)
+        (+ next-count 1)))))
+
+(define (opt-cfg-index-fill-rpo!
+  [postorder : (Array i64)]
+  [rpo : (Array i64)]
+  [reach-count : i64]
+  [index : i64]) : unit
+  (if (>= index reach-count)
+    unit
+    (begin
+      (array-set! rpo index (array-ref postorder (- (- reach-count 1) index)))
+      (opt-cfg-index-fill-rpo! postorder rpo reach-count (+ index 1)))))
+
+(define (opt-cfg-index-build [blocks : CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
+    [labels : (Array String) (make-array String count)]
     [ids : StringI64Map
-      (opt-pred-map-build-ids
+      (opt-cfg-index-fill-labels!
         blocks
         (string-i64-map-with-capacity (opt-pred-map-capacity count))
+        labels
         0)]
-    [preds : (Array OptLabelSet) (make-array OptLabelSet count)]
+    [succ-rows : (Array OptI64List) (make-array OptI64List count)]
+    [pred-rows : (Array OptI64List) (make-array OptI64List count)]
+    [reachable : (Array bool) (make-array bool count)]
+    [postorder : (Array i64) (make-array i64 count)]
+    [rpo : (Array i64) (make-array i64 count)]
+    [reach-count : i64 0]
     (begin
-      (opt-pred-map-fill-empty! preds count)
-      (opt-pred-map-fill! blocks ids preds)
-      (OptPredMap ids preds))))
+      (opt-cfg-i64-list-array-fill-empty! succ-rows count)
+      (opt-cfg-i64-list-array-fill-empty! pred-rows count)
+      (opt-cfg-index-fill-rows! blocks ids succ-rows pred-rows 0)
+      (opt-cfg-fill-bool! reachable count false)
+      (opt-cfg-fill-i64! postorder count (- 0 1))
+      (opt-cfg-fill-i64! rpo count (- 0 1))
+      (let
+        [succ-csr : OptCfgCsr (opt-cfg-csr-build succ-rows count)]
+        [pred-csr : OptCfgCsr (opt-cfg-csr-build pred-rows count)]
+        (begin
+          (if (> count 0)
+            (set!
+              reach-count
+              (opt-cfg-index-dfs-postorder! succ-csr reachable postorder 0 0))
+            unit)
+          (opt-cfg-index-fill-rpo! postorder rpo reach-count 0)
+          (OptCfgIndex ids labels succ-csr pred-csr reachable reach-count rpo))))))
+
+(define (opt-cfg-index-block-count [index : OptCfgIndex]) : i64
+  (array-length (struct-get index labels)))
+
+(define (opt-cfg-index-label [index : OptCfgIndex] [id : i64]) : String
+  (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
+    (array-ref (struct-get index labels) id)
+    ""))
+
+(define (opt-cfg-index-id [index : OptCfgIndex] [label : String]) : OptMaybeI64
+  (match (string-i64-map-get (struct-get index ids) label)
+    [(StringI64MapFound id) (OptSomeI64 id)]
+    [(StringI64MapMissing) (OptNoI64)]))
+
+(define (opt-cfg-index-row-labels-from
+  [index : OptCfgIndex]
+  [csr : OptCfgCsr]
+  [edge : i64]
+  [end : i64]
+  [labels : OptLabelSet]) : OptLabelSet
+  (if (>= edge end)
+    labels
+    (opt-cfg-index-row-labels-from
+      index
+      csr
+      (+ edge 1)
+      end
+      (opt-label-add
+        labels
+        (opt-cfg-index-label index (array-ref (struct-get csr edges) edge))))))
+
+(define (opt-cfg-index-row-labels
+  [index : OptCfgIndex]
+  [csr : OptCfgCsr]
+  [id : i64]) : OptLabelSet
+  (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
+    (opt-cfg-index-row-labels-from
+      index
+      csr
+      (array-ref (struct-get csr offsets) id)
+      (array-ref (struct-get csr offsets) (+ id 1))
+      (OptLabelNil))
+    (OptLabelNil)))
+
+(define (opt-cfg-index-successors [index : OptCfgIndex] [label : String]) : OptLabelSet
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id)
+      (opt-cfg-index-row-labels index (struct-get index succs) id)]
+    [(OptNoI64) (OptLabelNil)]))
+
+(define (opt-cfg-index-predecessors [index : OptCfgIndex] [label : String]) : OptLabelSet
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id)
+      (opt-cfg-index-row-labels index (struct-get index preds) id)]
+    [(OptNoI64) (OptLabelNil)]))
+
+(define (opt-cfg-index-reachable? [index : OptCfgIndex] [label : String]) : bool
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id) (array-ref (struct-get index reachable) id)]
+    [(OptNoI64) false]))
+
+(define (opt-cfg-index-reachable-labels-from
+  [index : OptCfgIndex]
+  [id : i64]
+  [labels : OptLabelSet]) : OptLabelSet
+  (if (>= id (opt-cfg-index-block-count index))
+    labels
+    (opt-cfg-index-reachable-labels-from
+      index
+      (+ id 1)
+      (if (array-ref (struct-get index reachable) id)
+        (opt-label-add labels (opt-cfg-index-label index id))
+        labels))))
+
+(define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
+  (opt-cfg-index-reachable-labels-from index 0 (OptLabelNil)))
+
+(define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
+  (if (and (>= slot 0) (< slot (struct-get index reach-count)))
+    (array-ref (struct-get index rpo) slot)
+    (- 0 1)))
+
+(define (opt-cfg-index-rpo-label [index : OptCfgIndex] [slot : i64]) : String
+  (opt-cfg-index-label index (opt-cfg-index-rpo-id index slot)))
+
+(define (opt-pred-map-build [blocks : CompilerIrBlockList]) : OptPredMap
+  (OptPredMap (opt-cfg-index-build blocks)))
 
 (define (opt-pred-map-lookup [map : OptPredMap] [label : String]) : OptLabelSet
-  (match (string-i64-map-get (struct-get map ids) label)
-    [(StringI64MapFound idx) (array-ref (struct-get map preds) idx)]
-    [(StringI64MapMissing) (OptLabelNil)]))
+  (opt-cfg-index-predecessors (struct-get map index) label))
+
+(define (opt-pred-map-successors [map : OptPredMap] [label : String]) : OptLabelSet
+  (opt-cfg-index-successors (struct-get map index) label))
 
 (define (opt-cfg-dominators-step-entry
   [pred-map : OptPredMap]
@@ -4243,6 +4561,7 @@
       (+ (compiler-ir-block-list-count blocks) 1))))
 
 (defstruct OptCfgContext
+  (index OptCfgIndex)
   (pred-map OptPredMap)
   (reachable OptLabelSet)
   (entry-label String)
@@ -4250,12 +4569,13 @@
 
 (define (opt-cfg-context-build [blocks : CompilerIrBlockList]) : OptCfgContext
   (let
-    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    [pred-map : OptPredMap (OptPredMap index)]
+    [reachable : OptLabelSet (opt-cfg-index-reachable-labels index)]
     [entry-label : String (opt-cfg-entry-label blocks)]
-    [pred-map : OptPredMap (opt-pred-map-build blocks)]
     [doms : OptDomTable
       (opt-cfg-dominators-with blocks pred-map reachable entry-label)]
-    (OptCfgContext pred-map reachable entry-label doms)))
+    (OptCfgContext index pred-map reachable entry-label doms)))
 
 (define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomTable
   (struct-get (opt-cfg-context-build blocks) doms))
@@ -5833,7 +6153,7 @@
           (opt-label-add explicit next-label)
           explicit))]))
 
-(define (opt-cfg-blocks-successors
+(define (opt-cfg-blocks-successors-scan
   [blocks : CompilerIrBlockList]
   [label : String]) : OptLabelSet
   (match blocks
@@ -5845,37 +6165,15 @@
             (opt-cfg-block-successors-with-next
               block
               (opt-cfg-entry-label (box-get rest)))
-            (opt-cfg-blocks-successors (box-get rest) label))])]))
+            (opt-cfg-blocks-successors-scan (box-get rest) label))])]))
 
-(define (opt-cfg-reachable-label
+(define (opt-cfg-blocks-successors
   [blocks : CompilerIrBlockList]
-  [label : String]
-  [seen : OptLabelSet]) : OptLabelSet
-  (if (opt-label-contains seen label)
-    seen
-    (opt-cfg-reachable-label-list
-      blocks
-      (opt-cfg-blocks-successors blocks label)
-      (opt-label-add seen label))))
-
-(define (opt-cfg-reachable-label-list
-  [blocks : CompilerIrBlockList]
-  [labels : OptLabelSet]
-  [seen : OptLabelSet]) : OptLabelSet
-  (match labels
-    [(OptLabelNil) seen]
-    [(OptLabelCons label rest)
-      (opt-cfg-reachable-label-list
-        blocks
-        (box-get rest)
-        (opt-cfg-reachable-label blocks label seen))]))
+  [label : String]) : OptLabelSet
+  (opt-cfg-index-successors (opt-cfg-index-build blocks) label))
 
 (define (opt-cfg-reachable-blocks [blocks : CompilerIrBlockList]) : OptLabelSet
-  (match blocks
-    [(IrBlockNil) (OptLabelNil)]
-    [(IrBlockCons block _)
-      (match block
-        [(IrBlock label _) (opt-cfg-reachable-label blocks label (OptLabelNil))])]))
+  (opt-cfg-index-reachable-labels (opt-cfg-index-build blocks)))
 
 (defenum OptLoopPreheader
   (OptNoLoopPreheader)
@@ -5984,30 +6282,30 @@
               next-worklist)]))]))
 
 (define (opt-natural-loop-safe-preheader-block?
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [label : String]
   [header : String]) : bool
   (let
-    [successors : OptLabelSet (opt-cfg-blocks-successors blocks label)]
+    [successors : OptLabelSet (opt-pred-map-successors pred-map label)]
     (and
       (= (opt-label-count successors) 1)
       (opt-label-contains successors header))))
 
 (define (opt-natural-loop-preheader-candidate-add
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [header : String]
   [candidate : OptLoopPreheaderCandidate]
   [pred : String]) : OptLoopPreheaderCandidate
   (match candidate
     [(OptLoopPreheaderMany) (OptLoopPreheaderMany)]
     [(OptLoopPreheaderNone)
-      (if (opt-natural-loop-safe-preheader-block? blocks pred header)
+      (if (opt-natural-loop-safe-preheader-block? pred-map pred header)
         (OptLoopPreheaderOne pred)
         (OptLoopPreheaderMany))]
     [(OptLoopPreheaderOne _) (OptLoopPreheaderMany)]))
 
 (define (opt-natural-loop-preheader-candidate-scan
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [header : String]
   [body : OptLabelSet]
@@ -6020,18 +6318,18 @@
         (opt-label-contains reachable pred)
         (not (opt-label-contains body pred)))
         (opt-natural-loop-preheader-candidate-scan
-          blocks
+          pred-map
           reachable
           header
           body
           (box-get rest)
           (opt-natural-loop-preheader-candidate-add
-            blocks
+            pred-map
             header
             candidate
             pred))
         (opt-natural-loop-preheader-candidate-scan
-          blocks
+          pred-map
           reachable
           header
           body
@@ -6052,7 +6350,7 @@
   [body : OptLabelSet]) : OptLoopPreheader
   (opt-natural-loop-preheader-from-candidate
     (opt-natural-loop-preheader-candidate-scan
-      blocks
+      pred-map
       reachable
       header
       body
@@ -15018,65 +15316,86 @@
 (define (compiler-optimize-ssa-self-test) : i64
   (let
     [diamond-blocks : CompilerIrBlockList (opt-ssa-diamond-blocks)]
+    [diamond-index : OptCfgIndex (opt-cfg-index-build diamond-blocks)]
     [diamond-doms : OptDomTable (opt-cfg-dominators diamond-blocks)]
     [then-frontier : OptLabelSet
       (opt-cfg-dominance-frontier diamond-blocks "then")]
     [else-frontier : OptLabelSet
       (opt-cfg-dominance-frontier diamond-blocks "else")]
     [loop-blocks : CompilerIrBlockList (opt-ssa-loop-blocks)]
+    [loop-index : OptCfgIndex (opt-cfg-index-build loop-blocks)]
     [loop-doms : OptDomTable (opt-cfg-dominators loop-blocks)]
     [loop-frontier : OptLabelSet
       (opt-cfg-dominance-frontier loop-blocks "loop")]
+    [unreachable-index : OptCfgIndex
+      (opt-cfg-index-build (opt-ssa-unreachable-blocks))]
     [unreachable-order : CompilerIrBlockList
       (opt-cfg-reachable-block-order (opt-ssa-unreachable-blocks))]
     (cond
       [(not
           (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
         1]
-      [(not (opt-dom-dominates? diamond-doms "entry" "join")) 2]
-      [(opt-dom-dominates? diamond-doms "then" "join") 3]
-      [(not (opt-label-contains then-frontier "join")) 4]
-      [(not (opt-label-contains else-frontier "join")) 5]
-      [(not (opt-dom-dominates? loop-doms "loop" "body")) 6]
-      [(not (opt-label-contains loop-frontier "loop")) 7]
-      [(not (= (compiler-ir-block-list-count unreachable-order) 1)) 8]
-      [(not (opt-block-list-has-label? unreachable-order "entry")) 9]
+      [(not (= (opt-cfg-index-block-count diamond-index) 4)) 2]
       [(not (opt-verify-ok? (opt-verify-function (opt-ssa-diamond-function))))
-        10]
-      [(not (opt-verify-ok? (opt-verify-function (opt-ssa-loop-function)))) 11]
+        3]
+      [(not
+          (opt-label-set-eq?
+            (opt-cfg-index-predecessors diamond-index "join")
+            (opt-cfg-predecessors-scan diamond-blocks "join")))
+        4]
+      [(not
+          (opt-label-set-eq?
+            (opt-cfg-index-successors diamond-index "entry")
+            (opt-cfg-blocks-successors-scan diamond-blocks "entry")))
+        5]
+      [(not (= (struct-get unreachable-index reach-count) 1)) 6]
+      [(not (opt-cfg-index-reachable? unreachable-index "entry")) 7]
+      [(opt-cfg-index-reachable? unreachable-index "dead") 8]
+      [(not (string-eq (opt-cfg-index-rpo-label unreachable-index 0) "entry"))
+        9]
+      [(not (string-eq (opt-cfg-index-rpo-label loop-index 0) "entry")) 10]
+      [(not (opt-dom-dominates? diamond-doms "entry" "join")) 11]
+      [(opt-dom-dominates? diamond-doms "then" "join") 12]
+      [(not (opt-label-contains then-frontier "join")) 13]
+      [(not (opt-label-contains else-frontier "join")) 14]
+      [(not (opt-dom-dominates? loop-doms "loop" "body")) 15]
+      [(not (opt-label-contains loop-frontier "loop")) 16]
+      [(not (= (compiler-ir-block-list-count unreachable-order) 1)) 17]
+      [(not (opt-block-list-has-label? unreachable-order "entry")) 18]
+      [(not (opt-verify-ok? (opt-verify-function (opt-ssa-loop-function)))) 19]
       [(not
           (opt-verify-ok? (opt-verify-function (opt-ssa-unreachable-function))))
-        12]
+        20]
       [(not
           (opt-verify-error-ok?
             (opt-verify-function (opt-ssa-duplicate-label-function))
             "optimizer verify: duplicate block label"))
-        13]
+        21]
       [(not
           (opt-verify-error-ok?
             (opt-verify-function (opt-ssa-unknown-successor-function))
             "optimizer verify: unknown successor label"))
-        14]
+        22]
       [(not
           (opt-verify-error-ok?
             (opt-verify-function (opt-ssa-bad-phi-function))
             "optimizer verify: phi predecessor mismatch"))
-        15]
+        23]
       [(not
           (opt-verify-error-ok?
             (opt-verify-function (opt-ssa-duplicate-def-function))
             "optimizer verify: duplicate var definition"))
-        16]
+        24]
       [(not
           (opt-verify-error-ok?
             (opt-verify-function (opt-ssa-use-before-def-function))
             "optimizer verify: use before definition"))
-        17]
+        25]
       [(not
           (opt-verify-error-ok?
             (opt-verify-function (opt-ssa-dominance-fail-function))
             "optimizer verify: use is not dominated by definition"))
-        18]
+        26]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

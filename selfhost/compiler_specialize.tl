@@ -3627,6 +3627,7 @@
     [(AstExprLiteral _) (OkSpecExpr expr state)]
     [(AstExprVar _) (OkSpecExpr expr state)]
     [(AstExprTypeLiteral _) (OkSpecExpr expr state)]
+    [(AstExprInit _) (OkSpecExpr expr state)]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (box-get left-box)]
@@ -4180,6 +4181,7 @@
         [(SpecNoString) (OkSpecSubExpr expr)])]
     [(AstExprLiteral _) (OkSpecSubExpr expr)]
     [(AstExprTypeLiteral _) (OkSpecSubExpr expr)]
+    [(AstExprInit _) (OkSpecSubExpr expr)]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (box-get left-box)]
@@ -4764,6 +4766,8 @@
     [(AstExprLiteral _) (OkSpecSubExpr expr)]
     [(AstExprTypeLiteral ty)
       (OkSpecSubExpr (AstExprTypeLiteral (spec-substitute-type ty subs)))]
+    [(AstExprInit ty)
+      (OkSpecSubExpr (ast-expr-init (spec-substitute-type ty subs)))]
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (box-get len-box)]

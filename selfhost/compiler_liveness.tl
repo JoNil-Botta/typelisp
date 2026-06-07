@@ -8,9 +8,8 @@
 
 (import "../stdlib/hashmap.tl")
 
-(defenum CompilerLiveI64Set
-  (CompilerLiveI64Nil)
-  (CompilerLiveI64Cons i64 (Box CompilerLiveI64Set)))
+(defstruct CompilerLiveI64Set
+  (words (Array i64)))
 
 (defenum CompilerLiveLabelSet
   (CompilerLiveLabelNil)
@@ -78,47 +77,88 @@
   (CompilerLiveBlockCons head (box rest)))
 
 (define (compiler-live-set-word-bits) : i64
-  31)
+  63)
 
-(define (compiler-live-set-bits-mask) : i64
-  0x7fffffff)
+(define (compiler-live-set-min [a : i64] [b : i64]) : i64
+  (if (< a b)
+    a
+    b))
+
+(define (compiler-live-set-max [a : i64] [b : i64]) : i64
+  (if (> a b)
+    a
+    b))
 
 (define (compiler-live-set-word-index [value : i64]) : i64
-  (/ value 31))
+  (/ value (compiler-live-set-word-bits)))
 
 (define (compiler-live-set-bit-index [value : i64]) : i64
-  (% value 31))
+  (% value (compiler-live-set-word-bits)))
 
 (define (compiler-live-set-bit-mask [value : i64]) : i64
-  (shl 1 (% value 31)))
+  (shl 1 (compiler-live-set-bit-index value)))
 
-(define (compiler-live-set-pack-word [word-index : i64] [bits : i64]) : i64
-  (bit-or (shl word-index 31) bits))
-
-(define (compiler-live-set-chunk-word-index [chunk : i64]) : i64
-  (shr chunk 31))
-
-(define (compiler-live-set-chunk-bits [chunk : i64]) : i64
-  (bit-and chunk 0x7fffffff))
+(define (compiler-live-set-words [set : CompilerLiveI64Set]) : (Array i64)
+  (struct-get set words))
 
 (define (compiler-live-set-empty) : CompilerLiveI64Set
-  CompilerLiveI64Nil)
+  (CompilerLiveI64Set (make-array i64 0)))
 
-(define (compiler-live-set-contains-word?
+(define (compiler-live-set-word-count [set : CompilerLiveI64Set]) : i64
+  (array-length (compiler-live-set-words set)))
+
+(define (compiler-live-set-word-at
   [set : CompilerLiveI64Set]
-  [word-index : i64]
-  [mask : i64]) : bool
-  (match set
-    [(CompilerLiveI64Nil) false]
-    [(CompilerLiveI64Cons chunk rest)
-      (let
-        [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
-        [bits : i64 (compiler-live-set-chunk-bits chunk)]
-        (if (= head-index word-index)
-          (not (= (bit-and bits mask) 0))
-          (if (> head-index word-index)
-            false
-            (compiler-live-set-contains-word? (box-get rest) word-index mask))))]))
+  [word-index : i64]) : i64
+  (if (and (>= word-index 0) (< word-index (compiler-live-set-word-count set)))
+    (array-ref (compiler-live-set-words set) word-index)
+    0))
+
+(define (compiler-live-set-copy-words-into
+  [dst : (Array i64)]
+  [src : (Array i64)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (compiler-live-set-copy-words-into dst src (+ index 1) count))))
+
+(define (compiler-live-set-copy-with-capacity
+  [set : CompilerLiveI64Set]
+  [capacity : i64]) : (Array i64)
+  (let
+    [words : (Array i64) (compiler-live-set-words set)]
+    [old-capacity : i64 (array-length words)]
+    [out : (Array i64) (make-array i64 capacity)]
+    [copy-count : i64 (compiler-live-set-min old-capacity capacity)]
+    (begin
+      (compiler-live-set-copy-words-into out words 0 copy-count)
+      out)))
+
+(define (compiler-live-set-trim-length [words : (Array i64)] [count : i64]) : i64
+  (let
+    [i : i64 count]
+    (begin
+      (while (and (> i 0) (= (array-ref words (- i 1)) 0))
+        (set! i (- i 1)))
+      i)))
+
+(define (compiler-live-set-from-words-trimmed
+  [words : (Array i64)]
+  [count : i64]) : CompilerLiveI64Set
+  (let
+    [n : i64 (compiler-live-set-trim-length words count)]
+    (if (<= n 0)
+      (compiler-live-set-empty)
+      (if (= n (array-length words))
+        (CompilerLiveI64Set words)
+        (let
+          [out : (Array i64) (make-array i64 n)]
+          (begin
+            (compiler-live-set-copy-words-into out words 0 n)
+            (CompilerLiveI64Set out)))))))
 
 (define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
   (if (< value 0)
@@ -126,35 +166,7 @@
     (let
       [word-index : i64 (compiler-live-set-word-index value)]
       [mask : i64 (compiler-live-set-bit-mask value)]
-      (compiler-live-set-contains-word? set word-index mask))))
-
-(define (compiler-live-set-insert-word
-  [set : CompilerLiveI64Set]
-  [word-index : i64]
-  [mask : i64]) : CompilerLiveI64Set
-  (match set
-    [(CompilerLiveI64Nil)
-      (CompilerLiveI64Cons
-        (compiler-live-set-pack-word word-index mask)
-        (box CompilerLiveI64Nil))]
-    [(CompilerLiveI64Cons chunk rest)
-      (let
-        [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
-        [bits : i64 (compiler-live-set-chunk-bits chunk)]
-        (if (= head-index word-index)
-          (if (= (bit-and bits mask) 0)
-            (CompilerLiveI64Cons
-              (compiler-live-set-pack-word head-index (bit-or bits mask))
-              rest)
-            set)
-          (if (> head-index word-index)
-            (CompilerLiveI64Cons
-              (compiler-live-set-pack-word word-index mask)
-              (box set))
-            (CompilerLiveI64Cons
-              chunk
-              (box
-                (compiler-live-set-insert-word (box-get rest) word-index mask))))))]))
+      (not (= (bit-and (compiler-live-set-word-at set word-index) mask) 0)))))
 
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
@@ -162,148 +174,134 @@
     (let
       [word-index : i64 (compiler-live-set-word-index value)]
       [mask : i64 (compiler-live-set-bit-mask value)]
-      (compiler-live-set-insert-word set word-index mask))))
-
-(define (compiler-live-set-remove-word
-  [set : CompilerLiveI64Set]
-  [word-index : i64]
-  [mask : i64]) : CompilerLiveI64Set
-  (match set
-    [(CompilerLiveI64Nil) CompilerLiveI64Nil]
-    [(CompilerLiveI64Cons chunk rest)
-      (let
-        [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
-        [bits : i64 (compiler-live-set-chunk-bits chunk)]
-        (if (= head-index word-index)
-          (let
-            [next-bits : i64 (bit-and bits (bit-xor mask -1))]
-            (if (= next-bits 0)
-              (box-get rest)
-              (if (= next-bits bits)
-                set
-                (CompilerLiveI64Cons
-                  (compiler-live-set-pack-word head-index next-bits)
-                  rest))))
-          (if (> head-index word-index)
-            set
-            (CompilerLiveI64Cons
-              chunk
-              (box
-                (compiler-live-set-remove-word (box-get rest) word-index mask))))))]))
+      [capacity : i64
+        (compiler-live-set-max
+          (compiler-live-set-word-count set)
+          (+ word-index 1))]
+      [old-bits : i64 (compiler-live-set-word-at set word-index)]
+      (if (not (= (bit-and old-bits mask) 0))
+        set
+        (let
+          [out : (Array i64)
+            (compiler-live-set-copy-with-capacity set capacity)]
+          (begin
+            (array-set! out word-index (bit-or old-bits mask))
+            (CompilerLiveI64Set out)))))))
 
 (define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
     set
     (let
       [word-index : i64 (compiler-live-set-word-index value)]
+      [capacity : i64 (compiler-live-set-word-count set)]
       [mask : i64 (compiler-live-set-bit-mask value)]
-      (compiler-live-set-remove-word set word-index mask))))
+      (if (>= word-index capacity)
+        set
+        (let
+          [old-bits : i64 (compiler-live-set-word-at set word-index)]
+          (if (= (bit-and old-bits mask) 0)
+            set
+            (let
+              [out : (Array i64)
+                (compiler-live-set-copy-with-capacity set capacity)]
+              (begin
+                (array-set! out word-index (bit-and old-bits (bit-xor mask -1)))
+                (compiler-live-set-from-words-trimmed out capacity)))))))))
+
+(define (compiler-live-set-union-words
+  [left : CompilerLiveI64Set]
+  [right : CompilerLiveI64Set]
+  [out : (Array i64)]
+  [index : i64]
+  [count : i64]
+  [changed : bool]) : bool
+  (if (>= index count)
+    changed
+    (let
+      [left-bits : i64 (compiler-live-set-word-at left index)]
+      [merged : i64 (bit-or left-bits (compiler-live-set-word-at right index))]
+      (begin
+        (array-set! out index merged)
+        (compiler-live-set-union-words
+          left
+          right
+          out
+          (+ index 1)
+          count
+          (or changed (not (= merged left-bits))))))))
 
 (define (compiler-live-set-union
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match left
-    [(CompilerLiveI64Nil) right]
-    [(CompilerLiveI64Cons left-chunk left-rest)
-      (let
-        [left-index : i64 (compiler-live-set-chunk-word-index left-chunk)]
-        [left-bits : i64 (compiler-live-set-chunk-bits left-chunk)]
-        (match right
-          [(CompilerLiveI64Nil) left]
-          [(CompilerLiveI64Cons right-chunk right-rest)
-            (let
-              [right-index : i64
-                (compiler-live-set-chunk-word-index right-chunk)]
-              [right-bits : i64 (compiler-live-set-chunk-bits right-chunk)]
-              (if (= left-index right-index)
-                (CompilerLiveI64Cons
-                  (compiler-live-set-pack-word
-                    left-index
-                    (bit-or left-bits right-bits))
-                  (box
-                    (compiler-live-set-union
-                      (box-get left-rest)
-                      (box-get right-rest))))
-                (if (< left-index right-index)
-                  (CompilerLiveI64Cons
-                    left-chunk
-                    (box (compiler-live-set-union (box-get left-rest) right)))
-                  (CompilerLiveI64Cons
-                    right-chunk
-                    (box (compiler-live-set-union left (box-get right-rest)))))))]))]))
+  (let
+    [count : i64
+      (compiler-live-set-max
+        (compiler-live-set-word-count left)
+        (compiler-live-set-word-count right))]
+    [out : (Array i64) (make-array i64 count)]
+    [changed : bool
+      (compiler-live-set-union-words left right out 0 count false)]
+    (if changed
+      (compiler-live-set-from-words-trimmed out count)
+      left)))
 
 (define (compiler-live-set-union-into
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (compiler-live-set-union left right))
 
+(define (compiler-live-set-minus-words
+  [left : CompilerLiveI64Set]
+  [right : CompilerLiveI64Set]
+  [out : (Array i64)]
+  [index : i64]
+  [count : i64]
+  [changed : bool]) : bool
+  (if (>= index count)
+    changed
+    (let
+      [left-bits : i64 (compiler-live-set-word-at left index)]
+      [next-bits : i64
+        (bit-and left-bits (bit-xor (compiler-live-set-word-at right index) -1))]
+      (begin
+        (array-set! out index next-bits)
+        (compiler-live-set-minus-words
+          left
+          right
+          out
+          (+ index 1)
+          count
+          (or changed (not (= next-bits left-bits))))))))
+
 (define (compiler-live-set-minus
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match left
-    [(CompilerLiveI64Nil) CompilerLiveI64Nil]
-    [(CompilerLiveI64Cons left-chunk left-rest)
-      (let
-        [left-index : i64 (compiler-live-set-chunk-word-index left-chunk)]
-        [left-bits : i64 (compiler-live-set-chunk-bits left-chunk)]
-        (match right
-          [(CompilerLiveI64Nil) left]
-          [(CompilerLiveI64Cons right-chunk right-rest)
-            (let
-              [right-index : i64
-                (compiler-live-set-chunk-word-index right-chunk)]
-              [right-bits : i64 (compiler-live-set-chunk-bits right-chunk)]
-              (if (= left-index right-index)
-                (let
-                  [next-bits : i64 (bit-and left-bits (bit-xor right-bits -1))]
-                  (if (= next-bits 0)
-                    (compiler-live-set-minus
-                      (box-get left-rest)
-                      (box-get right-rest))
-                    (CompilerLiveI64Cons
-                      (compiler-live-set-pack-word left-index next-bits)
-                      (box
-                        (compiler-live-set-minus
-                          (box-get left-rest)
-                          (box-get right-rest))))))
-                (if (< left-index right-index)
-                  (CompilerLiveI64Cons
-                    left-chunk
-                    (box (compiler-live-set-minus (box-get left-rest) right)))
-                  (compiler-live-set-minus left (box-get right-rest)))))]))]))
+  (let
+    [count : i64 (compiler-live-set-word-count left)]
+    [out : (Array i64) (make-array i64 count)]
+    [changed : bool
+      (compiler-live-set-minus-words left right out 0 count false)]
+    (if changed
+      (compiler-live-set-from-words-trimmed out count)
+      left)))
 
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : bool
   (let
-    [left-cur : CompilerLiveI64Set left]
-    [right-cur : CompilerLiveI64Set right]
+    [count : i64
+      (compiler-live-set-max
+        (compiler-live-set-word-count left)
+        (compiler-live-set-word-count right))]
+    [index : i64 0]
     [same : bool true]
-    [done : bool false]
     (begin
-      (while (and same (not done))
-        (match left-cur
-          [(CompilerLiveI64Nil)
-            (match right-cur
-              [(CompilerLiveI64Nil) (set! done true)]
-              [(CompilerLiveI64Cons _ _)
-                (begin
-                  (set! same false)
-                  (set! done true))])]
-          [(CompilerLiveI64Cons left-chunk left-rest)
-            (match right-cur
-              [(CompilerLiveI64Nil)
-                (begin
-                  (set! same false)
-                  (set! done true))]
-              [(CompilerLiveI64Cons right-chunk right-rest)
-                (if (= left-chunk right-chunk)
-                  (begin
-                    (set! left-cur (box-get left-rest))
-                    (set! right-cur (box-get right-rest)))
-                  (begin
-                    (set! same false)
-                    (set! done true)))])]))
+      (while (and same (< index count))
+        (if (=
+          (compiler-live-set-word-at left index)
+          (compiler-live-set-word-at right index))
+          (set! index (+ index 1))
+          (set! same false)))
       same)))
 
 (define (compiler-live-set-word-count-bits [bits : i64] [bit : i64]) : i64
@@ -316,14 +314,22 @@
       (compiler-live-set-word-count-bits bits (+ bit 1)))))
 
 (define (compiler-live-set-count [set : CompilerLiveI64Set]) : i64
-  (match set
-    [(CompilerLiveI64Nil) 0]
-    [(CompilerLiveI64Cons chunk rest)
-      (+
-        (compiler-live-set-word-count-bits
-          (compiler-live-set-chunk-bits chunk)
-          0)
-        (compiler-live-set-count (box-get rest)))]))
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    [word-count : i64 (compiler-live-set-word-count set)]
+    (begin
+      (while (< index word-count)
+        (begin
+          (set!
+            count
+            (+
+              count
+              (compiler-live-set-word-count-bits
+                (compiler-live-set-word-at set index)
+                0)))
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-live-set-score-word-desc
   [bits : i64]
@@ -341,16 +347,21 @@
         (+ (+ base (+ bit 1)) (* 17 acc))))))
 
 (define (compiler-live-set-score [set : CompilerLiveI64Set]) : i64
-  (match set
-    [(CompilerLiveI64Nil) 0]
-    [(CompilerLiveI64Cons chunk rest)
-      (compiler-live-set-score-word-desc
-        (compiler-live-set-chunk-bits chunk)
-        (*
-          (compiler-live-set-chunk-word-index chunk)
-          (compiler-live-set-word-bits))
-        (- (compiler-live-set-word-bits) 1)
-        (compiler-live-set-score (box-get rest)))]))
+  (let
+    [index : i64 (- (compiler-live-set-word-count set) 1)]
+    [score : i64 0]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            score
+            (compiler-live-set-score-word-desc
+              (compiler-live-set-word-at set index)
+              (* index (compiler-live-set-word-bits))
+              (- (compiler-live-set-word-bits) 1)
+              score))
+          (set! index (- index 1))))
+      score)))
 
 (define (compiler-live-set1 [a : i64]) : CompilerLiveI64Set
   (compiler-live-set-insert (compiler-live-set-empty) a))
@@ -366,6 +377,15 @@
       (compiler-live-set-insert (compiler-live-set-empty) a)
       b)
     c))
+
+(define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
+  (compiler-live-set-insert
+    (compiler-live-set-insert
+      (compiler-live-set-insert
+        (compiler-live-set-insert (compiler-live-set-empty) a)
+        b)
+      c)
+    d))
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : CompilerLiveI64Set
   (compiler-live-set-insert
@@ -418,6 +438,43 @@
         e)
       f)
     g))
+
+(define (compiler-live-set-ops-ok?) : bool
+  (let
+    [empty : CompilerLiveI64Set (compiler-live-set-empty)]
+    [with-negative : CompilerLiveI64Set (compiler-live-set-insert empty -4)]
+    [a : CompilerLiveI64Set (compiler-live-set4 0 62 63 130)]
+    [b : CompilerLiveI64Set (compiler-live-set4 130 63 62 0)]
+    [removed : CompilerLiveI64Set (compiler-live-set-remove a 62)]
+    [unioned : CompilerLiveI64Set
+      (compiler-live-set-union removed (compiler-live-set2 62 129))]
+    [minus : CompilerLiveI64Set
+      (compiler-live-set-minus unioned (compiler-live-set2 0 129))]
+    [trimmed : CompilerLiveI64Set
+      (compiler-live-set-remove (compiler-live-set-remove a 130) 63)]
+    [ok : bool true]
+    (begin
+      (set! ok (and ok (compiler-live-set-eq? empty with-negative)))
+      (set! ok (and ok (= (compiler-live-set-count a) 4)))
+      (set! ok (and ok (compiler-live-set-contains? a 0)))
+      (set! ok (and ok (compiler-live-set-contains? a 62)))
+      (set! ok (and ok (compiler-live-set-contains? a 63)))
+      (set! ok (and ok (compiler-live-set-contains? a 130)))
+      (set! ok (and ok (not (compiler-live-set-contains? a -1))))
+      (set! ok (and ok (not (compiler-live-set-contains? a 64))))
+      (set! ok (and ok (compiler-live-set-eq? a b)))
+      (set!
+        ok
+        (and ok (= (compiler-live-set-score a) (compiler-live-set-score b))))
+      (set! ok (and ok (= (compiler-live-set-count removed) 3)))
+      (set! ok (and ok (not (compiler-live-set-contains? removed 62))))
+      (set! ok (and ok (= (compiler-live-set-count unioned) 5)))
+      (set!
+        ok
+        (and ok (compiler-live-set-eq? minus (compiler-live-set3 62 63 130))))
+      (set! ok (and ok (= (compiler-live-set-count trimmed) 2)))
+      (set! ok (and ok (= (compiler-live-set-word-count trimmed) 1)))
+      ok)))
 
 (define (compiler-live-label-set-empty) : CompilerLiveLabelSet
   CompilerLiveLabelNil)
@@ -1391,14 +1448,16 @@
 
 (define (compiler-live-self-test) : i64
   (if (and
-    (compiler-live-use-def-ok?)
+    (compiler-live-set-ops-ok?)
     (and
-      (compiler-live-memory-use-def-ok?)
+      (compiler-live-use-def-ok?)
       (and
-        (compiler-live-vector-mask-use-def-ok?)
+        (compiler-live-memory-use-def-ok?)
         (and
-          (compiler-live-straight-ok?)
-          (and (compiler-live-branch-ok?) (compiler-live-phi-ok?))))))
+          (compiler-live-vector-mask-use-def-ok?)
+          (and
+            (compiler-live-straight-ok?)
+            (and (compiler-live-branch-ok?) (compiler-live-phi-ok?)))))))
     42
     (begin
       (panic "liveness: smoke mismatch")

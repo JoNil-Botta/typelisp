@@ -87,7 +87,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   Windows uses kernel32 `CreateProcessA` with temp-file redirection. Replaces the
   former backend assembly (#2142 slice 4); imported transitively via `process.tl`.
 - `profile.tl`: runtime profiling helpers for coarse elapsed time and
-  allocation counters, including `profile-now-ms`, `profile-alloc-total`,
+  allocation counters. `profile-now-ms` is implemented in TypeLisp over
+  platform FFI/syscalls; allocator counters still use allocator-runtime hooks.
+  The public helpers are `profile-now-ms`, `profile-alloc-total`,
   `profile-alloc-live`, `profile-alloc-peak`, and
   `profile-alloc-reset-peak`. Import it with
   `(import "stdlib/profile.tl")`.
@@ -161,8 +163,8 @@ names so runtime-plan additions must be assigned an owner first.
   `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
   wrappers around OS/process/profile surfaces: `tl_process_output`,
-  `tl_process_start`, `tl_process_wait`, `tl_profile_now_ms`,
-  `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
+  `tl_process_start`, `tl_process_wait`, `tl_profile_alloc_total`,
+  `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
   `tl_profile_alloc_reset_peak`, `.L_tl_fs_read_dir_status`,
   `.L_tl_fs_read_dir`, `.L_tl_fs_file_kind_status`,
   `.L_tl_fs_file_size_status`, `.L_tl_fs_file_size`. The fs read-dir and

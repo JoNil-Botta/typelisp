@@ -2779,9 +2779,6 @@
         "tl_process_wait")
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
-        "tl_profile_now_ms")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
         "tl_profile_alloc_total")
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
@@ -2791,7 +2788,8 @@
         "tl_profile_alloc_peak")
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
-        "tl_profile_alloc_reset_peak"))
+        "tl_profile_alloc_reset_peak")
+      false)
     (and
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
@@ -2966,17 +2964,23 @@
 (define (compiler-backend-runtime-helper-inventory-negative-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? "tl_random_system_seed"))
+    (not (compiler-backend-runtime-helper-known? "tl_profile_now_ms"))
     (and
-      (not (compiler-backend-plan-provides? plan "tl_random_system_seed"))
+      (not (compiler-backend-plan-provides? plan "tl_profile_now_ms"))
       (and
-        (not (compiler-backend-runtime-helper-known? "tl_cpuid_eax"))
+        (not (compiler-backend-runtime-helper-known? "tl_random_system_seed"))
         (and
-          (not (compiler-backend-plan-provides? plan "tl_cpuid_eax"))
+          (not (compiler-backend-plan-provides? plan "tl_random_system_seed"))
           (and
-            (not
-              (compiler-backend-runtime-helper-known? ".L_tl_fs_mkdir_status"))
-            (not (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))))))
+            (not (compiler-backend-runtime-helper-known? "tl_cpuid_eax"))
+            (and
+              (not (compiler-backend-plan-provides? plan "tl_cpuid_eax"))
+              (and
+                (not
+                  (compiler-backend-runtime-helper-known?
+                    ".L_tl_fs_mkdir_status"))
+                (not
+                  (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))))))))
 
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
   (let
@@ -5157,6 +5161,41 @@
           "ordinary")))
     (compiler-backend-defdispatch-thunk-ok?)))
 
+(define (compiler-backend-profile-runtime-source) : String
+  "(extern tl_profile_alloc_total : (-> i64))
+(define (main) : i64 (tl_profile_alloc_total))")
+
+(define (compiler-backend-profile-runtime-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-profile-runtime-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            ".globl tl_profile_alloc_total\n")
+          (compiler-backend-string-contains? asm "tl_profile_alloc_total:\n")
+          (compiler-backend-string-contains? asm "tl_profile_alloc_live:\n")
+          (compiler-backend-string-contains? asm "tl_profile_alloc_peak:\n")
+          (compiler-backend-string-contains?
+            asm
+            "tl_profile_alloc_reset_peak:\n")
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_profile_now_ms\n"))
+          (not (compiler-backend-string-contains? asm "tl_profile_now_ms:\n"))
+          (not
+            (compiler-backend-string-contains? asm "QueryPerformanceCounter")))
+        (not
+          (compiler-backend-string-contains? asm "QueryPerformanceFrequency")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-profile-runtime-split-ok?) : bool
+  (and
+    (compiler-backend-profile-runtime-target-ok? (BackendTargetLinux))
+    (compiler-backend-profile-runtime-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -5194,7 +5233,9 @@
           (compiler-backend-optimizer-rewrite-diagnostic-ok?)
           (and
             (compiler-backend-runtime-helper-asm-ok?)
-            (compiler-backend-runtime-helper-inventory-ok?))
+            (and
+              (compiler-backend-runtime-helper-inventory-ok?)
+              (compiler-backend-profile-runtime-split-ok?)))
           (compiler-backend-alloc-runtime-arena-ok?)
           (compiler-backend-region-ok?)
           (compiler-backend-process-output-ok?)

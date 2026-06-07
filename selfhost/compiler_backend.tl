@@ -11093,11 +11093,11 @@
         (string-eq name "tl_process_output")
         (string-eq name "tl_process_start")
         (string-eq name "tl_process_wait")
-        (string-eq name "tl_profile_now_ms")
         (string-eq name "tl_profile_alloc_total")
         (string-eq name "tl_profile_alloc_live")
         (string-eq name "tl_profile_alloc_peak")
-        (string-eq name "tl_profile_alloc_reset_peak"))
+        (string-eq name "tl_profile_alloc_reset_peak")
+        false)
       (backend-or8
         (string-eq name ".L_tl_fs_read_dir_status")
         (string-eq name ".L_tl_fs_read_dir")
@@ -11225,12 +11225,10 @@
     enabled
     (and
       (compiler-backend-runtime-helper-known? name)
-      (or
-        (backend-or4
-          (string-eq name "tl_profile_now_ms")
-          (string-eq name "tl_profile_alloc_total")
-          (string-eq name "tl_profile_alloc_live")
-          (string-eq name "tl_profile_alloc_peak"))
+      (backend-or4
+        (string-eq name "tl_profile_alloc_total")
+        (string-eq name "tl_profile_alloc_live")
+        (string-eq name "tl_profile_alloc_peak")
         (string-eq name "tl_profile_alloc_reset_peak")))))
 
 (define (compiler-backend-plan-provides-tail?
@@ -11467,8 +11465,6 @@
       (compiler-backend-runtime-index-defines? index "tl_env_var_value")]
     [defines-env-path-separator : bool
       (compiler-backend-runtime-index-defines? index "env-path-separator")]
-    [defines-profile-now-ms : bool
-      (compiler-backend-runtime-index-defines? index "tl_profile_now_ms")]
     [defines-profile-alloc-total : bool
       (compiler-backend-runtime-index-defines? index "tl_profile_alloc_total")]
     [defines-profile-alloc-live : bool
@@ -11604,8 +11600,6 @@
       (compiler-backend-runtime-index-extern? index "tl_env_var_value")]
     [extern-env-path-separator : bool
       (compiler-backend-runtime-index-extern? index "env-path-separator")]
-    [extern-profile-now-ms : bool
-      (compiler-backend-runtime-index-extern? index "tl_profile_now_ms")]
     [extern-profile-alloc-total : bool
       (compiler-backend-runtime-index-extern? index "tl_profile_alloc_total")]
     [extern-profile-alloc-live : bool
@@ -11728,8 +11722,6 @@
       (compiler-backend-runtime-index-calls? index "tl_env_var_value")]
     [calls-env-path-separator : bool
       (compiler-backend-runtime-index-calls? index "env-path-separator")]
-    [calls-profile-now-ms : bool
-      (compiler-backend-runtime-index-calls? index "tl_profile_now_ms")]
     [calls-profile-alloc-total : bool
       (compiler-backend-runtime-index-calls? index "tl_profile_alloc_total")]
     [calls-profile-alloc-live : bool
@@ -11871,20 +11863,16 @@
             needs-env-path-separator
             false)))]
     [needs-profile : bool
-      (or
-        (backend-or4
-          (and
-            (not defines-profile-now-ms)
-            (or extern-profile-now-ms calls-profile-now-ms))
-          (and
-            (not defines-profile-alloc-total)
-            (or extern-profile-alloc-total calls-profile-alloc-total))
-          (and
-            (not defines-profile-alloc-live)
-            (or extern-profile-alloc-live calls-profile-alloc-live))
-          (and
-            (not defines-profile-alloc-peak)
-            (or extern-profile-alloc-peak calls-profile-alloc-peak)))
+      (backend-or4
+        (and
+          (not defines-profile-alloc-total)
+          (or extern-profile-alloc-total calls-profile-alloc-total))
+        (and
+          (not defines-profile-alloc-live)
+          (or extern-profile-alloc-live calls-profile-alloc-live))
+        (and
+          (not defines-profile-alloc-peak)
+          (or extern-profile-alloc-peak calls-profile-alloc-peak))
         (and
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
@@ -13801,72 +13789,7 @@ tl_region_reset:
 ")))))))
 
 (define (compiler-backend-runtime-profile-functions) : String
-  "    .globl tl_profile_now_ms
-tl_profile_now_ms:
-    subq $16, %rsp
-    movq $1, %rdi
-    movq %rsp, %rsi
-    movq $228, %rax
-    syscall
-    testq %rax, %rax
-    js .L_tl_profile_now_zero
-    movq 0(%rsp), %r8
-    imulq $1000, %r8, %r8
-    movq 8(%rsp), %rax
-    xorq %rdx, %rdx
-    movq $1000000, %rcx
-    divq %rcx
-    addq %r8, %rax
-    addq $16, %rsp
-    ret
-.L_tl_profile_now_zero:
-    xorq %rax, %rax
-    addq $16, %rsp
-    ret
-
-    .globl tl_profile_alloc_total
-tl_profile_alloc_total:
-    movq tl_profile_alloc_total_bytes(%rip), %rax
-    ret
-
-    .globl tl_profile_alloc_live
-tl_profile_alloc_live:
-    movq tl_profile_alloc_live_bytes(%rip), %rax
-    ret
-
-    .globl tl_profile_alloc_peak
-tl_profile_alloc_peak:
-    movq tl_profile_alloc_peak_bytes(%rip), %rax
-    ret
-
-    .globl tl_profile_alloc_reset_peak
-tl_profile_alloc_reset_peak:
-    movq tl_profile_alloc_live_bytes(%rip), %rax
-    movq %rax, tl_profile_alloc_peak_bytes(%rip)
-    xorq %rax, %rax
-    ret
-
-")
-
-(define (compiler-backend-runtime-windows-profile-functions) : String
-  "    .globl tl_profile_now_ms
-tl_profile_now_ms:
-    push %rbp
-    mov %rsp, %rbp
-    sub $64, %rsp
-    leaq -8(%rbp), %rcx
-    call QueryPerformanceCounter
-    leaq -16(%rbp), %rcx
-    call QueryPerformanceFrequency
-    movq -8(%rbp), %rax
-    imulq $1000, %rax, %rax
-    cqto
-    idivq -16(%rbp)
-    mov %rbp, %rsp
-    pop %rbp
-    ret
-
-    .globl tl_profile_alloc_total
+  "    .globl tl_profile_alloc_total
 tl_profile_alloc_total:
     movq tl_profile_alloc_total_bytes(%rip), %rax
     ret
@@ -13893,11 +13816,11 @@ tl_profile_alloc_reset_peak:
 (define (compiler-backend-runtime-profile-functions-for-target
   [target : CompilerBackendTarget]
   [profile : bool]) : String
-  (if profile
-    (if (compiler-backend-target-windows? target)
-      (compiler-backend-runtime-windows-profile-functions)
-      (compiler-backend-runtime-profile-functions))
-    ""))
+  (let
+    [_target : CompilerBackendTarget target]
+    (if profile
+      (compiler-backend-runtime-profile-functions)
+      "")))
 
 (define (compiler-backend-runtime-fs-functions) : String
   ".L_tl_fs_read_dir_status:
@@ -17982,20 +17905,14 @@ tl_process_output:
                   "    .extern _snprintf
 "
                   "")
-                (string-append
-                  (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
-                    "    .extern QueryPerformanceCounter
-    .extern QueryPerformanceFrequency
-"
-                    "")
-                  ;; The Windows tl_process_output spawns the child via CreateProcessA
-                  ;; with a constructed contiguous env block (__p__environ above) and
-                  ;; captures stdout/stderr through CRT temp files made inheritable
-                  ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-                  ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-                  ;; variant uses raw syscalls instead.
-                  (if (compiler-backend-plan-provides? plan "tl_process_output")
-                    "    .extern __p__environ
+                ;; The Windows tl_process_output spawns the child via CreateProcessA
+                ;; with a constructed contiguous env block (__p__environ above) and
+                ;; captures stdout/stderr through CRT temp files made inheritable
+                ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+                ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+                ;; variant uses raw syscalls instead.
+                (if (compiler-backend-plan-provides? plan "tl_process_output")
+                  "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -18009,7 +17926,7 @@ tl_process_output:
     .extern GetExitCodeProcess
     .extern CloseHandle
 "
-                    ""))))))))
+                  "")))))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

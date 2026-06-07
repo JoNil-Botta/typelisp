@@ -76,14 +76,18 @@
   (with-arena phase
     (let [s : String (int->string 1)] (array (& phase s)))))"))
 
-(define (compiler-typecheck-reference-dyn-array-make-ok-source) : String
+(define (compiler-typecheck-reference-dyn-array-init-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let [items : (Array (& n i64)) (init : (Array (& n i64)))] unit))")
+
+(define (compiler-typecheck-reference-dyn-array-make-reject-source) : String
   "(define (main [n : i64]) : unit
   (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-reference-dyn-array-push-read-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [items : (Array (& n i64)) (make-array (& n i64) 0)]
+    [items : (Array (& n i64)) (init : (Array (& n i64)))]
     (begin
       (array-push! items (& n))
       (let [r : (& n i64) (array-ref items 0)] unit))))")
@@ -91,7 +95,7 @@
 (define (compiler-typecheck-reference-dyn-array-push-escape-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [items : (Array (& n i64)) (make-array (& n i64) 0)]
+    [items : (Array (& n i64)) (init : (Array (& n i64)))]
     (let [n : i64 1] (array-push! items (& n)))))")
 
 (define (compiler-typecheck-reference-dyn-array-hidden-source) : String
@@ -124,7 +128,7 @@
 (define (compiler-typecheck-reference-dyn-array-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      (compiler-typecheck-reference-dyn-array-make-ok-source))
+      (compiler-typecheck-reference-dyn-array-init-ok-source))
     (and
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-dyn-array-push-read-ok-source))
@@ -132,9 +136,13 @@
         (compiler-typecheck-error-ok?
           (compiler-typecheck-reference-dyn-array-push-escape-source)
           "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-reference-dyn-array-hidden-source)
-          "typecheck: make-array element type is not supported")))))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-reference-dyn-array-make-reject-source)
+            "typecheck: init unsupported type (& n i64)")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-reference-dyn-array-hidden-source)
+            "typecheck: make-array element type is not supported"))))))
 
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and

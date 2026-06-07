@@ -12114,7 +12114,11 @@
           [(OkTcType len-ty)
             (if (tc-integer-type? len-ty)
               (if (tc-dyn-array-elem-supported? env elem)
-                (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))
+                (match (tc-init-type-supported ctx env elem)
+                  [(OkTcUnit)
+                    (OkTcType
+                      (tc-tag-active-region env (ast-ty-dyn-array elem)))]
+                  [(ErrTcUnit message) (ErrTcType message)])
                 (ErrTcType
                   "typecheck: make-array element type is not supported"))
               (ErrTcType "typecheck: make-array length must be integer"))]

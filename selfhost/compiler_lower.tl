@@ -8289,9 +8289,12 @@
           (lower-make-array-from-len
             ctx
             state
+            env
+            type-env
             (box-get elem)
             (IrValueI64 0)
-            (AstTyI64))]
+            (AstTyI64)
+            origin)]
         [(AstTyBox elem)
           (lower-box
             ctx
@@ -9389,7 +9392,7 @@
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (box-get len-box)]
-        (lower-make-array ctx state env type-env elem-ty len))]
+        (lower-make-array ctx state env type-env elem-ty len origin))]
     [(AstExprArray values)
       (lower-array-literal ctx state env type-env values expr-ty origin)]
     [(AstExprArrayRef arr-box index-box)
@@ -12257,11 +12260,189 @@
           arr-value
           arr-ty))]))
 
-(define (lower-make-array-alloc-buffer
+(define (lower-make-array-init-advance
   [state : LowerState]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]) : ResultLowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc inc-alloc inc-var)
+      (OkLowerState
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-state-emit
+              (lower-state-emit
+                inc-alloc
+                (IrInstrBinOp
+                  inc-var
+                  IrBinAdd
+                  (IrValueVar index-var)
+                  (IrValueI64 1)
+                  (AstTyI64)))
+              (IrInstrMov index-var (IrValueVar inc-var) (AstTyI64)))
+            (IrInstrJump header-label))
+          exit-label))]))
+
+(define (lower-make-array-init-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]
+  [elem-ty : AstType]
+  [origin : AstExpr]) : ResultLowerState
+  (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
+    [(OkLowerExpr lowered-init)
+      (match lowered-init
+        [(LowerExpr init-state init-value _)
+          (match (lower-emit-gep
+            init-state
+            buf-value
+            (IrValueVar index-var)
+            elem-ty)
+            [(LowerExpr gep-state elem-ptr _)
+              (lower-make-array-init-advance
+                (lower-state-emit
+                  gep-state
+                  (IrInstrStorePtr elem-ptr init-value elem-ty))
+                index-var
+                header-label
+                exit-label)])])]
+    [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-make-array-init-loop-with-labels
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [elem-ty : AstType]
+  [origin : AstExpr]
+  [header-label : String]
+  [body-label : String]
+  [exit-label : String]) : ResultLowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc index-alloc index-var)
+      (let
+        [header-start : LowerState
+          (lower-state-finish-block
+            (lower-state-emit
+              (lower-state-emit
+                index-alloc
+                (IrInstrMov index-var (IrValueI64 0) (AstTyI64)))
+              (IrInstrJump header-label))
+            header-label)]
+        (match (lower-emit-binop
+          header-start
+          IrBinLt
+          (IrValueVar index-var)
+          len-i64
+          (AstTyBool))
+          [(LowerExpr cond-state cond-value _)
+            (let
+              [body-start : LowerState
+                (lower-state-finish-block
+                  (lower-state-emit
+                    cond-state
+                    (IrInstrBranch cond-value body-label exit-label))
+                  body-label)]
+              (lower-make-array-init-body
+                ctx
+                body-start
+                env
+                type-env
+                buf-value
+                index-var
+                header-label
+                exit-label
+                elem-ty
+                origin))]))]))
+
+(define (lower-make-array-init-loop-runtime
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (if (= elem-size 0)
+    (OkLowerState state)
+    (match (lower-state-fresh-label state "make_array_init_header")
+      [(LowerLabel header-label-state header-label)
+        (match (lower-state-fresh-label
+          header-label-state
+          "make_array_init_body")
+          [(LowerLabel body-label-state body-label)
+            (match (lower-state-fresh-label
+              body-label-state
+              "make_array_init_exit")
+              [(LowerLabel exit-label-state exit-label)
+                (lower-make-array-init-loop-with-labels
+                  ctx
+                  exit-label-state
+                  env
+                  type-env
+                  buf-value
+                  len-i64
+                  elem-ty
+                  origin
+                  header-label
+                  body-label
+                  exit-label)])])])))
+
+(define (lower-make-array-init-loop
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [buf-value : CompilerIrValue]
+  [len-i64 : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (match len-i64
+    [(IrValueI64 literal-len)
+      (if (= literal-len 0)
+        (OkLowerState state)
+        (lower-make-array-init-loop-runtime
+          ctx
+          state
+          env
+          type-env
+          buf-value
+          len-i64
+          elem-ty
+          elem-size
+          origin))]
+    [_
+      (lower-make-array-init-loop-runtime
+        ctx
+        state
+        env
+        type-env
+        buf-value
+        len-i64
+        elem-ty
+        elem-size
+        origin)]))
+
+(define (lower-make-array-alloc-buffer
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [arr-ty : AstType]
   [len-i64 : CompilerIrValue]
-  [elem-size : i64]) : ResultLowerExpr
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (lower-emit-binop
     state
     (IrBinMul)
@@ -12271,25 +12452,41 @@
     [(LowerExpr byte-state byte-count _)
       (match (lower-state-alloc-var byte-state)
         [(LowerAlloc buf-alloc buf-var)
-          (lower-make-array-store-fat
-            (lower-state-emit
-              buf-alloc
-              (IrInstrCall
-                buf-var
-                "tl_alloc"
-                (IrCallArgsOne byte-count)
-                (AstTyU64)))
-            arr-ty
-            buf-var
-            len-i64)])]))
+          (let
+            [alloc-state : LowerState
+              (lower-state-emit
+                buf-alloc
+                (IrInstrCall
+                  buf-var
+                  "tl_alloc"
+                  (IrCallArgsOne byte-count)
+                  (AstTyU64)))]
+            (match (lower-make-array-init-loop
+              ctx
+              alloc-state
+              env
+              type-env
+              (IrValueVar buf-var)
+              len-i64
+              elem-ty
+              elem-size
+              origin)
+              [(OkLowerState init-state)
+                (lower-make-array-store-fat init-state arr-ty buf-var len-i64)]
+              [(ErrLowerState message) (ErrLowerExpr message)]))])]))
 
 (define (lower-make-array-after-max-check
+  [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [fail-label : String]
   [alloc-label : String]
   [arr-ty : AstType]
   [len-i64 : CompilerIrValue]
-  [elem-size : i64]) : ResultLowerExpr
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [origin : AstExpr]) : ResultLowerExpr
   (let
     [fail-start : LowerState (lower-state-finish-block state fail-label)]
     [alloc-start : LowerState
@@ -12298,14 +12495,26 @@
           (lower-oob-abort fail-start)
           (IrInstrJump alloc-label))
         alloc-label)]
-    (lower-make-array-alloc-buffer alloc-start arr-ty len-i64 elem-size)))
+    (lower-make-array-alloc-buffer
+      ctx
+      alloc-start
+      env
+      type-env
+      arr-ty
+      len-i64
+      elem-ty
+      elem-size
+      origin)))
 
 (define (lower-make-array-from-len
   [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [elem-ty : AstType]
   [len-value : CompilerIrValue]
-  [len-ty : AstType]) : ResultLowerExpr
+  [len-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (let
     [resolved-elem : AstType (tc-resolve-type ctx elem-ty)]
     (match (lower-cast-value state len-value len-ty (AstTyI64))
@@ -12348,17 +12557,22 @@
                               (AstTyBool))
                               [(LowerExpr s5 within-max _)
                                 (lower-make-array-after-max-check
+                                  ctx
                                   (lower-state-emit
                                     s5
                                     (IrInstrBranch
                                       within-max
                                       alloc-label
                                       fail-label))
+                                  env
+                                  type-env
                                   fail-label
                                   alloc-label
                                   arr-ty
                                   len-i64
-                                  elem-size)]))])])])]))])))
+                                  resolved-elem
+                                  elem-size
+                                  origin)]))])])])]))])))
 
 (define (lower-make-array
   [ctx : TcContext]
@@ -12366,12 +12580,21 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [elem-ty : AstType]
-  [len : AstExpr]) : ResultLowerExpr
+  [len : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env len)
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr len-state len-value len-ty)
-          (lower-make-array-from-len ctx len-state elem-ty len-value len-ty)])]
+          (lower-make-array-from-len
+            ctx
+            len-state
+            env
+            type-env
+            elem-ty
+            len-value
+            len-ty
+            origin)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
@@ -18951,9 +19174,9 @@
 (define (main) : i64 0)")
 
 ;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
-;; and a dynamic-array fat value. The fixture also immediately uses
-;; `array-set!`, `array-ref`, and `array-length` so the generated IR exercises
-;; the full dynamic-array primitive set.
+;; initialized elements, and a dynamic-array fat value. The fixture also
+;; immediately uses `array-set!`, `array-ref`, and `array-length` so the
+;; generated IR exercises the full dynamic-array primitive set.
 (define (compiler-lower-make-array-source) : String
   "(define (main [n : i64]) : i64
   (let
@@ -18962,6 +19185,12 @@
       (array-set! a 0 40)
       (array-set! a 1 2)
       (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
+
+(define (compiler-lower-make-array-init-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [items : (Array String) (make-array String n)]
+    (array-length items)))")
 
 ;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
 ;; length load as `array-length` (#527): both lay out the i64 length at offset 8.
@@ -22811,6 +23040,16 @@
             (> (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (>= (lower-test-function-store-ptr-count functions "main") 3)
+            (>= (lower-test-function-branch-count functions "main") 3))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -24664,6 +24903,10 @@
         (set! ok false))
       (if (compiler-lower-make-array-shape-ok?
         (compiler-lower-make-array-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-make-array-init-shape-ok?
+        (compiler-lower-make-array-init-source))
         unit
         (set! ok false))
       (if (compiler-lower-runtime-helper-tests-ok?)

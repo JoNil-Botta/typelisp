@@ -19,8 +19,8 @@ The corpus emphasizes the cases where SIMD bugs hide:
   vector width 4/8): forces a masked/scalar tail. Exit 247.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32
   width 8/16): all-tail, a different element width. Exit 91.
-- `masked_if_i64.tl` — AVX-512 masked varying `if` over `n = 13` i64 lanes,
-  with direct-index predicated reads/writes and a masked tail. Exit 42.
+- `masked_if_i64.tl` — AVX-512-only masked varying `if` over `n = 13` i64
+  lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
   f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.

@@ -4002,6 +4002,21 @@
         [_ false])]
     [_ false]))
 
+(define (parse-ast-define-fn-finish
+  [name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [export : AstFnExport]) : ResultAstDecl
+  (match export
+    [(AstFnNoExport)
+      (OkAstDecl (ast-decl-def-fn-export name params ret body export))]
+    [(AstFnExport _)
+      (if (ast-param-list-has-comptime? params)
+        (ErrAstDecl
+          "parse: define :export-symbol cannot be used on functions with comptime parameters")
+        (OkAstDecl (ast-decl-def-fn-export name params ret body export)))]))
+
 (define (parse-ast-define-fn-rest
   [dispatch : SymI64Env]
   [name : String]
@@ -4024,13 +4039,12 @@
                       [(OkAstType parsed-ret)
                         (match (parse-ast-expr dispatch (box-get body))
                           [(OkAstExpr parsed-body)
-                            (OkAstDecl
-                              (ast-decl-def-fn-export
-                                name
-                                params
-                                parsed-ret
-                                parsed-body
-                                export))]
+                            (parse-ast-define-fn-finish
+                              name
+                              params
+                              parsed-ret
+                              parsed-body
+                              export)]
                           [(ErrAstExpr message) (ErrAstDecl message)])]
                       [(ErrAstType message) (ErrAstDecl message)])]
                   [_ (ErrAstDecl "parse: malformed function definition")])]
@@ -4069,13 +4083,12 @@
             [(SpSNil _)
               (match (parse-ast-expr dispatch (box-get first))
                 [(OkAstExpr parsed-body)
-                  (OkAstDecl
-                    (ast-decl-def-fn-export
-                      name
-                      params
-                      (AstTyUnit)
-                      parsed-body
-                      export))]
+                  (parse-ast-define-fn-finish
+                    name
+                    params
+                    (AstTyUnit)
+                    parsed-body
+                    export)]
                 [(ErrAstExpr message) (ErrAstDecl message)])]
             [_ (ErrAstDecl "parse: expected ':' in function definition")])))]
     [_ (ErrAstDecl "parse: malformed function definition")]))
@@ -7080,9 +7093,13 @@
         (compiler-parse-error-ok?
           "(define (f) (:export-symbol \"a\") (:export-symbol \"b\") : i64 0)"
           "parse: duplicate define :export-symbol metadata")
-        (compiler-parse-error-ok?
-          "(define (f) (:link-lib \"m\") : i64 0)"
-          "parse: unknown define metadata :link-lib")))))
+        (and
+          (compiler-parse-error-ok?
+            "(define (f) (:link-lib \"m\") : i64 0)"
+            "parse: unknown define metadata :link-lib")
+          (compiler-parse-error-ok?
+            "(define (f [comptime n : i64]) (:export-symbol \"f\") : i64 n)"
+            "parse: define :export-symbol cannot be used on functions with comptime parameters"))))))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source

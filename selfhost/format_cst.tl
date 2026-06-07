@@ -173,6 +173,23 @@
       (= (fmt-cst-comment-count tree) 1)
       (and (> (fmt-cst-bracket-count tree) 0) (> (fmt-cst-count tree) 8)))))
 
+(define (format-cst-prefixed-int-ok?) : bool
+  (let
+    [stream : FormatTokenStream (format-lex "(0x2a -0b101010)")]
+    (and
+      (= (format-token-tag-count stream (fmt-tag-int)) 2)
+      (and
+        (= (format-token-tag (format-token-at stream 1)) (fmt-tag-int))
+        (and
+          (string-eq (format-token-text (format-token-at stream 1)) "0x2a")
+          (and
+            (= (format-token-tag (format-token-at stream 2)) (fmt-tag-int))
+            (and
+              (string-eq
+                (format-token-text (format-token-at stream 2))
+                "-0b101010")
+              (= (format-token-tag (format-token-at stream 4)) (fmt-tag-end)))))))))
+
 (define (format-cst-self-test) : i64
   (let
     [stream : FormatTokenStream (format-lex (format-cst-fixture))]
@@ -184,4 +201,5 @@
       (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
       (unless (= (format-token-tag-count stream (fmt-tag-char)) 1) (return 5))
       (unless (format-cst-boxed-nested-ok?) (return 6))
+      (unless (format-cst-prefixed-int-ok?) (return 7))
       42)))

@@ -74,15 +74,75 @@
   (SpSInt i64 SourceSpan)
   (SpSSym String SourceSpan)
   (SpSNil SourceSpan)
-  (SpSCons (Box SpannedSexpr) (Box SpannedSexpr) SourceSpan)
+  (SpSCons i64 i64 SourceSpan)
   (SpSStr String SourceSpan)
   (SpSChar char SourceSpan)
   (SpSFloat String SourceSpan)
-  (SpSBracketList (Box SpannedSexpr) SourceSpan))
+  (SpSBracketList i64 SourceSpan))
 
 (defenum ResultSpannedSexpr
   (OkSpannedSexpr SpannedSexpr)
   (ErrSpannedSexpr SourceError))
+
+;; --- flat SpannedSexpr node pool (mirrors the AstExpr flat pool, #2294) ---
+;; SpSCons / SpSBracketList children are i64 ids into this pool instead of
+;; (box ...). Two plain globals (array + count), NOT a struct, to avoid the
+;; opt2 hot-path-inline miscompile seen on the AstExpr pool. The spanned tree
+;; is transient (consumed into AstExpr, spans copied out by value, then dead),
+;; so the pool is reset per program parse (see compiler_parse_core.tl).
+(define sp-node-pool-slots : (Array SpannedSexpr)
+  (make-array SpannedSexpr 262144))
+
+(define sp-node-pool-count : i64
+  0)
+
+(define (sp-node-pool-len) : i64
+  sp-node-pool-count)
+
+;; Grow is a safety net only. The spanned pool is reset per program parse AND
+;; truncated per top-level form (compiler_parse_core.tl), so live size stays
+;; well under the initial capacity and grow! never fires on real inputs. That
+;; matters because growing reassigns the global mid-push and the opt2 optimizer
+;; can cache the pre-grow array across the grow! call (the same CSE-across-call
+;; hazard the AST pool sidesteps by pre-sizing). Keeping grow dead avoids it.
+(define (sp-node-pool-grow!) : unit
+  (let
+    [old-slots : (Array SpannedSexpr) sp-node-pool-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
+    [len : i64 sp-node-pool-count]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! sp-node-pool-slots new-slots))))
+
+(define (sp-node-push [node : SpannedSexpr]) : i64
+  (begin
+    (if (>= sp-node-pool-count (array-length sp-node-pool-slots))
+      (sp-node-pool-grow!)
+      unit)
+    (let
+      [id : i64 sp-node-pool-count]
+      (begin
+        (array-set! sp-node-pool-slots id node)
+        (set! sp-node-pool-count (+ id 1))
+        id))))
+
+(define (sp-node-get [id : i64]) : SpannedSexpr
+  (array-ref sp-node-pool-slots id))
+
+(define (sp-node-pool-truncate! [mark : i64]) : unit
+  (set! sp-node-pool-count mark))
+
+(define (sp-node-pool-reset!) : unit
+  (sp-node-pool-truncate! 0))
 
 (define (sexpr-cons [head : Sexpr] [tail : Sexpr]) : Sexpr
   (SCons (box head) (box tail)))
@@ -91,10 +151,10 @@
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
   [span : SourceSpan]) : SpannedSexpr
-  (SpSCons (box head) (box tail) span))
+  (SpSCons (sp-node-push head) (sp-node-push tail) span))
 
 (define (spanned-sexpr-bracket-list [items : SpannedSexpr] [span : SourceSpan]) : SpannedSexpr
-  (SpSBracketList (box items) span))
+  (SpSBracketList (sp-node-push items) span))
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : SourceSpan
   (match s
@@ -114,12 +174,12 @@
     [(SpSNil _) SNil]
     [(SpSCons head tail _)
       (sexpr-cons
-        (spanned-sexpr-form (box-get head))
-        (spanned-sexpr-form (box-get tail)))]
+        (spanned-sexpr-form (sp-node-get head))
+        (spanned-sexpr-form (sp-node-get tail)))]
     [(SpSStr text _) (SStr text)]
     [(SpSChar c _) (SChar c)]
     [(SpSFloat text _) (SFloat text)]
-    [(SpSBracketList items _) (spanned-sexpr-form (box-get items))]))
+    [(SpSBracketList items _) (spanned-sexpr-form (sp-node-get items))]))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array Token)`.

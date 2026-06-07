@@ -264,6 +264,8 @@
   (AstExprBoxGet (Box AstExpr))
   ;; Compile-time-only type value literal: `(type T)`.
   (AstExprTypeLiteral AstType)
+  ;; Explicit zero/identity initialization for values of type `T`.
+  (AstExprInit AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
   (AstExprComptime (Box AstExpr))
@@ -598,6 +600,9 @@
 (define (ast-expr-box-get [value : AstExpr]) : AstExpr
   (AstExprBoxGet (box value)))
 
+(define (ast-expr-init [ty : AstType]) : AstExpr
+  (AstExprInit ty))
+
 (define (ast-expr-comptime [inner : AstExpr]) : AstExpr
   (AstExprComptime (box inner)))
 
@@ -798,6 +803,7 @@
     [(AstExprWithRegion _ _) 25]
     [(AstExprWithEscape _ _) 48]
     [(AstExprTypeLiteral _) 26]
+    [(AstExprInit _) 60]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
     [(AstExprTry _) 29]

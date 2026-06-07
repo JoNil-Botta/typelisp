@@ -3062,6 +3062,7 @@
           [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprTypeLiteral ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstExprInit ty) (tc-source-type-policy-ok ctx ty)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (box-get cond-box)]
@@ -6897,6 +6898,7 @@
         [(TcSpmdFound _ class _) (tc-spmd-finish expr-ty class spmd-env)]
         [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
     [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprInit _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -7701,6 +7703,7 @@
           (tc-expr-uses-free-name? func name bound)
           (tc-expr-list-uses-free-name? args name bound)))]
     [(AstExprTypeLiteral _) false]
+    [(AstExprInit _) false]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (box-get cond-box)]
@@ -7856,6 +7859,7 @@
           name
           (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
+    [(AstExprInit _) false]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -8235,6 +8239,7 @@
           name
           (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
+    [(AstExprInit _) false]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -11306,6 +11311,179 @@
         [_ (ErrTcType "typecheck: box-get requires Box type")])]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-init-unsupported-message [ctx : TcContext] [ty : AstType]) : String
+  (string-append
+    "typecheck: init unsupported type "
+    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+
+(define (tc-init-cleanup-owning-message [ctx : TcContext] [ty : AstType]) : String
+  (string-append
+    "typecheck: init does not support cleanup-owning aggregate "
+    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+
+(define (tc-init-aggregate-layout-ok [ctx : TcContext] [ty : AstType]) : ResultTcUnit
+  (match (tc-inline-aggregate-type-layout ctx ty)
+    [(OkTcLayoutInfo _) OkTcUnit]
+    [(ErrTcLayoutInfo message) (ErrTcUnit message)]))
+
+(define (tc-init-type-list-supported
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [types : AstTypeList]) : ResultTcUnit
+  (match types
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (box-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (match (tc-init-type-supported ctx env head)
+          [(OkTcUnit) (tc-init-type-list-supported ctx env rest)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]))
+
+(define (tc-init-struct-field-types-for-result
+  [ctx : TcContext]
+  [struct-name : String]
+  [struct-ty : AstType]
+  [fields : AstFieldDefList]) : AstTypeList
+  (let
+    [field-types : AstTypeList (tc-field-type-list ctx fields)]
+    (match struct-ty
+      [(AstTyStructArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [(AstTyVarArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [_ field-types])))
+
+(define (tc-init-enum-fields-for-result
+  [ctx : TcContext]
+  [enum-name : String]
+  [enum-ty : AstType]
+  [fields : AstTypeList]) : AstTypeList
+  (match enum-ty
+    [(AstTyEnumArgs _ lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
+        [(ErrTcLifetimeSubst _) fields])]
+    [(AstTyVarArgs _ lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
+        [(ErrTcLifetimeSubst _) fields])]
+    [_ fields]))
+
+(define (tc-init-struct-supported
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [struct-name : String]
+  [struct-ty : AstType]) : ResultTcUnit
+  (match (tc-struct-decl ctx struct-name)
+    [(OkTcStructDecl decl)
+      (match decl
+        [(TcStructDecl repr cleanup fields)
+          (if (ast-struct-repr-c? repr)
+            (ErrTcUnit "typecheck: init supports only default-layout structs")
+            (if (ast-struct-cleanup? cleanup)
+              (ErrTcUnit (tc-init-cleanup-owning-message ctx struct-ty))
+              (match (tc-init-aggregate-layout-ok ctx struct-ty)
+                [(OkTcUnit)
+                  (tc-init-type-list-supported
+                    ctx
+                    env
+                    (tc-init-struct-field-types-for-result
+                      ctx
+                      struct-name
+                      struct-ty
+                      fields))]
+                [(ErrTcUnit message) (ErrTcUnit message)])))])]
+    [(ErrTcStructDecl message) (ErrTcUnit message)]))
+
+(define (tc-init-enum-supported
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [enum-ty : AstType]) : ResultTcUnit
+  (match (tc-enum-decl ctx enum-name)
+    [(OkTcEnumDecl decl)
+      (match decl
+        [(TcEnumDecl cleanup variants)
+          (if (ast-enum-cleanup? cleanup)
+            (ErrTcUnit (tc-init-cleanup-owning-message ctx enum-ty))
+            (match (tc-init-aggregate-layout-ok ctx enum-ty)
+              [(OkTcUnit)
+                (match variants
+                  [(AstVariantDefNil)
+                    (ErrTcUnit
+                      "typecheck: init requires enum with at least one variant")]
+                  [(AstVariantDefCons variant _)
+                    (match variant
+                      [(AstVariantDef _ fields _)
+                        (tc-init-type-list-supported
+                          ctx
+                          env
+                          (tc-init-enum-fields-for-result
+                            ctx
+                            enum-name
+                            enum-ty
+                            fields))])])]
+              [(ErrTcUnit message) (ErrTcUnit message)]))])]
+    [(ErrTcEnumDecl message) (ErrTcUnit message)]))
+
+(define (tc-init-type-supported
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : AstType]) : ResultTcUnit
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (if (tc-integer-type? resolved)
+      OkTcUnit
+      (match resolved
+        [(AstTyF64) OkTcUnit]
+        [(AstTyF32) OkTcUnit]
+        [(AstTyBool) OkTcUnit]
+        [(AstTyChar) OkTcUnit]
+        [(AstTyUnit) OkTcUnit]
+        [(AstTyString) OkTcUnit]
+        [(AstTyPtr _) OkTcUnit]
+        [(AstTyMutPtr _) OkTcUnit]
+        [(AstTyDynArray elem)
+          (let
+            [elem-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx (box-get elem)))]
+            (if (tc-dyn-array-elem-supported? env elem-ty)
+              OkTcUnit
+              (ErrTcUnit
+                "typecheck: init dynamic array element type is not supported")))]
+        [(AstTyBox elem) (tc-init-type-supported ctx env (box-get elem))]
+        [(AstTyTuple elems)
+          (match (tc-init-aggregate-layout-ok ctx resolved)
+            [(OkTcUnit) (tc-init-type-list-supported ctx env elems)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(AstTyArray elem count)
+          (if (< count 0)
+            (ErrTcUnit
+              "typecheck: init fixed array length must be non-negative")
+            (match (tc-init-aggregate-layout-ok ctx resolved)
+              [(OkTcUnit) (tc-init-type-supported ctx env (box-get elem))]
+              [(ErrTcUnit message) (ErrTcUnit message)]))]
+        [(AstTyStruct name) (tc-init-struct-supported ctx env name resolved)]
+        [(AstTyStructArgs name _)
+          (tc-init-struct-supported ctx env name resolved)]
+        [(AstTyEnum name) (tc-init-enum-supported ctx env name resolved)]
+        [(AstTyEnumArgs name _) (tc-init-enum-supported ctx env name resolved)]
+        [_ (ErrTcUnit (tc-init-unsupported-message ctx resolved))]))))
+
+(define (tc-init-expr [ctx : TcContext] [env : TcTypeEnv] [ty : AstType]) : ResultTcType
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match (tc-init-type-supported ctx env resolved)
+      [(OkTcUnit) (OkTcType (tc-tag-active-region env resolved))]
+      [(ErrTcUnit message) (ErrTcType message)])))
+
 (define (tc-quasiquote-template-list-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -11471,6 +11649,7 @@
           (string-append
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
+    [(AstExprInit ty) (tc-init-expr ctx env ty)]
     [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -13779,6 +13958,7 @@
         [inner : AstExpr (box-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprTypeLiteral _) (OkTcMove moved)]
+    [(AstExprInit _) (OkTcMove moved)]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -14595,6 +14775,7 @@
         [inner : AstExpr (box-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
     [(AstExprTypeLiteral _) (OkTcBorrowCheck borrowed)]
+    [(AstExprInit _) (OkTcBorrowCheck borrowed)]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -15221,6 +15402,8 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (ast-expr-box-get (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprTypeLiteral ty) (AstExprTypeLiteral ty)]
+    [(AstExprInit ty) (ast-expr-init ty)]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]

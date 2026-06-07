@@ -524,6 +524,7 @@
     [(AstExprWithEscape _ _) "with-escape"]
     [(AstExprWithResource _ _) "with"]
     [(AstExprTypeLiteral _) "type literal"]
+    [(AstExprInit _) "init"]
     [(AstExprComptime _) "comptime"]
     [(AstExprQuote _) "quote"]
     [(AstExprQuasiquote _) "quasiquote"]
@@ -1263,6 +1264,11 @@
       (OkCtfe
         (CtfeType (ctfe-reflect-resolve-type (ctfe-env-reflections env) ty))
         fuel)]
+    [(AstExprInit _)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "comptime: init is a runtime-only expression"))]
     [(AstExprLiteral lit) (ctfe-eval-literal lit expr fuel)]
     [(AstExprVar name) (ctfe-eval-var name expr env fuel)]
     [(AstExprBinary op left-box right-box)
@@ -3543,6 +3549,7 @@
           [(OkCtfeQuoteExpr quoted _ next-fuel)
             (OkCtfeQuoteExpr (ast-expr-try quoted) (AstTyExpr) next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprInit ty) (OkCtfeQuoteExpr (ast-expr-init ty) (AstTyExpr) fuel)]
     [(AstExprPtrNullCheck ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -4426,6 +4433,10 @@
     [(AstExprTypeLiteral a-ty)
       (match b
         [(AstExprTypeLiteral b-ty) (ctfe-type-eq a-ty b-ty)]
+        [_ false])]
+    [(AstExprInit a-ty)
+      (match b
+        [(AstExprInit b-ty) (ctfe-type-eq a-ty b-ty)]
         [_ false])]
     [(AstExprComptime a-inner-box)
       (let

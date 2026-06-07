@@ -891,6 +891,7 @@
         [place : AstExpr (box-get place-box)]
         (tltest-reach-mark-expr place names))]
     [(AstExprTypeLiteral _) names]
+    [(AstExprInit _) names]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]

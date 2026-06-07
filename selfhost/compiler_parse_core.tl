@@ -577,6 +577,9 @@
 (define (compiler-parse-tag-expr-type-literal) : i64
   249)
 
+(define (compiler-parse-tag-expr-init) : i64
+  254)
+
 (define (compiler-parse-tag-expr-spmd-reduce) : i64
   250)
 
@@ -837,6 +840,7 @@
       (set!
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
+      (set! out (sym-i64-bind out "init" (compiler-parse-tag-expr-init)))
       (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
       (set! out (sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
       (set!
@@ -1018,6 +1022,7 @@
           [(string-eq name "cast") (compiler-parse-tag-expr-cast)]
           [(string-eq name "cond") (compiler-parse-tag-expr-cond)]
           [(string-eq name "type") (compiler-parse-tag-expr-type-literal)]
+          [(string-eq name "init") (compiler-parse-tag-expr-init)]
           [(string-eq name "with") (compiler-parse-tag-expr-with-resource)]
           [(string-eq name "true") (compiler-parse-tag-lit-true)]
           [(string-eq name "test") (compiler-parse-tag-decl-test)]
@@ -3207,6 +3212,25 @@
       (ErrAstExpr
         "parse: ptr-null expects (ptr-null : T) with a pointer type T")]))
 
+;; `(init : T)` - a colon followed by the target type.
+(define (parse-ast-init [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons colon ty-tail _)
+      (match (box-get ty-tail)
+        [(SpSCons ty end _)
+          (match (box-get end)
+            [(SpSNil _)
+              (if (sexpr-colon? (spanned-sexpr-form (box-get colon)))
+                (match (parse-ast-type
+                  dispatch
+                  (spanned-sexpr-form (box-get ty)))
+                  [(OkAstType parsed-ty) (OkAstExpr (ast-expr-init parsed-ty))]
+                  [(ErrAstType message) (ErrAstExpr message)])
+                (ErrAstExpr "parse: expected ':' in init"))]
+            [_ (ErrAstExpr "parse: init expects (init : T)")])]
+        [_ (ErrAstExpr "parse: init expects (init : T)")])]
+    [_ (ErrAstExpr "parse: init expects (init : T)")]))
+
 ;; `(ptr-null? p)` - a single pointer operand.
 (define (parse-ast-ptr-null-check [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3852,6 +3876,7 @@
     [(= tag (compiler-parse-tag-expr-xgetbv)) (parse-ast-xgetbv dispatch rest)]
     [(= tag (compiler-parse-tag-expr-syscall))
       (parse-ast-syscall dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-init)) (parse-ast-init dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
       (parse-ast-ptr-null dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
@@ -5995,6 +6020,20 @@
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
   (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
+(define (compiler-parse-init-ok?) : bool
+  (match (parse-ast-source "(define (main) : i64 (init : i64))")
+    [(OkAstProgram (AstProgram decls-box))
+      (match (box-get decls-box)
+        [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) AstDeclNil)
+          (match (ast-expr-unspan (box-get body-box))
+            [(AstExprInit ty)
+              (match ty
+                [(AstTyI64) true]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-box-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : (Box i64) (box 7))")
@@ -8082,6 +8121,9 @@
     (if (compiler-parse-raw-pointer-ops-ok?)
       unit
       (panic "parse: raw pointer ops shape test failed"))
+    (if (compiler-parse-init-ok?)
+      unit
+      (panic "parse: init shape test failed"))
     (if (compiler-parse-box-ok?)
       unit
       (panic "parse: box shape test failed"))
@@ -8167,14 +8209,16 @@
                                               (and
                                                 (compiler-parse-raw-pointer-ops-ok?)
                                                 (and
-                                                  (compiler-parse-box-ok?)
+                                                  (compiler-parse-init-ok?)
                                                   (and
-                                                    (compiler-parse-reference-ok?)
+                                                    (compiler-parse-box-ok?)
                                                     (and
-                                                      (compiler-parse-borrow-ok?)
+                                                      (compiler-parse-reference-ok?)
                                                       (and
-                                                        (compiler-parse-resource-with-shape-ok?)
-                                                        (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))))
+                                                        (compiler-parse-borrow-ok?)
+                                                        (and
+                                                          (compiler-parse-resource-with-shape-ok?)
+                                                          (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

@@ -1973,6 +1973,59 @@
               (compiler-typecheck-box-get-non-box-source)
               "typecheck: box-get requires Box type")))))))
 
+(define (compiler-typecheck-init-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(defenum Maybe (None) (Some i64))
+(define (main) : i64
+  (let
+    [n : i64 (init : i64)]
+    [flag : bool (init : bool)]
+    [text : String (init : String)]
+    [items : (Array i64) (init : (Array i64))]
+    [tupled : (Tuple i64 bool) (init : (Tuple i64 bool))]
+    [fixed : (Array i64 2) (init : (Array i64 2))]
+    [point : Point (init : Point)]
+    [maybe : Maybe (init : Maybe)]
+    [boxed : (Box i64) (init : (Box i64))]
+    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed)))))))")
+
+(define (compiler-typecheck-init-function-source) : String
+  "(define (main) : (-> i64) (init : (-> i64)))")
+
+(define (compiler-typecheck-init-repr-c-source) : String
+  "(defstruct Raw (:repr c) (x i64))
+(define (main) : Raw (init : Raw))")
+
+(define (compiler-typecheck-init-empty-enum-source) : String
+  "(defenum Empty)
+(define (main) : Empty (init : Empty))")
+
+(define (compiler-typecheck-init-cleanup-owning-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (main) : FileHandle (init : FileHandle))")
+
+(define (compiler-typecheck-init-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-init-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-init-function-source)
+        "typecheck: init unsupported type (-> i64)")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-init-repr-c-source)
+          "typecheck: init supports only default-layout structs")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-init-empty-enum-source)
+            "typecheck: init requires enum with at least one variant")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-init-cleanup-owning-source)
+            "typecheck: init does not support cleanup-owning aggregate FileHandle"))))))
+
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-region-builtin-source))
@@ -7056,6 +7109,9 @@
     (if (compiler-typecheck-box-tests-ok?)
       unit
       (panic "typecheck: box tests failed"))
+    (if (compiler-typecheck-init-tests-ok?)
+      unit
+      (panic "typecheck: init tests failed"))
     (if (compiler-typecheck-result-try-tests-ok?)
       unit
       (panic "typecheck: result try tests failed"))

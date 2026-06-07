@@ -1777,6 +1777,17 @@
           (tc-type-contains-reference? head)
           (tc-type-list-contains-reference? tail)))]))
 
+(define (tc-type-list-contains-mut-reference? [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head tail)
+      (let
+        [head : AstType (box-get head)]
+        [tail : AstTypeList (box-get tail)]
+        (or
+          (tc-type-contains-mut-reference? head)
+          (tc-type-list-contains-mut-reference? tail)))]))
+
 (define (tc-type-contains-reference? [ty : AstType]) : bool
   (match ty
     [(AstTyFunc args ret)
@@ -1795,6 +1806,23 @@
     [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
     [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
     [(AstTyVarArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [_ false]))
+
+(define (tc-type-contains-mut-reference? [ty : AstType]) : bool
+  (match ty
+    [(AstTyFunc args ret)
+      (or
+        (tc-type-list-contains-mut-reference? args)
+        (tc-type-contains-mut-reference? (box-get ret)))]
+    [(AstTyTuple elems) (tc-type-list-contains-mut-reference? elems)]
+    [(AstTyArray elem _) (tc-type-contains-mut-reference? (box-get elem))]
+    [(AstTyDynArray elem) (tc-type-contains-mut-reference? (box-get elem))]
+    [(AstTyBox elem) (tc-type-contains-mut-reference? (box-get elem))]
+    [(AstTyPtr elem) (tc-type-contains-mut-reference? (box-get elem))]
+    [(AstTyMutPtr elem) (tc-type-contains-mut-reference? (box-get elem))]
+    [(AstTyRef _ inner) (tc-type-contains-mut-reference? (box-get inner))]
+    [(AstTyMutRef _ _) true]
+    [(AstTyRegion _ inner) (tc-type-contains-mut-reference? (box-get inner))]
     [_ false]))
 
 (define (tc-type-list-collect-reference-lifetimes
@@ -3234,6 +3262,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprPtrAddrOf _) OkTcUnit]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -3754,6 +3783,31 @@
   (match (tc-type-strip-region ty)
     [(AstTyMutPtr elem) (OkTcType (box-get elem))]
     [_ (ErrTcType message)]))
+
+(define (tc-ptr-addr-of-cell-type-ok? [ty : AstType]) : bool
+  (if (tc-integer-type? ty)
+    true
+    (match (tc-type-strip-region ty)
+      [(AstTyF64) true]
+      [(AstTyF32) true]
+      [(AstTyBool) true]
+      [(AstTyChar) true]
+      [(AstTyPtr _) true]
+      [(AstTyMutPtr _) true]
+      [_ false])))
+
+(define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
+  (match env
+    [(TcTypeNil)
+      (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")]
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-ptr-addr-of-local-lookup (box-get rest) name)]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key (tc-hygiene-global-boundary-name))
+        (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")
+        (if (string-eq key name)
+          (OkTcType ty)
+          (tc-ptr-addr-of-local-lookup (box-get rest) name)))]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
@@ -6027,50 +6081,69 @@
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match (tc-expr ctx env func)
-    [(OkTcType fn-ty)
-      (match fn-ty
-        [(AstTyFunc params ret)
-          (tc-call-function-type ctx env func args params (box-get ret))]
-        [(AstTyRegion _ inner)
-          (match (box-get inner)
+  (match (ast-expr-unspan func)
+    [(AstExprLambda params maybe-ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-lambda-expr-allow-ref-captures ctx env params maybe-ret body)
+          [(OkTcType fn-ty)
+            (match fn-ty
+              [(AstTyFunc params ret)
+                (tc-call-function-type ctx env func args params (box-get ret))]
+              [_ (ErrTcType "typecheck: call target is not a function")])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [_
+      (match (tc-expr ctx env func)
+        [(OkTcType fn-ty)
+          (match fn-ty
             [(AstTyFunc params ret)
-              (match (tc-check-call-args ctx env args params false (AstNoType))
-                [(OkTcUnit) (OkTcType (tc-tag-active-region env (box-get ret)))]
-                [(ErrTcUnit message) (ErrTcType message)])]
+              (tc-call-function-type ctx env func args params (box-get ret))]
+            [(AstTyRegion _ inner)
+              (match (box-get inner)
+                [(AstTyFunc params ret)
+                  (match (tc-check-call-args
+                    ctx
+                    env
+                    args
+                    params
+                    false
+                    (AstNoType))
+                    [(OkTcUnit)
+                      (OkTcType (tc-tag-active-region env (box-get ret)))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(AstTyEnum enum-name)
+                  (match args
+                    [(AstExprNil)
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        enum-name
+                        (box-get inner))]
+                    [_ (ErrTcType "typecheck: arity mismatch")])]
+                [(AstTyEnumArgs enum-name _)
+                  (match args
+                    [(AstExprNil)
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        enum-name
+                        (box-get inner))]
+                    [_ (ErrTcType "typecheck: arity mismatch")])]
+                [_ (ErrTcType "typecheck: call target is not a function")])]
             [(AstTyEnum enum-name)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr
-                    ctx
-                    env
-                    func
-                    enum-name
-                    (box-get inner))]
+                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [(AstTyEnumArgs enum-name _)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr
-                    ctx
-                    env
-                    func
-                    enum-name
-                    (box-get inner))]
+                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
-        [(AstTyEnum enum-name)
-          (match args
-            [(AstExprNil)
-              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
-            [_ (ErrTcType "typecheck: arity mismatch")])]
-        [(AstTyEnumArgs enum-name _)
-          (match args
-            [(AstExprNil)
-              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
-            [_ (ErrTcType "typecheck: arity mismatch")])]
-        [_ (ErrTcType "typecheck: call target is not a function")])]
-    [(ErrTcType message) (ErrTcType message)]))
+        [(ErrTcType message) (ErrTcType message)])]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
 ;; user definition, or a local). Used to decide whether an unbound builtin
@@ -6648,6 +6721,598 @@
                             [(ErrTcUnit message) (ErrTcEnv message)])]
                         [(ErrTcUnit message) (ErrTcEnv message)])]
                     [(ErrTcType message) (ErrTcEnv message)])]))]))]))
+
+(define (tc-lambda-captures-reference-scan-root
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [body : AstExpr]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ _) false]
+    [(TcTypeBind key ty rest)
+      (if (or
+        (string-eq key (tc-region-marker-name))
+        (or
+          (string-eq key (tc-default-boundary-name))
+          (tc-cleanup-owner-marker-entry? key ty)))
+        (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
+        (if (and
+          (tc-expr-uses-free-name? body key bound)
+          (tc-type-contains-reference? ty))
+          true
+          (tc-lambda-captures-reference-scan-root (box-get rest) bound body)))]))
+
+(define (tc-lambda-captures-reference?
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]) : bool
+  (tc-lambda-captures-reference-scan-root
+    env
+    (tc-param-bound-names params)
+    body))
+
+(define (tc-ref-capturing-lambda-init? [env : TcTypeEnv] [init : AstExpr]) : bool
+  (match (ast-expr-unspan init)
+    [(AstExprLambda params _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (tc-lambda-captures-reference? env params body))]
+    [_ false]))
+
+(define (tc-ref-closure-expr-list-local-uses-ok?
+  [exprs : AstExprList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match exprs
+    [(AstExprNil) true]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (box-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (and
+          (tc-ref-closure-local-uses-ok? expr name bound)
+          (tc-ref-closure-expr-list-local-uses-ok? rest name bound)))]))
+
+(define (tc-ref-closure-let-binding-list-local-uses-ok?
+  [bindings : AstLetBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstLetBindingNil) true]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding bind-name _ init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (and
+                (tc-ref-closure-local-uses-ok? init name bound)
+                (tc-ref-closure-let-binding-list-local-uses-ok?
+                  rest
+                  name
+                  (tc-string-list-add bound bind-name))))]))]))
+
+(define (tc-ref-closure-let-rest-and-body-local-uses-ok?
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstLetBindingNil) (tc-ref-closure-local-uses-ok? body name bound)]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding bind-name _ init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (and
+                (tc-ref-closure-local-uses-ok? init name bound)
+                (tc-ref-closure-let-rest-and-body-local-uses-ok?
+                  rest
+                  body
+                  name
+                  (tc-string-list-add bound bind-name))))]))]))
+
+(define (tc-ref-closure-resource-binding-list-local-uses-ok?
+  [bindings : AstResourceBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) true]
+    [(AstResourceBindingCons binding rest)
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding bind-name init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
+              (and
+                (tc-ref-closure-local-uses-ok? init name bound)
+                (and
+                  (tc-ref-closure-local-uses-ok? cleanup name bound)
+                  (tc-ref-closure-resource-binding-list-local-uses-ok?
+                    rest
+                    name
+                    (tc-string-list-add bound bind-name)))))]))]))
+
+(define (tc-ref-closure-match-arms-local-uses-ok?
+  [arms : AstMatchArmList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match arms
+    [(AstMatchArmNil) true]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (and
+                (tc-ref-closure-local-uses-ok?
+                  body
+                  name
+                  (tc-pattern-add-bound-names pattern bound))
+                (tc-ref-closure-match-arms-local-uses-ok? rest name bound)))]))]))
+
+(define (tc-ref-closure-direct-call?
+  [func : AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match (ast-expr-unspan func)
+    [(AstExprVar var-name)
+      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
+    [_ false]))
+
+(define (tc-ref-closure-local-uses-ok?
+  [expr : AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprVar var-name)
+      (not
+        (and
+          (string-eq var-name name)
+          (not (tc-string-list-contains bound name))))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? left name bound)
+          (tc-ref-closure-local-uses-ok? right name bound)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (if (tc-ref-closure-direct-call? func name bound)
+          (tc-ref-closure-expr-list-local-uses-ok? args name bound)
+          (and
+            (tc-ref-closure-local-uses-ok? func name bound)
+            (tc-ref-closure-expr-list-local-uses-ok? args name bound))))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-box)]
+        [else-branch : AstExpr (box-get else-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? cond name bound)
+          (and
+            (tc-ref-closure-local-uses-ok? then-branch name bound)
+            (tc-ref-closure-local-uses-ok? else-branch name bound))))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (and
+          (tc-ref-closure-let-binding-list-local-uses-ok? bindings name bound)
+          (tc-ref-closure-local-uses-ok?
+            body
+            name
+            (tc-let-binding-list-add-bound-names bindings bound))))]
+    [(AstExprLambda params _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (not
+          (tc-expr-uses-free-name?
+            body
+            name
+            (tc-param-list-add-bound-names params bound))))]
+    [(AstExprTuple exprs)
+      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (tc-ref-closure-local-uses-ok? tuple name bound))]
+    [(AstExprArray exprs)
+      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (tc-ref-closure-local-uses-ok? len name bound))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? array name bound)
+          (tc-ref-closure-local-uses-ok? index name bound)))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? array name bound)
+          (and
+            (tc-ref-closure-local-uses-ok? index name bound)
+            (tc-ref-closure-local-uses-ok? value name bound))))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? array name bound)
+          (tc-ref-closure-local-uses-ok? value name bound)))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? str name bound)
+          (tc-ref-closure-local-uses-ok? index name bound)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? cond name bound)
+          (tc-ref-closure-local-uses-ok? body name bound)))]
+    [(AstExprBegin exprs)
+      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+    [(AstExprUnsafe exprs)
+      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+    [(AstExprSet var-name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (and
+          (not
+            (and
+              (string-eq var-name name)
+              (not (tc-string-list-contains bound name))))
+          (tc-ref-closure-local-uses-ok? value name bound)))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprBorrow _ _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tc-ref-closure-local-uses-ok? place name bound))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? scrutinee name bound)
+          (tc-ref-closure-match-arms-local-uses-ok? arms name bound)))]
+    [(AstExprForeach index _ start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? start name bound)
+          (and
+            (tc-ref-closure-local-uses-ok? end name bound)
+            (tc-ref-closure-local-uses-ok?
+              body
+              name
+              (tc-string-list-add bound index)))))]
+    [(AstExprSpmdReduce _ index _ start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? start name bound)
+          (and
+            (tc-ref-closure-local-uses-ok? end name bound)
+            (and
+              (tc-ref-closure-local-uses-ok? init name bound)
+              (tc-ref-closure-local-uses-ok?
+                value
+                name
+                (tc-string-list-add bound index))))))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (tc-ref-closure-local-uses-ok? receiver name bound))]
+    [(AstExprWithRegion _ body)
+      (tc-ref-closure-expr-list-local-uses-ok? body name bound)]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? scratch name bound)
+          (tc-ref-closure-expr-list-local-uses-ok? body name bound)))]
+    [(AstExprWithResource bindings body)
+      (and
+        (tc-ref-closure-resource-binding-list-local-uses-ok?
+          bindings
+          name
+          bound)
+        (tc-ref-closure-expr-list-local-uses-ok?
+          body
+          name
+          (tc-resource-binding-list-add-bound-names bindings bound)))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-ref-closure-local-uses-ok? inner name bound))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-ref-closure-local-uses-ok? ptr name bound))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? ptr name bound)
+          (tc-ref-closure-local-uses-ok? value name bound)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? ptr name bound)
+          (tc-ref-closure-local-uses-ok? offset name bound)))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-ref-closure-local-uses-ok? ptr name bound))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-ref-closure-local-uses-ok? ptr name bound))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tc-ref-closure-local-uses-ok? value name bound))]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        (tc-ref-closure-local-uses-ok? str name bound))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? ptr name bound)
+          (tc-ref-closure-local-uses-ok? len name bound)))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-ref-closure-local-uses-ok? array name bound))]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? leaf name bound)
+          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? leaf name bound)
+          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? leaf name bound)
+          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? leaf name bound)
+          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-ref-closure-local-uses-ok? index name bound))]
+    [(AstExprSyscall args)
+      (tc-ref-closure-expr-list-local-uses-ok? args name bound)]
+    [_ (not (tc-expr-uses-free-name? expr name bound))]))
+
+(define (tc-reference-closure-escape-message) : String
+  "typecheck: reference-capturing closure value would escape lexical scope")
+
+(define (tc-let-binding-ref-closure-scope-ok
+  [rest : AstLetBindingList]
+  [body : AstExpr]
+  [name : String]) : ResultTcUnit
+  (if (tc-ref-closure-let-rest-and-body-local-uses-ok?
+    rest
+    body
+    name
+    TcStringNil)
+    OkTcUnit
+    (ErrTcUnit (tc-reference-closure-escape-message))))
+
+(define (tc-let-binding-init-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]
+  [rest : AstLetBindingList]
+  [body : AstExpr]) : ResultTcType
+  (let
+    [ref-capturing-lambda : bool (tc-ref-capturing-lambda-init? env init)]
+    (match maybe-ty
+      [(AstSomeType want)
+        (let
+          [resolved-want : AstType (tc-resolve-type ctx want)]
+          (if ref-capturing-lambda
+            (match (tc-let-binding-ref-closure-scope-ok rest body name)
+              [(OkTcUnit)
+                (match (ast-expr-unspan init)
+                  [(AstExprLambda params maybe-ret lambda-body-box)
+                    (let
+                      [lambda-body : AstExpr (box-get lambda-body-box)]
+                      (tc-lambda-expr-allow-ref-captures
+                        ctx
+                        env
+                        params
+                        maybe-ret
+                        lambda-body))]
+                  [_
+                    (tc-expr-with-expected-or-actual ctx env init resolved-want)])]
+              [(ErrTcUnit message) (ErrTcType message)])
+            (tc-expr-with-expected-or-actual ctx env init resolved-want)))]
+      [(AstNoType)
+        (if ref-capturing-lambda
+          (match (tc-let-binding-ref-closure-scope-ok rest body name)
+            [(OkTcUnit)
+              (match (ast-expr-unspan init)
+                [(AstExprLambda params maybe-ret lambda-body-box)
+                  (let
+                    [lambda-body : AstExpr (box-get lambda-body-box)]
+                    (tc-lambda-expr-allow-ref-captures
+                      ctx
+                      env
+                      params
+                      maybe-ret
+                      lambda-body))]
+                [_ (tc-expr ctx env init)])]
+            [(ErrTcUnit message) (ErrTcType message)])
+          (tc-expr ctx env init))])))
+
+(define (tc-let-bindings-for-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : AstLetBindingList]
+  [body : AstExpr]) : ResultTcEnv
+  (match bindings
+    [(AstLetBindingNil) (OkTcEnv env)]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-let-binding-init-type
+                ctx
+                env
+                name
+                maybe-ty
+                init
+                rest
+                body)
+                [(OkTcType init-ty)
+                  (match maybe-ty
+                    [(AstSomeType want)
+                      (let
+                        [resolved-want : AstType (tc-resolve-type ctx want)]
+                        (match (tc-expect
+                          init-ty
+                          resolved-want
+                          "typecheck: let binding type mismatch")
+                          [(OkTcUnit)
+                            (match (tc-ensure-cleanup-resource-not-let-bound
+                              env
+                              init)
+                              [(OkTcUnit)
+                                (match (tc-ensure-reference-value-can-bind
+                                  env
+                                  init-ty)
+                                  [(OkTcUnit)
+                                    (tc-let-bindings-for-body
+                                      ctx
+                                      (tc-bind
+                                        env
+                                        name
+                                        (if (tc-type-contains-any-region
+                                          init-ty)
+                                          init-ty
+                                          resolved-want))
+                                      rest
+                                      body)]
+                                  [(ErrTcUnit message) (ErrTcEnv message)])]
+                              [(ErrTcUnit message) (ErrTcEnv message)])]
+                          [(ErrTcUnit message) (ErrTcEnv message)]))]
+                    [(AstNoType)
+                      (match (tc-ensure-cleanup-resource-not-let-bound env init)
+                        [(OkTcUnit)
+                          (match (tc-ensure-reference-value-can-bind
+                            env
+                            init-ty)
+                            [(OkTcUnit)
+                              (tc-let-bindings-for-body
+                                ctx
+                                (tc-bind env name init-ty)
+                                rest
+                                body)]
+                            [(ErrTcUnit message) (ErrTcEnv message)])]
+                        [(ErrTcUnit message) (ErrTcEnv message)])])]
+                [(ErrTcType message) (ErrTcEnv message)]))]))]))
 
 (define (tc-resource-cleanup-direct-name-ok [cleanup : AstExpr]) : ResultTcUnit
   (match (ast-expr-unspan cleanup)
@@ -7706,6 +8371,7 @@
               [(TcSpmdExprInfo _ class next-spmd-env)
                 (tc-spmd-finish expr-ty class next-spmd-env)])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrAddrOf _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -8228,6 +8894,8 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprPtrAddrOf var-name)
+      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -8608,6 +9276,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprPtrAddrOf _) false]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -8885,7 +9554,8 @@
   [root : TcTypeEnv]
   [env : TcTypeEnv]
   [bound : TcStringList]
-  [body : AstExpr]) : ResultTcUnit
+  [body : AstExpr]
+  [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
     [(TcTypeCache _ _ _ _ _) OkTcUnit]
@@ -8900,21 +9570,33 @@
             root
             (box-get rest)
             bound
-            body)]
+            body
+            allow-immutable-reference-captures)]
         [(not (tc-expr-uses-free-name? body key bound))
           (tc-check-lambda-region-captures-scan-root
             root
             (box-get rest)
             bound
-            body)]
+            body
+            allow-immutable-reference-captures)]
         [(tc-expr-sets-free-name? body key bound)
           (ErrTcUnit "typecheck: lambda cannot assign captured binding")]
         [(tc-cleanup-owner-active? root key)
           (ErrTcUnit
             "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
-        [(tc-type-contains-reference? ty)
+        [(tc-type-contains-mut-reference? ty)
           (ErrTcUnit
-            "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")]
+            "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")]
+        [(tc-type-contains-reference? ty)
+          (if allow-immutable-reference-captures
+            (tc-check-lambda-region-captures-scan-root
+              root
+              (box-get rest)
+              bound
+              body
+              allow-immutable-reference-captures)
+            (ErrTcUnit
+              "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
         [(tc-type-contains-any-region ty)
           (ErrTcUnit
             "typecheck: lambda cannot capture region-tagged value; region value would escape")]
@@ -8923,19 +9605,40 @@
             root
             (box-get rest)
             bound
-            body)])]))
+            body
+            allow-immutable-reference-captures)])]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
   [bound : TcStringList]
-  [body : AstExpr]) : ResultTcUnit
-  (tc-check-lambda-region-captures-scan-root env env bound body))
+  [body : AstExpr]
+  [allow-immutable-reference-captures : bool]) : ResultTcUnit
+  (tc-check-lambda-region-captures-scan-root
+    env
+    env
+    bound
+    body
+    allow-immutable-reference-captures))
 
 (define (tc-check-lambda-region-captures
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
-  (tc-check-lambda-region-captures-scan env (tc-param-bound-names params) body))
+  (tc-check-lambda-region-captures-scan
+    env
+    (tc-param-bound-names params)
+    body
+    false))
+
+(define (tc-check-lambda-region-captures-allow-refs
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-check-lambda-region-captures-scan
+    env
+    (tc-param-bound-names params)
+    body
+    true))
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
@@ -11394,6 +12097,23 @@
                 [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
                 [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
+(define (tc-ptr-addr-of-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (tc-require-unsafe env "ptr-addr-of")
+    [(OkTcUnit)
+      (match (tc-ptr-addr-of-local-lookup env name)
+        [(OkTcType ty)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (if (tc-ptr-addr-of-cell-type-ok? resolved)
+              (OkTcType (ast-ty-mut-ptr resolved))
+              (ErrTcType
+                "typecheck: ptr-addr-of supports local scalar cells only")))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
 (define (tc-ptr-read-expr [ctx : TcContext] [env : TcTypeEnv] [ptr : AstExpr]) : ResultTcType
   (match (tc-require-unsafe env "ptr-read")
     [(OkTcUnit)
@@ -11954,6 +12674,72 @@
         (ErrTcType "typecheck: with-escape arena must be i64"))]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-lambda-expr-with-capture-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [allow-immutable-reference-captures : bool]) : ResultTcType
+  (match (if allow-immutable-reference-captures
+    (tc-check-lambda-region-captures-allow-refs env params body)
+    (tc-check-lambda-region-captures env params body))
+    [(OkTcUnit)
+      (let
+        [lambda-env : TcTypeEnv
+          (match maybe-ret
+            [(AstSomeType ret)
+              (tc-bind-return-type
+                (tc-bind-params ctx env params)
+                (tc-resolve-type ctx ret))]
+            [(AstNoType)
+              (tc-bind-return-type (tc-bind-params ctx env params) (AstTyNever))])]
+        (match (match maybe-ret
+          [(AstSomeType ret)
+            (tc-expr-with-expected-or-actual
+              ctx
+              lambda-env
+              body
+              (tc-resolve-type ctx ret))]
+          [(AstNoType) (tc-expr ctx lambda-env body)])
+          [(OkTcType body-ty)
+            (if (tc-type-contains-any-region body-ty)
+              (ErrTcType
+                "typecheck: lambda return value has region-tagged type; region value would escape")
+              (match maybe-ret
+                [(AstSomeType ret)
+                  (match (tc-expect
+                    body-ty
+                    (tc-resolve-type ctx ret)
+                    "typecheck: lambda return type mismatch")
+                    [(OkTcUnit)
+                      (OkTcType
+                        (ast-ty-func
+                          (tc-param-type-list ctx params)
+                          (tc-resolve-type ctx ret)))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(AstNoType)
+                  (OkTcType
+                    (ast-ty-func (tc-param-type-list ctx params) body-ty))]))]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-lambda-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]) : ResultTcType
+  (tc-lambda-expr-with-capture-check ctx env params maybe-ret body false))
+
+(define (tc-lambda-expr-allow-ref-captures
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]) : ResultTcType
+  (tc-lambda-expr-with-capture-check ctx env params maybe-ret body true))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner-box _)
@@ -12009,7 +12795,7 @@
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (match (tc-let-bindings ctx env bindings)
+        (match (tc-let-bindings-for-body ctx env bindings body)
           [(OkTcEnv next-env)
             (match (tc-expr ctx next-env body)
               [(OkTcType body-ty)
@@ -12023,48 +12809,7 @@
     [(AstExprLambda params maybe-ret body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (match (tc-check-lambda-region-captures env params body)
-          [(OkTcUnit)
-            (let
-              [lambda-env : TcTypeEnv
-                (match maybe-ret
-                  [(AstSomeType ret)
-                    (tc-bind-return-type
-                      (tc-bind-params ctx env params)
-                      (tc-resolve-type ctx ret))]
-                  [(AstNoType)
-                    (tc-bind-return-type
-                      (tc-bind-params ctx env params)
-                      (AstTyNever))])]
-              (match (match maybe-ret
-                [(AstSomeType ret)
-                  (tc-expr-with-expected-or-actual
-                    ctx
-                    lambda-env
-                    body
-                    (tc-resolve-type ctx ret))]
-                [(AstNoType) (tc-expr ctx lambda-env body)])
-                [(OkTcType body-ty)
-                  (if (tc-type-contains-any-region body-ty)
-                    (ErrTcType
-                      "typecheck: lambda return value has region-tagged type; region value would escape")
-                    (match maybe-ret
-                      [(AstSomeType ret)
-                        (match (tc-expect
-                          body-ty
-                          (tc-resolve-type ctx ret)
-                          "typecheck: lambda return type mismatch")
-                          [(OkTcUnit)
-                            (OkTcType
-                              (ast-ty-func
-                                (tc-param-type-list ctx params)
-                                (tc-resolve-type ctx ret)))]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(AstNoType)
-                        (OkTcType
-                          (ast-ty-func (tc-param-type-list ctx params) body-ty))]))]
-                [(ErrTcType message) (ErrTcType message)]))]
-          [(ErrTcUnit message) (ErrTcType message)]))]
+        (tc-lambda-expr ctx env params maybe-ret body))]
     [(AstExprTuple exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
         [(OkTcUnit)
@@ -12626,6 +13371,7 @@
                 (ErrTcType
                   "typecheck: ptr-null? requires a raw pointer operand")])]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprPtrAddrOf name) (tc-ptr-addr-of-expr ctx env name)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -14339,6 +15085,10 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
+    [(AstExprPtrAddrOf name)
+      (if (tc-moved-contains? moved name)
+        (ErrTcMove (tc-move-use-message name))
+        (OkTcMove moved))]
     [(AstExprPtrRead inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -15230,6 +15980,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
+    [(AstExprPtrAddrOf _) (OkTcBorrowCheck borrowed)]
     [(AstExprPtrRead inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -15429,6 +16180,18 @@
         (TcSomeString value)
         (macro-hygiene-env-lookup (box-get rest) name))]))
 
+(define (macro-canonical-name [module : String] [name : String]) : String
+  (compiler-symbol-module-key module name))
+
+(define (macro-hygiene-global-base-name [macro-name : String] [base : String]) : String
+  (if (and
+    (tc-name-qualified? macro-name)
+    (and
+      (not (tc-name-qualified? base))
+      (string-eq base (tc-qualified-name-base macro-name))))
+    (compiler-symbol-module-key (tc-qualified-name-module macro-name) base)
+    base))
+
 (define (macro-hygiene-fresh-local
   [macro-name : String]
   [depth : i64]
@@ -15439,13 +16202,18 @@
       (int->string depth)
       (string-append "$" (string-append macro-name (string-append "$" base))))))
 
-(define (macro-hygiene-rename-var [env : MacroHygieneEnv] [name : String]) : String
+(define (macro-hygiene-rename-var
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [name : String]) : String
   (if (tc-hygiene-template-name? name)
     (let
       [base : String (tc-hygiene-template-base name)]
       (match (macro-hygiene-env-lookup env base)
         [(TcSomeString renamed) renamed]
-        [(TcNoString) (tc-hygiene-global-name base)]))
+        [(TcNoString)
+          (tc-hygiene-global-name
+            (macro-hygiene-global-base-name macro-name base))]))
     name))
 
 (define (macro-hygiene-bind-name
@@ -15637,7 +16405,8 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (ast-expr-spanned (macro-hygiene-expr inner env macro-name depth) span))]
-    [(AstExprVar name) (AstExprVar (macro-hygiene-rename-var env name))]
+    [(AstExprVar name)
+      (AstExprVar (macro-hygiene-rename-var env macro-name name))]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (box-get left-box)]
@@ -15741,7 +16510,7 @@
       (let
         [rhs : AstExpr (box-get rhs-box)]
         (ast-expr-set
-          (macro-hygiene-rename-var env name)
+          (macro-hygiene-rename-var env macro-name name)
           (macro-hygiene-expr rhs env macro-name depth)))]
     [(AstExprAnn inner-box ty)
       (let
@@ -15844,6 +16613,8 @@
       (let
         [ptr : AstExpr (box-get ptr-box)]
         (ast-expr-ptr-null-check (macro-hygiene-expr ptr env macro-name depth)))]
+    [(AstExprPtrAddrOf name)
+      (ast-expr-ptr-addr-of (macro-hygiene-rename-var env macro-name name))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -16066,7 +16837,12 @@
         decls
         (compiler-symbol-handle-index handle))
         [(MacroSomeDecl macro-name params ret body)
-          (OkMacroCallDecl (MacroSomeDecl macro-name params ret body))]
+          (OkMacroCallDecl
+            (MacroSomeDecl
+              (macro-canonical-name target-module base)
+              params
+              ret
+              body))]
         [(MacroNoDecl)
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr
@@ -16144,7 +16920,14 @@
                   decls
                   (compiler-symbol-handle-index handle))
                   [(MacroSomeDecl macro-name params ret body)
-                    (OkMacroCallDecl (MacroSomeDecl macro-name params ret body))]
+                    (OkMacroCallDecl
+                      (MacroSomeDecl
+                        (macro-canonical-name
+                          (tc-context-module ctx)
+                          lookup-name)
+                        params
+                        ret
+                        body))]
                   [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])
                 (ErrMacroCallDecl
                   (ctfe-diagnostic-at-expr

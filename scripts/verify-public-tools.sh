@@ -572,6 +572,10 @@ EOF
     assert_not_contains "$target_dir/main.s" "    .globl _start"
     assert_contains_any "$target_dir/main.s" "    .extern WriteFile" ".extern WriteFile"
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
+    runtime_write_body="$(awk -v label="_tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write:" '$0 == label { found = 1; next } found && /^_tl_/ && /:$/ { exit } found { print }' "$target_dir/main.s")"
+    [ -n "$runtime_write_body" ] || fail "$target_alias runtime-os-write body missing"
+    printf '%s\n' "$runtime_write_body" | grep -q "    call tl_alloc" && fail "$target_alias runtime-os-write still calls tl_alloc"
+    printf '%s\n' "$runtime_write_body" | grep -q "    leaq -" || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
 done
 
 cat > "$CLI_MATRIX/main.tl" <<'EOF'

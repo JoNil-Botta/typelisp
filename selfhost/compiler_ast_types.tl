@@ -293,6 +293,7 @@
   (AstExprPtrNullCheck (Box AstExpr))
   ;; Unsafe raw-pointer operations (#1055). The typechecker admits these only
   ;; inside `(unsafe ...)`; lowering maps them to existing pointer IR.
+  (AstExprPtrAddrOf String)
   (AstExprPtrRead (Box AstExpr))
   (AstExprPtrWrite (Box AstExpr) (Box AstExpr))
   (AstExprPtrOffset (Box AstExpr) (Box AstExpr))
@@ -630,6 +631,9 @@
 (define (ast-expr-ptr-null-check [ptr : AstExpr]) : AstExpr
   (AstExprPtrNullCheck (box ptr)))
 
+(define (ast-expr-ptr-addr-of [name : String]) : AstExpr
+  (AstExprPtrAddrOf name))
+
 (define (ast-expr-ptr-read [ptr : AstExpr]) : AstExpr
   (AstExprPtrRead (box ptr)))
 
@@ -814,6 +818,7 @@
     [(AstExprPtrNull _) 30]
     [(AstExprPtrNullCheck _) 31]
     [(AstExprWithResource _ _) 33]
+    [(AstExprPtrAddrOf _) 62]
     [(AstExprPtrRead _) 34]
     [(AstExprPtrWrite _ _) 35]
     [(AstExprPtrOffset _ _) 36]

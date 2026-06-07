@@ -16,7 +16,7 @@
 ;# Usage: imported implicitly; programs do not need to import it by hand.
 ;#
 ;# This module imports nothing: it must be the always-linked prelude, so it
-;# only uses builtins (string-length/string-data, syscall, pointer casts/reads)
+;# only uses builtins (string-length/string-data, syscall, raw pointer ops)
 ;# and its own externs. Keeping it import-free also avoids a shared-module
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
@@ -41,8 +41,10 @@
   windows
   (extern runtime-windows-exit-process (:symbol "ExitProcess") : (-> i32 never)))
 
-;: Runtime active-arena allocator used to provide WinAPI out-parameter scratch.
-(cfg windows (extern runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8))))
+;: Bootstrap fallback for stage0 compilers that predate local address-of.
+(cfg
+  (all windows (not feature-ptr-addr-of))
+  (extern runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8))))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
 (define (runtime-ptr-arg [ptr : (Ptr u8)]) : i64
@@ -66,20 +68,37 @@
 (define (runtime-os-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
   (cfg
     windows
-    (let
-      [handle : i64 (runtime-windows-fd-handle fd)]
-      [written : (MutPtr i32)
-        (unsafe
-          (ptr-cast (runtime-alloc 4) : (MutPtr i32)))]
-      [ok : i32
-        (runtime-windows-write-file handle buf (cast count : i32) written 0)]
-      (if (= ok (cast 0 : i32))
-        -1
-        (cast
+    (cfg
+      feature-ptr-addr-of
+      (let
+        [handle : i64 (runtime-windows-fd-handle fd)]
+        [written-cell : i32 (cast 0 : i32)]
+        [written : (MutPtr i32)
           (unsafe
-            (ptr-read (ptr-cast written : (Ptr i32))))
-          :
-          i64)))
+            (ptr-addr-of written-cell))]
+        [ok : i32
+          (runtime-windows-write-file handle buf (cast count : i32) written 0)]
+        (if (= ok (cast 0 : i32))
+          -1
+          (cast
+            (unsafe
+              (ptr-read (ptr-cast written : (Ptr i32))))
+            :
+            i64)))
+      (let
+        [handle : i64 (runtime-windows-fd-handle fd)]
+        [written : (MutPtr i32)
+          (unsafe
+            (ptr-cast (runtime-alloc 4) : (MutPtr i32)))]
+        [ok : i32
+          (runtime-windows-write-file handle buf (cast count : i32) written 0)]
+        (if (= ok (cast 0 : i32))
+          -1
+          (cast
+            (unsafe
+              (ptr-read (ptr-cast written : (Ptr i32))))
+            :
+            i64))))
     (syscall 1 fd (runtime-ptr-arg buf) count)))
 
 ;: Terminate the process with `code`; never returns. Linux uses the

@@ -2254,6 +2254,7 @@
       (let
         [value : AstExpr (box-get value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
+    [(AstExprPtrAddrOf _) roots]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -2764,6 +2765,7 @@
       (let
         [value : AstExpr (box-get value-box)]
         (lower-reach-expr all-functions names state value))]
+    [(AstExprPtrAddrOf _) state]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -5792,6 +5794,7 @@
     [(AstTyU8) true]
     [(AstTyBool) true]
     [(AstTyChar) true]
+    [(AstTyRef _ _) true]
     [(AstTyFunc _ _) true]
     [(AstTyTuple _) true]
     [(AstTyArray _ _) true]
@@ -8426,6 +8429,22 @@
                   [_ (ErrTcType "lower: call result type is not fast-pathable")])]
               [else (ErrTcType message)])
             (ErrTcType message))])]
+    [(AstExprLambda params maybe-ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-lambda-expr-allow-ref-captures
+          ctx
+          type-env
+          params
+          maybe-ret
+          body)
+          [(OkTcType fn-ty)
+            (match fn-ty
+              [(AstTyFunc _ ret)
+                (OkTcType
+                  (tc-type-without-regions (tc-resolve-type ctx (box-get ret))))]
+              [_ (ErrTcType "lower: call result type is not fast-pathable")])]
+          [(ErrTcType message) (ErrTcType message)]))]
     [_ (ErrTcType "lower: call result type is not fast-pathable")]))
 
 (define (lower-binary-result-type-fast
@@ -8629,7 +8648,20 @@
   (match maybe-ty
     [(AstSomeType ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstNoType) (lower-expr-result-type-fast ctx env type-env type-cache init)]))
+    [(AstNoType)
+      (if (tc-ref-capturing-lambda-init? type-env init)
+        (match (ast-expr-unspan init)
+          [(AstExprLambda params maybe-ret body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (tc-lambda-expr-allow-ref-captures
+                ctx
+                type-env
+                params
+                maybe-ret
+                body))]
+          [_ (lower-expr-result-type-fast ctx env type-env type-cache init)])
+        (lower-expr-result-type-fast ctx env type-env type-cache init))]))
 
 (define (lower-let-bindings-type-env-fast
   [ctx : TcContext]
@@ -9528,6 +9560,24 @@
                     (IrValueI64 0)
                     (AstTyBool)))])]
           [(ErrLowerExpr diag) (ErrLowerExpr diag)]))]
+    [(AstExprPtrAddrOf name)
+      (match (sym-i64-lookup env name)
+        [(SomeI64 local-id)
+          (match (lower-state-alloc-var state)
+            [(LowerAlloc allocated var-id)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-emit-at-expr
+                    allocated
+                    (IrInstrAddrOf var-id local-id)
+                    origin)
+                  (IrValueVar var-id)
+                  expr-ty))])]
+        [(NoneI64)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              "lower: ptr-addr-of requires local or parameter storage"))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -11527,6 +11577,41 @@
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan func)
+    [(AstExprLambda params maybe-ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-lambda-expr-allow-ref-captures
+          ctx
+          type-env
+          params
+          maybe-ret
+          body)
+          [(OkTcType fn-ty)
+            (match (lower-lambda
+              ctx
+              state
+              env
+              type-env
+              params
+              maybe-ret
+              body
+              func
+              fn-ty)
+              [(OkLowerExpr lowered-func)
+                (match lowered-func
+                  [(LowerExpr func-state func-value _)
+                    (lower-indirect-call
+                      ctx
+                      func-state
+                      env
+                      type-env
+                      func-value
+                      args
+                      result-ty
+                      origin)])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+          [(ErrTcType message)
+            (ErrLowerExpr (lower-diagnostic-at-expr func message))]))]
     [(AstExprVar raw-name)
       ;; Builtins reached from a macro expansion arrive hygiene-renamed
       ;; (`__tl_macro_global$string-length`); strip the prefix so the builtin
@@ -13489,15 +13574,77 @@
   [init : AstExpr]) : ResultLowerExpr
   (match maybe-ty
     [(AstSomeType ty)
-      (lower-expr-expected
-        ctx
-        state
-        env
-        type-env
-        init
-        (tc-type-without-regions (tc-resolve-type ctx ty))
-        init)]
-    [(AstNoType) (lower-expr ctx state env type-env init)]))
+      (if (tc-ref-capturing-lambda-init? type-env init)
+        (match (ast-expr-unspan init)
+          [(AstExprLambda params lambda-ret body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              [expected-ty : AstType
+                (tc-type-without-regions (tc-resolve-type ctx ty))]
+              (match (lower-lambda
+                ctx
+                state
+                env
+                type-env
+                params
+                lambda-ret
+                body
+                init
+                expected-ty)
+                [(OkLowerExpr lowered)
+                  (match lowered
+                    [(LowerExpr next-state value actual-ty)
+                      (OkLowerExpr
+                        (lower-coerce-value
+                          next-state
+                          value
+                          actual-ty
+                          expected-ty))])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+          [_
+            (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              init
+              (tc-type-without-regions (tc-resolve-type ctx ty))
+              init)])
+        (lower-expr-expected
+          ctx
+          state
+          env
+          type-env
+          init
+          (tc-type-without-regions (tc-resolve-type ctx ty))
+          init))]
+    [(AstNoType)
+      (if (tc-ref-capturing-lambda-init? type-env init)
+        (match (ast-expr-unspan init)
+          [(AstExprLambda params lambda-ret body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (tc-lambda-expr-allow-ref-captures
+                ctx
+                type-env
+                params
+                lambda-ret
+                body)
+                [(OkTcType lambda-ty)
+                  (lower-lambda
+                    ctx
+                    state
+                    env
+                    type-env
+                    params
+                    lambda-ret
+                    body
+                    init
+                    lambda-ty)]
+                [(ErrTcType message)
+                  (ErrLowerExpr (lower-diagnostic-at-expr init message))]))]
+          [_ (lower-expr ctx state env type-env init)])
+        (lower-expr ctx state env type-env init))]))
 
 (define (lower-let-bindings
   [ctx : TcContext]
@@ -19338,6 +19485,17 @@
            (+ x n))))
      32)))")
 
+(define (compiler-lower-capturing-lambda-reference-source) : String
+  "(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [f : (-> i64) (lambda () : i64 (let [copy : (& n i64) r] 42))]
+      (f))))")
+
+(define (compiler-lower-capturing-lambda-reference-immediate-source) : String
+  "(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    ((lambda () : i64 (let [copy : (& n i64) r] 42)))))")
+
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
 ;; runtime-variable and deferred-f64 (#735) rejection paths.
@@ -19724,8 +19882,12 @@
   "(extern raw-make : (-> (MutPtr i64)))
 (define (main [n : u64]) : u64
   (let
+    [cell : i64 0]
+    [local : (MutPtr i64) (unsafe (ptr-addr-of cell))]
     [p : (MutPtr i64) (raw-make)]
     (unsafe
+      (ptr-write! local 42)
+      (ptr-read local)
       (ptr-write! p 41)
       (ptr-read p)
       (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
@@ -23856,6 +24018,54 @@
             (= (lower-test-function-indirect-call-count functions "main") 1))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-capturing-lambda-reference-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-reference-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-reference-immediate-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-reference-immediate-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-capturing-lambda-tests-ok?) : bool
   (and
     (compiler-lower-capturing-lambda-scalar-shape-ok?)
@@ -23865,7 +24075,11 @@
         (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
         (and
           (compiler-lower-capturing-lambda-aggregate-shape-ok?)
-          (compiler-lower-capturing-lambda-shadow-shape-ok?))))))
+          (and
+            (compiler-lower-capturing-lambda-shadow-shape-ok?)
+            (and
+              (compiler-lower-capturing-lambda-reference-shape-ok?)
+              (compiler-lower-capturing-lambda-reference-immediate-shape-ok?))))))))
 
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
@@ -24825,10 +25039,22 @@
 
 (define (compiler-lower-raw-pointer-ops-ok?) : bool
   (and
-    (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source))
+    (compiler-lower-raw-pointer-addr-of-shape-ok?)
     (and
       (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
       (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source)))))
+
+(define (compiler-lower-raw-pointer-addr-of-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-raw-pointer-ops-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (and
+              (= (lower-test-function-addr-of-count functions "main") 1)
+              (>= (lower-test-function-store-ptr-count functions "main") 2)))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-raw-pointer-call-value-source))

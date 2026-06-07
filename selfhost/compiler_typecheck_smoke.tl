@@ -48,6 +48,96 @@
     [r : (& x i64) (& x)]
     (lambda () : unit (let [copy : (& x i64) r] unit))))")
 
+(define (compiler-typecheck-reference-lambda-immediate-ok-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    ((lambda () : i64 (read r)))))")
+
+(define (compiler-typecheck-reference-lambda-local-ok-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [f : (-> i64) (lambda () : i64 (read r))]
+      (f))))")
+
+(define (compiler-typecheck-reference-lambda-while-ok-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [i : i64 0]
+      (let [f : (-> i64) (lambda () : i64 (read r))]
+        (begin
+          (while (< i 1)
+            (begin
+              (set! i (+ i 1))
+              (let [v : i64 (f)] unit)))
+          (f))))))")
+
+(define (compiler-typecheck-reference-lambda-nested-ok-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    ((lambda () : i64
+      (let [f : (-> i64) (lambda () : i64 (read r))]
+        (f))))))")
+
+(define (compiler-typecheck-reference-lambda-inner-arena-ok-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (with-arena scratch
+      (let [f : (-> i64) (lambda () : i64 (read r))]
+        (f)))))")
+
+(define (compiler-typecheck-reference-lambda-local-return-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : (-> i64)
+  (let [r : (& n i64) (& n)]
+    (let [f : (-> i64) (lambda () : i64 (read r))]
+      f)))")
+
+(define (compiler-typecheck-reference-lambda-store-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : (Tuple (-> i64))
+  (let [r : (& n i64) (& n)]
+    (let [f : (-> i64) (lambda () : i64 (read r))]
+      (tuple f))))")
+
+(define (compiler-typecheck-reference-lambda-pass-unknown-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (call-now [f : (-> i64)]) : i64 (f))
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [f : (-> i64) (lambda () : i64 (read r))]
+      (call-now f))))")
+
+(define (compiler-typecheck-reference-lambda-assign-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let
+      [f : (-> i64) (lambda () : i64 (read r))]
+      [g : (-> i64) (lambda () : i64 0)]
+      (begin
+        (set! g f)
+        (g)))))")
+
+(define (compiler-typecheck-reference-lambda-inner-arena-return-source) : String
+  "(define (read [r : (& n i64)]) : i64 42)
+(define (main) : (-> i64)
+  (with-arena scratch
+    (let [n : i64 1]
+      (let [r : (& n i64) (& n)]
+        (let [f : (-> i64) (lambda () : i64 (read r))]
+          f)))))")
+
+(define (compiler-typecheck-reference-lambda-mutable-reject-source) : String
+  "(define (read [r : (&mut n i64)]) : i64 42)
+(define (main [n : i64]) : i64
+  (let [r : (&mut n i64) (&mut n)]
+    ((lambda () : i64 (read r)))))")
+
 (define (compiler-typecheck-reference-tuple-return-ok-source) : String
   "(define (main [n : i64]) : (Tuple (& n i64) i64)
   (tuple (& n) 1))")
@@ -144,6 +234,46 @@
             (compiler-typecheck-reference-dyn-array-hidden-source)
             "typecheck: make-array element type is not supported"))))))
 
+(define (compiler-typecheck-reference-lambda-capture-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-immediate-ok-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-lambda-local-ok-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-reference-lambda-while-ok-source))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-reference-lambda-nested-ok-source))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-reference-lambda-inner-arena-ok-source))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-reference-lambda-local-return-source)
+                "typecheck: reference-capturing closure value would escape lexical scope")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-reference-lambda-store-source)
+                  "typecheck: reference-capturing closure value would escape lexical scope")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-reference-lambda-pass-unknown-source)
+                    "typecheck: reference-capturing closure value would escape lexical scope")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-reference-lambda-assign-source)
+                      "typecheck: reference-capturing closure value would escape lexical scope")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-reference-lambda-inner-arena-return-source)
+                        "typecheck: reference-capturing closure value would escape lexical scope")
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-reference-lambda-mutable-reject-source)
+                        "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope"))))))))))))
+
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reference-nested-local-source))
@@ -175,8 +305,10 @@
                     (compiler-typecheck-reference-lambda-capture-source)
                     "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
                   (and
-                    (compiler-typecheck-reference-return-container-tests-ok?)
-                    (compiler-typecheck-reference-dyn-array-tests-ok?)))))))))))
+                    (compiler-typecheck-reference-lambda-capture-tests-ok?)
+                    (and
+                      (compiler-typecheck-reference-return-container-tests-ok?)
+                      (compiler-typecheck-reference-dyn-array-tests-ok?))))))))))))
 
 (define (main) : i64
   (begin

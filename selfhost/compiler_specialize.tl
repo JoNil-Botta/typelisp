@@ -3987,6 +3987,7 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-ptr-null-check rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprPtrAddrOf name) (OkSpecExpr (ast-expr-ptr-addr-of name) state)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -4504,6 +4505,16 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrAddrOf name)
+      (match (spec-value-subst-lookup subs name)
+        [(SpecSomeString _)
+          (ErrSpecSubExpr
+            (spec-diagnostic-at-expr
+              expr
+              (string-append
+                "cannot take address of comptime value parameter '"
+                (string-append name "'"))))]
+        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of name))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -5100,6 +5111,16 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprPtrAddrOf name)
+      (match (spec-type-subst-lookup subs name)
+        [(SpecSomeString _)
+          (ErrSpecSubExpr
+            (spec-diagnostic-at-expr
+              expr
+              (string-append
+                "type-valued comptime parameter '"
+                (string-append name "' cannot be used as a runtime value"))))]
+        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of name))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]

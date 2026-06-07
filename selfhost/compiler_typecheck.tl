@@ -2633,9 +2633,15 @@
   "(extern raw-make : (-> (MutPtr i64)))
 (define (main [n : u64]) : u64
   (unsafe
-    (ptr-write! (raw-make) 41)
-    (ptr-read (raw-make))
-    (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 1))))")
+    (let
+      [cell : i64 0]
+      [local : (MutPtr i64) (ptr-addr-of cell)]
+      (begin
+        (ptr-write! local 41)
+        (ptr-read local)
+        (ptr-write! (raw-make) 41)
+        (ptr-read (raw-make))
+        (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 1))))))")
 
 (define (compiler-typecheck-raw-pointer-cast-source) : String
   "(define (main [n : u64]) : (Ptr u8)
@@ -2643,6 +2649,9 @@
 
 (define (compiler-typecheck-raw-pointer-safe-read-source) : String
   "(define (main [p : (Ptr i64)]) : i64 (ptr-read p))")
+
+(define (compiler-typecheck-raw-pointer-safe-addr-of-source) : String
+  "(define (main [x : i64]) : (MutPtr i64) (ptr-addr-of x))")
 
 (define (compiler-typecheck-raw-pointer-safe-marker-shadow-source) : String
   "(define (main [p : (Ptr i64)]) : i64
@@ -2663,6 +2672,14 @@
 (define (compiler-typecheck-raw-pointer-int-to-ptr-bad-source) : String
   "(define (main [b : bool]) : (Ptr i64) (unsafe (int->ptr b : (Ptr i64))))")
 
+(define (compiler-typecheck-raw-pointer-addr-of-global-source) : String
+  "(define x : i64 1)
+(define (main) : (MutPtr i64) (unsafe (ptr-addr-of x)))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-aggregate-source) : String
+  "(define (main [text : String]) : (MutPtr String)
+  (unsafe (ptr-addr-of text)))")
+
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
@@ -2674,27 +2691,39 @@
           "typecheck: ptr-read requires unsafe context")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
-            "typecheck: ptr-read requires unsafe context")
+            (compiler-typecheck-raw-pointer-safe-addr-of-source)
+            "typecheck: ptr-addr-of requires unsafe context")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-raw-pointer-write-const-source)
-              "typecheck: ptr-write! requires a MutPtr pointer operand")
+              (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
+              "typecheck: ptr-read requires unsafe context")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-raw-pointer-write-mismatch-source)
-                "typecheck: ptr-write! value type mismatch")
+                (compiler-typecheck-raw-pointer-write-const-source)
+                "typecheck: ptr-write! requires a MutPtr pointer operand")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-raw-pointer-offset-bad-source)
-                  "typecheck: ptr-offset requires an integer offset")
+                  (compiler-typecheck-raw-pointer-write-mismatch-source)
+                  "typecheck: ptr-write! value type mismatch")
                 (and
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-raw-pointer-cast-bad-target-source)
-                    "typecheck: ptr-cast target must be a raw pointer type")
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
-                    "typecheck: int->ptr requires an integer operand"))))))))))
+                    (compiler-typecheck-raw-pointer-offset-bad-source)
+                    "typecheck: ptr-offset requires an integer offset")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-raw-pointer-cast-bad-target-source)
+                      "typecheck: ptr-cast target must be a raw pointer type")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
+                        "typecheck: int->ptr requires an integer operand")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-raw-pointer-addr-of-global-source)
+                          "typecheck: ptr-addr-of requires a local or parameter name")
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-raw-pointer-addr-of-aggregate-source)
+                          "typecheck: ptr-addr-of supports local scalar cells only")))))))))))))
 
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and
@@ -5434,6 +5463,41 @@
 (defmacro (late [value : bool]) : bool value)
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-macro-runtime-import-order-source) : String
+  "(define (runtime-touch [text : String]) : unit
+  (when true
+    (unsafe
+      (let [ptr : (Ptr u8) (string-data text)] unit))))
+(module stdlib.core-macros)
+(defmacro (and [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (and ,@(expr-list-tail args))
+       false)))
+(defmacro (or [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool false)
+    `(if ,(expr-list-head args)
+       true
+       (or ,@(expr-list-tail args)))))
+(defmacro (when [condition : bool] [body : unit]) : unit
+  `(if ,condition ,body unit))
+(defmacro (unless [condition : bool] [body : unit]) : unit
+  `(if ,condition unit ,body))
+(export (macro and))
+(export (macro or))
+(export (macro when))
+(export (macro unless))
+(module main)
+(import \"stdlib/core_macros.tl\" module stdlib.core-macros :as core)
+(define (main) : i64
+  (let [value : i64 0]
+    (begin
+      (core/when true (set! value 21))
+      (core/unless false (set! value (+ value 21)))
+      (if (core/and (= value 42) (core/or false true)) value 0))))")
+
 (define (compiler-typecheck-macro-hygiene-capture-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
   `(let ([tmp : i64 1])
@@ -5547,9 +5611,12 @@
         (compiler-typecheck-error-ok?
           (compiler-typecheck-macro-missing-export-source)
           "typecheck: missing macro export hidden/missing")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-late-local-source)
-          "typecheck: local macro late is defined later")))))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-macro-late-local-source)
+            "typecheck: local macro late is defined later")
+          (compiler-typecheck-ok?
+            (compiler-typecheck-macro-runtime-import-order-source)))))))
 
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.

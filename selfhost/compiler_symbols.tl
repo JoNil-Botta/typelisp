@@ -361,6 +361,22 @@
           decls
           owner-names))]))
 
+(define (compiler-symbols-remove-macro-alias-if-handle
+  [symbols : CompilerSymbols]
+  [name : String]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (match (compiler-symbol-map-lookup macros name)
+        [(SomeI64 existing)
+          (if (= existing handle)
+            (match (string-i64-map-remove macros name)
+              [(StringI64MapRemoveOk next-macros)
+                (CompilerSymbols values types next-macros decls owner-names)]
+              [(StringI64MapRemoveMissing _) symbols])
+            symbols)]
+        [(NoneI64) symbols])]))
+
 (define (compiler-registries-add-variant-alias
   [registries : CompilerRegistries]
   [name : String]
@@ -1413,6 +1429,99 @@
         (compiler-symbols-add-decl-alias-in-module symbols alias inner index))]
     [_ symbols]))
 
+(define (compiler-symbols-remove-decl-macro-alias
+  [symbols : CompilerSymbols]
+  [decl : AstDecl]
+  [index : i64]) : CompilerSymbols
+  (match decl
+    [(AstDeclDefMacro name _ _ _)
+      (compiler-symbols-remove-macro-alias-if-handle
+        symbols
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (compiler-symbols-remove-decl-macro-alias symbols template index))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (compiler-symbols-remove-decl-macro-alias symbols inner index))]
+    [_ symbols]))
+
+;; An explicit `module ... as alias` import should expose macros as `alias/name`
+;; without leaving the module's legacy bare macro alias in the importer.
+(define (compiler-symbols-remove-module-macro-aliases-list
+  [symbols : CompilerSymbols]
+  [decls : AstDeclList]
+  [target-module : String]
+  [index : i64]
+  [module : String]) : CompilerSymbols
+  (match decls
+    [(AstDeclNil) symbols]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
+            (compiler-symbols-remove-module-macro-aliases-list
+              symbols
+              rest
+              target-module
+              index
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (compiler-symbols-remove-module-macro-aliases-list
+              symbols
+              rest
+              target-module
+              index
+              module)]
+          [(AstDeclExport _)
+            (compiler-symbols-remove-module-macro-aliases-list
+              symbols
+              rest
+              target-module
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (compiler-symbols-remove-module-macro-aliases-list
+              symbols
+              rest
+              target-module
+              index
+              next-module)]
+          [(AstDeclTest _ _ _)
+            (compiler-symbols-remove-module-macro-aliases-list
+              symbols
+              rest
+              target-module
+              index
+              module)]
+          [_
+            (let
+              [next-symbols : CompilerSymbols
+                (if (string-eq module target-module)
+                  (compiler-symbols-remove-decl-macro-alias symbols decl index)
+                  symbols)]
+              (compiler-symbols-remove-module-macro-aliases-list
+                next-symbols
+                rest
+                target-module
+                (+ index 1)
+                module))]))]))
+
+(define (compiler-symbols-remove-module-macro-aliases
+  [symbols : CompilerSymbols]
+  [decls : AstDeclList]
+  [target-module : String]) : CompilerSymbols
+  (compiler-symbols-remove-module-macro-aliases-list
+    symbols
+    decls
+    target-module
+    0
+    ""))
+
 (define (compiler-symbols-add-module-aliases-list
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
@@ -1514,7 +1623,10 @@
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)))
               (compiler-symbols-add-module-aliases
-                symbols
+                (compiler-symbols-remove-module-macro-aliases
+                  symbols
+                  all-decls
+                  target-module)
                 all-decls
                 target-module
                 alias)]
@@ -3392,6 +3504,12 @@
   "(module data)
 (define answer : i64 7)
 (define (get) : i64 answer)
+(defmacro (all [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (all ,@(expr-list-tail args))
+       false)))
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
 (module main)
@@ -3415,28 +3533,42 @@
                 (and
                   (=
                     (compiler-symbol-lookup-score
-                      (compiler-symbols-lookup-type symbols "d/Point")
-                      (compiler-symbol-kind-defstruct)
-                      3)
+                      (compiler-symbols-lookup-macro symbols "d/all")
+                      (compiler-symbol-kind-defmacro)
+                      2)
                     1)
                   (and
                     (=
-                      (compiler-registry-lookup-score
-                        (compiler-registries-lookup-variant registries "d/Some")
-                        (compiler-symbol-kind-enum-variant)
-                        2
-                        1)
+                      (compiler-symbols-miss-score
+                        (compiler-symbols-lookup-macro symbols "all"))
                       1)
-                    (=
-                      (compiler-registry-lookup-score
-                        (compiler-registries-lookup-struct-field
-                          registries
-                          "d/Point"
-                          "x")
-                        (compiler-symbol-kind-struct-field)
-                        3
-                        0)
-                      1))))]
+                    (and
+                      (=
+                        (compiler-symbol-lookup-score
+                          (compiler-symbols-lookup-type symbols "d/Point")
+                          (compiler-symbol-kind-defstruct)
+                          4)
+                        1)
+                      (and
+                        (=
+                          (compiler-registry-lookup-score
+                            (compiler-registries-lookup-variant
+                              registries
+                              "d/Some")
+                            (compiler-symbol-kind-enum-variant)
+                            3
+                            1)
+                          1)
+                        (=
+                          (compiler-registry-lookup-score
+                            (compiler-registries-lookup-struct-field
+                              registries
+                              "d/Point"
+                              "x")
+                            (compiler-symbol-kind-struct-field)
+                            4
+                            0)
+                          1))))))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))

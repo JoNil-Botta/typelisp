@@ -8,9 +8,9 @@
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
 ;; but later parser work decides when they are populated.
-(import "stdlib/hashmap.tl")
+(import "../stdlib/hashmap.tl")
 
-(import "stdlib/hash.tl")
+(import "../stdlib/hash.tl")
 
 (defstruct AstSourceSpan
   (start-line i64)

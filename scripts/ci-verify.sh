@@ -126,10 +126,7 @@ stage1_driver_staged_symbols() {
         fs-mkdir-status \
         fs-remove-file-status \
         fs-remove-dir-status \
-        fs-rename-status \
-        fs-file-kind-status \
-        fs-file-size-status \
-        fs-file-size
+        fs-rename-status
 }
 
 stage1_driver_prebuild_failed_for_staged_symbol() {

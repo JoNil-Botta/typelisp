@@ -168,9 +168,7 @@ names so runtime-plan additions must be assigned an owner first.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
   wrappers around OS/profile surfaces: `tl_profile_alloc_total`,
   `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
-  `tl_profile_alloc_reset_peak`, `.L_tl_fs_file_kind_status`,
-  `.L_tl_fs_file_size_status`, `.L_tl_fs_file_size`. The fs metadata probes are
-  tracked by #2047.
+  `tl_profile_alloc_reset_peak`.
 - **Stdlib TypeLisp migration target:** compatibility runtime helpers whose
   preferred long-term owner is TypeLisp stdlib code or a narrower stdlib FFI
   boundary: `tl_substring`, `tl_string_concat`, `tl_string_concat3`,

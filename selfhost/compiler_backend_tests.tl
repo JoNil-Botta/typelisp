@@ -2814,33 +2814,19 @@
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
-  (and
-    (and
-      (backend-and4
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_profile_alloc_total")
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_profile_alloc_live")
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_profile_alloc_peak")
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          "tl_profile_alloc_reset_peak"))
-      (and
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          ".L_tl_fs_file_kind_status")
-        (and
-          (compiler-backend-runtime-helper-inventory-symbol-ok?
-            plan
-            ".L_tl_fs_file_size_status")
-          (compiler-backend-runtime-helper-inventory-symbol-ok?
-            plan
-            ".L_tl_fs_file_size"))))
-    true))
+  (backend-and4
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_profile_alloc_total")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_profile_alloc_live")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_profile_alloc_peak")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_profile_alloc_reset_peak")))
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-string-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -2953,6 +2939,20 @@
       "tl_process_wait")
     true))
 
+(define (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (backend-and4
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_fs_file_kind_status")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_fs_file_size_status")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      ".L_tl_fs_file_size")
+    true))
+
 (define (compiler-backend-runtime-helper-inventory-retired-io-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (backend-and8
@@ -3042,7 +3042,10 @@
       (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
       (and
         (compiler-backend-runtime-helper-inventory-retired-process-ok? plan)
-        (compiler-backend-runtime-helper-inventory-negative-ok? plan)))))
+        (and
+          (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok?
+            plan)
+          (compiler-backend-runtime-helper-inventory-negative-ok? plan))))))
 
 (define (compiler-backend-memory-op-ok?) : bool
   (and
@@ -3778,7 +3781,20 @@
       (and
         (not
           (compiler-backend-string-contains? asm ".L_tl_fs_read_dir_status:\n"))
-        (not (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n"))))))
+        (and
+          (not (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n"))
+          (backend-and4
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_file_kind_status:\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_file_size_status:\n"))
+            (not
+              (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n"))
+            true))))))
 
 (define (compiler-backend-fs-runtime-source) : String
   "(extern fs-process-id (:symbol \"tl_fs_process_id\") : (-> i64))
@@ -3830,6 +3846,13 @@
     (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir_status"))
     (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir"))))
 
+(define (compiler-backend-fs-metadata-runtime-removed-ok?) : bool
+  (backend-and4
+    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_kind_status"))
+    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_size_status"))
+    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_size"))
+    true))
+
 (define (compiler-backend-windows-private-fs-no-crt? [asm : String]) : bool
   (and
     (backend-and4
@@ -3840,149 +3863,6 @@
     (and
       (not (compiler-backend-string-contains? asm "    .extern _errno\n"))
       (not (compiler-backend-string-contains? asm "    call _errno\n")))))
-
-(define (compiler-backend-fs-file-kind-runtime-source) : String
-  "(extern fs-runtime-file-kind-status (:symbol \".L_tl_fs_file_kind_status\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(define (fs-file-kind-status [path : String]) : i64
-  (fs-runtime-file-kind-status
-    (unsafe (string-data path))
-    (string-length path)))
-(define (main [path : String]) : i64 (fs-file-kind-status path))")
-
-(define (compiler-backend-fs-file-kind-runtime-ok?) : bool
-  (match (compiler-backend-emit-source
-    (compiler-backend-fs-file-kind-runtime-source))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm ".L_tl_fs_file_kind_status:\n")
-        (and
-          (compiler-backend-string-contains? asm "    movq $262, %rax\n")
-          (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".globl tl_fs_file_kind_status\n"))
-            (not
-              (compiler-backend-string-contains?
-                asm
-                "\ntl_fs_file_kind_status:\n")))))]
-    [(ErrCompilerBackend _) false]))
-
-(define (compiler-backend-windows-fs-file-kind-runtime-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-fs-file-kind-runtime-source)
-    (BackendTargetWindows))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm ".L_tl_fs_file_kind_status:\n")
-        (and
-          (and
-            (compiler-backend-string-contains?
-              asm
-              "    .extern GetFileAttributesExA\n")
-            (and
-              (compiler-backend-string-contains?
-                asm
-                "    call GetFileAttributesExA\n")
-              (compiler-backend-string-contains? asm "    testl $16, %eax\n")))
-          (and
-            (backend-and4
-              (not (compiler-backend-string-contains? asm "    syscall"))
-              (not (compiler-backend-string-contains? asm "_stat64"))
-              (not (compiler-backend-string-contains? asm "    call _errno\n"))
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    .extern GetLastError\n")
-                (compiler-backend-windows-private-fs-no-crt? asm)))
-            (and
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".globl tl_fs_file_kind_status\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "\ntl_fs_file_kind_status:\n"))))))]
-    [(ErrCompilerBackend _) false]))
-
-(define (compiler-backend-fs-file-size-runtime-source) : String
-  "(extern fs-runtime-file-size-status (:symbol \".L_tl_fs_file_size_status\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(extern fs-runtime-file-size (:symbol \".L_tl_fs_file_size\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(define (fs-file-size-status [path : String]) : i64
-  (fs-runtime-file-size-status (unsafe (string-data path)) (string-length path)))
-(define (fs-file-size [path : String]) : i64
-  (fs-runtime-file-size (unsafe (string-data path)) (string-length path)))
-(define (main [path : String]) : i64
-  (+ (fs-file-size-status path) (fs-file-size path)))")
-
-(define (compiler-backend-fs-file-size-runtime-ok?) : bool
-  (match (compiler-backend-emit-source
-    (compiler-backend-fs-file-size-runtime-source))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm ".L_tl_fs_file_size_status:\n")
-        (and
-          (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n")
-          (and
-            (compiler-backend-string-contains? asm "    movq $262, %rax\n")
-            (and
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".globl tl_fs_file_size_status\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "\ntl_fs_file_size_status:\n"))))))]
-    [(ErrCompilerBackend _) false]))
-
-(define (compiler-backend-windows-fs-file-size-runtime-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-fs-file-size-runtime-source)
-    (BackendTargetWindows))
-    [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm ".L_tl_fs_file_size_status:\n")
-        (and
-          (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n")
-          (and
-            (and
-              (compiler-backend-string-contains?
-                asm
-                "    .extern GetFileAttributesExA\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    call GetFileAttributesExA\n")
-                (compiler-backend-string-contains?
-                  asm
-                  "    movl 32(%r12), %eax\n")))
-            (and
-              (backend-and4
-                (not (compiler-backend-string-contains? asm "    syscall"))
-                (not (compiler-backend-string-contains? asm "_stat64"))
-                (not
-                  (compiler-backend-string-contains? asm "    call _errno\n"))
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    .extern GetLastError\n")
-                  (compiler-backend-windows-private-fs-no-crt? asm)))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".globl tl_fs_file_size_status\n"))))))]
-    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-current-dir-source) : String
   "(extern tl_fs_current_dir_status : (-> i64))
@@ -5190,78 +5070,70 @@
             (and
               (and
                 (compiler-backend-fs-read-dir-runtime-removed-ok?)
-                (and
-                  (compiler-backend-fs-file-kind-runtime-ok?)
-                  (compiler-backend-fs-file-size-runtime-ok?)))
+                (compiler-backend-fs-metadata-runtime-removed-ok?))
               (and
+                (compiler-backend-fs-current-dir-extern-only-ok?)
                 (and
-                  (compiler-backend-fs-read-dir-runtime-removed-ok?)
+                  (compiler-backend-windows-fs-current-dir-extern-only-ok?)
                   (and
-                    (compiler-backend-windows-fs-file-kind-runtime-ok?)
-                    (compiler-backend-windows-fs-file-size-runtime-ok?)))
-                (and
-                  (compiler-backend-fs-current-dir-extern-only-ok?)
-                  (and
-                    (compiler-backend-windows-fs-current-dir-extern-only-ok?)
-                    (and
-                      (backend-and8
-                        (compiler-backend-user-helper-name-ok?)
-                        (compiler-backend-file-handle-open-close-runtime-ok?)
-                        (and
-                          (and
-                            (compiler-backend-string-runtime-ok?)
-                            (compiler-backend-shadowed-string-helpers-ok?))
-                          (compiler-backend-windows-print-runtime-ok?))
-                        (and
-                          (compiler-backend-env-runtime-ok?)
-                          (compiler-backend-stdlib-env-runtime-ok?))
-                        (compiler-backend-expanded-scalar-regs-ok?)
-                        (compiler-backend-regalloc-f64-ok?)
-                        (compiler-backend-runtime-coexist-ok?)
-                        (and
-                          (compiler-backend-module-symbol-ok?)
-                          (and
-                            (compiler-backend-program-argv-entry-capture-ok?)
-                            (compiler-backend-arg-runtime-abort-ok?))))
+                    (backend-and8
+                      (compiler-backend-user-helper-name-ok?)
+                      (compiler-backend-file-handle-open-close-runtime-ok?)
                       (and
                         (and
-                          (compiler-backend-windows-env-runtime-ok?)
-                          (and
-                            (compiler-backend-extern-metadata-symbol-ok?)
-                            (and
-                              (compiler-backend-varargs-ffi-ok?)
-                              (compiler-backend-c-abi-aggregate-ok?))))
+                          (compiler-backend-string-runtime-ok?)
+                          (compiler-backend-shadowed-string-helpers-ok?))
+                        (compiler-backend-windows-print-runtime-ok?))
+                      (and
+                        (compiler-backend-env-runtime-ok?)
+                        (compiler-backend-stdlib-env-runtime-ok?))
+                      (compiler-backend-expanded-scalar-regs-ok?)
+                      (compiler-backend-regalloc-f64-ok?)
+                      (compiler-backend-runtime-coexist-ok?)
+                      (and
+                        (compiler-backend-module-symbol-ok?)
                         (and
-                          (backend-and4
-                            (compiler-backend-string-ref-shape-ok?)
-                            (compiler-backend-fixed-array-shape-ok?)
-                            (compiler-backend-raw-pointer-fixture-shape-ok?)
-                            (and
-                              (compiler-backend-box-ok?)
-                              (compiler-backend-inline-aggregate-storage-ok?)))
+                          (compiler-backend-program-argv-entry-capture-ok?)
+                          (compiler-backend-arg-runtime-abort-ok?))))
+                    (and
+                      (and
+                        (compiler-backend-windows-env-runtime-ok?)
+                        (and
+                          (compiler-backend-extern-metadata-symbol-ok?)
                           (and
-                            (compiler-backend-tuple-ok?)
+                            (compiler-backend-varargs-ffi-ok?)
+                            (compiler-backend-c-abi-aggregate-ok?))))
+                      (and
+                        (backend-and4
+                          (compiler-backend-string-ref-shape-ok?)
+                          (compiler-backend-fixed-array-shape-ok?)
+                          (compiler-backend-raw-pointer-fixture-shape-ok?)
+                          (and
+                            (compiler-backend-box-ok?)
+                            (compiler-backend-inline-aggregate-storage-ok?)))
+                        (and
+                          (compiler-backend-tuple-ok?)
+                          (and
+                            (compiler-backend-export-symbol-tests-ok?)
                             (and
-                              (compiler-backend-export-symbol-tests-ok?)
+                              (compiler-backend-closure-emit-shape-ok?)
                               (and
-                                (compiler-backend-closure-emit-shape-ok?)
-                                (and
-                                  (compiler-backend-alloc-runtime-shape-ok?)
-                                  (backend-and8
-                                    (compiler-backend-scalar-wide-ops-ok?)
-                                    (compiler-backend-scalar-div-mod-ok?)
+                                (compiler-backend-alloc-runtime-shape-ok?)
+                                (backend-and8
+                                  (compiler-backend-scalar-wide-ops-ok?)
+                                  (compiler-backend-scalar-div-mod-ok?)
+                                  (and
+                                    (compiler-backend-narrow-scalar-instr-ok?)
+                                    (compiler-backend-global-compare-width-ok?))
+                                  (compiler-backend-f64-abi-ok?)
+                                  (compiler-backend-win64-f64-abi-ok?)
+                                  (compiler-backend-aggregate-storage-shape-ok?)
+                                  (compiler-backend-shift-guard-ok?)
+                                  (and
+                                    (compiler-backend-windows-runtime-guard-ok?)
                                     (and
-                                      (compiler-backend-narrow-scalar-instr-ok?)
-                                      (compiler-backend-global-compare-width-ok?))
-                                    (compiler-backend-f64-abi-ok?)
-                                    (compiler-backend-win64-f64-abi-ok?)
-                                    (compiler-backend-aggregate-storage-shape-ok?)
-                                    (compiler-backend-shift-guard-ok?)
-                                    (and
-                                      (compiler-backend-windows-runtime-guard-ok?)
-                                      (and
-                                        (compiler-backend-simd-vector-ok?)
-                                        (compiler-backend-dispatch-variant-mode-ok?))))))))))))))))))))
+                                      (compiler-backend-simd-vector-ok?)
+                                      (compiler-backend-dispatch-variant-mode-ok?)))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

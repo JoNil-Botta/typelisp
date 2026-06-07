@@ -188,12 +188,16 @@
     (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
     "os-windows"))
 
+(define (compiler-driver-enable-language-cfgs [cfgs : SymI64Env]) : SymI64Env
+  (compiler-cfg-enable cfgs "feature-ptr-addr-of"))
+
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
   [cfgs : SymI64Env]) : SymI64Env
-  (match target
-    [(BackendTargetLinux) (compiler-driver-enable-linux-cfgs cfgs)]
-    [(BackendTargetWindows) (compiler-driver-enable-windows-cfgs cfgs)]))
+  (compiler-driver-enable-language-cfgs
+    (match target
+      [(BackendTargetLinux) (compiler-driver-enable-linux-cfgs cfgs)]
+      [(BackendTargetWindows) (compiler-driver-enable-windows-cfgs cfgs)])))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]

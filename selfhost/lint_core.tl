@@ -990,6 +990,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (lint-walk-expr inner threshold acc))]
+    [(AstExprPtrAddrOf _) acc]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]

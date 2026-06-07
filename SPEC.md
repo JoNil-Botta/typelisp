@@ -3512,6 +3512,7 @@ Initial raw pointer operation set:
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
 | `(ptr-cast p : (Ptr T))` / `(ptr-cast p : (MutPtr T))` | Unsafe | raw pointer -> requested raw pointer type | Includes const/mutable pointer casts; no implicit `MutPtr` to `Ptr` coercion in v1. |
+| `(ptr-addr-of name)` | Unsafe | local/parameter `name : T` -> `(MutPtr T)` | V1 supports local or parameter scalar cells only. The pointer is valid only while that stack slot is live; escaping or storing it is the caller's responsibility. |
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
 
@@ -3525,10 +3526,10 @@ interior-NUL input, or too-small buffers; it does not allocate, does not create
 implicit `String -> Ptr` coercions, and does not extend the input String's
 lifetime.
 
-Deferred raw pointer operations: address-of local/global/field expressions,
-slice views, volatile/atomic access, provenance tracking, pointer comparisons
-beyond `ptr-null?`, pointer-to-function casts, and any borrow-checked reference
-surface. Those are follow-ups to the raw pointer/FFI track
+Deferred raw pointer operations: address-of globals, fields, array elements, or
+temporaries; slice views; volatile/atomic access; provenance tracking; pointer
+comparisons beyond `ptr-null?`; pointer-to-function casts; and any
+borrow-checked reference surface. Those are follow-ups to the raw pointer/FFI track
 (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 
 ---

@@ -919,6 +919,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (tltest-reach-mark-expr inner names))]
+    [(AstExprPtrAddrOf _) names]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]

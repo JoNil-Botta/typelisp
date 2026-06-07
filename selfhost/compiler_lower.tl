@@ -2254,6 +2254,7 @@
       (let
         [value : AstExpr (box-get value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
+    [(AstExprPtrAddrOf _) roots]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -2764,6 +2765,7 @@
       (let
         [value : AstExpr (box-get value-box)]
         (lower-reach-expr all-functions names state value))]
+    [(AstExprPtrAddrOf _) state]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -9525,6 +9527,24 @@
                     (IrValueI64 0)
                     (AstTyBool)))])]
           [(ErrLowerExpr diag) (ErrLowerExpr diag)]))]
+    [(AstExprPtrAddrOf name)
+      (match (sym-i64-lookup env name)
+        [(SomeI64 local-id)
+          (match (lower-state-alloc-var state)
+            [(LowerAlloc allocated var-id)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-emit-at-expr
+                    allocated
+                    (IrInstrAddrOf var-id local-id)
+                    origin)
+                  (IrValueVar var-id)
+                  expr-ty))])]
+        [(NoneI64)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              "lower: ptr-addr-of requires local or parameter storage"))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (box-get ptr-box)]
@@ -19210,8 +19230,12 @@
   "(extern raw-make : (-> (MutPtr i64)))
 (define (main [n : u64]) : u64
   (let
+    [cell : i64 0]
+    [local : (MutPtr i64) (unsafe (ptr-addr-of cell))]
     [p : (MutPtr i64) (raw-make)]
     (unsafe
+      (ptr-write! local 42)
+      (ptr-read local)
       (ptr-write! p 41)
       (ptr-read p)
       (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
@@ -24290,10 +24314,22 @@
 
 (define (compiler-lower-raw-pointer-ops-ok?) : bool
   (and
-    (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source))
+    (compiler-lower-raw-pointer-addr-of-shape-ok?)
     (and
       (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
       (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source)))))
+
+(define (compiler-lower-raw-pointer-addr-of-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-raw-pointer-ops-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (and
+              (= (lower-test-function-addr-of-count functions "main") 1)
+              (>= (lower-test-function-store-ptr-count functions "main") 2)))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-raw-pointer-call-value-source))

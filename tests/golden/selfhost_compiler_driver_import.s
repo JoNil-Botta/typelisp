@@ -1,6 +1,6 @@
 .data
-.globl _tl_shared_u2etl_colon_colonshared
-_tl_shared_u2etl_colon_colonshared:
+.globl _tl_shared_shared
+_tl_shared_shared:
     .quad 2
     .section .rodata
 .L_tl_str_data_l30_684964583_949472601:
@@ -57,8 +57,8 @@ tl_current_arena:
 
 .text
 .globl _start
-.globl _tl_stdlib_slashruntime_u2etl_colon_colonruntime_ptr_arg
-_tl_stdlib_slashruntime_u2etl_colon_colonruntime_ptr_arg:
+.globl _tl_stdlib_runtime_runtime_ptr_arg
+_tl_stdlib_runtime_runtime_ptr_arg:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
@@ -70,8 +70,8 @@ _tl_stdlib_slashruntime_u2etl_colon_colonruntime_ptr_arg:
     leave
     ret
 
-.globl _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write
-_tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write:
+.globl _tl_stdlib_runtime_runtime_os_write
+_tl_stdlib_runtime_runtime_os_write:
     pushq %rbp
     movq %rsp, %rbp
     subq $48, %rsp
@@ -80,7 +80,7 @@ _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write:
     movq %rdx, -24(%rbp)
 .Lf1_entry:
     movq -16(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_ptr_arg
+    call _tl_stdlib_runtime_runtime_ptr_arg
     movq %rax, -40(%rbp)
     movq $1, %rax
     pushq %rax
@@ -100,8 +100,8 @@ _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write:
     leave
     ret
 
-.globl _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
-_tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit:
+.globl _tl_stdlib_runtime_runtime_os_exit
+_tl_stdlib_runtime_runtime_os_exit:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
@@ -116,13 +116,13 @@ _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit:
     syscall
     movq %rax, -24(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq $0, %rax
     leave
     ret
 
-.globl _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
-_tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write:
+.globl _tl_stdlib_runtime_runtime_abort_write
+_tl_stdlib_runtime_runtime_abort_write:
     pushq %rbp
     movq %rsp, %rbp
     subq $80, %rsp
@@ -137,7 +137,7 @@ _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write:
     movq $2, %rdi
     movq -48(%rbp), %rsi
     movq -24(%rbp), %rdx
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write
+    call _tl_stdlib_runtime_runtime_os_write
     movq %rax, -72(%rbp)
     leave
     ret
@@ -151,10 +151,10 @@ tl_oob_abort:
     leaq .L_tl_str_l30_684964583_949472601(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq %rax, -32(%rbp)
 
 .globl tl_div_abort
@@ -166,10 +166,10 @@ tl_div_abort:
     leaq .L_tl_str_l40_150886025_1314050685(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $135, %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq %rax, -32(%rbp)
 
 .globl tl_shift_abort
@@ -181,10 +181,10 @@ tl_shift_abort:
     leaq .L_tl_str_l29_1993323280_919009571(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $129, %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq %rax, -32(%rbp)
 
 .globl tl_abort_string
@@ -195,10 +195,10 @@ tl_abort_string:
     movq %rdi, -8(%rbp)
 .Lf7_entry:
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq %rax, -32(%rbp)
 
 .globl tl_array_fill8
@@ -276,10 +276,10 @@ tl_region_abort:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq %rax, -32(%rbp)
 
 .globl tl_oom_abort
@@ -291,20 +291,20 @@ tl_oom_abort:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %rax
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_abort_write
+    call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_exit
+    call _tl_stdlib_runtime_runtime_os_exit
     movq %rax, -32(%rbp)
 
-.globl _tl_helper_u2etl_colon_colonhelper
-_tl_helper_u2etl_colon_colonhelper:
+.globl _tl_helper_helper
+_tl_helper_helper:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
 .Lf12_entry:
     movq $38, %rax
-    movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
+    movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
     movq %rax, -16(%rbp)
     movq -16(%rbp), %rax
@@ -317,10 +317,10 @@ main:
     movq %rsp, %rbp
     subq $16, %rsp
 .Lf13_entry:
-    call _tl_helper_u2etl_colon_colonhelper
+    call _tl_helper_helper
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax
-    movq _tl_shared_u2etl_colon_colonshared(%rip), %r8
+    movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
     movq %rax, -16(%rbp)
     movq -16(%rbp), %rax

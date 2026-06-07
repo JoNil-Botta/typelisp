@@ -1092,16 +1092,53 @@
     [i : i64 0]
     [n : i64 (string-length name)]
     [out : String ""]
+    [emitted : bool false]
+    [pending-separator : bool false]
     (begin
       (while (< i n)
-        (begin
-          (set!
-            out
-            (string-append
-              out
-              (compiler-load-package-symbol-char name i (string-ref name i))))
-          (set! i (+ i 1))))
+        (if (compiler-load-package-tl-extension-at? name i)
+          (set! i (+ i 3))
+          (let
+            [c : char (string-ref name i)]
+            (if (compiler-load-package-symbol-separator? c)
+              (begin
+                (if emitted
+                  (set! pending-separator true)
+                  unit)
+                (set! i (+ i 1)))
+              (begin
+                (if pending-separator
+                  (begin
+                    (set! out (string-append out "_"))
+                    (set! pending-separator false))
+                  unit)
+                (set!
+                  out
+                  (string-append
+                    out
+                    (compiler-load-package-symbol-char name i c)))
+                (set! emitted true)
+                (set! i (+ i 1)))))))
       out)))
+
+(define (compiler-load-package-symbol-separator? [c : char]) : bool
+  (or (= c #/') (or (= c #\\') (or (= c #:') (= c #.')))))
+
+(define (compiler-load-package-tl-extension-at? [name : String] [idx : i64]) : bool
+  (let
+    [n : i64 (string-length name)]
+    [after : i64 (+ idx 3)]
+    (and
+      (<= after n)
+      (and
+        (= (string-ref name idx) #.')
+        (and
+          (= (string-ref name (+ idx 1)) #t')
+          (and
+            (= (string-ref name (+ idx 2)) #l')
+            (or
+              (= after n)
+              (compiler-load-package-symbol-separator? (string-ref name after)))))))))
 
 (define (compiler-load-package-user-symbol [name : String]) : String
   (if (string-eq name "main")
@@ -4221,7 +4258,7 @@
       [(AstDeclExtern _ metadata _)
         (string-eq
           (ast-extern-metadata-symbol metadata)
-          "_tl_dep_slashsrc_slashlib_u2etl_colon_colonhelper")]
+          "_tl_dep_src_lib_helper")]
       [_ false])))
 
 (define (compiler-load-self-test) : i64

@@ -360,8 +360,8 @@ EOF
     assert_contains "$WORKDIR/build-package.stdout" "Generated: $MATH_ARCHIVE"
     assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_BIN"
     assert_contains "$PKG_ASM" "main:"
-    assert_contains "$PKG_ASM" ".extern _tl_stage1_math_slashsrc_slashlib_u2etl_colon_colonadd_one"
-    assert_not_contains "$PKG_ASM" "_tl_stage1_math_slashsrc_slashlib_u2etl_colon_colonadd_one:"
+    assert_contains "$PKG_ASM" ".extern _tl_stage1_math_src_lib_add_one"
+    assert_not_contains "$PKG_ASM" "_tl_stage1_math_src_lib_add_one:"
     set +e
     "$PKG_BIN" > "$WORKDIR/build-package-bin.stdout" 2> "$WORKDIR/build-package-bin.stderr"
     pkg_bin_status=$?

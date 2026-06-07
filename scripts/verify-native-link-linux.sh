@@ -322,10 +322,10 @@ EOF
     assert_file_exact "$_again" "$_asm" compiler-driver-import-deterministic
     assert_file_exact "$_asm" "$ROOT/tests/golden/selfhost_compiler_driver_import.s" compiler-driver-import-golden
     for _snippet in \
-        "_tl_shared_u2etl_colon_colonshared:" \
-        "_tl_helper_u2etl_colon_colonhelper:" \
-        "call _tl_helper_u2etl_colon_colonhelper" \
-        "_tl_shared_u2etl_colon_colonshared(%rip)" \
+        "_tl_shared_shared:" \
+        "_tl_helper_helper:" \
+        "call _tl_helper_helper" \
+        "_tl_shared_shared(%rip)" \
         "_start:"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-import
@@ -366,8 +366,8 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-pkg-import "$_pkg/src/main.tl" "$_asm"
     run_compiler_driver "$_driver" compiler-driver-pkg-import-again "$_pkg/src/main.tl" "$_again"
     assert_file_exact "$_again" "$_asm" compiler-driver-pkg-import-deterministic
-    assert_contains "$_asm" "_u2etl_colon_colonadd_one:" compiler-driver-pkg-import
-    if ! grep -F "call _tl_" "$_asm" | grep -F "_u2etl_colon_colonadd_one" >/dev/null 2>&1; then
+    assert_contains "$_asm" "math_src_lib_add_one:" compiler-driver-pkg-import
+    if ! grep -F "call _tl_" "$_asm" | grep -F "math_src_lib_add_one" >/dev/null 2>&1; then
         fail "compiler-driver-pkg-import missing qualified add-one call"
     fi
     assemble_link_run_asm compiler-driver-pkg-import "$_asm" 42 - - 1
@@ -510,9 +510,9 @@ EOF
     echo "[selfhost-native] compiler_driver stdlib JSON import graph"
     run_compiler_driver "$_driver" compiler-driver-stdlib-json "$_src" "$_asm"
     for _snippet in \
-        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse" \
-        "_tl_stdlib_slashjson_u2etl_colon_colonjson_stringify" \
-        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse_object"
+        "_tl_stdlib_json_json_parse" \
+        "_tl_stdlib_json_json_stringify" \
+        "_tl_stdlib_json_json_parse_object"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-stdlib-json
     done

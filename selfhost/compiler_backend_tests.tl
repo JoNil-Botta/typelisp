@@ -1938,7 +1938,7 @@
             (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
             (compiler-backend-string-contains?
               asm
-              ".L_tl_alloc_abort:\n    jmp tl_oom_abort\n")
+              ".L_tl_alloc_abort:\n    sub $32, %rsp\n    call tl_oom_abort\n")
             (not (compiler-backend-string-contains? asm "    call _write\n")))]
         [no-process-runtime : bool
           (backend-and4
@@ -2028,7 +2028,7 @@
           (backend-and4
             (compiler-backend-string-contains?
               asm
-              ".L_tl_alloc_abort:\n    jmp tl_oom_abort\n")
+              ".L_tl_alloc_abort:\n    sub $32, %rsp\n    call tl_oom_abort\n")
             (not
               (compiler-backend-string-contains? asm ".L_tl_win_write_abort"))
             (not (compiler-backend-string-contains? asm "    call WriteFile\n"))

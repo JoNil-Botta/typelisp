@@ -13012,7 +13012,8 @@ tl_alloc:
     pop %rbp
     ret
 .L_tl_alloc_abort:
-    jmp tl_oom_abort
+    sub $32, %rsp
+    call tl_oom_abort
 
 ")))))
 

@@ -4558,6 +4558,16 @@
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyStr) true]
+    [(AstTyArray elem-ty _)
+      (not (tc-type-contains-reference? (box-get elem-ty)))]
+    [(AstTyDynArray elem-ty)
+      (not (tc-type-contains-reference? (box-get elem-ty)))]
+    [_ false]))
+
+(define (lower-borrow-place-value-reference? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyArray _ _) true]
+    [(AstTyDynArray _) true]
     [_ false]))
 
 (define (lower-supported-reference-type-list-with-stack?
@@ -4780,13 +4790,15 @@
           [referent-ty : AstType (tc-borrow-referent-type place-ty)]
           (match (sym-i64-lookup env name)
             [(SomeI64 id)
-              (OkLowerExpr
-                (lower-borrow-copy-to-storage
-                  ctx
-                  state
-                  (IrValueVar id)
-                  referent-ty
-                  result-ty))]
+              (if (lower-borrow-place-value-reference? ctx referent-ty)
+                (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))
+                (OkLowerExpr
+                  (lower-borrow-copy-to-storage
+                    ctx
+                    state
+                    (IrValueVar id)
+                    referent-ty
+                    result-ty)))]
             [(NoneI64)
               (OkLowerExpr
                 (LowerExpr
@@ -13021,99 +13033,92 @@
     (lower-state-type-cache state)
     arr)
     [(OkTcType arr-ty)
-      (match (tc-type-strip-region arr-ty)
-        [(AstTyDynArray elem-ty)
-          (match (lower-expr ctx state env type-env arr)
-            [(OkLowerExpr arr-lowered)
-              (match arr-lowered
-                [(LowerExpr arr-state arr-value _)
-                  (match (lower-index-result-type-or-check
-                    ctx
-                    env
-                    type-env
-                    (lower-state-type-cache arr-state)
-                    index)
-                    [(OkTcType idx-ty)
-                      (match (lower-expr ctx arr-state env type-env index)
-                        [(OkLowerExpr idx-lowered)
-                          (match idx-lowered
-                            [(LowerExpr idx-state idx-value _)
-                              (match (lower-array-element-addr
-                                idx-state
-                                arr-value
-                                idx-value
-                                idx-ty
-                                (tc-type-without-regions (box-get elem-ty)))
-                                [(LowerExpr addr-state elem-ptr _)
-                                  (match (lower-emit-load
-                                    addr-state
-                                    elem-ptr
-                                    (tc-type-without-regions (box-get elem-ty)))
-                                    [(LowerExpr load-state load-value _)
-                                      (OkLowerExpr
-                                        (LowerExpr
-                                          load-state
-                                          load-value
-                                          (tc-type-without-regions
-                                            (box-get elem-ty))))])])])]
-                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrTcType message)
-                      (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
-            [(ErrLowerExpr message) (ErrLowerExpr message)])]
-        [(AstTyArray elem-ty elem-count)
-          (let
-            [fixed-elem-ty : AstType
-              (tc-type-without-regions (box-get elem-ty))]
-            (match (lower-expr ctx state env type-env arr)
-              [(OkLowerExpr arr-lowered)
-                (match arr-lowered
-                  [(LowerExpr arr-state arr-value _)
-                    (match (lower-index-result-type-or-check
-                      ctx
-                      env
-                      type-env
-                      (lower-state-type-cache arr-state)
-                      index)
-                      [(OkTcType idx-ty)
-                        (match (lower-expr ctx arr-state env type-env index)
-                          [(OkLowerExpr idx-lowered)
-                            (match idx-lowered
-                              [(LowerExpr idx-state idx-value _)
-                                (match (lower-fixed-array-element-addr
-                                  idx-state
-                                  arr-value
-                                  idx-value
-                                  idx-ty
-                                  fixed-elem-ty
-                                  elem-count)
-                                  [(LowerExpr addr-state elem-ptr _)
-                                    (if (=
-                                      (lower-type-size ctx fixed-elem-ty)
-                                      0)
-                                      (OkLowerExpr
-                                        (LowerExpr
-                                          addr-state
-                                          IrValueUnit
-                                          fixed-elem-ty))
-                                      (match (lower-emit-load
-                                        addr-state
-                                        elem-ptr
-                                        fixed-elem-ty)
-                                        [(LowerExpr load-state load-value _)
-                                          (OkLowerExpr
-                                            (LowerExpr
-                                              load-state
-                                              load-value
-                                              fixed-elem-ty))]))])])]
-                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                      [(ErrTcType message)
-                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-        [_
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: array-ref requires a dynamic array"))])]
+      (match (tc-array-readable-receiver ctx arr-ty)
+        [(OkTcArrayReceiver receiver)
+          (match receiver
+            [(TcArrayReceiver container-ty elem-ty)
+              (let
+                [elem-ir-ty : AstType (tc-type-without-regions elem-ty)]
+                (match (lower-expr ctx state env type-env arr)
+                  [(OkLowerExpr arr-lowered)
+                    (match arr-lowered
+                      [(LowerExpr arr-state arr-value _)
+                        (match (lower-index-result-type-or-check
+                          ctx
+                          env
+                          type-env
+                          (lower-state-type-cache arr-state)
+                          index)
+                          [(OkTcType idx-ty)
+                            (match (lower-expr ctx arr-state env type-env index)
+                              [(OkLowerExpr idx-lowered)
+                                (match idx-lowered
+                                  [(LowerExpr idx-state idx-value _)
+                                    (match (tc-type-strip-region
+                                      (tc-resolve-type ctx container-ty))
+                                      [(AstTyDynArray _)
+                                        (match (lower-array-element-addr
+                                          idx-state
+                                          arr-value
+                                          idx-value
+                                          idx-ty
+                                          elem-ir-ty)
+                                          [(LowerExpr addr-state elem-ptr _)
+                                            (match (lower-emit-load
+                                              addr-state
+                                              elem-ptr
+                                              elem-ir-ty)
+                                              [(LowerExpr
+                                                  load-state
+                                                  load-value
+                                                  _)
+                                                (OkLowerExpr
+                                                  (LowerExpr
+                                                    load-state
+                                                    load-value
+                                                    elem-ir-ty))])])]
+                                      [(AstTyArray _ elem-count)
+                                        (match (lower-fixed-array-element-addr
+                                          idx-state
+                                          arr-value
+                                          idx-value
+                                          idx-ty
+                                          elem-ir-ty
+                                          elem-count)
+                                          [(LowerExpr addr-state elem-ptr _)
+                                            (if (=
+                                              (lower-type-size ctx elem-ir-ty)
+                                              0)
+                                              (OkLowerExpr
+                                                (LowerExpr
+                                                  addr-state
+                                                  IrValueUnit
+                                                  elem-ir-ty))
+                                              (match (lower-emit-load
+                                                addr-state
+                                                elem-ptr
+                                                elem-ir-ty)
+                                                [(LowerExpr
+                                                    load-state
+                                                    load-value
+                                                    _)
+                                                  (OkLowerExpr
+                                                    (LowerExpr
+                                                      load-state
+                                                      load-value
+                                                      elem-ir-ty))]))])]
+                                      [_
+                                        (ErrLowerExpr
+                                          (lower-diagnostic-at-expr
+                                            arr
+                                            "lower: array-ref requires array type"))])])]
+                              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                          [(ErrTcType message)
+                            (ErrLowerExpr
+                              (lower-diagnostic-at-expr index message))])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
+        [(ErrTcArrayReceiver message)
+          (ErrLowerExpr (lower-diagnostic-at-expr arr message))])]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
@@ -13132,123 +13137,105 @@
     (lower-state-type-cache state)
     arr)
     [(OkTcType arr-ty)
-      (match (tc-type-strip-region arr-ty)
-        [(AstTyDynArray elem-ty)
-          (match (lower-expr ctx state env type-env arr)
-            [(OkLowerExpr arr-lowered)
-              (match arr-lowered
-                [(LowerExpr arr-state arr-value _)
-                  (match (lower-index-result-type-or-check
-                    ctx
-                    env
-                    type-env
-                    (lower-state-type-cache arr-state)
-                    index)
-                    [(OkTcType idx-ty)
-                      (match (lower-expr ctx arr-state env type-env index)
-                        [(OkLowerExpr idx-lowered)
-                          (match idx-lowered
-                            [(LowerExpr idx-state idx-value _)
-                              (match (lower-expr
-                                ctx
-                                idx-state
-                                env
-                                type-env
-                                value)
-                                [(OkLowerExpr value-lowered)
-                                  (match value-lowered
-                                    [(LowerExpr value-state value-ir _)
-                                      (match (lower-array-element-addr
-                                        value-state
-                                        arr-value
-                                        idx-value
-                                        idx-ty
-                                        (tc-type-without-regions
-                                          (box-get elem-ty)))
-                                        [(LowerExpr addr-state elem-ptr _)
-                                          (OkLowerExpr
-                                            (LowerExpr
-                                              (lower-state-emit
-                                                addr-state
-                                                (IrInstrStorePtr
-                                                  elem-ptr
-                                                  value-ir
-                                                  (tc-type-without-regions
-                                                    (box-get elem-ty))))
-                                              IrValueUnit
-                                              (AstTyUnit)))])])]
-                                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrTcType message)
-                      (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
-            [(ErrLowerExpr message) (ErrLowerExpr message)])]
-        [(AstTyArray elem-ty elem-count)
-          (let
-            [fixed-elem-ty : AstType
-              (tc-type-without-regions (box-get elem-ty))]
-            (match (lower-expr ctx state env type-env arr)
-              [(OkLowerExpr arr-lowered)
-                (match arr-lowered
-                  [(LowerExpr arr-state arr-value _)
-                    (match (lower-index-result-type-or-check
-                      ctx
-                      env
-                      type-env
-                      (lower-state-type-cache arr-state)
-                      index)
-                      [(OkTcType idx-ty)
-                        (match (lower-expr ctx arr-state env type-env index)
-                          [(OkLowerExpr idx-lowered)
-                            (match idx-lowered
-                              [(LowerExpr idx-state idx-value _)
-                                (match (lower-expr
-                                  ctx
-                                  idx-state
-                                  env
-                                  type-env
-                                  value)
-                                  [(OkLowerExpr value-lowered)
-                                    (match value-lowered
-                                      [(LowerExpr value-state value-ir _)
-                                        (match (lower-fixed-array-element-addr
-                                          value-state
-                                          arr-value
-                                          idx-value
-                                          idx-ty
-                                          fixed-elem-ty
-                                          elem-count)
-                                          [(LowerExpr addr-state elem-ptr _)
-                                            (if (=
-                                              (lower-type-size
-                                                ctx
-                                                fixed-elem-ty)
-                                              0)
-                                              (OkLowerExpr
-                                                (LowerExpr
-                                                  addr-state
-                                                  IrValueUnit
-                                                  (AstTyUnit)))
-                                              (OkLowerExpr
-                                                (LowerExpr
-                                                  (lower-state-emit
-                                                    addr-state
-                                                    (IrInstrStorePtr
+      (match (tc-array-set-receiver ctx arr-ty)
+        [(OkTcArrayReceiver receiver)
+          (match receiver
+            [(TcArrayReceiver container-ty elem-ty)
+              (let
+                [elem-ir-ty : AstType (tc-type-without-regions elem-ty)]
+                (match (lower-expr ctx state env type-env arr)
+                  [(OkLowerExpr arr-lowered)
+                    (match arr-lowered
+                      [(LowerExpr arr-state arr-value _)
+                        (match (lower-index-result-type-or-check
+                          ctx
+                          env
+                          type-env
+                          (lower-state-type-cache arr-state)
+                          index)
+                          [(OkTcType idx-ty)
+                            (match (lower-expr ctx arr-state env type-env index)
+                              [(OkLowerExpr idx-lowered)
+                                (match idx-lowered
+                                  [(LowerExpr idx-state idx-value _)
+                                    (match (lower-expr
+                                      ctx
+                                      idx-state
+                                      env
+                                      type-env
+                                      value)
+                                      [(OkLowerExpr value-lowered)
+                                        (match value-lowered
+                                          [(LowerExpr value-state value-ir _)
+                                            (match (tc-type-strip-region
+                                              (tc-resolve-type ctx container-ty))
+                                              [(AstTyDynArray _)
+                                                (match (lower-array-element-addr
+                                                  value-state
+                                                  arr-value
+                                                  idx-value
+                                                  idx-ty
+                                                  elem-ir-ty)
+                                                  [(LowerExpr
+                                                      addr-state
                                                       elem-ptr
-                                                      value-ir
-                                                      fixed-elem-ty))
-                                                  IrValueUnit
-                                                  (AstTyUnit))))])])]
-                                  [(ErrLowerExpr message)
-                                    (ErrLowerExpr message)])])]
-                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                      [(ErrTcType message)
-                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-        [_
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: array-set! requires a dynamic array"))])]
+                                                      _)
+                                                    (OkLowerExpr
+                                                      (LowerExpr
+                                                        (lower-state-emit
+                                                          addr-state
+                                                          (IrInstrStorePtr
+                                                            elem-ptr
+                                                            value-ir
+                                                            elem-ir-ty))
+                                                        IrValueUnit
+                                                        (AstTyUnit)))])]
+                                              [(AstTyArray _ elem-count)
+                                                (match (lower-fixed-array-element-addr
+                                                  value-state
+                                                  arr-value
+                                                  idx-value
+                                                  idx-ty
+                                                  elem-ir-ty
+                                                  elem-count)
+                                                  [(LowerExpr
+                                                      addr-state
+                                                      elem-ptr
+                                                      _)
+                                                    (if (=
+                                                      (lower-type-size
+                                                        ctx
+                                                        elem-ir-ty)
+                                                      0)
+                                                      (OkLowerExpr
+                                                        (LowerExpr
+                                                          addr-state
+                                                          IrValueUnit
+                                                          (AstTyUnit)))
+                                                      (OkLowerExpr
+                                                        (LowerExpr
+                                                          (lower-state-emit
+                                                            addr-state
+                                                            (IrInstrStorePtr
+                                                              elem-ptr
+                                                              value-ir
+                                                              elem-ir-ty))
+                                                          IrValueUnit
+                                                          (AstTyUnit))))])]
+                                              [_
+                                                (ErrLowerExpr
+                                                  (lower-diagnostic-at-expr
+                                                    arr
+                                                    "lower: array-set! requires array type"))])])]
+                                      [(ErrLowerExpr message)
+                                        (ErrLowerExpr message)])])]
+                              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                          [(ErrTcType message)
+                            (ErrLowerExpr
+                              (lower-diagnostic-at-expr index message))])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
+        [(ErrTcArrayReceiver message)
+          (ErrLowerExpr (lower-diagnostic-at-expr arr message))])]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; Copy old dynamic-array elements into a freshly allocated buffer. The loop is
@@ -13492,37 +13479,31 @@
     (lower-state-type-cache state)
     arr)
     [(OkTcType arr-ty)
-      (match (tc-type-strip-region arr-ty)
-        [(AstTyDynArray elem-ty)
-          (let
-            [elem-ir-ty : AstType (tc-type-without-regions (box-get elem-ty))]
-            (match (lower-expr ctx state env type-env arr)
-              [(OkLowerExpr arr-lowered)
-                (match arr-lowered
-                  [(LowerExpr arr-state arr-value _)
-                    (match (lower-expr ctx arr-state env type-env value)
-                      [(OkLowerExpr value-lowered)
-                        (match value-lowered
-                          [(LowerExpr value-state value-ir _)
-                            (OkLowerExpr
-                              (lower-array-push-from-values
-                                ctx
-                                value-state
-                                arr-value
-                                elem-ir-ty
-                                value-ir))])]
-                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-        [(AstTyArray _ _)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: fixed-array array-push! is not supported"))]
-        [_
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: array-push! requires a dynamic array"))])]
+      (match (tc-array-push-receiver ctx arr-ty)
+        [(OkTcArrayReceiver receiver)
+          (match receiver
+            [(TcArrayReceiver _ elem-ty)
+              (let
+                [elem-ir-ty : AstType (tc-type-without-regions elem-ty)]
+                (match (lower-expr ctx state env type-env arr)
+                  [(OkLowerExpr arr-lowered)
+                    (match arr-lowered
+                      [(LowerExpr arr-state arr-value _)
+                        (match (lower-expr ctx arr-state env type-env value)
+                          [(OkLowerExpr value-lowered)
+                            (match value-lowered
+                              [(LowerExpr value-state value-ir _)
+                                (OkLowerExpr
+                                  (lower-array-push-from-values
+                                    ctx
+                                    value-state
+                                    arr-value
+                                    elem-ir-ty
+                                    value-ir))])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
+        [(ErrTcArrayReceiver message)
+          (ErrLowerExpr (lower-diagnostic-at-expr arr message))])]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; Lower each syscall operand and widen it to i64 (the kernel reads the full
@@ -19655,6 +19636,14 @@
 (define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
+(define (compiler-lower-mut-ref-array-access-source) : String
+  "(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
+  (array-set! a i v))
+(define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
+  (array-push! a v))
+(define (main) : i64 0)")
+
 ;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
 ;; a tail store, and in-place fat `{ptr, len}` updates.
 (define (compiler-lower-array-push-source) : String
@@ -25464,8 +25453,16 @@
         (compiler-lower-fixed-array-access-source))
         unit
         (set! ok false))
+      (if (compiler-lower-array-access-shape-ok?
+        (compiler-lower-mut-ref-array-access-source))
+        unit
+        (set! ok false))
       (if (compiler-lower-array-push-shape-ok?
         (compiler-lower-array-push-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-array-push-shape-ok?
+        (compiler-lower-mut-ref-array-access-source))
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?

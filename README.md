@@ -444,14 +444,15 @@ argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 
 ### Memory and aliasing
 
-TypeLisp does not currently implement source-level borrow checking,
+TypeLisp does not currently implement full source-level borrow checking,
 destructors, `free`, or a garbage collector. `SPEC.md` now defines v1
-move-only aggregate handle semantics and the reserved immutable borrow
-expression forms `(& place)` / `(& arena place)` for the selfhost checker:
+move-only aggregate handle semantics plus lexical immutable/mutable borrow
+expression forms for the selfhost checker:
 scalars, raw pointers, and non-capturing function values are copyable, while
 `String`, arrays, tuples, structs, enums, and capturing closures move in
-by-value positions. The current compiler may still accept aggregate
-copies until that checker lands. Aggregate values are implemented as
+by-value positions. Some legacy paths may still accept aggregate copies until
+all front-end entry points route through the selfhost checker. Aggregate values
+are implemented as
 pointer-sized handles in the IR/ABI, but those handles are not checked language
 references. The v1 raw pointer design is now specified as explicit unsafe
 syntax:
@@ -461,8 +462,8 @@ compiler implements that surface for FFI/runtime work; it is not the future safe
 reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are mutable
-buffers reached through a live owner handle; `array-set!` is a temporary
-borrow-like compatibility operation until mutable references land. Structs are
+buffers reached through a live owner handle or an exclusive mutable reference;
+`array-set!` and `array-push!` reject immutable-reference receivers. Structs are
 read-only today because `struct-set!` is not implemented. The current IR/ABI may
 still carry aggregate values through pointer-shaped heap handles in positions
 not covered by the new layout-query contract. Heap allocation uses a

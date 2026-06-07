@@ -207,7 +207,7 @@
 ;; `(clone <expr>)`
 (define (clone-call-expr [inner : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar "clone"))
+    (ast-node-push (AstExprVar (intern "clone")))
     (ast-expr-cons inner AstExprNil)))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
@@ -227,7 +227,7 @@
   (if (>= i count)
     AstExprNil
     (ast-expr-cons
-      (clone-call-expr (ast-node-push (AstExprVar (clone-binder-name i))))
+      (clone-call-expr (ast-node-push (AstExprVar (intern (clone-binder-name i)))))
       (clone-variant-ctor-args count (+ i 1)))))
 
 (define (clone-type-list-len [types : AstTypeList]) : i64
@@ -247,7 +247,7 @@
         (ast-match-arm
           (ast-pat-variant vname (clone-variant-pat-args count 0))
           (ast-expr-call
-            (ast-node-push (AstExprVar vname))
+            (ast-node-push (AstExprVar (intern vname)))
             (clone-variant-ctor-args count 0))))]))
 
 (define (clone-variant-arms [variants : AstVariantDefList]) : AstMatchArmList
@@ -271,7 +271,7 @@
           [(AstFieldDef fname _ _)
             (ast-expr-cons
               (clone-call-expr
-                (ast-expr-struct-get (ast-node-push (AstExprVar "x")) fname))
+                (ast-expr-struct-get (ast-node-push (AstExprVar (intern "x"))) fname))
               (clone-struct-ctor-args rest))]))]))
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
@@ -404,17 +404,17 @@
 
 ;; `(Nil)` â€” a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [nil-ctor : String]) : i64
-  (ast-expr-call (ast-node-push (AstExprVar nil-ctor)) AstExprNil))
+  (ast-expr-call (ast-node-push (AstExprVar (intern nil-ctor))) AstExprNil))
 
 (define (clone-list-tail-next-expr [boxed-tail : bool]) : i64
   (if boxed-tail
-    (ast-expr-box-get (ast-node-push (AstExprVar "t")))
-    (ast-node-push (AstExprVar "t"))))
+    (ast-expr-box-get (ast-node-push (AstExprVar (intern "t"))))
+    (ast-node-push (AstExprVar (intern "t")))))
 
 (define (clone-list-tail-acc-expr [boxed-tail : bool]) : i64
   (if boxed-tail
-    (ast-expr-box (ast-node-push (AstExprVar "acc")))
-    (ast-node-push (AstExprVar "acc"))))
+    (ast-expr-box (ast-node-push (AstExprVar (intern "acc"))))
+    (ast-node-push (AstExprVar (intern "acc")))))
 
 ;; A two-parameter `(define (fn [x : T] [acc : T]) : T body)`.
 (define (clone-make-list-fn
@@ -444,12 +444,12 @@
         (AstPatBinding "h")
         (ast-pattern-cons (AstPatBinding "t") AstPatternNil)))
     (ast-expr-call
-      (ast-node-push (AstExprVar fn-name))
+      (ast-node-push (AstExprVar (intern fn-name)))
       (ast-expr-cons
         (clone-list-tail-next-expr boxed-tail)
         (ast-expr-cons
           (ast-expr-call
-            (ast-node-push (AstExprVar cons-ctor))
+            (ast-node-push (AstExprVar (intern cons-ctor)))
             (ast-expr-cons
               head-expr
               (ast-expr-cons (clone-list-tail-acc-expr boxed-tail) AstExprNil)))
@@ -463,11 +463,11 @@
   [boxed-tail : bool]
   [head-expr : i64]) : i64
   (ast-expr-match
-    (ast-node-push (AstExprVar "x"))
+    (ast-node-push (AstExprVar (intern "x")))
     (ast-match-arm-cons
       (ast-match-arm
         (ast-pat-variant nil-ctor AstPatternNil)
-        (ast-node-push (AstExprVar "acc")))
+        (ast-node-push (AstExprVar (intern "acc"))))
       (ast-match-arm-cons
         (clone-list-step-arm fn-name cons-ctor boxed-tail head-expr)
         AstMatchArmNil))))
@@ -488,7 +488,7 @@
         nil-ctor
         cons-ctor
         boxed-tail
-        (clone-call-expr (ast-node-push (AstExprVar "h")))))))
+        (clone-call-expr (ast-node-push (AstExprVar (intern "h"))))))))
 
 ;; clone$L$rev: tail-recursively reverse (no cloning) to restore source order.
 (define (clone-list-rev-decl
@@ -506,19 +506,19 @@
         nil-ctor
         cons-ctor
         boxed-tail
-        (ast-node-push (AstExprVar "h"))))))
+        (ast-node-push (AstExprVar (intern "h")))))))
 
 ;; clone$L: reverse(acc(x, Nil), Nil) â€” both folds run in O(1) stack frames.
 (define (clone-list-entry-decl [type-name : String] [nil-ctor : String]) : AstDecl
   (clone-make-helper-decl
     type-name
     (ast-expr-call
-      (ast-node-push (AstExprVar (clone-list-rev-name type-name)))
+      (ast-node-push (AstExprVar (intern (clone-list-rev-name type-name))))
       (ast-expr-cons
         (ast-expr-call
-          (ast-node-push (AstExprVar (clone-list-acc-name type-name)))
+          (ast-node-push (AstExprVar (intern (clone-list-acc-name type-name))))
           (ast-expr-cons
-            (ast-node-push (AstExprVar "x"))
+            (ast-node-push (AstExprVar (intern "x")))
             (ast-expr-cons (clone-nil-expr nil-ctor) AstExprNil)))
         (ast-expr-cons (clone-nil-expr nil-ctor) AstExprNil)))))
 
@@ -542,7 +542,7 @@
         (clone-make-helper-decl
           name
           (ast-expr-match
-            (ast-node-push (AstExprVar "x"))
+            (ast-node-push (AstExprVar (intern "x")))
             (clone-variant-arms variants)))
         acc)]))
 
@@ -573,7 +573,7 @@
                   (clone-make-helper-decl
                     name
                     (ast-expr-call
-                      (ast-node-push (AstExprVar name))
+                      (ast-node-push (AstExprVar (intern name)))
                       (clone-struct-ctor-args fields)))
                   acc)
                 acc))]

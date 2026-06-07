@@ -1284,7 +1284,7 @@
           expr
           "comptime: init is a runtime-only expression"))]
     [(AstExprLiteral lit) (ctfe-eval-literal lit expr fuel)]
-    [(AstExprVar name) (ctfe-eval-var name expr env fuel)]
+    [(AstExprVar name) (ctfe-eval-var (intern-str name) expr env fuel)]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -1519,7 +1519,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (ctfe-offset-field-name inner))]
-    [(AstExprVar name) (CtfeSomeFieldName name)]
+    [(AstExprVar name) (CtfeSomeFieldName (intern-str name))]
     [_ (CtfeNoFieldName)]))
 
 (define (ctfe-layout-info-for-type
@@ -2794,33 +2794,33 @@
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExprVar name)
       (cond
-        [(or (string-eq name "size-of") (string-eq name "align-of"))
-          (ctfe-eval-size-align-query name args expr env fuel)]
-        [(string-eq name "offset-of")
+        [(or (string-eq (intern-str name) "size-of") (string-eq (intern-str name) "align-of"))
+          (ctfe-eval-size-align-query (intern-str name) args expr env fuel)]
+        [(string-eq (intern-str name) "offset-of")
           (ctfe-eval-offset-query args expr env fuel)]
-        [(ctfe-reflection-query-name? name)
-          (ctfe-eval-reflection-query name args expr env fuel)]
-        [(or (string-eq name "string-eq") (string-eq name "string=?"))
-          (ctfe-eval-string-eq-call name args expr env fuel)]
-        [(or (string-eq name "string-append") (string-eq name "string-concat"))
-          (ctfe-eval-string-append-call name args expr env fuel)]
-        [(or (string-eq name "string-length") (string-eq name "length"))
-          (ctfe-eval-string-length-call name args expr env fuel)]
-        [(string-eq name "int->string")
+        [(ctfe-reflection-query-name? (intern-str name))
+          (ctfe-eval-reflection-query (intern-str name) args expr env fuel)]
+        [(or (string-eq (intern-str name) "string-eq") (string-eq (intern-str name) "string=?"))
+          (ctfe-eval-string-eq-call (intern-str name) args expr env fuel)]
+        [(or (string-eq (intern-str name) "string-append") (string-eq (intern-str name) "string-concat"))
+          (ctfe-eval-string-append-call (intern-str name) args expr env fuel)]
+        [(or (string-eq (intern-str name) "string-length") (string-eq (intern-str name) "length"))
+          (ctfe-eval-string-length-call (intern-str name) args expr env fuel)]
+        [(string-eq (intern-str name) "int->string")
           (ctfe-eval-int-to-string-call args expr env fuel)]
-        [(string-eq name "expr-bool")
+        [(string-eq (intern-str name) "expr-bool")
           (ctfe-eval-expr-bool-call args expr env fuel)]
-        [(string-eq name "expr-int")
+        [(string-eq (intern-str name) "expr-int")
           (ctfe-eval-expr-int-call args expr env fuel)]
-        [(string-eq name "expr-var")
+        [(string-eq (intern-str name) "expr-var")
           (ctfe-eval-expr-var-call args expr env fuel)]
-        [(string-eq name "expr-splice")
+        [(string-eq (intern-str name) "expr-splice")
           (ctfe-eval-expr-splice-call args expr env fuel)]
-        [(string-eq name "expr-if") (ctfe-eval-expr-if-call args expr env fuel)]
-        [(ctfe-expr-inspector-name? name)
-          (ctfe-eval-expr-inspector-call name args expr env fuel)]
-        [(ctfe-expr-list-inspector-name? name)
-          (ctfe-eval-expr-list-inspector-call name args expr env fuel)]
+        [(string-eq (intern-str name) "expr-if") (ctfe-eval-expr-if-call args expr env fuel)]
+        [(ctfe-expr-inspector-name? (intern-str name))
+          (ctfe-eval-expr-inspector-call (intern-str name) args expr env fuel)]
+        [(ctfe-expr-list-inspector-name? (intern-str name))
+          (ctfe-eval-expr-list-inspector-call (intern-str name) args expr env fuel)]
         [else (ctfe-unsupported-form expr)])]
     [_ (ctfe-unsupported-form expr)]))
 
@@ -3196,7 +3196,7 @@
       (OkCtfeQuoteExpr (ast-node-push expr) (ctfe-quote-literal-type lit) fuel)]
     [(AstExprVar name)
       (OkCtfeQuoteExpr
-        (ast-node-push (AstExprVar (ctfe-quote-name env name)))
+        (ast-node-push (AstExprVar (intern (ctfe-quote-name env (intern-str name)))))
         (AstTyExpr)
         fuel)]
     [(AstExprBinary op left-box right-box)
@@ -4075,7 +4075,7 @@
         [_ false])]
     [(AstExprVar a-name)
       (match b
-        [(AstExprVar b-name) (string-eq a-name b-name)]
+        [(AstExprVar b-name) (string-eq (intern-str a-name) (intern-str b-name))]
         [_ false])]
     [(AstExprBinary a-op a-l-box a-r-box)
       (let
@@ -4790,7 +4790,7 @@
   (ast-node-push (AstExprLiteral (AstLitBool b))))
 
 (define (ctfe-expr-var [name : String]) : i64
-  (ast-node-push (AstExprVar name)))
+  (ast-node-push (AstExprVar (intern name))))
 
 (define (ctfe-expr-if [cond : i64] [then-branch : i64] [else-branch : i64]) : i64
   (ast-expr-if cond then-branch else-branch))
@@ -4869,7 +4869,7 @@
 
 (define (ctfe-expr-var-name [e : i64]) : String
   (match (ast-node-get e)
-    [(AstExprVar name) name]
+    [(AstExprVar name) (intern-str name)]
     [_ ""]))
 
 (define (ctfe-expr-if-cond [e : i64]) : i64
@@ -5189,17 +5189,17 @@
 
 (define (compiler-ctfe-call1 [name : String] [arg : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar name))
+    (ast-node-push (AstExprVar (intern name)))
     (ast-expr-cons arg AstExprNil)))
 
 (define (compiler-ctfe-call2 [name : String] [a : i64] [b : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar name))
+    (ast-node-push (AstExprVar (intern name)))
     (ast-expr-cons a (ast-expr-cons b AstExprNil))))
 
 (define (compiler-ctfe-call3 [name : String] [a : i64] [b : i64] [c : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar name))
+    (ast-node-push (AstExprVar (intern name)))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c AstExprNil)))))
 
 (define (compiler-ctfe-eval-i64-ok? [expr : i64] [env : CtfeEnv] [want : i64]) : bool
@@ -5302,7 +5302,7 @@
         (compiler-ctfe-call2
           "offset-of"
           packet-ty
-          (ast-node-push (AstExprVar "count")))
+          (ast-node-push (AstExprVar (intern "count"))))
         env
         8)
         unit
@@ -5317,7 +5317,7 @@
         (compiler-ctfe-call2
           "offset-of"
           box-ty
-          (ast-node-push (AstExprVar "x")))
+          (ast-node-push (AstExprVar (intern "x"))))
         env
         0)
         unit
@@ -5338,7 +5338,7 @@
         (compiler-ctfe-call2
           "offset-of"
           choice-ty
-          (ast-node-push (AstExprVar "tag")))
+          (ast-node-push (AstExprVar (intern "tag"))))
         env
         "offset-of requires struct layout type")
         unit
@@ -5347,7 +5347,7 @@
         (compiler-ctfe-call2
           "offset-of"
           packet-ty
-          (ast-node-push (AstExprVar "missing")))
+          (ast-node-push (AstExprVar (intern "missing"))))
         env
         "offset-of unknown field missing")
         unit
@@ -5679,7 +5679,7 @@
       (CtfeExpr (ast-node-push (AstExprLiteral (AstLitInt 1))) (AstTyI64))]
     [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "n" int-expr-value)]
     [spliced-int : i64
-      (compiler-ctfe-call1 "expr-splice" (ast-node-push (AstExprVar "n")))]
+      (compiler-ctfe-call1 "expr-splice" (ast-node-push (AstExprVar (intern "n"))))]
     [true-expr : i64
       (compiler-ctfe-call1
         "expr-bool"
@@ -5695,7 +5695,7 @@
   (let
     [true-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool true)))]
     [false-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool false)))]
-    [flag-var : i64 (ast-node-push (AstExprVar "flag"))]
+    [flag-var : i64 (ast-node-push (AstExprVar (intern "flag")))]
     [spliced : AstExprList
       (ast-expr-cons true-lit (ast-expr-cons false-lit AstExprNil))]
     [env : CtfeEnv
@@ -5710,7 +5710,7 @@
     [qq-if : i64
       (ast-expr-quasiquote
         (ast-expr-if
-          (ast-expr-unquote (ast-node-push (AstExprVar "cond")))
+          (ast-expr-unquote (ast-node-push (AstExprVar (intern "cond"))))
           true-lit
           false-lit))]
     [qq-splice : i64
@@ -5718,7 +5718,7 @@
         (ast-node-push
           (AstExprBegin
             (ast-expr-cons
-              (ast-expr-unquote-splicing (ast-node-push (AstExprVar "xs")))
+              (ast-expr-unquote-splicing (ast-node-push (AstExprVar (intern "xs"))))
               AstExprNil))))]
     (and
       (match (compiler-ctfe-eval

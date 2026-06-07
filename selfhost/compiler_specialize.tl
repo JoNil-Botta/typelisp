@@ -3351,7 +3351,7 @@
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)
-    [(AstExprVar name) (SpecSomeString name)]
+    [(AstExprVar name) (SpecSomeString (intern-str name))]
     [_ (SpecNoString)]))
 
 (define (spec-rewrite-expr-list
@@ -3449,7 +3449,7 @@
             [(OkSpecEnsure specialized-name ensure-state)
               (OkSpecExpr
                 (ast-expr-call
-                  (ast-node-push (AstExprVar specialized-name))
+                  (ast-node-push (AstExprVar (intern specialized-name)))
                   runtime-args)
                 ensure-state)]
             [(ErrSpecEnsure diag) (ErrSpecExpr diag)])]
@@ -4252,9 +4252,9 @@
             (OkSpecSubExpr (ast-expr-spanned rewritten span))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprVar name)
-      (match (spec-value-subst-lookup subs name)
+      (match (spec-value-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
-          (spec-ctfe-value-to-expr (spec-value-subst-value subs name) expr)]
+          (spec-ctfe-value-to-expr (spec-value-subst-value subs (intern-str name)) expr)]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral _) (OkSpecSubExpr (ast-node-push expr))]
@@ -4844,14 +4844,14 @@
             (OkSpecSubExpr (ast-expr-spanned rewritten span))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprVar name)
-      (match (spec-type-subst-lookup subs name)
+      (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
             (spec-diagnostic-at-expr
               expr
               (string-append
                 "type-valued comptime parameter '"
-                (string-append name "' cannot be used as a runtime value"))))]
+                (string-append (intern-str name) "' cannot be used as a runtime value"))))]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral ty)
@@ -5867,7 +5867,7 @@
       (spec-value-subst-cons "x" (CtfeI64 5) SpecValueSubstNil)]
     (and
       ;; mapped variable x -> integer literal 5
-      (match (spec-substitute-values-expr (AstExprVar "x") subs)
+      (match (spec-substitute-values-expr (AstExprVar (intern "x")) subs)
         [(OkSpecSubExpr e)
           (match (ast-node-get e)
             [(AstExprLiteral lit)
@@ -5878,18 +5878,18 @@
         [(ErrSpecSubExpr _) false])
       (and
         ;; unmapped variable y -> unchanged
-        (match (spec-substitute-values-expr (AstExprVar "y") subs)
+        (match (spec-substitute-values-expr (AstExprVar (intern "y")) subs)
           [(OkSpecSubExpr e)
             (match (ast-node-get e)
-              [(AstExprVar name) (string-eq name "y")]
+              [(AstExprVar name) (string-eq (intern-str name) "y")]
               [_ false])]
           [(ErrSpecSubExpr _) false])
         ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
         (match (spec-substitute-values-expr
           (AstExprIf
-            (ast-node-push (AstExprVar "x"))
+            (ast-node-push (AstExprVar (intern "x")))
             (ast-node-push (AstExprLiteral (AstLitInt 1)))
-            (ast-node-push (AstExprVar "y")))
+            (ast-node-push (AstExprVar (intern "y"))))
           subs)
           [(OkSpecSubExpr e)
             (match (ast-node-get e)
@@ -5905,7 +5905,7 @@
                           [_ false])]
                       [_ false])
                     (match else-branch
-                      [(AstExprVar name) (string-eq name "y")]
+                      [(AstExprVar name) (string-eq (intern-str name) "y")]
                       [_ false])))]
               [_ false])]
           [(ErrSpecSubExpr _) false])))))

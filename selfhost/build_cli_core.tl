@@ -20,6 +20,8 @@
 
 (import "package_lock_core.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "compiler_driver_core.tl")
 
 (defenum BuildConfig
@@ -215,6 +217,12 @@
 
 (define (build-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
+
+(define (build-invalid-manifest-message [diag : CompilerDiagnostic]) : String
+  (build-cat3
+    "invalid package manifest '"
+    (compiler-diagnostic-path diag)
+    (string-append "': " (compiler-diagnostic-message diag))))
 
 (define (build-unknown-target [value : String]) : String
   (build-cat3 "build: unknown target " value ""))
@@ -771,14 +779,12 @@
 
 (define (build-load-manifest [manifest-path : String]) : ResultBuildManifest
   (if (file-exists? manifest-path)
-    (match (compiler-load-parse-manifest (read-file manifest-path))
-      [(OkCompilerPkgManifest manifest) (OkBuildManifest manifest)]
-      [(ErrCompilerPkgManifest message)
-        (ErrBuildManifest
-          (build-cat3
-            "invalid package manifest '"
-            manifest-path
-            (string-append "': " message)))])
+    (match (compiler-load-parse-manifest-diagnostic
+      manifest-path
+      (read-file manifest-path))
+      [(OkCompilerPkgManifestDiagnostic manifest) (OkBuildManifest manifest)]
+      [(ErrCompilerPkgManifestDiagnostic diag)
+        (ErrBuildManifest (build-invalid-manifest-message diag))])
     (ErrBuildManifest
       (build-cat3 "cannot read package manifest '" manifest-path "'"))))
 

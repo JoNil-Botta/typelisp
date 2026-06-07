@@ -5,6 +5,8 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "../stdlib/fs.tl")
@@ -18,14 +20,17 @@
     false
     (let
       [c : char (string-ref name idx)]
-      (if (or
-        (or (and (>= c #a') (<= c #z')) (and (>= c #A') (<= c #Z')))
-        (or (and (>= c #0') (<= c #9')) (or (= c #-') (= c #_'))))
+      (if (core/or
+        (core/and (>= c #a') (<= c #z'))
+        (core/and (>= c #A') (<= c #Z'))
+        (core/and (>= c #0') (<= c #9'))
+        (= c #-')
+        (= c #_'))
         (scaffold-name-bad-char? name (+ idx 1))
         true))))
 
 (define (scaffold-name-ok? [name : String]) : bool
-  (and (> (string-length name) 0) (not (scaffold-name-bad-char? name 0))))
+  (core/and (> (string-length name) 0) (not (scaffold-name-bad-char? name 0))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.

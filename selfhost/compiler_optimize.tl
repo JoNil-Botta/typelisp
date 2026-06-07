@@ -4227,11 +4227,12 @@
           next
           (- remaining 1))))))
 
-(define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomTable
+(define (opt-cfg-dominators-with
+  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [entry-label : String]) : OptDomTable
   (let
-    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
-    [entry-label : String (opt-cfg-entry-label blocks)]
-    [pred-map : OptPredMap (opt-pred-map-build blocks)]
     [initial : OptDomTable
       (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
     (opt-cfg-dominators-fixed
@@ -4240,6 +4241,24 @@
       entry-label
       initial
       (+ (compiler-ir-block-list-count blocks) 1))))
+
+(defstruct OptCfgContext
+  (pred-map OptPredMap)
+  (reachable OptLabelSet)
+  (entry-label String)
+  (doms OptDomTable))
+
+(define (opt-cfg-context-build [blocks : CompilerIrBlockList]) : OptCfgContext
+  (let
+    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
+    [entry-label : String (opt-cfg-entry-label blocks)]
+    [pred-map : OptPredMap (opt-pred-map-build blocks)]
+    [doms : OptDomTable
+      (opt-cfg-dominators-with blocks pred-map reachable entry-label)]
+    (OptCfgContext pred-map reachable entry-label doms)))
+
+(define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomTable
+  (struct-get (opt-cfg-context-build blocks) doms))
 
 (define (opt-dom-dominates?
   [table : OptDomTable]
@@ -4269,6 +4288,7 @@
 (define (opt-cfg-dominance-frontier-blocks
   [all-blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [doms : OptDomTable]
   [label : String]) : OptLabelSet
@@ -4282,6 +4302,7 @@
               (opt-cfg-dominance-frontier-blocks
                 all-blocks
                 (box-get rest)
+                pred-map
                 reachable
                 doms
                 label)]
@@ -4292,19 +4313,31 @@
                   doms
                   label
                   (opt-label-intersection
-                    (opt-cfg-predecessors all-blocks block-label)
+                    (opt-pred-map-lookup pred-map block-label)
                     reachable))
                 (not (opt-dom-strict-dominates? doms label block-label))))
               (opt-label-add tail block-label)
               tail))])]))
 
+(define (opt-cfg-dominance-frontier-with-context
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [label : String]) : OptLabelSet
+  (opt-cfg-dominance-frontier-blocks
+    blocks
+    blocks
+    (struct-get context pred-map)
+    (struct-get context reachable)
+    (struct-get context doms)
+    label))
+
 (define (opt-cfg-dominance-frontier
   [blocks : CompilerIrBlockList]
   [label : String]) : OptLabelSet
-  (let
-    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
-    [doms : OptDomTable (opt-cfg-dominators blocks)]
-    (opt-cfg-dominance-frontier-blocks blocks blocks reachable doms label)))
+  (opt-cfg-dominance-frontier-with-context
+    blocks
+    (opt-cfg-context-build blocks)
+    label))
 
 (defenum ResultCompilerOptimizeVerify
   (OkCompilerOptimizeVerify)
@@ -4861,7 +4894,7 @@
     (opt-label-set-eq? (opt-phi-input-labels inputs) preds)))
 
 (define (opt-verify-phi-predecessors-instrs
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [block-label : String]
   [instrs : CompilerIrInstrList]) : ResultCompilerOptimizeVerify
   (match instrs
@@ -4871,18 +4904,21 @@
         [(IrInstrPhi _ inputs _)
           (if (opt-phi-input-labels-match?
             inputs
-            (opt-cfg-predecessors blocks block-label))
+            (opt-pred-map-lookup pred-map block-label))
             (opt-verify-phi-predecessors-instrs
-              blocks
+              pred-map
               block-label
               (box-get rest))
             (ErrCompilerOptimizeVerify
               "optimizer verify: phi predecessor mismatch"))]
         [_
-          (opt-verify-phi-predecessors-instrs blocks block-label (box-get rest))])]))
+          (opt-verify-phi-predecessors-instrs
+            pred-map
+            block-label
+            (box-get rest))])]))
 
 (define (opt-verify-phi-predecessors-instr-seq-from
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : ResultCompilerOptimizeVerify
@@ -4892,9 +4928,9 @@
       [(IrInstrPhi _ inputs _)
         (if (opt-phi-input-labels-match?
           inputs
-          (opt-cfg-predecessors blocks block-label))
+          (opt-pred-map-lookup pred-map block-label))
           (opt-verify-phi-predecessors-instr-seq-from
-            blocks
+            pred-map
             block-label
             instrs
             (+ index 1))
@@ -4902,13 +4938,13 @@
             "optimizer verify: phi predecessor mismatch"))]
       [_
         (opt-verify-phi-predecessors-instr-seq-from
-          blocks
+          pred-map
           block-label
           instrs
           (+ index 1))])))
 
 (define (opt-verify-phi-predecessors-blocks
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [remaining : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
   (match remaining
     [(IrBlockNil) (OkCompilerOptimizeVerify)]
@@ -4916,12 +4952,12 @@
       (match block
         [(IrBlock label instrs)
           (match (opt-verify-phi-predecessors-instr-seq-from
-            blocks
+            pred-map
             label
             instrs
             0)
             [(OkCompilerOptimizeVerify)
-              (opt-verify-phi-predecessors-blocks blocks (box-get rest))]
+              (opt-verify-phi-predecessors-blocks pred-map (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
               (ErrCompilerOptimizeVerify message)])])]))
 
@@ -4940,7 +4976,9 @@
             [(ErrCompilerOptimizeVerify message)
               (ErrCompilerOptimizeVerify message)])])]))
 
-(define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
+(define (opt-verify-function-with-context
+  [func : CompilerIrFunction]
+  [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
     [(IrFunction _ params _ _ blocks)
       (cond
@@ -4954,13 +4992,29 @@
             "optimizer verify: duplicate var definition")]
         [else
           (let
-            [doms : OptDomTable (opt-cfg-dominators blocks)]
+            [doms : OptDomTable (struct-get context doms)]
+            [pred-map : OptPredMap (struct-get context pred-map)]
             [defs : OptVarDefList (opt-var-defs-from-function params blocks)]
-            (match (opt-verify-phi-predecessors-blocks blocks blocks)
+            (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(OkCompilerOptimizeVerify)
                 (opt-verify-block-uses defs doms blocks)]
               [(ErrCompilerOptimizeVerify message)
                 (ErrCompilerOptimizeVerify message)]))])]))
+
+(define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
+  (match func
+    [(IrFunction _ params _ _ blocks)
+      (cond
+        [(not (opt-cfg-block-labels-unique? blocks))
+          (ErrCompilerOptimizeVerify "optimizer verify: duplicate block label")]
+        [(not (opt-cfg-successor-targets-known? blocks))
+          (ErrCompilerOptimizeVerify
+            "optimizer verify: unknown successor label")]
+        [(not (opt-verify-single-defs? params blocks))
+          (ErrCompilerOptimizeVerify
+            "optimizer verify: duplicate var definition")]
+        [else
+          (opt-verify-function-with-context func (opt-cfg-context-build blocks))])]))
 
 (define (opt-verify-function-list [functions : CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
   (match functions
@@ -5639,9 +5693,11 @@
               (opt-global-cse-instr-seq facts doms label instrs))
             (opt-global-cse-blocks facts doms (box-get rest)))])]))
 
-(define (opt-global-value-number-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (opt-global-value-number-blocks-with-context
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    [doms : OptDomTable (struct-get context doms)]
     [copy-facts : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks blocks (OptGlobalCopyNil))]
     [copied : CompilerIrBlockList
@@ -5653,8 +5709,15 @@
       (opt-global-copy-facts-from-blocks cse (OptGlobalCopyNil))]
     (opt-global-copy-blocks cse-copy-facts doms cse)))
 
-(define (opt-global-value-number-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function func)
+(define (opt-global-value-number-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-global-value-number-blocks-with-context
+    (opt-cfg-context-build blocks)
+    blocks))
+
+(define (opt-global-value-number-function-with-context
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function-with-context func context)
     [(OkCompilerOptimizeVerify)
       (match func
         [(IrFunction name params ret-ty frame blocks)
@@ -5663,8 +5726,15 @@
             params
             ret-ty
             frame
-            (opt-global-value-number-blocks blocks))])]
+            (opt-global-value-number-blocks-with-context context blocks))])]
     [(ErrCompilerOptimizeVerify _) func]))
+
+(define (opt-global-value-number-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (opt-global-value-number-function-with-context
+        (opt-cfg-context-build blocks)
+        func)]))
 
 (define (opt-cfg-fold-branch [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
@@ -5892,7 +5962,7 @@
         (opt-natural-loop-collect-add-pred reachable state pred))]))
 
 (define (opt-natural-loop-collect-body
-  [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [body : OptLabelSet]
   [worklist : OptLabelSet]) : OptLabelSet
@@ -5903,12 +5973,12 @@
         [state : OptNaturalLoopCollectState
           (opt-natural-loop-collect-add-preds
             reachable
-            (opt-cfg-predecessors blocks label)
+            (opt-pred-map-lookup pred-map label)
             (OptNaturalLoopCollectState body (box-get rest)))]
         (match state
           [(OptNaturalLoopCollectState next-body next-worklist)
             (opt-natural-loop-collect-body
-              blocks
+              pred-map
               reachable
               next-body
               next-worklist)]))]))
@@ -5976,6 +6046,7 @@
 
 (define (opt-natural-loop-find-preheader
   [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [header : String]
   [body : OptLabelSet]) : OptLoopPreheader
@@ -5985,18 +6056,19 @@
       reachable
       header
       body
-      (opt-cfg-predecessors blocks header)
+      (opt-pred-map-lookup pred-map header)
       (OptLoopPreheaderNone))))
 
 (define (opt-natural-loop-build
   [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [header : String]
   [latch : String]) : OptNaturalLoop
   (let
     [body : OptLabelSet
       (opt-natural-loop-collect-body
-        blocks
+        pred-map
         reachable
         (opt-label-add (opt-label-add (OptLabelNil) header) latch)
         (opt-label-add (OptLabelNil) latch))]
@@ -6004,10 +6076,11 @@
       header
       latch
       body
-      (opt-natural-loop-find-preheader blocks reachable header body))))
+      (opt-natural-loop-find-preheader blocks pred-map reachable header body))))
 
 (define (opt-cfg-natural-loop-successors
   [blocks : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [doms : OptDomTable]
   [source : String]
@@ -6020,6 +6093,7 @@
         [next : OptNaturalLoopList
           (opt-cfg-natural-loop-successors
             blocks
+            pred-map
             reachable
             doms
             source
@@ -6029,13 +6103,14 @@
           (opt-label-contains reachable header)
           (opt-dom-dominates? doms header source))
           (OptNaturalLoopCons
-            (opt-natural-loop-build blocks reachable header source)
+            (opt-natural-loop-build blocks pred-map reachable header source)
             (box next))
           next))]))
 
 (define (opt-cfg-natural-loop-blocks
   [all-blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
+  [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [doms : OptDomTable]) : OptNaturalLoopList
   (match remaining
@@ -6048,11 +6123,13 @@
               (opt-cfg-natural-loop-blocks
                 all-blocks
                 (box-get rest)
+                pred-map
                 reachable
                 doms)]
             (if (opt-label-contains reachable label)
               (opt-cfg-natural-loop-successors
                 all-blocks
+                pred-map
                 reachable
                 doms
                 label
@@ -6062,11 +6139,18 @@
                 tail)
               tail))])]))
 
+(define (opt-cfg-natural-loops-with-context
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]) : OptNaturalLoopList
+  (opt-cfg-natural-loop-blocks
+    blocks
+    blocks
+    (struct-get context pred-map)
+    (struct-get context reachable)
+    (struct-get context doms)))
+
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
-  (let
-    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
-    [doms : OptDomTable (opt-cfg-dominators blocks)]
-    (opt-cfg-natural-loop-blocks blocks blocks reachable doms)))
+  (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))
 
 ;; --- conservative loop-invariant code motion (#1801) ------------------------
 ;;
@@ -6279,22 +6363,37 @@
     [(OptNaturalLoopCons loop rest)
       (opt-licm-apply-loops (box-get rest) (opt-licm-apply-loop blocks loop))]))
 
-(define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-licm-apply-loops (opt-cfg-natural-loops blocks) blocks))
+(define (opt-licm-blocks-with-context
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-licm-apply-loops
+    (opt-cfg-natural-loops-with-context blocks context)
+    blocks))
 
-(define (opt-licm-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function func)
+(define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-licm-blocks-with-context (opt-cfg-context-build blocks) blocks))
+
+(define (opt-licm-function-with-context
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function-with-context func context)
     [(OkCompilerOptimizeVerify)
       (match func
         [(IrFunction name params ret-ty frame blocks)
           (let
-            [hoisted-blocks : CompilerIrBlockList (opt-licm-blocks blocks)]
+            [hoisted-blocks : CompilerIrBlockList
+              (opt-licm-blocks-with-context context blocks)]
             [hoisted : CompilerIrFunction
               (IrFunction name params ret-ty frame hoisted-blocks)]
             (match (opt-verify-function hoisted)
               [(OkCompilerOptimizeVerify) hoisted]
               [(ErrCompilerOptimizeVerify _) func]))])]
     [(ErrCompilerOptimizeVerify _) func]))
+
+(define (opt-licm-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (opt-licm-function-with-context (opt-cfg-context-build blocks) func)]))
 
 ;; --- simple induction-derived cleanup (#1802) ------------------------------
 ;;
@@ -6962,13 +7061,15 @@
             next-frame
             (or changed loop-changed))])]))
 
-(define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function func)
+(define (opt-induction-function-with-context
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function-with-context func context)
     [(OkCompilerOptimizeVerify)
       (match func
         [(IrFunction name params ret-ty frame blocks)
           (match (opt-induction-apply-loops
-            (opt-cfg-natural-loops blocks)
+            (opt-cfg-natural-loops-with-context blocks context)
             blocks
             frame
             false)
@@ -6982,6 +7083,11 @@
                     [(ErrCompilerOptimizeVerify _) func]))
                 func)])])]
     [(ErrCompilerOptimizeVerify _) func]))
+
+(define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (opt-induction-function-with-context (opt-cfg-context-build blocks) func)]))
 
 (define (opt-cfg-filter-phi-inputs
   [reachable : OptLabelSet]
@@ -8090,17 +8196,23 @@
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
-(define (opt-gvn-blocks
+(define (opt-gvn-blocks-with-context
+  [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    [doms : OptDomTable (struct-get context doms)]
     [sources : I64I64Map
       (opt-gvn-sources-blocks
         blocks
         (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
     [table : OptGvnMap (opt-gvn-build-map-blocks sources blocks (OptGvnMapNil))]
     (opt-gvn-rewrite-blocks table doms sources blocks)))
+
+(define (opt-gvn-blocks
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-gvn-blocks-with-context (opt-cfg-context-build blocks) params blocks))
 
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -8394,18 +8506,34 @@
                       (opt-heavy-pass-block-limit))]
                   [gvn : CompilerIrBlockList
                     (if run-heavy?
-                      (opt-gvn-blocks params sroa-blocks)
+                      (let
+                        [gvn-context : OptCfgContext
+                          (opt-cfg-context-build sroa-blocks)]
+                        (opt-gvn-blocks-with-context
+                          gvn-context
+                          params
+                          sroa-blocks))
                       sroa-blocks)]
                   [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
                   [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
                   [licm : CompilerIrFunction
                     (if run-heavy?
-                      (opt-licm-function
-                        (IrFunction name params ret-ty promoted-frame cfg))
+                      (let
+                        [licm-context : OptCfgContext
+                          (opt-cfg-context-build cfg)]
+                        (opt-licm-function-with-context
+                          licm-context
+                          (IrFunction name params ret-ty promoted-frame cfg)))
                       (IrFunction name params ret-ty promoted-frame cfg))]
+                  [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
                   [induction : CompilerIrFunction
                     (if run-heavy?
-                      (opt-induction-function licm)
+                      (let
+                        [induction-context : OptCfgContext
+                          (opt-cfg-context-build licm-blocks)]
+                        (opt-induction-function-with-context
+                          induction-context
+                          licm))
                       licm)]
                   [induction-frame : i64 (opt-function-frame induction)]
                   [induction-blocks : CompilerIrBlockList
@@ -8416,13 +8544,17 @@
                   ;; consistent with the promoted blocks.
                   [global : CompilerIrFunction
                     (if run-heavy?
-                      (opt-global-value-number-function
-                        (IrFunction
-                          name
-                          params
-                          ret-ty
-                          induction-frame
-                          induction-blocks))
+                      (let
+                        [global-context : OptCfgContext
+                          (opt-cfg-context-build induction-blocks)]
+                        (opt-global-value-number-function-with-context
+                          global-context
+                          (IrFunction
+                            name
+                            params
+                            ret-ty
+                            induction-frame
+                            induction-blocks)))
                       (IrFunction
                         name
                         params

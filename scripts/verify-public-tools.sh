@@ -2024,8 +2024,15 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$PKG_ASM" "inc:"
     assert_contains "$PKG_ASM" "add_one"
 else
-    assert_contains_any "$PKG_ASM" "_tl_inc:" "_tl_math_u2etl_colon_coloninc:"
+    assert_contains_any "$PKG_ASM" \
+        "_tl_inc:" \
+        "_tl_math_u2etl_colon_coloninc:" \
+        "_tl_public_tool_pkg_slashsrc_slashmath_u2etl_colon_coloninc"
     assert_contains "$PKG_ASM" "add_one"
+    assert_contains "$PKG_ASM" "_tl_public_tool_pkg_slashsrc_slashmath_u2etl_colon_coloninc"
+    assert_contains "$PKG_ASM" "_tl_math_slashsrc_slashlib_u2etl_colon_colonadd_one"
+    assert_contains "$PKG_ASM" "_tl_stdlib_slashruntime_u2etl_colon_colonruntime_os_write"
+    assert_not_contains "$PKG_ASM" "_tl_public_tool_pkg_slashvendor_slashmath"
 fi
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
 PKG_OUT_DIR="$PKG/target/typelisp/release/public_tool_pkg"
@@ -2108,7 +2115,11 @@ assert_contains "$WALK_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$WALK_ASM" "inc:"
 else
-    assert_contains_any "$WALK_ASM" "_tl_inc:" "_tl_math_u2etl_colon_coloninc:"
+    assert_contains_any "$WALK_ASM" \
+        "_tl_inc:" \
+        "_tl_math_u2etl_colon_coloninc:" \
+        "_tl_walk_pkg_slashsrc_slashmath_u2etl_colon_coloninc"
+    assert_contains "$WALK_ASM" "_tl_walk_pkg_slashsrc_slashmath_u2etl_colon_coloninc"
 fi
 
 MISSING_DEP="$WORKDIR/missing_dep"

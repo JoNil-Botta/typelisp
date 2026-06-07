@@ -1293,6 +1293,7 @@
 
 (define (tltest-run-harness-in-temp
   [source : String]
+  [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [target : CompilerBackendTarget]
@@ -1302,7 +1303,7 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (lower-compiler-program-with-decl-paths source program paths)
+    (match (lower-compiler-program-with-decl-paths entry-path program paths)
       [(OkCompilerLower ir spans)
         (match (compiler-driver-emit-lowered-with-level
           source
@@ -1398,8 +1399,9 @@
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)])))
 
-(define (tltest-run-direct
+(define (tltest-run-direct-with-entry
   [source : String]
+  [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [target : String]
@@ -1414,6 +1416,7 @@
         [(OkSourceToolString temp-dir)
           (tltest-run-harness-in-temp
             source
+            entry-path
             (tltest-program-with-print-runtime program backend-target)
             (tltest-paths-with-print-runtime backend-target paths)
             backend-target
@@ -1424,6 +1427,14 @@
             (print-error
               (string-append "test: failed to create temp dir: " message))
             1)])]))
+
+(define (tltest-run-direct
+  [source : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [target : String]
+  [opt-level : i64]) : i64
+  (tltest-run-direct-with-entry source source program paths target opt-level))
 
 (define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
   (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
@@ -1645,7 +1656,13 @@
     (if (tltest-decls-have-main? decls)
       (let
         [status : i64
-          (tltest-run-direct source (ast-program decls) paths target opt-level)]
+          (tltest-run-direct-with-entry
+            source
+            ""
+            (ast-program decls)
+            paths
+            target
+            opt-level)]
         (if (= status 0)
           (OkTestPackageTotals 1 1)
           (ErrTestPackageTotals status)))
@@ -1661,12 +1678,14 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
-  (match (compiler-driver-load-package-file-with-runtime
+  (match (compiler-driver-load-package-file-with-runtime-owned
     source
     backend-target
     roots
     manifest-dir
+    package-owner
     deps
     true)
     [(OkCompilerLoadWithPaths decls paths _ _)
@@ -1689,13 +1708,15 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
-    (match (compiler-driver-load-package-file-with-runtime
+    (match (compiler-driver-load-package-file-with-runtime-owned
       source
       backend-target
       roots
       manifest-dir
+      package-owner
       deps
       true)
       [(OkCompilerLoadWithPaths decls paths _ _)
@@ -1723,6 +1744,7 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
@@ -1739,6 +1761,7 @@
           test-mode
           backend-target
           manifest-dir
+          package-owner
           deps
           file-count
           test-count)
@@ -1750,6 +1773,7 @@
           test-mode
           backend-target
           manifest-dir
+          package-owner
           deps)
           [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
           [(OkTestPackageTotals source-files source-tests)
@@ -1762,6 +1786,7 @@
               test-mode
               backend-target
               manifest-dir
+              package-owner
               deps
               (+ file-count source-files)
               (+ test-count source-tests))]))]))
@@ -1774,6 +1799,7 @@
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
@@ -1788,6 +1814,7 @@
         test-mode
         backend-target
         manifest-dir
+        package-owner
         deps)
         [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
         [(OkTestPackageTotals source-files source-tests)
@@ -1799,6 +1826,7 @@
             test-mode
             backend-target
             manifest-dir
+            package-owner
             deps
             (+ file-count source-files)
             (+ test-count source-tests))])]))
@@ -1825,6 +1853,7 @@
           (let
             [manifest : CompilerPkgManifest (struct-get source-set manifest)]
             [manifest-dir : String (struct-get source-set manifest-dir)]
+            [package-owner : String (struct-get manifest name)]
             [tests-prefix : String (tltest-package-tests-prefix manifest-dir)]
             (match (package-source-discover-tests-for "test" source-set)
               [(ErrPackageSourceList message)
@@ -1841,6 +1870,7 @@
                   test-mode
                   backend-target
                   manifest-dir
+                  package-owner
                   (struct-get manifest deps)
                   0
                   0)
@@ -1854,6 +1884,7 @@
                       test-mode
                       backend-target
                       manifest-dir
+                      package-owner
                       (struct-get manifest deps)
                       0
                       0)

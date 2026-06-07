@@ -41,6 +41,15 @@
   (OkPkgResolve String)
   (ErrPkgResolve String))
 
+(defstruct CompilerLoadPackageEntry
+  (entry-path String)
+  (manifest-dir String)
+  (owner String))
+
+(defenum ResultCompilerLoadPackageEntry
+  (OkCompilerLoadPackageEntry CompilerLoadPackageEntry)
+  (ErrCompilerLoadPackageEntry String))
+
 (defenum CompilerLoadMaybeModuleId
   (CompilerLoadNoModuleId)
   (CompilerLoadSomeModuleId String))
@@ -1136,6 +1145,92 @@
     (and (string-eq decl-path entry-path) (string-eq source-name "main"))
     (or (string-eq module "") (string-eq module "main"))))
 
+(define (compiler-load-root-prefix [root : String]) : String
+  (compiler-load-join-root-path root ""))
+
+(define (compiler-load-path-under-root? [path : String] [root : String]) : bool
+  (let
+    [prefix : String (compiler-load-root-prefix root)]
+    [prefix-len : i64 (string-length prefix)]
+    (and (> prefix-len 0) (compiler-load-string-prefix-at? path prefix 0))))
+
+(define (compiler-load-owned-path-from-root
+  [owner : String]
+  [root : String]
+  [path : String]) : String
+  (let
+    [prefix : String (compiler-load-root-prefix root)]
+    [prefix-len : i64 (string-length prefix)]
+    [path-len : i64 (string-length path)]
+    (if (= prefix-len 0)
+      (if (compiler-load-absolute-path? path)
+        path
+        (string-append
+          owner
+          (string-append "/" (compiler-load-normalize-path path))))
+      (if (compiler-load-path-under-root? path root)
+        (string-append
+          owner
+          (string-append
+            "/"
+            (substring path prefix-len (- path-len prefix-len))))
+        path))))
+
+(define (compiler-load-stdlib-owner-root? [root : String]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path root)]
+    [base : String (fs-basename (& normalized))]
+    (string-eq base "stdlib")))
+
+(define (compiler-load-stdlib-owned-path-from-roots
+  [path : String]
+  [stdlib-roots : StringVec]) : String
+  (let
+    [roots : StringVec (compiler-load-roots-with-env stdlib-roots)]
+    [i : i64 0]
+    [n : i64 (string-vec-len roots)]
+    [found : bool false]
+    [out : String ""]
+    (begin
+      (while (and (not found) (< i n))
+        (let
+          [root : String (string-vec-get roots i "")]
+          [prefix : String (compiler-load-root-prefix root)]
+          [prefix-len : i64 (string-length prefix)]
+          [path-len : i64 (string-length path)]
+          (if (and
+            (compiler-load-stdlib-owner-root? root)
+            (and
+              (> prefix-len 0)
+              (compiler-load-string-prefix-at? path prefix 0)))
+            (begin
+              (set! found true)
+              (set!
+                out
+                (string-append
+                  "stdlib/"
+                  (substring path prefix-len (- path-len prefix-len)))))
+            (set! i (+ i 1)))))
+      (if found
+        out
+        path))))
+
+(define (compiler-load-package-owned-path
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
+  [path : String]) : String
+  (let
+    [stdlib-path : String
+      (if (compiler-load-stdlib-import? path)
+        (compiler-load-normalize-path path)
+        (compiler-load-stdlib-owned-path-from-roots path stdlib-roots))]
+    (if (compiler-load-stdlib-import? stdlib-path)
+      stdlib-path
+      (if (= (string-length package-owner) 0)
+        path
+        (compiler-load-owned-path-from-root package-owner package-root path)))))
+
 (define (compiler-load-package-decl-logical-name
   [entry-path : String]
   [decl-path : String]
@@ -1168,15 +1263,23 @@
             (ast-type-cons ty (compiler-load-param-type-list rest))]))]))
 
 (define (compiler-load-package-def-fn-extern
-  [entry-path : String]
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
   [decl-path : String]
   [module : String]
   [name : String]
   [params : AstParamList]
   [ret : AstType]) : AstDecl
   (let
+    [logical-path : String
+      (compiler-load-package-owned-path
+        package-owner
+        package-root
+        stdlib-roots
+        decl-path)]
     [logical : String
-      (compiler-load-package-decl-logical-name entry-path decl-path module name)]
+      (compiler-load-package-decl-logical-name "" logical-path module name)]
     (AstDeclExtern
       name
       (AstExternMetadata
@@ -1187,7 +1290,9 @@
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
-  [entry-path : String]
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
   [decl-path : String]
   [module : String]
   [decl : AstDecl]) : CompilerLoadMaybeDecl
@@ -1195,7 +1300,9 @@
     [(AstDeclDefFn name params ret _ _)
       (CompilerLoadSomeDecl
         (compiler-load-package-def-fn-extern
-          entry-path
+          package-owner
+          package-root
+          stdlib-roots
           decl-path
           module
           name
@@ -1207,7 +1314,9 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match (compiler-load-package-transform-decl
-          entry-path
+          package-owner
+          package-root
+          stdlib-roots
           decl-path
           module
           inner)
@@ -1218,7 +1327,9 @@
       (let
         [template : AstDecl (box-get template-box)]
         (match (compiler-load-package-transform-decl
-          entry-path
+          package-owner
+          package-root
+          stdlib-roots
           decl-path
           module
           template)
@@ -1243,8 +1354,98 @@
         rest)]
     [(AstDeclPathNil) AstDeclPathNil]))
 
-(define (compiler-load-package-extern-decls
+(define (compiler-load-package-owned-decl-path
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
   [entry-path : String]
+  [module : String]
+  [decl-path : String]
+  [decl : AstDecl]) : String
+  (match decl
+    [(AstDeclDefFn name _ _ _ _)
+      (if (compiler-load-package-entry-main? entry-path decl-path module name)
+        ""
+        (compiler-load-package-owned-path
+          package-owner
+          package-root
+          stdlib-roots
+          decl-path))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (compiler-load-package-owned-decl-path
+          package-owner
+          package-root
+          stdlib-roots
+          entry-path
+          module
+          decl-path
+          inner))]
+    [_
+      (compiler-load-package-owned-path
+        package-owner
+        package-root
+        stdlib-roots
+        decl-path)]))
+
+(define (compiler-load-package-owned-paths-for-decls-in-module
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
+  [entry-path : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [module : String]) : AstDeclPathList
+  (match decls
+    [(AstDeclNil) AstDeclPathNil]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String (compiler-load-path-list-head-or paths entry-path)]
+        [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
+        [next-module : String
+          (match decl
+            [(AstDeclModule name) name]
+            [_ module])]
+        (ast-decl-path-cons
+          (compiler-load-package-owned-decl-path
+            package-owner
+            package-root
+            stdlib-roots
+            entry-path
+            module
+            decl-path
+            decl)
+          (compiler-load-package-owned-paths-for-decls-in-module
+            package-owner
+            package-root
+            stdlib-roots
+            entry-path
+            rest
+            rest-paths
+            next-module)))]))
+
+(define (compiler-load-package-owned-paths-for-decls
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
+  [entry-path : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : AstDeclPathList
+  (compiler-load-package-owned-paths-for-decls-in-module
+    package-owner
+    package-root
+    stdlib-roots
+    entry-path
+    decls
+    paths
+    ""))
+
+(define (compiler-load-package-extern-decls
+  [package-owner : String]
+  [package-root : String]
+  [stdlib-roots : StringVec]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [seen : SymI64Env]
@@ -1255,14 +1456,23 @@
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        [decl-path : String (compiler-load-path-list-head-or paths entry-path)]
+        [decl-path : String
+          (compiler-load-path-list-head-or paths package-root)]
+        [owned-decl-path : String
+          (compiler-load-package-owned-path
+            package-owner
+            package-root
+            stdlib-roots
+            decl-path)]
         [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
           (match decl
             [(AstDeclModule name) name]
             [_ module])]
         (match (compiler-load-package-extern-decls
-          entry-path
+          package-owner
+          package-root
+          stdlib-roots
           rest
           rest-paths
           seen
@@ -1273,14 +1483,16 @@
               rest-modules
               rest-seen)
             (match (compiler-load-package-transform-decl
-              entry-path
+              package-owner
+              package-root
+              stdlib-roots
               decl-path
               module
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (OkCompilerLoadWithPaths
                   (ast-decl-cons transformed rest-decls)
-                  (ast-decl-path-cons decl-path rest-decl-paths)
+                  (ast-decl-path-cons owned-decl-path rest-decl-paths)
                   (ast-decl-module-cons module rest-modules)
                   rest-seen)]
               [(CompilerLoadNoDecl)
@@ -1291,10 +1503,10 @@
                   rest-seen)])]
           [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))]))
 
-(define (compiler-load-package-entry-path-for-source [source-path : String]) : ResultPkgResolve
+(define (compiler-load-package-entry-for-source [source-path : String]) : ResultCompilerLoadPackageEntry
   (match (compiler-load-discover-manifest source-path)
     [(CompilerLoadNoPath)
-      (ErrPkgResolve
+      (ErrCompilerLoadPackageEntry
         (string-append
           "compiler-load: dependency package manifest not found for "
           source-path))]
@@ -1303,18 +1515,23 @@
         manifest-path
         (read-file manifest-path))
         [(ErrCompilerPkgManifestDiagnostic diag)
-          (ErrPkgResolve
+          (ErrCompilerLoadPackageEntry
             (string-append
               "compiler-load: invalid dependency package manifest '"
               (string-append
                 manifest-path
                 (string-append "': " (compiler-diagnostic-message diag)))))]
         [(OkCompilerPkgManifestDiagnostic manifest)
-          (OkPkgResolve
-            (compiler-load-normalize-path
-              (compiler-load-join-root-path
-                (compiler-load-dirname manifest-path)
-                (struct-get manifest entry))))])]))
+          (let
+            [manifest-dir : String (compiler-load-dirname manifest-path)]
+            (OkCompilerLoadPackageEntry
+              (CompilerLoadPackageEntry
+                (compiler-load-normalize-path
+                  (compiler-load-join-root-path
+                    manifest-dir
+                    (struct-get manifest entry)))
+                manifest-dir
+                (struct-get manifest name))))])]))
 
 (define (compiler-load-package-externs-from-import
   [resolved : String]
@@ -1322,10 +1539,10 @@
   [stdlib-roots : StringVec]
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-package-entry-path-for-source resolved)
-    [(ErrPkgResolve message)
+  (match (compiler-load-package-entry-for-source resolved)
+    [(ErrCompilerLoadPackageEntry message)
       (ErrCompilerLoadWithPaths (compiler-diagnostic-at-start resolved message))]
-    [(OkPkgResolve entry-path)
+    [(OkCompilerLoadPackageEntry entry)
       (match (compiler-load-file-with-paths-and-roots-expect-cfg
         resolved
         seen
@@ -1334,7 +1551,9 @@
         cfgs)
         [(OkCompilerLoadWithPaths imported-decls imported-paths _ import-seen)
           (compiler-load-package-extern-decls
-            entry-path
+            (struct-get entry owner)
+            (struct-get entry manifest-dir)
+            stdlib-roots
             imported-decls
             imported-paths
             import-seen
@@ -2003,7 +2222,9 @@
         (AstExprLiteral (AstLitInt 1)))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
-      "src/main.tl"
+      "demo"
+      ""
+      (string-vec-new)
       "src/main.tl"
       "main"
       decl)
@@ -3570,6 +3791,113 @@
           (compiler-load-join-import-path "src/app/main.tl" "C:/dep.tl")
           "C:/dep.tl")))))
 
+(define (compiler-load-test-path-at [paths : AstDeclPathList] [index : i64]) : String
+  (match paths
+    [(AstDeclPathNil) ""]
+    [(AstDeclPathCons path rest)
+      (if (= index 0)
+        path
+        (let
+          [rest : AstDeclPathList (box-get rest)]
+          (compiler-load-test-path-at rest (- index 1))))]))
+
+(define (compiler-load-package-owner-paths-ok?) : bool
+  (let
+    [roots : StringVec (string-vec-push (string-vec-new) "C:/repo/stdlib")]
+    [mixed-roots : StringVec
+      (string-vec-push
+        (string-vec-push (string-vec-new) "C:/repo/stdlib")
+        "C:/repo/selfhost")]
+    [runtime-decl : AstDecl
+      (ast-decl-def-fn
+        "runtime-helper"
+        AstParamNil
+        (AstTyI64)
+        (AstExprLiteral (AstLitInt 1)))]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        "helper"
+        AstParamNil
+        (AstTyI64)
+        (AstExprLiteral (AstLitInt 2)))]
+    [main-decl : AstDecl
+      (ast-decl-def-fn
+        "main"
+        AstParamNil
+        (AstTyI64)
+        (AstExprLiteral (AstLitInt 0)))]
+    [decls : AstDeclList
+      (ast-decl-cons
+        runtime-decl
+        (ast-decl-cons helper-decl (ast-decl-cons main-decl AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "C:/repo/stdlib/runtime.tl"
+        (ast-decl-path-cons
+          "C:/pkg/src/main.tl"
+          (ast-decl-path-cons "C:/pkg/src/main.tl" AstDeclPathNil)))]
+    [owned : AstDeclPathList
+      (compiler-load-package-owned-paths-for-decls
+        "app"
+        "C:/pkg/"
+        roots
+        "C:/pkg/src/main.tl"
+        decls
+        paths)]
+    [runtime-owned-ok : bool
+      (string-eq (compiler-load-test-path-at owned 0) "stdlib/runtime.tl")]
+    [helper-owned-ok : bool
+      (string-eq (compiler-load-test-path-at owned 1) "app/src/main.tl")]
+    [entry-main-ok : bool (string-eq (compiler-load-test-path-at owned 2) "")]
+    [stdlib-normalized-ok : bool
+      (string-eq
+        (compiler-load-package-owned-path
+          "app"
+          "C:/pkg/"
+          roots
+          "stdlib/../stdlib/runtime.tl")
+        "stdlib/runtime.tl")]
+    [empty-root-owned-ok : bool
+      (string-eq
+        (compiler-load-package-owned-path "app" "" roots "src/main.tl")
+        "app/src/main.tl")]
+    [selfhost-root-owned-ok : bool
+      (string-eq
+        (compiler-load-package-owned-path
+          "app"
+          "C:/repo/"
+          mixed-roots
+          "C:/repo/selfhost/compiler_driver_core.tl")
+        "app/selfhost/compiler_driver_core.tl")]
+    (and
+      runtime-owned-ok
+      (and
+        helper-owned-ok
+        (and
+          entry-main-ok
+          (and
+            stdlib-normalized-ok
+            (and empty-root-owned-ok selfhost-root-owned-ok)))))))
+
+(define (compiler-load-package-owner-extern-symbol-ok?) : bool
+  (let
+    [decl : AstDecl
+      (compiler-load-package-def-fn-extern
+        "dep"
+        "C:/dep/"
+        (string-vec-new)
+        "C:/dep/src/lib.tl"
+        ""
+        "helper"
+        AstParamNil
+        (AstTyI64))]
+    (match decl
+      [(AstDeclExtern _ metadata _)
+        (string-eq
+          (ast-extern-metadata-symbol metadata)
+          "_tl_dep_slashsrc_slashlib_u2etl_colon_colonhelper")]
+      [_ false])))
+
 (define (compiler-load-self-test) : i64
   (begin
     (unless
@@ -3583,6 +3911,18 @@
       (return
         (begin
           (panic "compiler-load: relative resolution smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-package-owner-paths-ok?)
+      (return
+        (begin
+          (panic "compiler-load: package owner path smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-package-owner-extern-symbol-ok?)
+      (return
+        (begin
+          (panic "compiler-load: package owner extern symbol smoke mismatch")
           0)))
     (unless
       (compiler-load-source-provenance-ok?)

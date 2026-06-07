@@ -588,6 +588,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [manifest-dir : String]
+  [package-owner : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultSourceToolString
@@ -604,6 +605,7 @@
         opt-level
         mode
         manifest-dir
+        package-owner
         deps
         emit-entry
         crt-entry)

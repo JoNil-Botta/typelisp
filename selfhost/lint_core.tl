@@ -815,6 +815,7 @@
     [(AstExprLiteral _) acc]
     [(AstExprVar _) acc]
     [(AstExprTypeLiteral _) acc]
+    [(AstExprInit _) acc]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (box-get left-box)]

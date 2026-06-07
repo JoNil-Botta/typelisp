@@ -2226,6 +2226,7 @@
         [inner : AstExpr (box-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
     [(AstExprTypeLiteral _) roots]
+    [(AstExprInit _) roots]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -2735,6 +2736,7 @@
         [inner : AstExpr (box-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
     [(AstExprTypeLiteral _) state]
+    [(AstExprInit _) state]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
@@ -8126,6 +8128,203 @@
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
     [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))]))
 
+(define (lower-init-expr-list-from-types [types : AstTypeList]) : AstExprList
+  (match types
+    [(AstTypeNil) AstExprNil]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (box-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (ast-expr-cons
+          (ast-expr-init head)
+          (lower-init-expr-list-from-types rest)))]))
+
+(define (lower-init-expr-list-repeat [ty : AstType] [count : i64]) : AstExprList
+  (if (<= count 0)
+    AstExprNil
+    (ast-expr-cons
+      (ast-expr-init ty)
+      (lower-init-expr-list-repeat ty (- count 1)))))
+
+(define (lower-init-scalar
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (lower-materialize-at-expr state value ty origin))
+
+(define (lower-init-struct
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [struct-name : String]
+  [struct-ty : AstType]) : ResultLowerExpr
+  (if (lower-struct-repr-c? ctx struct-name)
+    (ErrLowerExpr
+      (lower-diagnostic "lower: init supports only default-layout structs"))
+    (match (lower-struct-fields ctx struct-name)
+      [(OkAstFieldDefList fields)
+        (let
+          [field-types : AstTypeList
+            (tc-resolve-type-list
+              ctx
+              (lower-struct-constructor-field-types-for-result
+                ctx
+                struct-name
+                struct-ty
+                fields))]
+          (lower-construct-struct
+            ctx
+            state
+            env
+            type-env
+            struct-name
+            (lower-init-expr-list-from-types field-types)
+            struct-ty))]
+      [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))])))
+
+(define (lower-init-enum
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [enum-name : String]
+  [enum-ty : AstType]) : ResultLowerExpr
+  (match (tc-enum-decl ctx enum-name)
+    [(OkTcEnumDecl decl)
+      (match decl
+        [(TcEnumDecl _ variants)
+          (match variants
+            [(AstVariantDefNil)
+              (ErrLowerExpr
+                (lower-diagnostic
+                  "lower: init requires enum with at least one variant"))]
+            [(AstVariantDefCons variant _)
+              (match variant
+                [(AstVariantDef variant-name fields _)
+                  (let
+                    [lookup-name : String
+                      (tc-variant-name-for-enum enum-name variant-name)]
+                    [payload-types : AstTypeList
+                      (tc-resolve-type-list
+                        ctx
+                        (lower-enum-constructor-fields-for-result
+                          ctx
+                          enum-name
+                          enum-ty
+                          fields))]
+                    (match (compiler-registries-lookup-variant
+                      (tc-context-registries ctx)
+                      lookup-name)
+                      [(SomeI64 handle)
+                        (lower-construct-enum-with-name
+                          ctx
+                          state
+                          env
+                          type-env
+                          lookup-name
+                          handle
+                          (lower-init-expr-list-from-types payload-types)
+                          enum-name
+                          enum-ty)]
+                      [(NoneI64)
+                        (ErrLowerExpr
+                          (lower-diagnostic
+                            (string-append
+                              "lower: unknown variant "
+                              lookup-name)))]))])])])]
+    [(ErrTcEnumDecl message) (ErrLowerExpr (lower-diagnostic message))]))
+
+(define (lower-init-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [ty : AstType]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (if (tc-integer-type? resolved)
+      (lower-init-scalar state (IrValueI64 0) expr-ty origin)
+      (match resolved
+        [(AstTyF64) (lower-init-scalar state (IrValueF64 "0.0") expr-ty origin)]
+        [(AstTyF32) (lower-init-scalar state (IrValueF64 "0.0") expr-ty origin)]
+        [(AstTyBool)
+          (lower-init-scalar state (IrValueBool false) expr-ty origin)]
+        [(AstTyChar)
+          (lower-init-scalar state (IrValueChar #\nul') expr-ty origin)]
+        [(AstTyUnit) (OkLowerExpr (LowerExpr state IrValueUnit expr-ty))]
+        [(AstTyString)
+          (lower-init-scalar state (IrValueString "") expr-ty origin)]
+        [(AstTyPtr _)
+          (match (lower-materialize state (IrValueI64 0) (AstTyU64))
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr null-state null-value _)
+                  (OkLowerExpr (LowerExpr null-state null-value expr-ty))])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstTyMutPtr _)
+          (match (lower-materialize state (IrValueI64 0) (AstTyU64))
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr null-state null-value _)
+                  (OkLowerExpr (LowerExpr null-state null-value expr-ty))])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstTyDynArray elem)
+          (lower-make-array-from-len
+            ctx
+            state
+            (box-get elem)
+            (IrValueI64 0)
+            (AstTyI64))]
+        [(AstTyBox elem)
+          (lower-box
+            ctx
+            state
+            env
+            type-env
+            (ast-expr-init (box-get elem))
+            expr-ty)]
+        [(AstTyTuple elems)
+          (lower-tuple
+            ctx
+            state
+            env
+            type-env
+            (lower-init-expr-list-from-types elems)
+            expr-ty
+            origin)]
+        [(AstTyArray elem count)
+          (if (< count 0)
+            (ErrLowerExpr
+              (lower-diagnostic
+                "lower: init fixed array length must be non-negative"))
+            (lower-array-literal
+              ctx
+              state
+              env
+              type-env
+              (lower-init-expr-list-repeat (box-get elem) count)
+              expr-ty
+              origin))]
+        [(AstTyStruct name)
+          (lower-init-struct ctx state env type-env name resolved)]
+        [(AstTyStructArgs name _)
+          (lower-init-struct ctx state env type-env name resolved)]
+        [(AstTyEnum name)
+          (lower-init-enum ctx state env type-env name resolved)]
+        [(AstTyEnumArgs name _)
+          (lower-init-enum ctx state env type-env name resolved)]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (string-append
+                "lower: init unsupported type "
+                (tc-type-render resolved))))]))))
+
 (define (lower-var-or-nullary-variant
   [ctx : TcContext]
   [state : LowerState]
@@ -8624,6 +8823,8 @@
       (match (lower-lookup-type type-cache env type-env name)
         [(OkTcType expr-ty) (OkTcType (tc-type-without-regions expr-ty))]
         [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprInit ty)
+      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprAnn _ ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprCast _ ty)
@@ -8945,6 +9146,8 @@
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
     [(AstExprLiteral lit)
       (lower-materialize-at-expr state (lower-literal-value lit) expr-ty origin)]
+    [(AstExprInit ty)
+      (lower-init-expr ctx state env type-env ty origin expr-ty)]
     [(AstExprVar name)
       (lower-var-or-nullary-variant ctx state env type-env name expr-ty)]
     [(AstExprAnn inner-box _)
@@ -19031,6 +19234,24 @@
 (define (main) : i64
   (get-y (make-point 20 22)))")
 
+(define (compiler-lower-init-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(defenum Maybe (None) (Some i64))
+(define (main) : i64
+  (let
+    [n : i64 (init : i64)]
+    [flag : bool (init : bool)]
+    [ch : char (init : char)]
+    [text : String (init : String)]
+    [ptr : (Ptr i64) (init : (Ptr i64))]
+    [items : (Array i64) (init : (Array i64))]
+    [tupled : (Tuple i64 bool) (init : (Tuple i64 bool))]
+    [fixed : (Array i64 2) (init : (Array i64 2))]
+    [point : Point (init : Point)]
+    [maybe : Maybe (init : Maybe)]
+    [boxed : (Box i64) (init : (Box i64))]
+    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed)))))))")
+
 ;; Tuple construction + ref lowering (#1583): `(tuple true 42)` reserves
 ;; struct-shaped aggregate storage and stores each element at its field offset;
 ;; `(tuple-ref t 1)` gep+loads the indexed element. The whole computation lives
@@ -24408,6 +24629,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-init-source))
         unit
         (set! ok false))
       (if (compiler-lower-tuple-shape-ok?)

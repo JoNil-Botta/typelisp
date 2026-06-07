@@ -841,7 +841,7 @@ Region-polymorphic functions (`(forall (r) ...)`) are deferred to a follow-up
 slice; every function type in v1 is region-agnostic and therefore cannot
 accept or produce region-tagged handles.
 
-### 3.10 Reference types and immutable borrow expressions (v1 design)
+### 3.10 Reference types and borrow expressions (v1 design)
 
 The selfhost compiler accepts written lifetime-bearing reference type forms:
 
@@ -859,23 +859,30 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
 - Immutable references are copyable pointer/provenance values. Copying an
   immutable reference aliases the same immutable referent and does not move or
   copy the referent.
-- Mutable reference expression syntax, mutable exclusivity, implementation of
-  reference-capturing closure relaxation, and non-lexical lifetimes are
-  follow-up borrow-checker work. Borrowed `str` source semantics are specified
-  in section 3.11. Source programs using reference types are rejected before
-  lowering until the selfhost borrow-checker slices land.
+- Mutable references are exclusive, non-copying handles to the same referent.
+  The lexical checker enforces many immutable borrows or one mutable borrow for
+  tracked local/place paths. Non-lexical lifetimes, reference-capturing closure
+  relaxation, and general dereference/update operations remain follow-up
+  borrow-checker work.
+- Lowering supports reference values for scalar referents, borrowed `str`, and
+  array referents used by `array-ref`, `array-set!`, and `array-push!`.
+  Borrowed `str` source semantics are specified in section 3.11.
 
-Immutable borrow expressions are specified as:
+Borrow expressions are specified as:
 
-```lisp test=ignore name=immutable-borrow-expression-syntax reason="borrow expressions are specified before selfhost implementation"
+```lisp test=ignore name=borrow-expression-syntax reason=syntax-only
 (& place)
 (& arena place)
+(&mut place)
+(&mut arena place)
 ```
 
 - `(& place)` creates an immutable reference and lets the checker infer the
   lifetime/arena name.
 - `(& arena place)` creates the same reference but requires the inferred
   lifetime/arena name to be `arena`; otherwise the checker reports a type error.
+- `(&mut place)` and `(&mut arena place)` create mutable references with the
+  same lifetime inference and explicit-lifetime check.
 - Borrow expressions are explicit. There is no implicit conversion from `T` to
   `(& arena T)` in v1.
 - The referent type is the place's value type, except that borrowing a `String`
@@ -2250,18 +2257,17 @@ the loop because the loop may execute zero times.
 **Non-consuming use sites.** A non-consuming use may inspect a move-only value
 without moving it. In v1 these are limited to:
 
-- Immutable borrow expressions `(& place)` / `(& lifetime place)` and reference
-  parameters once the selfhost syntax/provenance/escape slices land
-  (#1033-#1035).
+- Immutable and mutable borrow expressions `(& place)` / `(&mut place)` and
+  their explicit-lifetime forms.
 - Compatibility inspection calls whose current signatures are not yet
   reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
   `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
   `print-error`, dynamic-array `length`/`array-length`, `array-ref` when the
   element type is copyable, `struct-get` when the selected field type is
   copyable, and stdlib predicates that only inspect their aggregate argument.
-- `array-set!` on the array receiver itself while the mutable-reference model is
-  pending. This compatibility rule mutates the array storage but does not move
-  the array handle.
+- `array-set!` and `array-push!` on an owned array receiver or mutable
+  reference receiver. These operations mutate the array storage and do not move
+  the array handle; immutable-reference receivers are rejected.
 
 Ordinary user-defined function parameters are by-value unless their type is a
 future reference type. Passing a `String`, array, tuple, struct, enum, or
@@ -3560,8 +3566,9 @@ stdlib extern wrappers.
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
 | `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer; invalid lengths trap |
-| `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element (bounds checked) |
-| `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element (bounds checked) |
+| `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element, including through an immutable or mutable reference receiver (bounds checked) |
+| `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element through an owned array or mutable reference receiver (bounds checked) |
+| `array-push!` | `(Array t) t → unit` | Append to a dynamic array through an owned array or mutable reference receiver |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |
@@ -4751,6 +4758,8 @@ expr          ::= literal
 
 borrow-expr   ::= "(" "&" borrow-place ")"
                 | "(" "&" ident borrow-place ")"
+                | "(" "&mut" borrow-place ")"
+                | "(" "&mut" ident borrow-place ")"
 borrow-place  ::= ident
                 | "(" "struct-get" borrow-place ident ")"
                 | "(" "tuple-ref" borrow-place integer ")"

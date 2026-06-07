@@ -2942,6 +2942,22 @@
 (define (main [n : i64]) : unit
   (take (&mut n)))")
 
+(define (compiler-typecheck-reference-mut-array-set-source) : String
+  "(define (put [items : (&mut items (Array i64))] [v : i64]) : unit
+  (array-set! items 0 v))
+(define (main [items : (Array i64)]) : unit
+  (put (&mut items) 7))")
+
+(define (compiler-typecheck-reference-mut-array-push-source) : String
+  "(define (grow [items : (&mut items (Array i64))] [v : i64]) : unit
+  (array-push! items v))
+(define (main [items : (Array i64)]) : unit
+  (grow (&mut items) 7))")
+
+(define (compiler-typecheck-reference-immut-array-set-source) : String
+  "(define (bad [items : (& items (Array i64))]) : unit
+  (array-set! items 0 7))")
+
 (define (compiler-typecheck-reference-str-source) : String
   "(define (take [s : (& text str)]) : unit unit)
 (define (main [text : String]) : unit
@@ -3203,6 +3219,16 @@
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-source))]
     [mut-borrow-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-borrow-source))]
+    [mut-array-set-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-mut-array-set-source))]
+    [mut-array-push-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-mut-array-push-source))]
+    [immut-array-set-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-immut-array-set-source)
+        "typecheck: array-set! requires mutable array access")]
     [str-value-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-str-value-source)
@@ -3327,6 +3353,15 @@
         unit
         (set! ok false))
       (if mut-borrow-ok
+        unit
+        (set! ok false))
+      (if mut-array-set-ok
+        unit
+        (set! ok false))
+      (if mut-array-push-ok
+        unit
+        (set! ok false))
+      (if immut-array-set-error-ok
         unit
         (set! ok false))
       (if str-value-error-ok

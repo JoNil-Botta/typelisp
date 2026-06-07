@@ -11465,8 +11465,8 @@
         (string-eq name "tl_arena_poison_enable")))))
 
 ;; Current stdlib modules still depend on these backend runtime shims for
-;; unavoidable OS/profile operations. `stdlib/fs.tl` read-dir and metadata
-;; probes are tracked by #2047.
+;; unavoidable OS/profile operations. `stdlib/fs.tl` metadata probes are tracked
+;; by #2047.
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     false
@@ -11481,11 +11481,11 @@
         false
         false)
       (backend-or8
-        (string-eq name ".L_tl_fs_read_dir_status")
-        (string-eq name ".L_tl_fs_read_dir")
         (string-eq name ".L_tl_fs_file_kind_status")
         (string-eq name ".L_tl_fs_file_size_status")
         (string-eq name ".L_tl_fs_file_size")
+        false
+        false
         false
         false
         false))))
@@ -11735,14 +11735,8 @@
               ".L_tl_abort"
               provides-abort)
             false
-            (compiler-backend-provides-runtime-name?
-              name
-              ".L_tl_fs_read_dir_status"
-              provides-fs)
-            (compiler-backend-provides-runtime-name?
-              name
-              ".L_tl_fs_read_dir"
-              provides-fs)
+            false
+            false
             (compiler-backend-provides-runtime-name?
               name
               ".L_tl_fs_file_kind_status"
@@ -11935,10 +11929,6 @@
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_size")]
     [extern-fs-process-id : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_fs_process_id")]
-    [extern-fs-read-dir-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_read_dir_status")]
-    [extern-fs-read-dir : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_read_dir")]
     [extern-read-line : bool
       (compiler-backend-runtime-index-extern? index ".L_tl_read_stdin_line")]
     [extern-read-bytes : bool
@@ -12051,10 +12041,6 @@
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_size")]
     [calls-fs-process-id : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
-    [calls-fs-read-dir-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_read_dir_status")]
-    [calls-fs-read-dir : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_read_dir")]
     [calls-read-line : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
@@ -12124,28 +12110,16 @@
     [needs-file-read-chunk : bool false]
     [needs-fs-runtime : bool
       (or
-        (or
-          (backend-or8
-            extern-fs-read-dir-status
-            extern-fs-read-dir
-            extern-fs-file-kind-status
-            false
-            false
-            false
-            false
-            false)
-          (or extern-fs-file-size-status extern-fs-file-size))
-        (or
-          (backend-or8
-            calls-fs-read-dir-status
-            calls-fs-read-dir
-            calls-fs-file-kind-status
-            false
-            false
-            false
-            false
-            false)
-          (or calls-fs-file-size-status calls-fs-file-size)))]
+        (backend-or4
+          extern-fs-file-kind-status
+          extern-fs-file-size-status
+          extern-fs-file-size
+          false)
+        (backend-or4
+          calls-fs-file-kind-status
+          calls-fs-file-size-status
+          calls-fs-file-size
+          false))]
     [needs-read-line : bool false]
     [needs-read-bytes : bool false]
     [needs-stdin-eof : bool false]
@@ -13476,253 +13450,7 @@ tl_profile_alloc_reset_peak:
       "")))
 
 (define (compiler-backend-runtime-fs-functions) : String
-  ".L_tl_fs_read_dir_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_read_dir_status_invalid
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_read_dir_status_invalid
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_read_dir_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_read_dir_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_read_dir_status_path_copy_loop
-.L_tl_fs_read_dir_status_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $257, %rax
-    movq $-100, %rdi
-    movq %r13, %rsi
-    movq $65536, %rdx
-    xorq %r10, %r10
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_read_dir_status_error_from_rax
-    movq %rax, %rbx
-    movq $3, %rax
-    movq %rbx, %rdi
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_read_dir_status_error_from_rax
-    xorq %rax, %rax
-    jmp .L_tl_fs_read_dir_status_return
-.L_tl_fs_read_dir_status_error_from_rax:
-    negq %rax
-    jmp .L_tl_fs_read_dir_status_return
-.L_tl_fs_read_dir_status_invalid:
-    movq $22, %rax
-.L_tl_fs_read_dir_status_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_read_dir:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    sub $24, %rsp
-    movq %rdi, %rbx
-    movq %rsi, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_read_dir_empty
-    movq %r12, %rdi
-    addq $1, %rdi
-    js .L_tl_fs_read_dir_empty
-    call tl_alloc
-    movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_fs_read_dir_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_fs_read_dir_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_fs_read_dir_path_copy_loop
-.L_tl_fs_read_dir_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq $257, %rax
-    movq $-100, %rdi
-    movq %r13, %rsi
-    movq $65536, %rdx
-    xorq %r10, %r10
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_read_dir_empty
-    movq %rax, %rbx
-    movq $32768, %rdi
-    call tl_alloc
-    movq %rax, %r14
-    xorq %r15, %r15
-.L_tl_fs_read_dir_first_getdents:
-    movq $217, %rax
-    movq %rbx, %rdi
-    movq %r14, %rsi
-    movq $32768, %rdx
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_read_dir_close_empty
-    cmpq $0, %rax
-    je .L_tl_fs_read_dir_first_done
-    movq %rax, -16(%rbp)
-    xorq %rcx, %rcx
-.L_tl_fs_read_dir_first_entry:
-    cmpq -16(%rbp), %rcx
-    jge .L_tl_fs_read_dir_first_getdents
-    movzwq 16(%r14,%rcx), %r8
-    testq %r8, %r8
-    jz .L_tl_fs_read_dir_first_done
-    leaq 19(%r14,%rcx), %rsi
-    movzbl (%rsi), %edx
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_first_count_name
-    movzbl 1(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_first_next
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_first_count_name
-    movzbl 2(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_first_next
-.L_tl_fs_read_dir_first_count_name:
-    xorq %r9, %r9
-.L_tl_fs_read_dir_first_len_loop:
-    movzbl (%rsi,%r9), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_first_len_done
-    incq %r9
-    jmp .L_tl_fs_read_dir_first_len_loop
-.L_tl_fs_read_dir_first_len_done:
-    addq %r9, %r15
-    incq %r15
-.L_tl_fs_read_dir_first_next:
-    addq %r8, %rcx
-    jmp .L_tl_fs_read_dir_first_entry
-.L_tl_fs_read_dir_first_done:
-    movq $3, %rax
-    movq %rbx, %rdi
-    syscall
-    movq %r15, %rdi
-    cmpq $0, %rdi
-    jne .L_tl_fs_read_dir_alloc_output
-    movq $1, %rdi
-.L_tl_fs_read_dir_alloc_output:
-    call tl_alloc
-    movq %rax, %r12
-    cmpq $0, %r15
-    je .L_tl_fs_read_dir_return_string
-    movq $257, %rax
-    movq $-100, %rdi
-    movq %r13, %rsi
-    movq $65536, %rdx
-    xorq %r10, %r10
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_read_dir_empty
-    movq %rax, %rbx
-    movq $0, -8(%rbp)
-.L_tl_fs_read_dir_second_getdents:
-    movq $217, %rax
-    movq %rbx, %rdi
-    movq %r14, %rsi
-    movq $32768, %rdx
-    syscall
-    testq %rax, %rax
-    js .L_tl_fs_read_dir_close_empty
-    cmpq $0, %rax
-    je .L_tl_fs_read_dir_second_done
-    movq %rax, -16(%rbp)
-    xorq %rcx, %rcx
-.L_tl_fs_read_dir_second_entry:
-    cmpq -16(%rbp), %rcx
-    jge .L_tl_fs_read_dir_second_getdents
-    movzwq 16(%r14,%rcx), %r8
-    testq %r8, %r8
-    jz .L_tl_fs_read_dir_second_done
-    movq %r8, -24(%rbp)
-    leaq 19(%r14,%rcx), %rsi
-    movzbl (%rsi), %edx
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_second_count_name
-    movzbl 1(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_second_next
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_second_count_name
-    movzbl 2(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_second_next
-.L_tl_fs_read_dir_second_count_name:
-    xorq %r9, %r9
-.L_tl_fs_read_dir_second_len_loop:
-    movzbl (%rsi,%r9), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_second_len_done
-    incq %r9
-    jmp .L_tl_fs_read_dir_second_len_loop
-.L_tl_fs_read_dir_second_len_done:
-    movq -8(%rbp), %r8
-    xorq %r10, %r10
-.L_tl_fs_read_dir_second_copy_loop:
-    cmpq %r9, %r10
-    jge .L_tl_fs_read_dir_second_copy_done
-    movzbl (%rsi,%r10), %edx
-    movb %dl, (%r12,%r8)
-    incq %r10
-    incq %r8
-    jmp .L_tl_fs_read_dir_second_copy_loop
-.L_tl_fs_read_dir_second_copy_done:
-    movb $10, (%r12,%r8)
-    incq %r8
-    movq %r8, -8(%rbp)
-.L_tl_fs_read_dir_second_next:
-    addq -24(%rbp), %rcx
-    jmp .L_tl_fs_read_dir_second_entry
-.L_tl_fs_read_dir_second_done:
-    movq $3, %rax
-    movq %rbx, %rdi
-    syscall
-    jmp .L_tl_fs_read_dir_return_string
-.L_tl_fs_read_dir_close_empty:
-    movq $3, %rax
-    movq %rbx, %rdi
-    syscall
-.L_tl_fs_read_dir_empty:
-    call .L_tl_alloc8
-    movq %rax, %r12
-    xorq %r15, %r15
-.L_tl_fs_read_dir_return_string:
-    call .L_tl_alloc16
-    movq %r12, 0(%rax)
-    movq %r15, 8(%rax)
-    add $24, %rsp
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_file_kind_status:
+  ".L_tl_fs_file_kind_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -13888,242 +13616,7 @@ tl_profile_alloc_reset_peak:
 ")
 
 (define (compiler-backend-runtime-windows-fs-functions) : String
-  ".L_tl_fs_read_dir_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_read_dir_status_win_invalid
-    movq %r12, %rcx
-    addq $3, %rcx
-    js .L_tl_fs_read_dir_status_win_invalid
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_fs_read_dir_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_read_dir_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_fs_read_dir_status_win_path_copy_loop
-.L_tl_fs_read_dir_status_win_path_copy_done:
-    movb $92, (%r13,%r12)
-    movb $42, 1(%r13,%r12)
-    movb $0, 2(%r13,%r12)
-    movq $320, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %r13, %rcx
-    movq %rax, %rdx
-    sub $32, %rsp
-    call FindFirstFileA
-    add $32, %rsp
-    cmpq $-1, %rax
-    je .L_tl_fs_read_dir_status_win_errno
-    movq %rax, %rcx
-    sub $32, %rsp
-    call FindClose
-    add $32, %rsp
-    testl %eax, %eax
-    jz .L_tl_fs_read_dir_status_win_errno
-    xorq %rax, %rax
-    jmp .L_tl_fs_read_dir_status_win_return
-.L_tl_fs_read_dir_status_win_errno:
-    call .L_tl_fs_win_last_error_status
-    testq %rax, %rax
-    jne .L_tl_fs_read_dir_status_win_return
-    movq $1, %rax
-    jmp .L_tl_fs_read_dir_status_win_return
-.L_tl_fs_read_dir_status_win_invalid:
-    movq $22, %rax
-.L_tl_fs_read_dir_status_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_read_dir:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    push %r15
-    push %rsi
-    push %rdi
-    sub $8, %rsp
-    movq %rcx, %rsi
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_read_dir_win_empty
-    movq %r12, %rcx
-    addq $3, %rcx
-    js .L_tl_fs_read_dir_win_empty
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %rbx
-    xorq %r10, %r10
-.L_tl_fs_read_dir_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_read_dir_win_path_copy_done
-    movzbl (%rsi,%r10), %edx
-    movb %dl, (%rbx,%r10)
-    incq %r10
-    jmp .L_tl_fs_read_dir_win_path_copy_loop
-.L_tl_fs_read_dir_win_path_copy_done:
-    movb $92, (%rbx,%r12)
-    movb $42, 1(%rbx,%r12)
-    movb $0, 2(%rbx,%r12)
-    movq $320, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r12
-    movq %rbx, %rcx
-    movq %r12, %rdx
-    sub $32, %rsp
-    call FindFirstFileA
-    add $32, %rsp
-    cmpq $-1, %rax
-    je .L_tl_fs_read_dir_win_empty
-    movq %rax, %rdi
-    xorq %r13, %r13
-.L_tl_fs_read_dir_win_first_entry:
-    leaq 44(%r12), %rsi
-    movzbl (%rsi), %edx
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_win_first_count_name
-    movzbl 1(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_win_first_next
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_win_first_count_name
-    movzbl 2(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_win_first_next
-.L_tl_fs_read_dir_win_first_count_name:
-    xorq %r9, %r9
-.L_tl_fs_read_dir_win_first_len_loop:
-    movzbl (%rsi,%r9), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_win_first_len_done
-    incq %r9
-    jmp .L_tl_fs_read_dir_win_first_len_loop
-.L_tl_fs_read_dir_win_first_len_done:
-    addq %r9, %r13
-    incq %r13
-.L_tl_fs_read_dir_win_first_next:
-    movq %rdi, %rcx
-    movq %r12, %rdx
-    sub $32, %rsp
-    call FindNextFileA
-    add $32, %rsp
-    testl %eax, %eax
-    jne .L_tl_fs_read_dir_win_first_entry
-    movq %rdi, %rcx
-    sub $32, %rsp
-    call FindClose
-    add $32, %rsp
-    movq %r13, %rcx
-    cmpq $0, %rcx
-    jne .L_tl_fs_read_dir_win_alloc_output
-    movq $1, %rcx
-.L_tl_fs_read_dir_win_alloc_output:
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r14
-    cmpq $0, %r13
-    je .L_tl_fs_read_dir_win_return_string
-    movq %rbx, %rcx
-    movq %r12, %rdx
-    sub $32, %rsp
-    call FindFirstFileA
-    add $32, %rsp
-    cmpq $-1, %rax
-    je .L_tl_fs_read_dir_win_empty
-    movq %rax, %rdi
-    xorq %r15, %r15
-.L_tl_fs_read_dir_win_second_entry:
-    leaq 44(%r12), %rsi
-    movzbl (%rsi), %edx
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_win_second_count_name
-    movzbl 1(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_win_second_next
-    cmpb $46, %dl
-    jne .L_tl_fs_read_dir_win_second_count_name
-    movzbl 2(%rsi), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_win_second_next
-.L_tl_fs_read_dir_win_second_count_name:
-    xorq %r9, %r9
-.L_tl_fs_read_dir_win_second_len_loop:
-    movzbl (%rsi,%r9), %edx
-    testb %dl, %dl
-    je .L_tl_fs_read_dir_win_second_len_done
-    incq %r9
-    jmp .L_tl_fs_read_dir_win_second_len_loop
-.L_tl_fs_read_dir_win_second_len_done:
-    xorq %r10, %r10
-.L_tl_fs_read_dir_win_second_copy_loop:
-    cmpq %r9, %r10
-    jge .L_tl_fs_read_dir_win_second_copy_done
-    movzbl (%rsi,%r10), %edx
-    movb %dl, (%r14,%r15)
-    incq %r10
-    incq %r15
-    jmp .L_tl_fs_read_dir_win_second_copy_loop
-.L_tl_fs_read_dir_win_second_copy_done:
-    movb $10, (%r14,%r15)
-    incq %r15
-.L_tl_fs_read_dir_win_second_next:
-    movq %rdi, %rcx
-    movq %r12, %rdx
-    sub $32, %rsp
-    call FindNextFileA
-    add $32, %rsp
-    testl %eax, %eax
-    jne .L_tl_fs_read_dir_win_second_entry
-    movq %rdi, %rcx
-    sub $32, %rsp
-    call FindClose
-    add $32, %rsp
-    jmp .L_tl_fs_read_dir_win_return_string
-.L_tl_fs_read_dir_win_empty:
-    call .L_tl_alloc8
-    movq %rax, %r14
-    xorq %r13, %r13
-.L_tl_fs_read_dir_win_return_string:
-    call .L_tl_alloc16
-    movq %r14, 0(%rax)
-    movq %r13, 8(%rax)
-    add $8, %rsp
-    pop %rdi
-    pop %rsi
-    pop %r15
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-.L_tl_fs_file_kind_status:
+  ".L_tl_fs_file_kind_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -15634,11 +15127,12 @@ tl_string_concat5:
     .extern ExitProcess
 "
         (string-append
-          (if (compiler-backend-plan-provides? plan ".L_tl_fs_read_dir_status")
-            "    .extern FindFirstFileA
-    .extern FindNextFileA
-    .extern FindClose
-    .extern GetFileAttributesExA
+          (if (or
+            (compiler-backend-plan-provides? plan ".L_tl_fs_file_kind_status")
+            (or
+              (compiler-backend-plan-provides? plan ".L_tl_fs_file_size_status")
+              (compiler-backend-plan-provides? plan ".L_tl_fs_file_size")))
+            "    .extern GetFileAttributesExA
     .extern GetLastError
 "
             "")

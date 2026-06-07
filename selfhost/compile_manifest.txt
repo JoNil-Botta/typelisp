@@ -129,7 +129,7 @@ decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by se
 # coverage for smaller command binaries. See selfhost/TESTING.md for the full
 # inventory and removal policy.
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_build_cli_config_from:
 contains|_tl_source_tool_build_source:
 contains|_tl_build_config_from:
@@ -142,7 +142,7 @@ contains|Generated:
 end
 
 case|selfhost_clean|selfhost/clean.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_clean_run_from:
 contains|_tl_clean_source:
 contains|_tl_clean_package:
@@ -155,7 +155,7 @@ end
 # through its `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so
 # the dispatcher's assembly must reference every command's runner.
 case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_cli_dispatch:
 contains|_tl_build_run_from:
 contains|_tl_clean_run_from:
@@ -194,7 +194,7 @@ decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC fr
 decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
@@ -205,7 +205,7 @@ contains|_tl_fs_mkdir_status:
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
@@ -219,7 +219,7 @@ contains|selfhost-check: --stdlib-root requires a value
 end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_compile_cli_config_from:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
@@ -327,14 +327,14 @@ contains|linux-x86_64
 end
 
 case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_compiler_check_self_test:
 contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_check_source:
@@ -359,7 +359,7 @@ contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_emit_file_buffer_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
@@ -367,7 +367,7 @@ contains|compiler-driver: expected input and output paths
 end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
 contains|_tl_compiler_driver_compile_file_for_target:
@@ -424,7 +424,7 @@ contains|_tl_compiler_embedded_stdlib_u2etl_colon_coloncompiler_embedded_stdlib_
 end
 
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-size-status,fs-file-size
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
@@ -560,7 +560,7 @@ contains|main:
 end
 
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_generate_file:
 contains|_tl_doc_generate_package:
 contains|_tl_doc_generate_html_file:
@@ -658,7 +658,7 @@ contains|_tl_format_lex:
 end
 
 case|selfhost_doc_site_core|selfhost/doc_site_core.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_render_index:
 contains|_tl_doc_site_css:
@@ -674,7 +674,7 @@ contains|doc-site: duplicate output path in stdlib manifest
 end
 
 case|selfhost_doc_site|selfhost/doc_site.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_usage:
 contains|_tl_doc_site_render_index:
@@ -685,7 +685,7 @@ contains|doc-site: expected zero args or output directory
 end
 
 case|selfhost_doc_site_smoke|selfhost/doc_site_smoke.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_site_smoke:
 contains|_tl_doc_site_render_index:
 contains|_tl_doc_extract_source:
@@ -704,7 +704,7 @@ contains|_tl_doc_render_markdown:
 end
 
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_test_extract_source:
 contains|_tl_doc_test_extract_file:
 contains|_tl_doc_test_parse_run_metadata:
@@ -733,7 +733,7 @@ contains|was expected to fail
 end
 
 case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
 contains|_tl_doc_test_smoke:
@@ -806,7 +806,7 @@ count-at-least|call _tl_print_value|2
 end
 
 case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_format_cli_core_u2etl_colon_colonfmt_format_file:
 contains|_tl_format_cli_core_u2etl_colon_colonfmt_files:
 contains|_tl_format_cli_core_u2etl_colon_colonfmt_package:
@@ -940,7 +940,7 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|_tl_repl_banner:
@@ -958,7 +958,7 @@ contains|tl>
 end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_run_direct_from:
 contains|_tl_run_run_from:
 contains|_tl_run_cli_config_from:
@@ -967,7 +967,7 @@ contains|run: expected source path
 end
 
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_run_direct:
@@ -1020,7 +1020,7 @@ end
 decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by the retained selfhost/lint.tl wrapper and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
 
 case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_file:
 contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_render_finding:
 contains|_tl_lint_driver_core_u2etl_colon_colonselfhost_lint_package:
@@ -1048,7 +1048,7 @@ contains|package-lock: duplicate dependency alias
 end
 
 case|selfhost_scaffold|selfhost/scaffold.tl|assembly|skip|direct
-requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+requires-stage0-symbol|fs-file-kind-status,fs-file-size-status,fs-file-size
 contains|_tl_scaffold_new:
 contains|_tl_scaffold_init:
 contains|_tl_scaffold_emit:

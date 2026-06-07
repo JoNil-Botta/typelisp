@@ -2,7 +2,8 @@
 ;#
 ;# Provides recoverable current-directory and temporary-directory APIs, path-join,
 ;# lexical path normalization, safe relative suffix checks, and cleanup helpers on
-;# top of direct platform FFI bindings and compiler/runtime primitives:
+;# top of direct platform FFI bindings and remaining compiler/runtime metadata
+;# primitives:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
 ;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`,
@@ -11,7 +12,7 @@
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
-;; requires-stage0-symbol: fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+;; requires-stage0-symbol: fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/fs.tl")
 ;# (define joined : String
@@ -34,18 +35,6 @@
 (defenum ResultIoStringList
   (OkIoStringList StringList)
   (ErrIoStringList IoError))
-
-;: Runtime status probe for listing directory entries.
-(extern fs-runtime-read-dir-status (:symbol ".L_tl_fs_read_dir_status") : (->
-  (Ptr u8)
-  i64
-  i64))
-
-;: Runtime string probe for listing directory entries.
-(extern fs-runtime-read-dir (:symbol ".L_tl_fs_read_dir") : (->
-  (Ptr u8)
-  i64
-  String))
 
 ;: Runtime status probe for retrieving a filesystem node kind.
 (extern fs-runtime-file-kind-status (:symbol ".L_tl_fs_file_kind_status") : (->
@@ -102,6 +91,29 @@
       (unsafe
         (int->ptr (cast ptr : u64) : (Ptr u8))))))
 
+;: Linux `openat` syscall (number 257), used for directory enumeration.
+(define (fs-linux-syscall-openat
+  [dirfd : i64]
+  [path : (Ptr u8)]
+  [flags : i64]
+  [mode : i64]) : i64
+  (io-linux-syscall-status
+    (syscall 257 dirfd (io-linux-ptr-arg path) flags mode)))
+
+;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
+(define (fs-linux-syscall-getdents64
+  [fd : i64]
+  [buf : (MutPtr u8)]
+  [count : i64]) : i64
+  (io-linux-syscall-status
+    (syscall
+      217
+      fd
+      (io-linux-ptr-arg
+        (unsafe
+          (ptr-cast buf : (Ptr u8))))
+      count)))
+
 ;: Windows kernel32 bindings backing the directory/file primitives (#2142
 ;: slice 1), replacing the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
 (cfg
@@ -122,6 +134,22 @@
   (extern fs-win-delete-file (:symbol "DeleteFileA") : (-> (Ptr u8) i32)))
 
 (cfg windows (extern fs-win-get-last-error (:symbol "GetLastError") : (-> i32)))
+
+(cfg
+  windows
+  (extern fs-win-find-first-file (:symbol "FindFirstFileA") : (->
+    (Ptr u8)
+    (MutPtr u8)
+    i64)))
+
+(cfg
+  windows
+  (extern fs-win-find-next-file (:symbol "FindNextFileA") : (->
+    i64
+    (MutPtr u8)
+    i32)))
+
+(cfg windows (extern fs-win-find-close (:symbol "FindClose") : (-> i64 i32)))
 
 ;: Windows `_mkdir` replacement via CreateDirectoryA; ERROR_ALREADY_EXISTS
 ;: (183) maps to EEXIST (17) so building over an existing directory keeps the
@@ -286,13 +314,263 @@
     (cast (fs-windows-get-current-process-id) : i64)
     (fs-linux-syscall-getpid)))
 
+;: Linux `AT_FDCWD` for path-relative `openat`.
+(define fs-linux-at-fdcwd : i64
+  -100)
+
+;: Linux `O_DIRECTORY`, requiring the opened path to be a directory.
+(define fs-linux-open-directory : i64
+  65536)
+
+;: Directory enumeration scratch buffer size used by the former backend runtime.
+(define fs-read-dir-buffer-size : i64
+  32768)
+
+;: Size of the Windows `WIN32_FIND_DATAA` structure used by FindFirstFileA.
+(define fs-windows-find-data-size : i64
+  320)
+
+;: Offset of `cFileName` within `WIN32_FIND_DATAA`.
+(define fs-windows-find-data-name-offset : i64
+  44)
+
+;: Read one byte from a C string-like pointer as an integer.
+(define (fs-c-string-byte [ptr : (Ptr u8)] [offset : i64]) : i64
+  (cast
+    (unsafe
+      (ptr-read (ptr-offset ptr offset)))
+    :
+    i64))
+
+;: Return true when a directory entry name is `.` or `..`.
+(define (fs-read-dir-dot-entry? [name : (Ptr u8)]) : bool
+  (if (!= (fs-c-string-byte name 0) 46)
+    false
+    (let
+      [second : i64 (fs-c-string-byte name 1)]
+      (if (= second 0)
+        true
+        (and (= second 46) (= (fs-c-string-byte name 2) 0))))))
+
+;: Append one non-dot entry name plus a newline to `out`.
+(define (fs-read-dir-append-entry! [out : (Array u8)] [name : (Ptr u8)]) : unit
+  (if (fs-read-dir-dot-entry? name)
+    unit
+    (let
+      [i : i64 0]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (let
+            [byte : u8
+              (unsafe
+                (ptr-read (ptr-offset name i)))]
+            (if (= (cast byte : i64) 0)
+              (set! done true)
+              (begin
+                (array-push! out byte)
+                (set! i (+ i 1))))))
+        (array-push! out (cast #\newline' : u8))))))
+
+;: Convert the accumulated newline-delimited bytes into a String.
+(define (fs-read-dir-bytes-string [out : (Array u8)]) : String
+  (unsafe
+    (string-from-bytes (io-array-const-ptr out) (array-length out))))
+
+;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
+(cfg
+  (not windows)
+  (define (fs-linux-dirent-reclen [base : (Ptr u8)] [offset : i64]) : i64
+    (cast
+      (unsafe
+        (ptr-read (ptr-cast (ptr-offset base (+ offset 16)) : (Ptr u16))))
+      :
+      i64)))
+
+;: Return the Linux `d_name` pointer from a `linux_dirent64` record.
+(cfg
+  (not windows)
+  (define (fs-linux-dirent-name [base : (Ptr u8)] [offset : i64]) : (Ptr u8)
+    (unsafe
+      (ptr-offset base (+ offset 19)))))
+
+;: Open an owned path as a Linux directory.
+(cfg
+  (not windows)
+  (define (fs-linux-open-dir-owned [path : String]) : i64
+    (let
+      [path-bytes : (Array u8) (io-c-string path)]
+      (fs-linux-syscall-openat
+        fs-linux-at-fdcwd
+        (io-array-const-ptr path-bytes)
+        fs-linux-open-directory
+        0))))
+
+;: Return the Linux host status code for opening and closing a directory.
+(cfg
+  (not windows)
+  (define (fs-linux-read-dir-status [path : String]) : i64
+    (let
+      [fd : i64 (fs-linux-open-dir-owned path)]
+      (if (< fd 0)
+        (io-last-error-code)
+        (fs-status-from-result (io-linux-syscall-close fd))))))
+
+;: Append entries from one Linux getdents64 buffer page.
+(cfg
+  (not windows)
+  (define (fs-linux-read-dir-append-page!
+    [buf : (Array u8)]
+    [read-count : i64]
+    [out : (Array u8)]) : unit
+    (let
+      [base : (Ptr u8) (io-array-const-ptr buf)]
+      [offset : i64 0]
+      [done : bool false]
+      (while (not done)
+        (if (>= offset read-count)
+          (set! done true)
+          (let
+            [reclen : i64 (fs-linux-dirent-reclen base offset)]
+            (if (<= reclen 0)
+              (set! done true)
+              (begin
+                (fs-read-dir-append-entry!
+                  out
+                  (fs-linux-dirent-name base offset))
+                (set! offset (+ offset reclen))))))))))
+
+;: Return the newline-delimited Linux directory listing payload.
+(cfg
+  (not windows)
+  (define (fs-linux-read-dir [path : String]) : String
+    (let
+      [fd : i64 (fs-linux-open-dir-owned path)]
+      (if (< fd 0)
+        ""
+        (let
+          [buf : (Array u8) (make-array u8 fs-read-dir-buffer-size)]
+          [out : (Array u8) (make-array u8 0)]
+          [ok : bool true]
+          [done : bool false]
+          (begin
+            (while (not done)
+              (let
+                [read-count : i64
+                  (fs-linux-syscall-getdents64
+                    fd
+                    (io-array-ptr buf)
+                    fs-read-dir-buffer-size)]
+                (cond
+                  [(< read-count 0)
+                    (begin
+                      (set! ok false)
+                      (set! done true))]
+                  [(= read-count 0) (set! done true)]
+                  [else (fs-linux-read-dir-append-page! buf read-count out)])))
+            (io-linux-syscall-close fd)
+            (if ok
+              (fs-read-dir-bytes-string out)
+              "")))))))
+
+;: Map Windows `GetLastError` values to errno-style stdlib statuses.
+(cfg
+  windows
+  (define (fs-windows-last-error-status) : i64
+    (let
+      [code : i64 (cast (fs-win-get-last-error) : i64)]
+      (cond
+        [(= code 2) io-status-not-found]
+        [(= code 3) io-status-not-directory]
+        [(= code 5) io-status-permission-denied]
+        [(= code 87) io-status-invalid]
+        [(= code 123) io-status-invalid]
+        [(= code 161) io-status-invalid]
+        [(= code 206) io-status-name-too-long]
+        [(= code 267) io-status-not-directory]
+        [else code]))))
+
+;: Return an I/O error status when Windows reported no concrete code.
+(cfg
+  windows
+  (define (fs-windows-nonzero-status [status : i64]) : i64
+    (if (= status io-status-ok)
+      io-status-io-error
+      status)))
+
+;: Build the `path\*` search pattern expected by FindFirstFileA.
+(cfg
+  windows
+  (define (fs-windows-read-dir-pattern [path : String]) : String
+    (string-append path "\\*")))
+
+;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
+(cfg
+  windows
+  (define (fs-windows-find-data-name [data : (Array u8)]) : (Ptr u8)
+    (unsafe
+      (ptr-cast
+        (ptr-offset (io-array-ptr data) fs-windows-find-data-name-offset)
+        :
+        (Ptr u8)))))
+
+;: Return the Windows host status code for opening and closing a directory scan.
+(cfg
+  windows
+  (define (fs-windows-read-dir-status [path : String]) : i64
+    (let
+      [pattern : String (fs-windows-read-dir-pattern path)]
+      [pattern-bytes : (Array u8) (io-c-string pattern)]
+      [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
+      [handle : i64
+        (fs-win-find-first-file
+          (io-array-const-ptr pattern-bytes)
+          (io-array-ptr data))]
+      (if (= handle -1)
+        (fs-windows-nonzero-status (fs-windows-last-error-status))
+        (if (= (fs-win-find-close handle) (cast 0 : i32))
+          (fs-windows-nonzero-status (fs-windows-last-error-status))
+          io-status-ok)))))
+
+;: Return the newline-delimited Windows directory listing payload.
+(cfg
+  windows
+  (define (fs-windows-read-dir [path : String]) : String
+    (let
+      [pattern : String (fs-windows-read-dir-pattern path)]
+      [pattern-bytes : (Array u8) (io-c-string pattern)]
+      [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
+      [out : (Array u8) (make-array u8 0)]
+      [handle : i64
+        (fs-win-find-first-file
+          (io-array-const-ptr pattern-bytes)
+          (io-array-ptr data))]
+      (if (= handle -1)
+        ""
+        (let
+          [done : bool false]
+          (begin
+            (while (not done)
+              (begin
+                (fs-read-dir-append-entry! out (fs-windows-find-data-name data))
+                (if (=
+                  (fs-win-find-next-file handle (io-array-ptr data))
+                  (cast 0 : i32))
+                  (set! done true)
+                  unit)))
+            (fs-win-find-close handle)
+            (fs-read-dir-bytes-string out)))))))
+
 ;: Return the host status code for reading a directory listing.
 (define (fs-read-dir-status [path : String]) : i64
-  (fs-runtime-read-dir-status (io-string-data path) (string-length path)))
+  (cfg
+    windows
+    (fs-windows-read-dir-status path)
+    (fs-linux-read-dir-status path)))
 
 ;: Return the newline-delimited host directory listing payload.
 (define (fs-read-dir [path : String]) : String
-  (fs-runtime-read-dir (io-string-data path) (string-length path)))
+  (cfg windows (fs-windows-read-dir path) (fs-linux-read-dir path)))
 
 ;: Return the host status code or sentinel for a filesystem node kind.
 (define (fs-file-kind-status [path : String]) : i64

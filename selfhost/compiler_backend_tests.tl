@@ -2832,23 +2832,15 @@
       (and
         (compiler-backend-runtime-helper-inventory-symbol-ok?
           plan
-          ".L_tl_fs_read_dir_status")
+          ".L_tl_fs_file_kind_status")
         (and
           (compiler-backend-runtime-helper-inventory-symbol-ok?
             plan
-            ".L_tl_fs_read_dir")
+            ".L_tl_fs_file_size_status")
           (compiler-backend-runtime-helper-inventory-symbol-ok?
             plan
-            ".L_tl_fs_file_kind_status"))))
-    (and
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        ".L_tl_fs_file_size_status")
-      (and
-        (compiler-backend-runtime-helper-inventory-symbol-ok?
-          plan
-          ".L_tl_fs_file_size")
-        true))))
+            ".L_tl_fs_file_size"))))
+    true))
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-string-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -3780,8 +3772,13 @@
       (not
         (compiler-backend-string-contains? asm ".globl tl_fs_mkdir_status\n"))
       (not (compiler-backend-string-contains? asm "    call _mkdir\n")))
-    (not
-      (compiler-backend-string-contains? asm "    call GetCurrentProcessId\n"))))
+    (and
+      (not
+        (compiler-backend-string-contains? asm "    call GetCurrentProcessId\n"))
+      (and
+        (not
+          (compiler-backend-string-contains? asm ".L_tl_fs_read_dir_status:\n"))
+        (not (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n"))))))
 
 (define (compiler-backend-fs-runtime-source) : String
   "(extern fs-process-id (:symbol \"tl_fs_process_id\") : (-> i64))
@@ -3828,41 +3825,10 @@
         (compiler-backend-no-private-fs-runtime? asm))]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-fs-read-dir-runtime-source) : String
-  "(extern fs-runtime-read-dir-status (:symbol \".L_tl_fs_read_dir_status\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(extern fs-runtime-read-dir (:symbol \".L_tl_fs_read_dir\") : (->
-  (Ptr u8)
-  i64
-  String))
-(define (fs-read-dir-status [path : String]) : i64
-  (fs-runtime-read-dir-status (unsafe (string-data path)) (string-length path)))
-(define (fs-read-dir [path : String]) : String
-  (fs-runtime-read-dir (unsafe (string-data path)) (string-length path)))
-(define (main [path : String]) : i64
-  (+ (fs-read-dir-status path) (string-length (fs-read-dir path))))")
-
-(define (compiler-backend-fs-read-dir-runtime-ok?) : bool
-  (match (compiler-backend-emit-source
-    (compiler-backend-fs-read-dir-runtime-source))
-    [(OkCompilerBackend asm)
-      (backend-and8
-        (compiler-backend-string-contains? asm ".L_tl_fs_read_dir_status:\n")
-        (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")
-        (compiler-backend-string-contains? asm "    movq $217, %rax\n")
-        (not
-          (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n"))
-        (not (compiler-backend-string-contains? asm ".globl tl_fs_read_dir\n"))
-        (not
-          (compiler-backend-string-contains?
-            asm
-            ".globl tl_fs_read_dir_status\n"))
-        (not (compiler-backend-string-contains? asm "\ntl_fs_read_dir:\n"))
-        (not
-          (compiler-backend-string-contains? asm "\ntl_fs_read_dir_status:\n")))]
-    [(ErrCompilerBackend _) false]))
+(define (compiler-backend-fs-read-dir-runtime-removed-ok?) : bool
+  (and
+    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir_status"))
+    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir"))))
 
 (define (compiler-backend-windows-private-fs-no-crt? [asm : String]) : bool
   (and
@@ -3874,39 +3840,6 @@
     (and
       (not (compiler-backend-string-contains? asm "    .extern _errno\n"))
       (not (compiler-backend-string-contains? asm "    call _errno\n")))))
-
-(define (compiler-backend-windows-fs-read-dir-runtime-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-fs-read-dir-runtime-source)
-    (BackendTargetWindows))
-    [(OkCompilerBackend asm)
-      (backend-and8
-        (compiler-backend-string-contains? asm ".L_tl_fs_read_dir_status:\n")
-        (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")
-        (compiler-backend-string-contains? asm "    .extern FindFirstFileA\n")
-        (compiler-backend-string-contains? asm "    .extern FindNextFileA\n")
-        (compiler-backend-string-contains? asm "    .extern FindClose\n")
-        (compiler-backend-string-contains? asm "    call FindFirstFileA\n")
-        (and
-          (compiler-backend-string-contains? asm "    call FindNextFileA\n")
-          (compiler-backend-string-contains? asm "    call FindClose\n"))
-        (and
-          (and
-            (not (compiler-backend-string-contains? asm "    syscall"))
-            (compiler-backend-windows-private-fs-no-crt? asm))
-          (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".globl tl_fs_read_dir_status\n"))
-            (and
-              (not
-                (compiler-backend-string-contains? asm "\ntl_fs_read_dir:\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "\ntl_fs_read_dir_status:\n"))))))]
-    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-file-kind-runtime-source) : String
   "(extern fs-runtime-file-kind-status (:symbol \".L_tl_fs_file_kind_status\") : (->
@@ -5256,13 +5189,13 @@
             (compiler-backend-windows-fs-runtime-ok?)
             (and
               (and
-                (compiler-backend-fs-read-dir-runtime-ok?)
+                (compiler-backend-fs-read-dir-runtime-removed-ok?)
                 (and
                   (compiler-backend-fs-file-kind-runtime-ok?)
                   (compiler-backend-fs-file-size-runtime-ok?)))
               (and
                 (and
-                  (compiler-backend-windows-fs-read-dir-runtime-ok?)
+                  (compiler-backend-fs-read-dir-runtime-removed-ok?)
                   (and
                     (compiler-backend-windows-fs-file-kind-runtime-ok?)
                     (compiler-backend-windows-fs-file-size-runtime-ok?)))

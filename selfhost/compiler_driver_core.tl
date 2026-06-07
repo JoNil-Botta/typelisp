@@ -1082,8 +1082,7 @@
         (write-file output-path asm)
         (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (print-string
-          (string-append "Generated: " (string-append output-path "\n")))
+        (print-string (string-append "Wrote " (string-append output-path "\n")))
         0)]
     [(ErrCompilerDriver diag)
       (begin
@@ -1107,7 +1106,7 @@
           (if (= status 0)
             (begin
               (print-string
-                (string-append "Generated: " (string-append output-path "\n")))
+                (string-append "Wrote " (string-append output-path "\n")))
               0)
             status)))]
     [(ErrCompilerDriverBuffer diag)

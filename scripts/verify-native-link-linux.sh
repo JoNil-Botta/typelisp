@@ -234,7 +234,7 @@ run_compiler_driver() {
         if [ -s "$_stderr" ]; then sed 's/^/  stderr: /' "$_stderr" >&2; fi
         exit 1
     fi
-    expect_stream "printf:Generated: $_asm\n" "$_stdout" "$_label.driver.stdout"
+    expect_stream "printf:Wrote $_asm\n" "$_stdout" "$_label.driver.stdout"
     assert_empty "$_stderr" "$_label driver stderr"
 }
 

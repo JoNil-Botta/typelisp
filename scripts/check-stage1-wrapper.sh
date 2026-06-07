@@ -242,7 +242,7 @@ run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
     echo "compile did not write $ASM" >&2
     exit 1
 }
-assert_contains "$WORKDIR/compile.stdout" "Generated: $ASM"
+assert_contains "$WORKDIR/compile.stdout" "Wrote $ASM"
 
 echo "[host-action-cli] compile --emit-ir"
 run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
@@ -250,7 +250,7 @@ run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
     echo "compile --emit-ir did not write $IR" >&2
     exit 1
 }
-assert_contains "$WORKDIR/compile-ir.stdout" "Generated: $IR"
+assert_contains "$WORKDIR/compile-ir.stdout" "Wrote $IR"
 assert_contains "$IR" "typelisp-ir-summary v1"
 
 run_expect_failure compile-missing-source "$COMPILER" compile
@@ -284,7 +284,7 @@ run_capture build "$COMPILER" build "$SRC" -o "$BIN"
     echo "build did not write executable $BIN" >&2
     exit 1
 }
-assert_contains "$WORKDIR/build.stdout" "Generated: $BIN"
+assert_contains "$WORKDIR/build.stdout" "Built $BIN"
 
 echo "[host-action-cli] package build"
     PKG="$WORKDIR/pkg"
@@ -357,8 +357,8 @@ EOF
         echo "package build did not write dependency archive $MATH_ARCHIVE" >&2
         exit 1
     }
-    assert_contains "$WORKDIR/build-package.stdout" "Generated: $MATH_ARCHIVE"
-    assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_BIN"
+    assert_contains "$WORKDIR/build-package.stdout" "Built $MATH_ARCHIVE"
+    assert_contains "$WORKDIR/build-package.stdout" "Built $PKG_BIN"
     assert_contains "$PKG_ASM" "main:"
     assert_contains "$PKG_ASM" ".extern _tl_stage1_math_src_lib_add_one"
     assert_not_contains "$PKG_ASM" "_tl_stage1_math_src_lib_add_one:"
@@ -385,8 +385,8 @@ EOF
         echo "package dev profile build did not write dependency archive $MATH_DEV_ARCHIVE" >&2
         exit 1
     }
-    assert_contains "$WORKDIR/build-package-dev.stdout" "Generated: $MATH_DEV_ARCHIVE"
-    assert_contains "$WORKDIR/build-package-dev.stdout" "Generated: $PKG_DEV_BIN"
+    assert_contains "$WORKDIR/build-package-dev.stdout" "Built $MATH_DEV_ARCHIVE"
+    assert_contains "$WORKDIR/build-package-dev.stdout" "Built $PKG_DEV_BIN"
 
     rm -rf "$PKG/target"
     run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
@@ -398,7 +398,7 @@ EOF
         echo "package discovery did not keep assembly side artifact $PKG_ASM" >&2
         exit 1
     }
-    assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/release/stage1_pkg/stage1_pkg"
+    assert_contains "$WORKDIR/build-package-discover.stdout" "Built ../../../target/typelisp/release/stage1_pkg/stage1_pkg"
 
     LIBPKG="$WORKDIR/libpkg"
     mkdir -p "$LIBPKG/src"
@@ -418,7 +418,7 @@ EOF
         echo "package lib build did not write static archive $LIB_ARCHIVE" >&2
         exit 1
     }
-    assert_contains "$WORKDIR/build-package-lib.stdout" "Generated: $LIB_ARCHIVE"
+    assert_contains "$WORKDIR/build-package-lib.stdout" "Built $LIB_ARCHIVE"
 
 run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
 assert_empty "$WORKDIR/build-package-missing.stdout"
@@ -541,7 +541,7 @@ EOF
 EOF
     run_capture doc "$COMPILER" doc "$DOC_ENTRY" -o "$DOC_MD" --stdlib-root "$DOC_STDLIB"
     assert_empty "$WORKDIR/doc.stderr"
-    assert_contains "$WORKDIR/doc.stdout" "Generated: $DOC_MD"
+    assert_contains "$WORKDIR/doc.stdout" "Wrote $DOC_MD"
     assert_contains "$DOC_MD" "Entry module docs."
     assert_contains "$DOC_MD" "Local module docs."
     assert_contains "$DOC_MD" "Stdlib module docs."

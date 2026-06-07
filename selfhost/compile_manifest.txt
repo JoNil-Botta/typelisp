@@ -137,7 +137,7 @@ contains|_tl_build_package:
 contains|_tl_build_package_emit:
 contains|_tl_host_plan_netline:
 contains|could not find typelisp.pkg
-contains|Generated:
+contains|Built
 end
 
 case|selfhost_clean|selfhost/clean.tl|assembly|skip|direct

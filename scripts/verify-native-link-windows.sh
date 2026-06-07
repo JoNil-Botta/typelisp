@@ -201,7 +201,7 @@ if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     sed 's/^/  /' "$WORKDIR/build.stderr" >&2 || true
     fail "selfhost build --direct failed"
 fi
-assert_contains "$WORKDIR/build.stdout" "Generated: $BIN_DISPLAY"
+assert_contains "$WORKDIR/build.stdout" "Built $BIN_DISPLAY"
 assert_empty "$WORKDIR/build.stderr"
 [ -x "$BIN" ] || fail "selfhost build did not write executable $BIN"
 
@@ -282,7 +282,7 @@ if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     sed 's/^/  /' "$WORKDIR/build-link.stderr" >&2 || true
     fail "selfhost build --direct --link-lib failed"
 fi
-assert_contains "$WORKDIR/build-link.stdout" "Generated: $LINK_BIN_DISPLAY"
+assert_contains "$WORKDIR/build-link.stdout" "Built $LINK_BIN_DISPLAY"
 assert_empty "$WORKDIR/build-link.stderr"
 [ -x "$LINK_BIN" ] || fail "selfhost link-input build did not write executable $LINK_BIN"
 
@@ -338,7 +338,7 @@ if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     sed 's/^/  /' "$WORKDIR/build-link-metadata.stderr" >&2 || true
     fail "selfhost build --direct extern link metadata failed"
 fi
-assert_contains "$WORKDIR/build-link-metadata.stdout" "Generated: $LINK_METADATA_BIN_DISPLAY"
+assert_contains "$WORKDIR/build-link-metadata.stdout" "Built $LINK_METADATA_BIN_DISPLAY"
 assert_empty "$WORKDIR/build-link-metadata.stderr"
 [ -x "$LINK_METADATA_BIN" ] || fail "selfhost metadata link-input build did not write executable $LINK_METADATA_BIN"
 
@@ -383,7 +383,7 @@ if ! "$COMPILER" build "$LINK_SRC" --target windows-x86_64 -o "$PUBLIC_LINK_BIN"
     sed 's/^/  /' "$WORKDIR/public-build-link.stderr" >&2 || true
     fail "public build --link-lib failed"
 fi
-assert_contains "$WORKDIR/public-build-link.stdout" "Generated: $PUBLIC_LINK_BIN_DISPLAY"
+assert_contains "$WORKDIR/public-build-link.stdout" "Built $PUBLIC_LINK_BIN_DISPLAY"
 assert_empty "$WORKDIR/public-build-link.stderr"
 
 set +e
@@ -427,7 +427,7 @@ if ! "$COMPILER" build "$LINK_METADATA_SRC" --target windows-x86_64 \
     sed 's/^/  /' "$WORKDIR/public-build-link-metadata.stderr" >&2 || true
     fail "public build extern link metadata failed"
 fi
-assert_contains "$WORKDIR/public-build-link-metadata.stdout" "Generated: $PUBLIC_LINK_METADATA_BIN_DISPLAY"
+assert_contains "$WORKDIR/public-build-link-metadata.stdout" "Built $PUBLIC_LINK_METADATA_BIN_DISPLAY"
 assert_empty "$WORKDIR/public-build-link-metadata.stderr"
 
 set +e

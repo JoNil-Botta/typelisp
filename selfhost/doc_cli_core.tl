@@ -43,8 +43,8 @@
   (OkDocDefaultCliConfig DocDefaultCliConfig)
   (ErrDocDefaultCliConfig String))
 
-(define (doc-print-generated [output-path : String]) : unit
-  (print-string (string-append "Generated: " (string-append output-path "\n"))))
+(define (doc-print-wrote [output-path : String]) : unit
+  (print-string (string-append "Wrote " (string-append output-path "\n"))))
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
@@ -52,7 +52,7 @@
     [markdown : String (doc-render-markdown (doc-extract-source source))]
     (begin
       (write-file output-path markdown)
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-cli-module-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
@@ -113,7 +113,7 @@
     [(OkCompilerLoadWithPaths _ paths _ _)
       (begin
         (write-file output-path (doc-render-loaded-markdown input-path paths))
-        (doc-print-generated output-path)
+        (doc-print-wrote output-path)
         0)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
@@ -135,7 +135,7 @@
           output-path
           (doc-render-module-graph-markdown
             (doc-modules-from-string-list (struct-get source-set sources))))
-        (doc-print-generated output-path)
+        (doc-print-wrote output-path)
         0)]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
@@ -144,7 +144,7 @@
     [html : String (doc-html-render-source input-path source)]
     (begin
       (write-file output-path html)
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
@@ -152,7 +152,7 @@
     [modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-html-render-module-graph modules))
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-test-file [input-path : String] [stdlib-roots : StringVec]) : i64
@@ -206,7 +206,7 @@
         (- (string-vec-len paths) 1))]
     (begin
       (write-file output-path (doc-render-module-graph-markdown modules))
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-test-config-finish

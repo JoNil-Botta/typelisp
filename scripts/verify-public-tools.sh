@@ -236,7 +236,7 @@ build_linux_cli_tool() {
     run_cmd "$_case-compile" "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Wrote "
     run_cmd "$_case-assemble" as "$_asm" -o "$_obj"
     assert_success
     assert_stdout_empty
@@ -255,7 +255,7 @@ build_host_cli_tool() {
     run_cmd "$_case-build" "$COMPILER" build "$_source" -o "$_output" --target "$HOST_TARGET"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$_output")"
+    assert_contains "$out" "Built $(native_arg_path "$_output")"
     [ -x "$_output" ] || fail "$_case did not write executable $_output"
 }
 
@@ -388,7 +388,7 @@ run_cmd compile-hello "$COMPILER" compile examples/hello.tl -o "$WORKDIR/hello.s
 assert_success
 assert_stderr_empty
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Wrote "
 fi
 assert_contains "$WORKDIR/hello.s" "main:"
 
@@ -470,7 +470,7 @@ run_cmd unsafe-import-reach-compile "$COMPILER" compile "$UNSAFE_REACH/main.tl" 
 assert_success
 assert_stderr_empty
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Wrote "
 fi
 assert_contains "$UNSAFE_REACH/main.s" "main:"
 
@@ -510,7 +510,7 @@ EOF
     assert_success
     assert_stderr_empty
     if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
-        assert_contains "$out" "Generated:"
+        assert_contains "$out" "Wrote "
     fi
     assert_contains "$mode_dir/main.s" "main:"
     if [ "$mode" = avx2 ]; then
@@ -919,7 +919,7 @@ elif [ "$HOST_ACTION_ENABLED" -eq 0 ] &&
 else
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Built "
     BUILD_MATRIX_ASM="$BUILD_MATRIX/target/typelisp/release/backend_mode_build/backend_mode_build.s"
     if [ "$HOST_OS" = linux ]; then
         [ -f "$BUILD_MATRIX_ASM" ] || fail "package --backend-mode avx512 did not keep assembly"
@@ -975,7 +975,7 @@ EOF
     run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$PLANNER_OUTPUT")"
+    assert_contains "$out" "Built $(native_arg_path "$PLANNER_OUTPUT")"
     [ -f "$PLANNER_OUTPUT" ] || fail "selfhost build tool did not write executable"
     run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
     assert_code 23
@@ -1010,7 +1010,7 @@ EOF
     run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $LINK_OUTPUT"
+    assert_contains "$out" "Built $LINK_OUTPUT"
     run_cmd selfhost-build-tool-link-output "$LINK_OUTPUT"
     assert_code 42
     assert_stderr_empty
@@ -1023,7 +1023,7 @@ EOF
     run_cmd public-build-link-lib "$COMPILER" build "$LINK_SOURCE" -o "$PUBLIC_LINK_OUTPUT" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $PUBLIC_LINK_OUTPUT"
+    assert_contains "$out" "Built $PUBLIC_LINK_OUTPUT"
     run_cmd public-build-link-output "$PUBLIC_LINK_OUTPUT"
     assert_code 42
     assert_stderr_empty
@@ -1076,7 +1076,7 @@ EOF
     run_cmd selfhost-build-tool-avx2 "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$PLANNER_AVX2_OUTPUT")"
+    assert_contains "$out" "Built $(native_arg_path "$PLANNER_AVX2_OUTPUT")"
     [ -f "$PLANNER_AVX2_OUTPUT" ] || fail "selfhost build tool did not write avx2 executable"
 
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
@@ -1176,7 +1176,7 @@ EOF
     SELFHOST_PKG_ASM="$SELFHOST_PKG_OUT_DIR/selfhost_pkg.s"
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package build did not write executable"
     [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not keep assembly"
-    assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_PKG_BIN")"
+    assert_contains "$out" "Built $(native_arg_path "$SELFHOST_PKG_BIN")"
     assert_contains "$SELFHOST_PKG_ASM" "main:"
     assert_contains "$SELFHOST_PKG_ASM" "add_one"
     set +e
@@ -1191,7 +1191,7 @@ EOF
     assert_stderr_empty
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package discovery did not write executable"
     [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package discovery did not keep assembly"
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Built "
 
     SELFHOST_LIBPKG="$SELFHOST_PLANNER_DIR/libpkg"
     mkdir -p "$SELFHOST_LIBPKG/src"
@@ -1211,7 +1211,7 @@ EOF
     assert_stderr_empty
     SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/release/selfhost_lib/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
     [ -s "$SELFHOST_LIB_ARCHIVE" ] || fail "selfhost package lib build did not write archive"
-    assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_LIB_ARCHIVE")"
+    assert_contains "$out" "Built $(native_arg_path "$SELFHOST_LIB_ARCHIVE")"
 
     SELFHOST_BADPKG="$SELFHOST_PLANNER_DIR/badpkg"
     mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math/src"
@@ -1276,7 +1276,7 @@ EOF
     run_cmd selfhost-build-package-missing-dep "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     # The selfhost --direct planner builds the path dependency's archive first
-    # (emitting its `Generated:` line) before resolving the entry package's
+    # (emitting its `Built` line) before resolving the entry package's
     # imports, so stdout carries the dependency build, not nothing. The failure
     # is the missing import below.
     assert_contains "$err" "compiler-load: cannot read import"
@@ -1371,7 +1371,7 @@ EOF
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package --backend-mode avx2 did not keep assembly"
-    assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_PKG_BIN")"
+    assert_contains "$out" "Built $(native_arg_path "$SELFHOST_PKG_BIN")"
     assert_contains "$SELFHOST_PKG_ASM" "vzeroupper"
 
     run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --target
@@ -1722,14 +1722,14 @@ EOF
     run_cmd doc-generate "$COMPILER" doc "$WORKDIR/doc_source.tl" -o "$WORKDIR/doc_source.md"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Wrote "
     assert_contains "$WORKDIR/doc_source.md" "Module docs."
     assert_contains "$WORKDIR/doc_source.md" "answer"
 
     run_cmd doc-generate-positional "$COMPILER" doc "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source_positional.md"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$WORKDIR/doc_source_positional.md")"
+    assert_contains "$out" "Wrote $(native_arg_path "$WORKDIR/doc_source_positional.md")"
     assert_contains "$WORKDIR/doc_source_positional.md" "Module docs."
     assert_contains "$WORKDIR/doc_source_positional.md" "answer"
 
@@ -1743,7 +1743,7 @@ EOF
     run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_OUT"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$DOC_CUSTOM_OUT")"
+    assert_contains "$out" "Wrote $(native_arg_path "$DOC_CUSTOM_OUT")"
     assert_contains "$DOC_CUSTOM_OUT" "x"
 
     DOC_GRAPH_DIR="$WORKDIR/doc-module-graph"
@@ -1778,7 +1778,7 @@ EOF
     run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$DOC_GRAPH_OUT")"
+    assert_contains "$out" "Wrote $(native_arg_path "$DOC_GRAPH_OUT")"
 
     DOC_GRAPH_ENTRY_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_ENTRY")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_ENTRY")")
     DOC_GRAPH_LOCAL_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_LOCAL")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_LOCAL")")
@@ -1806,7 +1806,7 @@ EOF
     run_cmd doc-generate-explicit-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" "$DOC_GRAPH_LOCAL" "$DOC_GRAPH_STDLIB_SOURCE" "$DOC_GRAPH_EXPLICIT_OUT"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $(native_arg_path "$DOC_GRAPH_EXPLICIT_OUT")"
+    assert_contains "$out" "Wrote $(native_arg_path "$DOC_GRAPH_EXPLICIT_OUT")"
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "## Modules"
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Entry module docs."
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Local module docs."
@@ -1820,7 +1820,7 @@ EOF
     fi
     run_cmd doc-generate-html "$DOC_TOOL" --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
-    assert_contains "$out" "Generated: $(native_arg_path "$WORKDIR/doc_source.html")"
+    assert_contains "$out" "Wrote $(native_arg_path "$WORKDIR/doc_source.html")"
     assert_stderr_empty
     assert_contains "$WORKDIR/doc_source.html" "<!doctype html>"
     assert_contains "$WORKDIR/doc_source.html" "typelisp-docs.css"
@@ -1859,7 +1859,7 @@ run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pas
 assert_success
 assert_stderr_empty
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
-    assert_contains "$out" "Generated:"
+    assert_contains "$out" "Wrote "
 fi
 assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
 
@@ -2028,7 +2028,7 @@ assert_success
 assert_stderr_empty
 PKG_ASM="$PKG/target/typelisp/release/public_tool_pkg/public_tool_pkg.s"
 [ -f "$PKG_ASM" ] || fail "package build did not write deterministic assembly"
-assert_contains "$out" "Generated:"
+assert_contains "$out" "Built "
 assert_contains "$PKG_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$PKG_ASM" "inc:"
@@ -2120,7 +2120,7 @@ assert_success
 assert_stderr_empty
 WALK_ASM="$WALK_PKG/target/typelisp/release/walk_pkg/walk_pkg.s"
 [ -f "$WALK_ASM" ] || fail "package discover-upward did not write assembly"
-assert_contains "$out" "Generated:"
+assert_contains "$out" "Built "
 assert_contains "$WALK_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$WALK_ASM" "inc:"

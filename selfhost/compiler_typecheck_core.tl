@@ -10952,10 +10952,20 @@
             [decls : AstDeclList (box-get decls-box)]
             (tc-ctfe-layouts-from-decls ctx decls "" CtfeLayoutInfoNil))])]))
 
+;; CTFE base environment (reflection + layout metadata). This is invariant across
+;; a single compile (same program/symbols/registries), but is requested up to ~8
+;; times per compile -- once in macro expansion plus once per comptime evaluation
+;; in the typecheck and lower passes -- and each `ctfe-reflections-from-program` /
+;; `tc-ctfe-layouts` build walks the whole program (O(program), tens of MB). The
+;; cache is populated eagerly in `macro-expand-program` (which always runs first,
+;; in the enclosing program arena, so the cached value never dangles into a
+;; rewound scratch arena) and reset per compile at the top of that function.
 (define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
-  (ctfe-env-with-metadata
-    (tc-ctfe-layouts ctx)
-    (ctfe-reflections-from-program (tc-context-program ctx))))
+  (if macro-expand-ctfe-env-ready
+    macro-expand-ctfe-env-value
+    (ctfe-env-with-metadata
+      (tc-ctfe-layouts ctx)
+      (ctfe-reflections-from-program (tc-context-program ctx)))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -17443,9 +17453,7 @@
         type-env
         params
         expanded-args
-        (if macro-expand-ctfe-env-ready
-          macro-expand-ctfe-env-value
-          (tc-ctfe-env ctx))
+        (tc-ctfe-env ctx)
         call-expr)
         [(OkMacroEnv env)
           (match (ctfe-eval-node
@@ -18442,75 +18450,82 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         [has-defmacro : bool (macro-program-has-defmacro? decls)]
-        (if (or has-defmacro (macro-program-needs-expansion? decls))
-          (begin
-            (cfg compile-profile (compiler-tc-profile-start))
-            (match (build-compiler-symbols program)
-              [(OkCompilerSymbols symbols)
-                (match (build-compiler-registries-with-symbols program symbols)
-                  [(OkCompilerRegistries registries)
-                    (match (build-compiler-exports-with
-                      program
-                      symbols
-                      registries)
-                      [(OkCompilerExports exports)
-                        (begin
-                          (set! macro-expand-exports-value exports)
-                          (set! macro-expand-exports-ready true)
-                          (set! macro-expand-active-module "")
-                          (set! macro-expand-active-index 0)
-                          (set!
-                            macro-expand-macro-names
-                            (macro-collect-macro-names
-                              decls
-                              (tc-string-list-add
-                                (tc-string-list-add (TcStringNil) "when")
-                                "unless")))
-                          (let
-                            [ctx : TcContext
-                              (TcContext program symbols registries "")]
-                            (match (tc-build-top-env ctx program)
-                              [(OkTcEnv top-env)
-                                (begin
-                                  (cfg
-                                    compile-profile
-                                    (compiler-tc-profile-finish "macro_setup"))
-                                  (set!
-                                    macro-expand-ctfe-env-value
-                                    (tc-ctfe-env ctx))
-                                  (set! macro-expand-ctfe-env-ready true)
-                                  (cfg
-                                    compile-profile
-                                    (compiler-tc-profile-start))
-                                  (match (macro-expand-decls
-                                    ctx
-                                    top-env
-                                    decls
-                                    decls
-                                    (not has-defmacro))
-                                    [(OkMacroDecls ndecls)
-                                      (begin
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-profile-finish
-                                            "macro_walk"))
-                                        (OkMacroExpand (ast-program ndecls)))]
-                                    [(ErrMacroDecls diag)
-                                      (begin
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-profile-finish
-                                            "macro_walk"))
-                                        (ErrMacroExpand diag))]))]
-                              [(ErrTcEnv message)
-                                (ErrMacroExpand (tc-diag-at-start message))])))]
-                      [(ErrCompilerExports message)
-                        (ErrMacroExpand (tc-diag-at-start message))])]
-                  [(ErrCompilerRegistries message)
-                    (ErrMacroExpand (tc-diag-at-start message))])]
-              [(ErrCompilerSymbols message)
-                (ErrMacroExpand (tc-diag-at-start message))]))
-          (OkMacroExpand program)))]))
+        (begin
+          ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
+          ;; (or the next program in a multi-program process) never reuses a stale
+          ;; or another program's metadata. The cache is repopulated eagerly below.
+          (set! macro-expand-ctfe-env-ready false)
+          (if (or has-defmacro (macro-program-needs-expansion? decls))
+            (begin
+              (cfg compile-profile (compiler-tc-profile-start))
+              (match (build-compiler-symbols program)
+                [(OkCompilerSymbols symbols)
+                  (match (build-compiler-registries-with-symbols
+                    program
+                    symbols)
+                    [(OkCompilerRegistries registries)
+                      (match (build-compiler-exports-with
+                        program
+                        symbols
+                        registries)
+                        [(OkCompilerExports exports)
+                          (begin
+                            (set! macro-expand-exports-value exports)
+                            (set! macro-expand-exports-ready true)
+                            (set! macro-expand-active-module "")
+                            (set! macro-expand-active-index 0)
+                            (set!
+                              macro-expand-macro-names
+                              (macro-collect-macro-names
+                                decls
+                                (tc-string-list-add
+                                  (tc-string-list-add (TcStringNil) "when")
+                                  "unless")))
+                            (let
+                              [ctx : TcContext
+                                (TcContext program symbols registries "")]
+                              (match (tc-build-top-env ctx program)
+                                [(OkTcEnv top-env)
+                                  (begin
+                                    (cfg
+                                      compile-profile
+                                      (compiler-tc-profile-finish "macro_setup"))
+                                    (set!
+                                      macro-expand-ctfe-env-value
+                                      (tc-ctfe-env ctx))
+                                    (set! macro-expand-ctfe-env-ready true)
+                                    (cfg
+                                      compile-profile
+                                      (compiler-tc-profile-start))
+                                    (match (macro-expand-decls
+                                      ctx
+                                      top-env
+                                      decls
+                                      decls
+                                      (not has-defmacro))
+                                      [(OkMacroDecls ndecls)
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-profile-finish
+                                              "macro_walk"))
+                                          (OkMacroExpand (ast-program ndecls)))]
+                                      [(ErrMacroDecls diag)
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-profile-finish
+                                              "macro_walk"))
+                                          (ErrMacroExpand diag))]))]
+                                [(ErrTcEnv message)
+                                  (ErrMacroExpand (tc-diag-at-start message))])))]
+                        [(ErrCompilerExports message)
+                          (ErrMacroExpand (tc-diag-at-start message))])]
+                    [(ErrCompilerRegistries message)
+                      (ErrMacroExpand (tc-diag-at-start message))])]
+                [(ErrCompilerSymbols message)
+                  (ErrMacroExpand (tc-diag-at-start message))]))
+            (OkMacroExpand program))))]))
 
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))

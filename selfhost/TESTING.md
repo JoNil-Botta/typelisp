@@ -112,6 +112,22 @@ artifact directory, and `--asm target/path/build.s` to analyze an existing
 assembly file without recompiling. The report is intentionally a local
 measurement tool, not a CI size gate.
 
+`scripts/measure-instruction-counts.sh` is the Linux-only dynamic instruction
+counter for local deterministic performance measurements. It builds TypeLisp
+benchmark binaries and runs them under `valgrind --tool=cachegrind`, then runs a
+compiler self-compile command under cachegrind and records the `Ir` event:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-instruction-counts.sh --runs 3
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-instruction-counts.sh --filter arith_loop --benchmarks-only
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-instruction-counts.sh --self-compile-only --opt-level 2
+```
+
+The script writes `runs.tsv` and `summary.tsv` under
+`target/instruction-counts/` by default and fails if a case's `Ir` count differs
+across repeated runs. It intentionally measures full-process instruction counts;
+the benchmark loops and self-compile workload dominate startup overhead.
+
 ### Coverage policy
 
 New behavior should get TypeLisp-owned coverage: a module-local self-test, a

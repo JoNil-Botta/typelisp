@@ -14280,6 +14280,151 @@
     (opt-inline-known-indirect-caller)
     (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
 
+(define (opt-inline-level-functions [level : i64]) : CompilerIrFunctionList
+  (opt-inline-program-functions (opt-inline-frame-functions) level))
+
+(define (opt-inline-self-recursive) : CompilerIrFunction
+  (IrFunction
+    "self_inline"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 0 "self_inline" IrCallArgsNil (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-large-callee-instrs [idx : i64]) : CompilerIrInstrList
+  (if (> idx (opt-inline-max-body))
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueVar idx)))
+      IrInstrNil)
+    (compiler-ir-instr-cons
+      (IrInstrBinOp
+        (+ idx 1)
+        (IrBinAdd)
+        (if (= idx 0)
+          (IrValueI64 0)
+          (IrValueVar idx))
+        (IrValueI64 1)
+        (AstTyI64))
+      (opt-inline-large-callee-instrs (+ idx 1)))))
+
+(define (opt-inline-large-callee) : CompilerIrFunction
+  (IrFunction
+    "too_large_inline"
+    IrParamNil
+    (AstTyI64)
+    (+ (opt-inline-max-body) 2)
+    (compiler-ir-block-cons
+      (compiler-ir-block "entry" (opt-inline-large-callee-instrs 0))
+      IrBlockNil)))
+
+(define (opt-inline-bounds-callee) : CompilerIrFunction
+  (IrFunction
+    "bounds_inline"
+    (compiler-ir-param-cons
+      (IrParam "idx" (AstTyI64) 0)
+      (compiler-ir-param-cons (IrParam "len" (AstTyI64) 1) IrParamNil))
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_inline.ok")
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-call-one [dst : i64] [callee : String]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall dst callee IrCallArgsNil (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueVar dst)))
+      IrInstrNil)))
+
+(define (opt-inline-call-large) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block "entry" (opt-inline-call-one 0 "too_large_inline"))
+      IrBlockNil)))
+
+(define (opt-inline-call-bounds) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            2
+            "bounds_inline"
+            (IrCallArgsTwo (IrValueI64 0) (IrValueI64 4))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-large-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-large)
+    (compiler-ir-function-cons (opt-inline-large-callee) IrFunctionNil)))
+
+(define (opt-inline-bounds-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds)
+    (compiler-ir-function-cons (opt-inline-bounds-callee) IrFunctionNil)))
+
+(define (opt-inline-multi-call-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    6
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 10) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 20) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "inline_add"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrCall
+                  3
+                  "inline_add"
+                  (IrCallArgsTwo (IrValueVar 1) (IrValueVar 2))
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  IrInstrNil))))))
+      IrBlockNil)))
+
+(define (opt-inline-multi-call-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-multi-call-caller)
+    (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
+
 (define (opt-devirt-dynamic-caller) : CompilerIrFunction
   (IrFunction
     "dynamic"
@@ -14404,6 +14549,74 @@
             (opt-inline-mov-dst-src? (box-get rest) dst src))]
         [_ (opt-inline-mov-dst-src? (box-get rest) dst src)])]))
 
+(define (opt-inline-function-instrs
+  [functions : CompilerIrFunctionList]
+  [name : String]) : CompilerIrInstrList
+  (match (opt-function-list-find functions name)
+    [(OptSomeFunction func) (opt-function-first-instrs func)]
+    [(OptNoFunction) IrInstrNil]))
+
+(define (opt-inline-function-frame
+  [functions : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match (opt-function-list-find functions name)
+    [(OptSomeFunction func) (opt-function-frame func)]
+    [(OptNoFunction) (- 0 1)]))
+
+(define (compiler-optimize-inline-level-gate-ok?) : bool
+  (let
+    [level0 : CompilerIrInstrList
+      (opt-inline-function-instrs (opt-inline-level-functions 0) "main")]
+    [level1 : CompilerIrInstrList
+      (opt-inline-function-instrs (opt-inline-level-functions 1) "main")]
+    [level2 : CompilerIrInstrList
+      (opt-inline-function-instrs (opt-inline-level-functions 2) "main")]
+    (and
+      (= (opt-count-direct-call-name level0 "inline_add") 1)
+      (and
+        (= (opt-count-direct-call-name level1 "inline_add") 1)
+        (= (opt-count-direct-call-name level2 "inline_add") 0)))))
+
+(define (compiler-optimize-inline-self-recursive-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons (opt-inline-self-recursive) IrFunctionNil)]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions functions 2)]
+    [instrs : CompilerIrInstrList
+      (opt-inline-function-instrs optimized "self_inline")]
+    (= (opt-count-direct-call-name instrs "self_inline") 1)))
+
+(define (compiler-optimize-inline-large-callee-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-large-functions) 2)]
+    [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
+    (= (opt-count-direct-call-name instrs "too_large_inline") 1)))
+
+(define (compiler-optimize-inline-bounds-callee-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-bounds-functions) 2)]
+    [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
+    (= (opt-count-direct-call-name instrs "bounds_inline") 1)))
+
+(define (compiler-optimize-inline-multi-call-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-multi-call-functions) 2)]
+    [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
+    [frame : i64 (opt-inline-function-frame optimized "main")]
+    (cond
+      [(not (= frame 8)) false]
+      [(not (= (compiler-ir-instr-list-count instrs) 7)) false]
+      [(not (= (opt-count-direct-call-name instrs "inline_add") 0)) false]
+      [(not (= (opt-inline-count-binop-dst instrs 6) 1)) false]
+      [(not (= (opt-inline-count-binop-dst instrs 7) 1)) false]
+      [(not (opt-inline-mov-dst-src? instrs 2 6)) false]
+      [(not (opt-inline-mov-dst-src? instrs 3 7)) false]
+      [else true])))
+
 (define (compiler-optimize-inline-self-test) : i64
   (let
     [optimized : CompilerIrFunctionList
@@ -14427,32 +14640,33 @@
             [(not (= (opt-inline-count-binop-dst instrs 3) 1)) 3]
             [(not (= (opt-inline-count-binop-dst instrs 5) 0)) 4]
             [(not (opt-inline-mov-dst-src? instrs 2 3)) 5]
+            [(not (= (opt-count-direct-call-name instrs "inline_add") 0)) 6]
             [(not
                 (=
                   (opt-count-direct-call-name
                     (opt-function-first-instrs devirt-direct)
                     "inline_add")
                   1))
-              6]
+              7]
             [(not
                 (=
                   (opt-count-indirect-call-instrs
                     (opt-function-first-instrs devirt-direct))
                   0))
-              7]
+              8]
             [(not
                 (=
                   (opt-count-indirect-call-instrs
                     (opt-function-first-instrs devirt-dynamic))
                   1))
-              8]
+              9]
             [(not
                 (=
                   (opt-count-direct-call-name
                     (opt-function-first-instrs devirt-dynamic)
                     "inline_add")
                   0))
-              9]
+              10]
             [else
               (match (opt-function-list-find devirt-inlined "main")
                 [(OptSomeFunction indirect-main)
@@ -14460,31 +14674,36 @@
                     [indirect-instrs : CompilerIrInstrList
                       (opt-function-first-instrs indirect-main)]
                     (cond
-                      [(not (= (opt-function-frame indirect-main) 4)) 10]
+                      [(not (= (opt-function-frame indirect-main) 4)) 11]
                       [(not
                           (= (compiler-ir-instr-list-count indirect-instrs) 5))
-                        11]
-                      [(not
-                          (= (opt-inline-count-binop-dst indirect-instrs 3) 1))
                         12]
                       [(not
-                          (= (opt-count-indirect-call-instrs indirect-instrs) 0))
+                          (= (opt-inline-count-binop-dst indirect-instrs 3) 1))
                         13]
-                      [(not (opt-inline-mov-dst-src? indirect-instrs 2 3)) 14]
+                      [(not
+                          (= (opt-count-indirect-call-instrs indirect-instrs) 0))
+                        14]
+                      [(not (opt-inline-mov-dst-src? indirect-instrs 2 3)) 15]
                       [(not
                           (= (compiler-ir-function-list-count devirt-reach) 2))
-                        15]
-                      [(not (opt-function-list-defines? devirt-reach "main"))
                         16]
+                      [(not (opt-function-list-defines? devirt-reach "main"))
+                        17]
                       [(not
                           (opt-function-list-defines?
                             devirt-reach
                             "kept_target"))
-                        17]
-                      [(opt-function-list-defines? devirt-reach "dead") 18]
+                        18]
+                      [(opt-function-list-defines? devirt-reach "dead") 19]
+                      [(not (compiler-optimize-inline-level-gate-ok?)) 20]
+                      [(not (compiler-optimize-inline-self-recursive-ok?)) 21]
+                      [(not (compiler-optimize-inline-large-callee-ok?)) 22]
+                      [(not (compiler-optimize-inline-bounds-callee-ok?)) 23]
+                      [(not (compiler-optimize-inline-multi-call-ok?)) 24]
                       [else 42]))]
-                [(OptNoFunction) 19])]))]
-      [(OptNoFunction) 20])))
+                [(OptNoFunction) 25])]))]
+      [(OptNoFunction) 26])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

@@ -10651,18 +10651,16 @@
                         (tc-repr-c-layout-size layout)
                         (tc-repr-c-layout-align layout)))]
                   [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
-                (ErrTcLayoutInfo
-                  (tc-cat3
-                    "typecheck: repr c struct "
-                    owner
-                    (tc-cat3
-                      " field "
-                      field
-                      (string-append
-                        " references default-layout struct "
-                        nested)))))])]
+                ;; #2296: embed a default-layout struct by value using its
+                ;; default inline C-rule layout (default layout now follows C
+                ;; layout per #1867). `seen` carries the repr-c owners so a
+                ;; cycle back through this struct is still detected.
+                (tc-inline-aggregate-type-layout-with-stack
+                  ctx
+                  (AstTyStruct nested)
+                  seen))])]
         [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
-    [(AstTyStructArgs nested _)
+    [(AstTyStructArgs nested lifetimes)
       (match (tc-struct-decl ctx nested)
         [(OkTcStructDecl decl)
           (match decl
@@ -10675,17 +10673,23 @@
                         (tc-repr-c-layout-size layout)
                         (tc-repr-c-layout-align layout)))]
                   [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
-                (ErrTcLayoutInfo
-                  (tc-cat3
-                    "typecheck: repr c struct "
-                    owner
-                    (tc-cat3
-                      " field "
-                      field
-                      (string-append
-                        " references default-layout struct "
-                        nested)))))])]
+                ;; #2296: embed a default-layout struct (with type args) by value
+                ;; using its default inline C-rule layout.
+                (tc-inline-aggregate-type-layout-with-stack
+                  ctx
+                  (AstTyStructArgs nested lifetimes)
+                  seen))])]
         [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
+    ;; #2296: embed an enum by value using its default inline layout (tag +
+    ;; payload). Enums have no separate repr-c layout; the inline engine threads
+    ;; `seen` for cycle detection.
+    [(AstTyEnum name)
+      (tc-inline-aggregate-type-layout-with-stack ctx (AstTyEnum name) seen)]
+    [(AstTyEnumArgs name lifetimes)
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (AstTyEnumArgs name lifetimes)
+        seen)]
     [_ (ErrTcLayoutInfo (tc-repr-c-unsupported-field-message owner field ty))]))
 
 (define (tc-repr-c-fields-layout

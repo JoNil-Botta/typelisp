@@ -12429,6 +12429,23 @@ __errno_location:
     leaq tl_errno(%rip), %rax
     ret
 
+    .globl fflush
+fflush:
+    xorq %rax, %rax
+    ret
+
+    .globl strlen
+strlen:
+    movq %rdi, %rax
+.L_tl_strlen_loop:
+    cmpb $0, (%rax)
+    je .L_tl_strlen_done
+    incq %rax
+    jmp .L_tl_strlen_loop
+.L_tl_strlen_done:
+    subq %rdi, %rax
+    ret
+
     .globl getenv
 getenv:
     movq .L_tl_envp(%rip), %r8
@@ -12603,6 +12620,23 @@ _close:
     call CloseHandle
     addq $40, %rsp
 .L_tl_close_ok:
+    xorq %rax, %rax
+    ret
+
+    .globl strlen
+strlen:
+    movq %rcx, %rax
+.L_tl_win_sl:
+    cmpb $0, (%rax)
+    je .L_tl_win_sld
+    incq %rax
+    jmp .L_tl_win_sl
+.L_tl_win_sld:
+    subq %rcx, %rax
+    ret
+
+    .globl fflush
+fflush:
     xorq %rax, %rax
     ret
 

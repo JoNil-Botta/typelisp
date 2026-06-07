@@ -149,36 +149,11 @@
     (runtime-abort-write "tl: invalid region mark\n")
     (runtime-os-exit 134)))
 
-;: C `strlen`: count bytes up to the terminating NUL. Exported as the fixed
-;: `strlen` symbol so the env layer and the Windows startup/argv asm reach the
-;: same implementation on both targets (#2142 slice 3).
-(define (tl-runtime-strlen [ptr : (Ptr u8)])
-  (:export-symbol "strlen")
-  :
-  i64
-  (let
-    [n : i64 0]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (if (=
-          (cast
-            (unsafe
-              (ptr-read (ptr-offset ptr n)))
-            :
-            i64)
-          0)
-          (set! done true)
-          (set! n (+ n 1))))
-      n)))
-
-;: C `fflush`: the freestanding runtime performs unbuffered writes, so flushing
-;: is a no-op that reports success. Exported as `fflush` for the stdio-compat
-;: call site (#2142 slice 3).
-(define (tl-runtime-fflush [stream : (Ptr u8)])
-  (:export-symbol "fflush")
-  :
-  i32
-  (let
-    [ignore-stream : (Ptr u8) stream]
-    (cast 0 : i32)))
+;; NOTE: strlen / fflush are deliberately NOT moved here. They live in the
+;; backend libc-shim block, which the published stage0 emits UNCONDITIONALLY
+;; (unlike the gated abort handlers), and `strlen` is also called by
+;; backend-emitted asm (tl_setup_argv). A TypeLisp export of `strlen`/`fflush`
+;; therefore collides with the seed's shim during the no-Rust bootstrap. Moving
+;; them needs a publish-first sequence (the new backend must ship as stage0
+;; before the stdlib export lands) — tracked alongside the OOM-abort port
+;; (#2221).

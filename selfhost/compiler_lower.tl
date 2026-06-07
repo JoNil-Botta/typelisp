@@ -4831,7 +4831,14 @@
       [(LowerExpr base-state base _)
         (LowerExpr
           (if (> size 0)
-            (lower-store-at-offset base-state base 0 value resolved)
+            (lower-store-inline-value-at-offset
+              ctx
+              base-state
+              base
+              0
+              value
+              resolved
+              size)
             base-state)
           base
           result-ty)])))
@@ -5998,6 +6005,7 @@
       (lower-substring-call-runtime fields-state ptr (IrValueI64 0) len)]))
 
 (define (lower-capture-snapshot-dynarray-copy
+  [ctx : TcContext]
   [state : LowerState]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -6006,9 +6014,10 @@
   [elem-size : i64]) : LowerState
   (if (= elem-size 0)
     state
-    (lower-array-push-copy-loop state old-buf new-buf len elem-ty)))
+    (lower-array-push-copy-loop ctx state old-buf new-buf len elem-ty)))
 
 (define (lower-capture-snapshot-dynarray-finish
+  [ctx : TcContext]
   [state : LowerState]
   [old-buf : CompilerIrValue]
   [len : CompilerIrValue]
@@ -6021,6 +6030,7 @@
       (let
         [copied-state : LowerState
           (lower-capture-snapshot-dynarray-copy
+            ctx
             arr-state
             old-buf
             (IrValueVar buf-var)
@@ -6067,6 +6077,7 @@
                 (match (lower-state-alloc-var byte-state)
                   [(LowerAlloc buf-alloc buf-var)
                     (lower-capture-snapshot-dynarray-finish
+                      ctx
                       (lower-state-emit
                         buf-alloc
                         (IrInstrCall
@@ -6100,7 +6111,13 @@
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
         [size : i64 (lower-type-size ctx resolved)]
         (if (> size 0)
-          (match (lower-load-at-offset state src offset resolved)
+          (match (lower-load-inline-value-at-offset
+            ctx
+            state
+            src
+            offset
+            resolved
+            (lower-state-mode state))
             [(LowerExpr load-state field-value _)
               (match (lower-capture-snapshot-value
                 ctx
@@ -6114,12 +6131,14 @@
                     [(LowerExpr snap-state snap-value _)
                       (lower-capture-snapshot-type-list
                         ctx
-                        (lower-store-at-offset
+                        (lower-store-inline-value-at-offset
+                          ctx
                           snap-state
                           dst
                           offset
                           snap-value
-                          resolved)
+                          resolved
+                          size)
                         env
                         type-env
                         src
@@ -6179,7 +6198,13 @@
     (let
       [offset : i64 (* index elem-size)]
       (if (> elem-size 0)
-        (match (lower-load-at-offset state src offset elem-ty)
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          src
+          offset
+          elem-ty
+          (lower-state-mode state))
           [(LowerExpr load-state elem-value _)
             (match (lower-capture-snapshot-value
               ctx
@@ -6193,12 +6218,14 @@
                   [(LowerExpr snap-state snap-value _)
                     (lower-capture-snapshot-fixed-array-elems
                       ctx
-                      (lower-store-at-offset
+                      (lower-store-inline-value-at-offset
+                        ctx
                         snap-state
                         dst
                         offset
                         snap-value
-                        elem-ty)
+                        elem-ty
+                        elem-size)
                       env
                       type-env
                       src
@@ -13495,6 +13522,7 @@
 ;; Copy old dynamic-array elements into a freshly allocated buffer. The loop is
 ;; emitted as explicit IR so `array-push!` works for runtime lengths.
 (define (lower-array-push-copy-loop
+  [ctx : TcContext]
   [state : LowerState]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -13538,30 +13566,35 @@
                                   body-label
                                   exit-label))
                               body-label)]
-                          (match (lower-emit-gep
+                          (match (lower-emit-elem-addr-gep
+                            ctx
                             body-start
                             old-buf
                             (IrValueVar index-var)
                             elem-ty)
                             [(LowerExpr src-gep-state src-ptr _)
-                              (match (lower-emit-load
+                              (match (lower-load-inline-value-at-offset
+                                ctx
                                 src-gep-state
                                 src-ptr
-                                elem-ty)
+                                0
+                                elem-ty
+                                (lower-state-mode src-gep-state))
                                 [(LowerExpr load-state elem-value _)
-                                  (match (lower-emit-gep
+                                  (match (lower-emit-elem-addr-gep
+                                    ctx
                                     load-state
                                     new-buf
                                     (IrValueVar index-var)
                                     elem-ty)
                                     [(LowerExpr dst-gep-state dst-ptr _)
                                       (match (lower-state-alloc-var
-                                        (lower-state-emit
+                                        (lower-array-elem-store-state
+                                          ctx
                                           dst-gep-state
-                                          (IrInstrStorePtr
-                                            dst-ptr
-                                            elem-value
-                                            elem-ty)))
+                                          dst-ptr
+                                          elem-value
+                                          elem-ty))
                                         [(LowerAlloc inc-alloc inc-var)
                                           (lower-state-finish-block
                                             (lower-state-emit
@@ -13582,6 +13615,7 @@
                                             exit-label)])])])]))]))])])])]))
 
 (define (lower-array-push-finish
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [old-buf : CompilerIrValue]
@@ -13590,8 +13624,9 @@
   [new-len : CompilerIrValue]
   [elem-ty : AstType]
   [value-ir : CompilerIrValue]) : LowerExpr
-  (match (lower-emit-gep
-    (lower-array-push-copy-loop state old-buf new-buf old-len elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    (lower-array-push-copy-loop ctx state old-buf new-buf old-len elem-ty)
     new-buf
     old-len
     elem-ty)
@@ -13599,9 +13634,12 @@
       (LowerExpr
         (lower-store-at-offset
           (lower-store-at-offset
-            (lower-state-emit
+            (lower-array-elem-store-state
+              ctx
               tail-gep-state
-              (IrInstrStorePtr tail-ptr value-ir elem-ty))
+              tail-ptr
+              value-ir
+              elem-ty)
             arr-value
             0
             new-buf
@@ -13614,6 +13652,7 @@
         (AstTyUnit))]))
 
 (define (lower-array-push-alloc-buffer
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [old-buf : CompilerIrValue]
@@ -13633,6 +13672,7 @@
           (match (lower-state-alloc-var byte-state)
             [(LowerAlloc buf-alloc buf-var)
               (lower-array-push-finish
+                ctx
                 (lower-state-emit
                   buf-alloc
                   (IrInstrCall
@@ -13649,6 +13689,7 @@
                 value-ir)])])]))
 
 (define (lower-array-push-after-max-check
+  [ctx : TcContext]
   [state : LowerState]
   [fail-label : String]
   [alloc-label : String]
@@ -13667,6 +13708,7 @@
           (IrInstrJump alloc-label))
         alloc-label)]
     (lower-array-push-alloc-buffer
+      ctx
       alloc-start
       arr-value
       old-buf
@@ -13705,6 +13747,7 @@
                       (AstTyBool))
                       [(LowerExpr check-state within-max _)
                         (lower-array-push-after-max-check
+                          ctx
                           (lower-state-emit
                             check-state
                             (IrInstrBranch within-max alloc-label fail-label))

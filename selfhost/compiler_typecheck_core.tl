@@ -1207,7 +1207,16 @@
     [(TcTypeNil) (ErrTcType (string-append "typecheck: unbound name " name))]
     [(TcTypeCache ids values _ _ rest)
       (match (string-i64-map-get ids name)
-        [(StringI64MapFound index) (OkTcType (array-ref values index))]
+        ;; `index` is the map's stored slot for `name`, always in `[0, len)` of the
+        ;; parallel `values` array, so the bounds check is dead weight on this hot
+        ;; name-resolution read.
+        [(StringI64MapFound index)
+          (OkTcType
+            (unsafe
+              (ptr-read
+                (ptr-offset
+                  (ptr-cast (array-data values) : (Ptr AstType))
+                  index))))]
         [(StringI64MapMissing)
           (ErrTcType (string-append "typecheck: unbound name " name))])]
     [(TcTypeBind key ty rest)
@@ -1221,10 +1230,21 @@
       (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))]
     [(TcTypeCache ids values unsafe-flags _ rest)
       (match (string-i64-map-get ids name)
+        ;; `index` is map-validated into the parallel arrays; skip the bounds check.
         [(StringI64MapFound index)
           (OkTcTypeUnsafe
-            (array-ref values index)
-            (= (array-ref unsafe-flags index) 1))]
+            (unsafe
+              (ptr-read
+                (ptr-offset
+                  (ptr-cast (array-data values) : (Ptr AstType))
+                  index)))
+            (=
+              (unsafe
+                (ptr-read
+                  (ptr-offset
+                    (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                    index)))
+              1))]
         [(StringI64MapMissing)
           (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))])]
     [(TcTypeBind key ty rest)

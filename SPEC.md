@@ -3626,7 +3626,10 @@ entry `argc`/`argv`/`envp`, raw string/array storage, and CPU instructions when
 stdlib code needs capabilities that are not expressible as ordinary FFI calls.
 `stdlib/msvc.tl` owns Windows MSVC/link.exe and SDK discovery through stdlib
 environment, filesystem, and process helpers rather than backend runtime
-symbols.
+symbols. The backend-owned core runtime subset is limited to the allocator and
+arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
+`tl_arena_make`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, and
+`tl_arena_poison_enable`.
 
 | Symbol | Purpose |
 |--------|---------|
@@ -3645,6 +3648,15 @@ symbols.
 | `tl_oob_abort` | Bounds-check trap |
 | `tl_div_abort` | Integer division/remainder trap |
 | `tl_shift_abort` | Shift-count trap |
+
+Allocator/arena page acquisition and release are explicitly backend-owned core
+runtime (#2314): Linux emits `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`,
+`tl_arena_destroy`, and `tl_region_reset` (plus the current `tl_arena_make`
+fatal-exit syscall), while Windows emits kernel32 `VirtualAlloc`/`VirtualFree`
+for the corresponding page paths. `tl_region_mark`, `tl_arena_current`,
+`tl_arena_set`, and `tl_arena_poison_enable` only read or update backend runtime
+state. The string and trap symbols in the table are stdlib/runtime-prelude
+exports or migration targets, not backend-owned core helpers.
 
 ### 6.3 Builtin operator aliases
 

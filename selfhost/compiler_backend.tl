@@ -11503,6 +11503,15 @@
 (define (compiler-backend-runtime-helper-core? [name : String])
   :
   bool
+  ;; The allocator/arena substrate is irreducible backend core runtime (#2314).
+  ;; It bootstraps ordinary TypeLisp allocation, owns the single
+  ;; `tl_current_arena` slot, and must remain import-free/allocation-free while
+  ;; acquiring and releasing arena pages. Linux page ownership is the mmap/munmap
+  ;; sequence in `tl_alloc`, `tl_arena_make`, `tl_arena_destroy`, and
+  ;; `tl_region_reset`; Windows uses kernel32 VirtualAlloc/VirtualFree in the
+  ;; same allocation/release paths. `tl_region_mark`, `tl_arena_current`,
+  ;; `tl_arena_set`, and `tl_arena_poison_enable` only read or update this
+  ;; backend runtime state.
   ;; tl_oob_abort / tl_div_abort / tl_shift_abort moved to the runtime prelude
   ;; (stdlib/runtime.tl) and are now provided by #2143 export-symbol, so they are
   ;; no longer backend-owned runtime helpers (keeping them here would make the
@@ -12685,19 +12694,22 @@ tl_region_mark:
 
 ")
 
-;; Freestanding Linux runtime support (#no-libc). The stdlib issues OS calls
-;; through raw `syscall`s and TypeLisp bodies (io.tl/fs.tl/env.tl/runtime.tl).
+;; Freestanding Linux runtime support (#no-libc). Most stdlib OS calls are raw
+;; `syscall`s in TypeLisp bodies (io.tl/fs.tl/env.tl/runtime.tl). The
+;; allocator/arena page calls are the deliberate backend-core exception (#2314).
 ;; The former `strlen`/`getenv`/`fflush` shims and private errno accessor have
 ;; moved into TypeLisp stdlib code, so the final link needs no `-lc` and no
 ;; dynamic loader.
 (define (compiler-backend-runtime-linux-libc-shim-functions) : String
   "")
 
-;; Windows freestanding runtime support (kernel32-only). Like the Linux side, the
-;; OS-calling primitives now live in TypeLisp (io.tl/fs.tl/env.tl/runtime.tl via
-;; direct kernel32 bindings), so this block only retains the genuinely
-;; backend-level pieces: `__chkstk` (required by the MSVC ABI for large stack
-;; frames), and the program entry (`tl_setup_argv` builds argv from
+;; Windows freestanding runtime support (kernel32-only). Like the Linux side,
+;; most OS-calling primitives now live in TypeLisp (io.tl/fs.tl/env.tl/
+;; runtime.tl via direct kernel32 bindings). The allocator/arena VirtualAlloc/
+;; VirtualFree page calls are the deliberate backend-core exception (#2314), and
+;; this block retains the other genuinely backend-level pieces: `__chkstk`
+;; (required by the MSVC ABI for large stack frames), and the program entry
+;; (`tl_setup_argv` builds argv from
 ;; GetCommandLineA, `_tl_start` is the entry thunk). The former `_errno`,
 ;; `strlen`/`getenv`/`fflush` shims and the `.L_tl_win_write_abort` OOM helper
 ;; were removed (stdlib owns errno, env.tl walks GetEnvironmentStringsA itself;
@@ -12913,6 +12925,8 @@ tl_boot_pool:
 ;; `tl_arena_destroy` releases an arena's whole chain (prev-links to 0). Arena
 ;; header is the same 32-byte record as tl_alloc {0:prev, 8:base, 16:bump,
 ;; 24:end}. System V (mmap=9 / munmap=11) flavor.
+;; These mmap/munmap calls are part of the checked backend-core page boundary
+;; (#2314), not stdlib-owned OS helpers.
 ;;
 ;; These are `.globl` symbols. The runtime (arena primitives, tl_alloc, the
 ;; region runtime, and the `tl_current_arena` slot) is emitted in exactly ONE
@@ -12998,9 +13012,10 @@ tl_arena_destroy:
 
 ")))
 
-;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. The arg arrives
-;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
-;; failure traps via `ud2` (no libc dependency).
+;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. These calls are
+;; part of the checked backend-core page boundary (#2314). The arg arrives in
+;; %rcx; a 32-byte shadow space is reserved before each call. A mapping failure
+;; traps via `ud2` (no libc dependency).
 (define (compiler-backend-runtime-windows-arena-functions [profile : bool]) : String
   (string-append
     "    .globl tl_arena_current

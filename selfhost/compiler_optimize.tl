@@ -4748,7 +4748,10 @@
 (defstruct OptDomInfo
   (index OptCfgIndex)
   (words i64)
-  (rows (Array i64)))
+  (rows (Array i64))
+  (idom (Array i64))
+  (tin (Array i64))
+  (tout (Array i64)))
 
 (define (opt-dom-row-base [words : i64] [id : i64]) : i64
   (* id words))
@@ -4890,12 +4893,15 @@
       (opt-dom-fixpoint! index rows scratch words entry-id (- remaining 1))
       unit)))
 
-(define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : String]) : OptDomInfo
+(define (opt-cfg-dominators-bitset-with
+  [index : OptCfgIndex]
+  [entry-label : String]) : OptDomInfo
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [words : i64 (opt-bits-words count)]
     [rows : (Array i64) (make-array i64 (* count words))]
     [scratch : (Array i64) (make-array i64 words)]
+    [empty : (Array i64) (make-array i64 0)]
     [entry-id : i64 (- 0 1)]
     (begin
       (match (opt-cfg-index-id index entry-label)
@@ -4905,9 +4911,211 @@
       (if (>= entry-id 0)
         (opt-dom-fixpoint! index rows scratch words entry-id (+ count 1))
         unit)
-      (OptDomInfo index words rows))))
+      (OptDomInfo index words rows empty empty empty))))
+
+(define (opt-dom-intersect-idom
+  [index : OptCfgIndex]
+  [idom : (Array i64)]
+  [left : i64]
+  [right : i64]) : i64
+  (let
+    [a : i64 left]
+    [b : i64 right]
+    (begin
+      (while (!= a b)
+        (begin
+          (while (>
+            (opt-cfg-index-rpo-num index a)
+            (opt-cfg-index-rpo-num index b))
+            (set! a (array-ref idom a)))
+          (while (>
+            (opt-cfg-index-rpo-num index b)
+            (opt-cfg-index-rpo-num index a))
+            (set! b (array-ref idom b)))))
+      a)))
+
+(define (opt-dom-idom-from-preds
+  [index : OptCfgIndex]
+  [idom : (Array i64)]
+  [id : i64]) : i64
+  (let
+    [preds : OptCfgCsr (struct-get index preds)]
+    [edge : i64 (array-ref (struct-get preds offsets) id)]
+    [end : i64 (array-ref (struct-get preds offsets) (+ id 1))]
+    [candidate : i64 (- 0 1)]
+    (begin
+      (while (< edge end)
+        (let
+          [pred : i64 (array-ref (struct-get preds edges) edge)]
+          (begin
+            (if (and
+              (array-ref (struct-get index reachable) pred)
+              (>= (array-ref idom pred) 0))
+              (if (< candidate 0)
+                (set! candidate pred)
+                (set!
+                  candidate
+                  (opt-dom-intersect-idom index idom pred candidate)))
+              unit)
+            (set! edge (+ edge 1)))))
+      candidate)))
+
+(define (opt-dom-idom-iterate-rpo!
+  [index : OptCfgIndex]
+  [idom : (Array i64)]
+  [entry-id : i64]) : bool
+  (let
+    [slot : i64 1]
+    [changed : bool false]
+    (begin
+      (while (< slot (struct-get index reach-count))
+        (let
+          [id : i64 (opt-cfg-index-rpo-id index slot)]
+          [new-idom : i64 (opt-dom-idom-from-preds index idom id)]
+          (begin
+            (if (and
+              (!= id entry-id)
+              (and (>= new-idom 0) (!= (array-ref idom id) new-idom)))
+              (begin
+                (array-set! idom id new-idom)
+                (set! changed true))
+              unit)
+            (set! slot (+ slot 1)))))
+      changed)))
+
+(define (opt-dom-idom-fixpoint!
+  [index : OptCfgIndex]
+  [idom : (Array i64)]
+  [entry-id : i64]
+  [remaining : i64]) : unit
+  (if (<= remaining 0)
+    unit
+    (if (opt-dom-idom-iterate-rpo! index idom entry-id)
+      (opt-dom-idom-fixpoint! index idom entry-id (- remaining 1))
+      unit)))
+
+(define (opt-dom-child-rows-fill!
+  [index : OptCfgIndex]
+  [idom : (Array i64)]
+  [rows : (Array OptI64List)]) : unit
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (let
+          [parent : i64 (array-ref idom id)]
+          (begin
+            (if (and
+              (array-ref (struct-get index reachable) id)
+              (and (>= parent 0) (!= parent id)))
+              (array-set!
+                rows
+                parent
+                (opt-i64-list-add (array-ref rows parent) id))
+              unit)
+            (set! id (+ id 1)))))
+      unit)))
+
+(define (opt-dom-euler-dfs!
+  [children : OptCfgCsr]
+  [tin : (Array i64)]
+  [tout : (Array i64)]
+  [id : i64]
+  [time : i64]) : i64
+  (let
+    [next : i64 (+ time 1)]
+    [edge : i64 (array-ref (struct-get children offsets) id)]
+    [end : i64 (array-ref (struct-get children offsets) (+ id 1))]
+    (begin
+      (array-set! tin id time)
+      (while (< edge end)
+        (begin
+          (set!
+            next
+            (opt-dom-euler-dfs!
+              children
+              tin
+              tout
+              (array-ref (struct-get children edges) edge)
+              next))
+          (set! edge (+ edge 1))))
+      (array-set! tout id next)
+      next)))
+
+(define (opt-dom-build-euler!
+  [index : OptCfgIndex]
+  [idom : (Array i64)]
+  [tin : (Array i64)]
+  [tout : (Array i64)]
+  [entry-id : i64]) : unit
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [child-rows : (Array OptI64List) (make-array OptI64List count)]
+    (begin
+      (opt-cfg-fill-i64! tin count (- 0 1))
+      (opt-cfg-fill-i64! tout count (- 0 1))
+      (if (>= entry-id 0)
+        (begin
+          (opt-cfg-i64-list-array-fill-empty! child-rows count)
+          (opt-dom-child-rows-fill! index idom child-rows)
+          (let
+            [children : OptCfgCsr (opt-cfg-csr-build child-rows count)]
+            (begin
+              (opt-dom-euler-dfs! children tin tout entry-id 0)
+              unit)))
+        unit))))
+
+(define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : String]) : OptDomInfo
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [idom : (Array i64) (make-array i64 count)]
+    [tin : (Array i64) (make-array i64 count)]
+    [tout : (Array i64) (make-array i64 count)]
+    [empty : (Array i64) (make-array i64 0)]
+    [entry-id : i64 (- 0 1)]
+    (begin
+      (opt-cfg-fill-i64! idom count (- 0 1))
+      (match (opt-cfg-index-id index entry-label)
+        [(OptSomeI64 id) (set! entry-id id)]
+        [(OptNoI64) unit])
+      (if (and
+        (>= entry-id 0)
+        (array-ref (struct-get index reachable) entry-id))
+        (begin
+          (array-set! idom entry-id entry-id)
+          (opt-dom-idom-fixpoint! index idom entry-id (+ count 1))
+          (opt-dom-build-euler! index idom tin tout entry-id))
+        (begin
+          (opt-cfg-fill-i64! tin count (- 0 1))
+          (opt-cfg-fill-i64! tout count (- 0 1))))
+      (OptDomInfo index 0 empty idom tin tout))))
 
 (define (opt-dom-info-dominates-id?
+  [info : OptDomInfo]
+  [dominator-id : i64]
+  [label-id : i64]) : bool
+  (let
+    [index : OptCfgIndex (struct-get info index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (and
+      (and (>= dominator-id 0) (< dominator-id count))
+      (and (>= label-id 0) (< label-id count)))
+      (if (and
+        (array-ref (struct-get index reachable) dominator-id)
+        (array-ref (struct-get index reachable) label-id))
+        (let
+          [dom-tin : i64 (array-ref (struct-get info tin) dominator-id)]
+          [dom-tout : i64 (array-ref (struct-get info tout) dominator-id)]
+          [label-tin : i64 (array-ref (struct-get info tin) label-id)]
+          [label-tout : i64 (array-ref (struct-get info tout) label-id)]
+          (and
+            (and (>= dom-tin 0) (>= label-tin 0))
+            (and (<= dom-tin label-tin) (<= label-tout dom-tout))))
+        false)
+      false)))
+
+(define (opt-dom-bitset-info-dominates-id?
   [info : OptDomInfo]
   [dominator-id : i64]
   [label-id : i64]) : bool
@@ -4973,6 +5181,45 @@
   [legacy : OptLegacyDomTable]) : bool
   (opt-dom-info-matches-legacy-from? info legacy 0))
 
+(define (opt-dom-info-row-matches-bitset?
+  [info : OptDomInfo]
+  [bitset : OptDomInfo]
+  [label-id : i64]
+  [dominator-id : i64]) : bool
+  (let
+    [index : OptCfgIndex (struct-get info index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (>= dominator-id count)
+      true
+      (let
+        [info-has : bool
+          (opt-dom-info-dominates-id? info dominator-id label-id)]
+        [bitset-has : bool
+          (opt-dom-bitset-info-dominates-id? bitset dominator-id label-id)]
+        (if (or (and info-has bitset-has) (and (not info-has) (not bitset-has)))
+          (opt-dom-info-row-matches-bitset?
+            info
+            bitset
+            label-id
+            (+ dominator-id 1))
+          false)))))
+
+(define (opt-dom-info-matches-bitset-from?
+  [info : OptDomInfo]
+  [bitset : OptDomInfo]
+  [id : i64]) : bool
+  (let
+    [index : OptCfgIndex (struct-get info index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (>= id count)
+      true
+      (if (opt-dom-info-row-matches-bitset? info bitset id 0)
+        (opt-dom-info-matches-bitset-from? info bitset (+ id 1))
+        false))))
+
+(define (opt-dom-info-matches-bitset? [info : OptDomInfo] [bitset : OptDomInfo]) : bool
+  (opt-dom-info-matches-bitset-from? info bitset 0))
+
 (defstruct OptCfgContext
   (index OptCfgIndex)
   (pred-map OptPredMap)
@@ -5001,6 +5248,15 @@
         blocks
         (struct-get context pred-map)
         (struct-get context reachable)
+        (struct-get context entry-label)))))
+
+(define (opt-cfg-dominators-match-bitset? [blocks : CompilerIrBlockList]) : bool
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    (opt-dom-info-matches-bitset?
+      (struct-get context doms)
+      (opt-cfg-dominators-bitset-with
+        (struct-get context index)
         (struct-get context entry-label)))))
 
 (define (opt-dom-dominates?
@@ -16527,6 +16783,13 @@
           (opt-cfg-dominators-match-legacy?
             (opt-natural-loop-irreducible-blocks)))
         31]
+      [(not (opt-cfg-dominators-match-bitset? diamond-blocks)) 32]
+      [(not (opt-cfg-dominators-match-bitset? loop-blocks)) 33]
+      [(not (opt-cfg-dominators-match-bitset? (opt-ssa-unreachable-blocks))) 34]
+      [(not
+          (opt-cfg-dominators-match-bitset?
+            (opt-natural-loop-irreducible-blocks)))
+        35]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

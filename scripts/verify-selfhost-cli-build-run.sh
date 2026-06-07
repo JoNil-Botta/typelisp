@@ -276,16 +276,11 @@ prepare_cli_surface_files() {
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
-(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
-(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(import "stdlib/io.tl")
+
 (extern fixture-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
 (define (fixture-stdout-write [text : String]) : unit
-  (begin
-    (fixture-write
-      (cast 1 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
+  (stdout-write (& text)))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
@@ -1438,16 +1433,11 @@ assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(entry 
 
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'
-(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
-(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(import "stdlib/io.tl")
+
 (extern fixture-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
 (define (fixture-stdout-write [text : String]) : unit
-  (begin
-    (fixture-write
-      (cast 1 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
+  (stdout-write (& text)))
 (define (fixture-arg [index : i64]) : String
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]

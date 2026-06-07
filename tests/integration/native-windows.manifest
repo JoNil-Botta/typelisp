@@ -49,6 +49,7 @@ lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|-
 lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|-
 lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
 lambda_capture_fixed_array_aggregate|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|-
+lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|-
 lambda_capture_nested_aggregate|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|-
 lambda_capture_scalar|tests/integration/lambda_capture_scalar.tl|42|-|-|-
 lambda_capture_struct_enum|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-

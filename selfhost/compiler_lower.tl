@@ -5920,7 +5920,9 @@
     [(AstTyTuple _) true]
     [(AstTyArray _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
     [_ false]))
@@ -5938,7 +5940,9 @@
     [(AstTyTuple _) (AstTyU64)]
     [(AstTyArray _ _) (AstTyU64)]
     [(AstTyEnum _) (AstTyU64)]
+    [(AstTyEnumArgs _ _) (AstTyU64)]
     [(AstTyStruct _) (AstTyU64)]
+    [(AstTyStructArgs _ _) (AstTyU64)]
     [(AstTyString) (AstTyU64)]
     [(AstTyDynArray _) (AstTyU64)]
     [_ ty]))
@@ -5993,7 +5997,11 @@
         ty)]
     [(AstTyStruct name)
       (lower-capture-snapshot-struct-value ctx state env type-env value name ty)]
+    [(AstTyStructArgs name _)
+      (lower-capture-snapshot-struct-value ctx state env type-env value name ty)]
     [(AstTyEnum name)
+      (lower-capture-snapshot-enum-value ctx state env type-env value name ty)]
+    [(AstTyEnumArgs name _)
       (lower-capture-snapshot-enum-value ctx state env type-env value name ty)]
     [_ (OkLowerExpr (LowerExpr state value ty))]))
 

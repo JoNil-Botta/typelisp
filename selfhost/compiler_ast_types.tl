@@ -371,9 +371,16 @@
         (set! ast-node-pool-count (+ id 1))
         id))))
 
-;: Read the node at `id`.
+;: Read the node at `id`. Unchecked: pool ids are an internal invariant (every
+;: id comes from `ast-node-push`), so the bounds check `array-ref` would emit is
+;: dead weight on this hot, ubiquitous accessor. Dropping it also makes the body
+;: a single gep+load+return, which the opt2 inliner can now inline.
 (define (ast-node-get [id : i64]) : AstExpr
-  (array-ref ast-node-pool-slots id))
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (array-data ast-node-pool-slots) : (Ptr AstExpr))
+        id))))
 
 ;: Overwrite the node at `id` in place (used when a node is rewritten in place).
 (define (ast-node-set! [id : i64] [node : AstExpr]) : unit
@@ -436,9 +443,13 @@
         (set! ty-node-pool-count (+ id 1))
         id))))
 
-;: Read the type node at `id`.
+;: Read the type node at `id`. Unchecked for the same reason as `ast-node-get`:
+;: ty ids are an internal invariant, so the bounds check is dead weight and its
+;: removal makes the accessor inlinable at opt2.
 (define (ty-node-get [id : i64]) : AstType
-  (array-ref ty-node-pool-slots id))
+  (unsafe
+    (ptr-read
+      (ptr-offset (ptr-cast (array-data ty-node-pool-slots) : (Ptr AstType)) id))))
 
 ;: Overwrite the type node at `id` in place.
 (define (ty-node-set! [id : i64] [node : AstType]) : unit

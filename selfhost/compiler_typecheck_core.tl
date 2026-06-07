@@ -38,6 +38,10 @@
   (OkTcTypeList AstTypeList)
   (ErrTcTypeList String))
 
+(defenum ResultTcExprList
+  (OkTcExprList AstExprList)
+  (ErrTcExprList String))
+
 (defenum TcBorrowPlace
   (TcBorrowPlace String AstType))
 
@@ -75,6 +79,10 @@
 (defenum TcMaybeString
   (TcNoString)
   (TcSomeString String))
+
+(defenum TcMaybeExternAbi
+  (TcNoExternAbi)
+  (TcSomeExternAbi AstExternAbi))
 
 (defenum TcStringList
   (TcStringNil)
@@ -5926,7 +5934,134 @@
           [(ErrTcUnit message) (ErrTcType message)]))]
     [(ErrTcLifetimeSubst message) (ErrTcType message)]))
 
+(define (tc-call-dynamic-c-varargs-abi? [abi : AstExternAbi]) : bool
+  (or
+    (ast-extern-abi-c-varargs-open? abi)
+    (ast-extern-abi-c-varargs-typed? abi)))
+
+(define (tc-call-extern-abi-for-name [ctx : TcContext] [name : String]) : TcMaybeExternAbi
+  (let
+    [source-name : String
+      (if (tc-hygiene-global-name? name)
+        (tc-hygiene-global-base name)
+        name)]
+    [module : String (tc-context-module ctx)]
+    [lookup-name : String
+      (if (and
+        (> (string-length module) 0)
+        (not (tc-name-qualified? source-name)))
+        (compiler-symbol-module-key module source-name)
+        source-name)]
+    (match (compiler-symbols-lookup-value (tc-context-symbols ctx) lookup-name)
+      [(SomeI64 handle)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-extern))
+          (match (compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (match decl
+                [(AstDeclExtern _ metadata _)
+                  (TcSomeExternAbi (ast-extern-metadata-abi metadata))]
+                [_ (TcNoExternAbi)])]
+            [(ErrAstDecl _) (TcNoExternAbi)])
+          (TcNoExternAbi))]
+      [(NoneI64) (TcNoExternAbi)])))
+
+(define (tc-call-extern-abi [ctx : TcContext] [func : AstExpr]) : TcMaybeExternAbi
+  (match (ast-expr-unspan func)
+    [(AstExprVar name) (tc-call-extern-abi-for-name ctx name)]
+    [_ (TcNoExternAbi)]))
+
+(define (tc-call-varargs-tail-args [args : AstExprList] [params : AstTypeList]) : ResultTcExprList
+  (match params
+    [(AstTypeNil) (OkTcExprList args)]
+    [(AstTypeCons _ rest-params)
+      (match args
+        [(AstExprCons _ rest-args)
+          (tc-call-varargs-tail-args (box-get rest-args) (box-get rest-params))]
+        [(AstExprNil) (ErrTcExprList "typecheck: arity mismatch")])]))
+
+(define (tc-type-list-append [a : AstTypeList] [b : AstTypeList]) : AstTypeList
+  (match a
+    [(AstTypeNil) b]
+    [(AstTypeCons head rest)
+      (ast-type-cons (box-get head) (tc-type-list-append (box-get rest) b))]))
+
+(define (tc-type-list-repeat [ty : AstType] [count : i64]) : AstTypeList
+  (if (<= count 0)
+    AstTypeNil
+    (ast-type-cons ty (tc-type-list-repeat ty (- count 1)))))
+
+(define (tc-call-open-varargs-tail-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcTypeList
+  (match args
+    [(AstExprNil) (OkTcTypeList AstTypeNil)]
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-expr ctx env arg)
+          [(OkTcType ty)
+            (let
+              [resolved : AstType (tc-resolve-type ctx ty)]
+              (if (tc-extern-abi-value-type-ok? resolved)
+                (match (tc-call-open-varargs-tail-types ctx env rest)
+                  [(OkTcTypeList tail-types)
+                    (OkTcTypeList (ast-type-cons ty tail-types))]
+                  [(ErrTcTypeList message) (ErrTcTypeList message)])
+                (ErrTcTypeList
+                  (tc-extern-abi-unsupported-message
+                    "variadic argument"
+                    resolved))))]
+          [(ErrTcType message) (ErrTcTypeList message)]))]))
+
+(define (tc-call-extern-varargs-params
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [abi : AstExternAbi]) : ResultTcTypeList
+  (match (tc-call-varargs-tail-args args params)
+    [(OkTcExprList tail-args)
+      (if (ast-extern-abi-c-varargs-open? abi)
+        (match (tc-call-open-varargs-tail-types ctx env tail-args)
+          [(OkTcTypeList tail-types)
+            (OkTcTypeList (tc-type-list-append params tail-types))]
+          [(ErrTcTypeList message) (ErrTcTypeList message)])
+        (if (ast-extern-abi-c-varargs-typed? abi)
+          (let
+            [tail-ty : AstType
+              (tc-resolve-type ctx (ast-extern-abi-varargs-tail-type abi))]
+            (OkTcTypeList
+              (tc-type-list-append
+                params
+                (tc-type-list-repeat tail-ty (tc-expr-list-len tail-args)))))
+          (OkTcTypeList params)))]
+    [(ErrTcExprList message) (ErrTcTypeList message)]))
+
 (define (tc-call-function-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]) : ResultTcType
+  (match (tc-call-extern-abi ctx func)
+    [(TcSomeExternAbi abi)
+      (if (tc-call-dynamic-c-varargs-abi? abi)
+        (match (tc-call-extern-varargs-params ctx env args params abi)
+          [(OkTcTypeList expanded-params)
+            (tc-call-function-type-normal ctx env func args expanded-params ret)]
+          [(ErrTcTypeList message) (ErrTcType message)])
+        (tc-call-function-type-normal ctx env func args params ret))]
+    [(TcNoExternAbi)
+      (tc-call-function-type-normal ctx env func args params ret)]))
+
+(define (tc-call-function-type-normal
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]
@@ -13524,21 +13659,38 @@
           "typecheck: extern c-varargs fixed argument count exceeds parameter count"))]
     [_ (ErrTcUnit "typecheck: extern must have function type")]))
 
+(define (tc-check-extern-varargs-tail-type
+  [ctx : TcContext]
+  [abi : AstExternAbi]) : ResultTcUnit
+  (if (ast-extern-abi-c-varargs-typed? abi)
+    (let
+      [tail-ty : AstType
+        (tc-resolve-type ctx (ast-extern-abi-varargs-tail-type abi))]
+      (if (tc-extern-abi-value-type-ok? tail-ty)
+        OkTcUnit
+        (ErrTcUnit
+          (tc-extern-abi-unsupported-message "variadic argument" tail-ty))))
+    OkTcUnit))
+
 (define (tc-check-extern-decl
   [ctx : TcContext]
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
     [(AstExternMetadata abi _ _ explicit-abi)
-      (if (and explicit-abi (ast-extern-abi-c? abi))
+      (if (and
+        (ast-extern-abi-c? abi)
+        (or explicit-abi (ast-extern-abi-c-varargs? abi)))
         (let
           [resolved : AstType (tc-resolve-type ctx ty)]
           (match (tc-check-extern-c-abi resolved)
             [(OkTcUnit)
               (if (ast-extern-abi-c-varargs? abi)
-                (tc-check-extern-varargs-fixed-count
+                (match (tc-check-extern-varargs-fixed-count
                   (ast-extern-abi-varargs-fixed-count abi)
                   resolved)
+                  [(OkTcUnit) (tc-check-extern-varargs-tail-type ctx abi)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])
                 OkTcUnit)]
             [(ErrTcUnit message) (ErrTcUnit message)]))
         OkTcUnit)]))
@@ -14789,14 +14941,42 @@
           [(OkTcMove moved1)
             (match (tc-move-call-param-types ctx env func)
               [(OkTcTypeList params)
-                (tc-move-check-exprs-with-types
-                  ctx
-                  env
-                  locals
-                  loop-carried
-                  moved1
-                  args
-                  params)]
+                (match (tc-call-extern-abi ctx func)
+                  [(TcSomeExternAbi abi)
+                    (if (tc-call-dynamic-c-varargs-abi? abi)
+                      (match (tc-call-extern-varargs-params
+                        ctx
+                        env
+                        args
+                        params
+                        abi)
+                        [(OkTcTypeList expanded-params)
+                          (tc-move-check-exprs-with-types
+                            ctx
+                            env
+                            locals
+                            loop-carried
+                            moved1
+                            args
+                            expanded-params)]
+                        [(ErrTcTypeList message) (ErrTcMove message)])
+                      (tc-move-check-exprs-with-types
+                        ctx
+                        env
+                        locals
+                        loop-carried
+                        moved1
+                        args
+                        params))]
+                  [(TcNoExternAbi)
+                    (tc-move-check-exprs-with-types
+                      ctx
+                      env
+                      locals
+                      loop-carried
+                      moved1
+                      args
+                      params)])]
               [(ErrTcTypeList _)
                 (tc-move-check-exprs ctx env locals loop-carried moved1 args)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -15710,15 +15890,46 @@
           [(OkTcBorrowCheck borrowed1)
             (match (tc-move-call-param-types ctx env func)
               [(OkTcTypeList params)
-                (match (tc-borrow-check-exprs-with-types
-                  ctx
-                  env
-                  locals
-                  (tc-moved-clone borrowed1)
-                  args
-                  params)
-                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                (match (tc-call-extern-abi ctx func)
+                  [(TcSomeExternAbi abi)
+                    (if (tc-call-dynamic-c-varargs-abi? abi)
+                      (match (tc-call-extern-varargs-params
+                        ctx
+                        env
+                        args
+                        params
+                        abi)
+                        [(OkTcTypeList expanded-params)
+                          (match (tc-borrow-check-exprs-with-types
+                            ctx
+                            env
+                            locals
+                            (tc-moved-clone borrowed1)
+                            args
+                            expanded-params)
+                            [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                            [(ErrTcBorrowCheck message)
+                              (ErrTcBorrowCheck message)])]
+                        [(ErrTcTypeList message) (ErrTcBorrowCheck message)])
+                      (match (tc-borrow-check-exprs-with-types
+                        ctx
+                        env
+                        locals
+                        (tc-moved-clone borrowed1)
+                        args
+                        params)
+                        [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                  [(TcNoExternAbi)
+                    (match (tc-borrow-check-exprs-with-types
+                      ctx
+                      env
+                      locals
+                      (tc-moved-clone borrowed1)
+                      args
+                      params)
+                      [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
               [(ErrTcTypeList _)
                 (match (tc-borrow-check-exprs
                   ctx

@@ -245,7 +245,7 @@
   (AstExprSet String (Box AstExpr))
   (AstExprAnn (Box AstExpr) AstType)
   (AstExprCast (Box AstExpr) AstType)
-  (AstExprBorrow AstBorrowLifetime (Box AstExpr))
+  (AstExprBorrow bool AstBorrowLifetime (Box AstExpr))
   (AstExprMatch (Box AstExpr) AstMatchArmList)
   (AstExprForeach String AstType (Box AstExpr) (Box AstExpr) (Box AstExpr))
   (AstExprSpmdReduce
@@ -557,8 +557,11 @@
 (define (ast-expr-cast [expr : AstExpr] [ty : AstType]) : AstExpr
   (AstExprCast (box expr) ty))
 
-(define (ast-expr-borrow [lifetime : AstBorrowLifetime] [expr : AstExpr]) : AstExpr
-  (AstExprBorrow lifetime (box expr)))
+(define (ast-expr-borrow
+  [mutable : bool]
+  [lifetime : AstBorrowLifetime]
+  [expr : AstExpr]) : AstExpr
+  (AstExprBorrow mutable lifetime (box expr)))
 
 (define (ast-expr-match [scrutinee : AstExpr] [arms : AstMatchArmList]) : AstExpr
   (AstExprMatch (box scrutinee) arms))
@@ -796,7 +799,7 @@
     [(AstExprSet _ _) 19]
     [(AstExprAnn _ _) 20]
     [(AstExprCast _ _) 21]
-    [(AstExprBorrow _ _) 40]
+    [(AstExprBorrow _ _ _) 40]
     [(AstExprMatch _ _) 22]
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]

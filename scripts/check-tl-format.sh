@@ -107,6 +107,12 @@ xargs grep -lE '\(:(symbol|abi|link-lib|link-search|link-arg)([[:space:]]|\)|$)|
 if grep -F -x 'stdlib/core_macros.tl' "$ALL_FILES" >/dev/null 2>&1; then
     printf '%s\n' 'stdlib/core_macros.tl' >> "$METADATA_FILES"
 fi
+
+# The #806 safety fixture uses mutable-borrow expression syntax before the
+# published seed formatter can parse it.
+if grep -F -x 'tests/safety/mutable_reference_reject.tl' "$ALL_FILES" >/dev/null 2>&1; then
+    printf '%s\n' 'tests/safety/mutable_reference_reject.tl' >> "$METADATA_FILES"
+fi
 sort -u "$METADATA_FILES" > "$WORKDIR/current-syntax-files.sorted"
 mv "$WORKDIR/current-syntax-files.sorted" "$METADATA_FILES"
 

@@ -1,4 +1,7 @@
-;: SPEC safe-code contract: mutable/shared-reference mutation is rejected until
-;: the mutable borrow checker can prove exclusivity.
-(define (main [n : (&mut phase i64)]) : unit
-  unit)
+;: SPEC safe-code contract: safe code rejects overlapping mutable borrows.
+(define (main [n : i64]) : unit
+  (let
+    [r : (&mut n i64) (&mut n)]
+    (let
+      [s : (&mut n i64) (&mut n)]
+      unit)))

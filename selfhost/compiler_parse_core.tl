@@ -2946,7 +2946,10 @@
         [_ (ErrAstExpr "parse: malformed array-push!")])]
     [_ (ErrAstExpr "parse: malformed array-push!")]))
 
-(define (parse-ast-borrow [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+(define (parse-ast-borrow
+  [dispatch : SymI64Env]
+  [mutable : bool]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons first tail _)
       (match (box-get tail)
@@ -2954,7 +2957,7 @@
           (match (parse-ast-expr dispatch (box-get first))
             [(OkAstExpr parsed-place)
               (OkAstExpr
-                (ast-expr-borrow AstBorrowLifetimeInferred parsed-place))]
+                (ast-expr-borrow mutable AstBorrowLifetimeInferred parsed-place))]
             [(ErrAstExpr message) (ErrAstExpr message)])]
         [(SpSCons place end _)
           (match (box-get end)
@@ -2965,6 +2968,7 @@
                     [(OkAstExpr parsed-place)
                       (OkAstExpr
                         (ast-expr-borrow
+                          mutable
                           (AstBorrowLifetimeNamed name)
                           parsed-place))]
                     [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -3928,10 +3932,9 @@
                 (parse-ast-call dispatch head rest)
                 (parse-ast-binary dispatch (ast-binop-from-tag tag) rest))]
             [(= tag (compiler-parse-tag-ty-ref))
-              (parse-ast-borrow dispatch rest)]
+              (parse-ast-borrow dispatch false rest)]
             [(= tag (compiler-parse-tag-ty-mut-ref))
-              (ErrAstExpr
-                "parse: mutable borrow expressions are not implemented (#806)")]
+              (parse-ast-borrow dispatch true rest)]
             [else (parse-ast-list-expr-tag dispatch tag head rest)])))]
     [_ (parse-ast-call dispatch head rest)]))
 
@@ -6107,7 +6110,46 @@
   (begin
     (& x)
     (& x x)
+    (&mut x)
     x))")
+
+(define (compiler-parse-borrow-inferred-var? [expr : AstExpr] [name : String]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprBorrow false AstBorrowLifetimeInferred place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (match (ast-expr-unspan place)
+          [(AstExprVar place-name) (string-eq place-name name)]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-mut-borrow-inferred-var?
+  [expr : AstExpr]
+  [name : String]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprBorrow true AstBorrowLifetimeInferred place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (match (ast-expr-unspan place)
+          [(AstExprVar place-name) (string-eq place-name name)]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-borrow-named-var?
+  [expr : AstExpr]
+  [lifetime : String]
+  [name : String]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprBorrow false (AstBorrowLifetimeNamed actual-lifetime) place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (match (ast-expr-unspan place)
+          [(AstExprVar place-name)
+            (and
+              (string-eq actual-lifetime lifetime)
+              (string-eq place-name name))]
+          [_ false]))]
+    [_ false]))
 
 (define (compiler-parse-borrow-ok?) : bool
   (match (parse-ast-source (compiler-parse-borrow-source))
@@ -6129,41 +6171,26 @@
                             [first : AstExpr (box-get first)]
                             [rest0 : AstExprList (box-get rest0)]
                             (match rest0
-                              [(AstExprCons second _)
+                              [(AstExprCons second rest1)
                                 (let
                                   [second : AstExpr (box-get second)]
-                                  (match (ast-expr-unspan first)
-                                    [(AstExprBorrow
-                                        AstBorrowLifetimeInferred
-                                        first-place-box)
+                                  [rest1 : AstExprList (box-get rest1)]
+                                  (match rest1
+                                    [(AstExprCons third _)
                                       (let
-                                        [first-place : AstExpr
-                                          (box-get first-place-box)]
-                                        (match (ast-expr-unspan first-place)
-                                          [(AstExprVar first-name)
-                                            (if (string-eq first-name "x")
-                                              (match (ast-expr-unspan second)
-                                                [(AstExprBorrow
-                                                    (AstBorrowLifetimeNamed
-                                                      lifetime)
-                                                    second-place-box)
-                                                  (let
-                                                    [second-place : AstExpr
-                                                      (box-get second-place-box)]
-                                                    (match (ast-expr-unspan
-                                                      second-place)
-                                                      [(AstExprVar second-name)
-                                                        (and
-                                                          (string-eq
-                                                            lifetime
-                                                            "x")
-                                                          (string-eq
-                                                            second-name
-                                                            "x"))]
-                                                      [_ false]))]
-                                                [_ false])
-                                              false)]
-                                          [_ false]))]
+                                        [third : AstExpr (box-get third)]
+                                        (and
+                                          (compiler-parse-borrow-inferred-var?
+                                            first
+                                            "x")
+                                          (and
+                                            (compiler-parse-borrow-named-var?
+                                              second
+                                              "x"
+                                              "x")
+                                            (compiler-parse-mut-borrow-inferred-var?
+                                              third
+                                              "x"))))]
                                     [_ false]))]
                               [_ false]))]
                         [_ false])]
@@ -7331,11 +7358,6 @@
       (if (compiler-parse-error-ok?
         "(define (main [x : i64]) : unit (& 1 x))"
         "parse: borrow lifetime must be an identifier")
-        unit
-        (set! ok false))
-      (if (compiler-parse-error-ok?
-        "(define (main [x : i64]) : unit (&mut x))"
-        "parse: mutable borrow expressions are not implemented (#806)")
         unit
         (set! ok false))
       ok)))

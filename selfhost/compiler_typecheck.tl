@@ -2908,6 +2908,11 @@
 (define (compiler-typecheck-reference-mut-source) : String
   "(define (main [n : (&mut phase i64)]) : unit unit)")
 
+(define (compiler-typecheck-reference-mut-borrow-source) : String
+  "(define (take [r : (&mut n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (&mut n)))")
+
 (define (compiler-typecheck-reference-str-source) : String
   "(define (take [s : (& text str)]) : unit unit)
 (define (main [text : String]) : unit
@@ -3165,10 +3170,10 @@
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-lambda-return-source)
         "typecheck: returning references requires lifetime support (#804)")]
-    [mut-ref-error-ok : bool
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-reference-mut-source)
-        "typecheck: mutable reference types require mutable borrow checker support (#806)")]
+    [mut-ref-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-mut-source))]
+    [mut-borrow-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-mut-borrow-source))]
     [str-value-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-str-value-source)
@@ -3289,7 +3294,10 @@
       (if lambda-return-error-ok
         unit
         (set! ok false))
-      (if mut-ref-error-ok
+      (if mut-ref-ok
+        unit
+        (set! ok false))
+      (if mut-borrow-ok
         unit
         (set! ok false))
       (if str-value-error-ok
@@ -6433,6 +6441,52 @@
   (let [borrowed : (& items i64) (& (array-ref items 0))]
     (array-set! items 0 7)))")
 
+(define (compiler-typecheck-live-mut-borrow-post-scope-source) : String
+  "(define (main [n : i64]) : i64
+  (begin
+    (let [r : (&mut n i64) (&mut n)] unit)
+    (let [s : (&mut n i64) (&mut n)] unit)
+    n))")
+
+(define (compiler-typecheck-live-mut-borrow-function-call-source) : String
+  "(define (take [r : (&mut n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (begin
+    (take (&mut n))
+    (set! n 3)))")
+
+(define (compiler-typecheck-live-mut-borrow-duplicate-source) : String
+  "(define (bad [n : i64]) : unit
+  (let [r : (&mut n i64) (&mut n)]
+    (let [s : (&mut n i64) (&mut n)] unit)))")
+
+(define (compiler-typecheck-live-mut-borrow-after-immut-source) : String
+  "(define (bad [n : i64]) : unit
+  (let [r : (& n i64) (& n)]
+    (let [s : (&mut n i64) (&mut n)] unit)))")
+
+(define (compiler-typecheck-live-immut-borrow-after-mut-source) : String
+  "(define (bad [n : i64]) : unit
+  (let [r : (&mut n i64) (&mut n)]
+    (let [s : (& n i64) (& n)] unit)))")
+
+(define (compiler-typecheck-live-mut-borrow-call-duplicate-source) : String
+  "(define (take2 [a : (&mut n i64)] [b : (&mut n i64)]) : unit unit)
+(define (bad [n : i64]) : unit
+  (take2 (&mut n) (&mut n)))")
+
+(define (compiler-typecheck-live-mut-borrow-assign-source) : String
+  "(define (bad [n : i64]) : i64
+  (let [r : (&mut n i64) (&mut n)]
+    (begin
+      (set! n 2)
+      n)))")
+
+(define (compiler-typecheck-live-mut-borrow-array-set-source) : String
+  "(define (bad [items : (Array i64)]) : unit
+  (let [borrowed : (&mut items i64) (&mut (array-ref items 0))]
+    (array-set! items 0 7)))")
+
 (define (compiler-typecheck-live-borrow-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -6500,6 +6554,44 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-borrow-array-set-source)
+        "typecheck: cannot assign to borrowed place `items.#array.0`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-live-mut-borrow-post-scope-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-live-mut-borrow-function-call-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-duplicate-source)
+        "typecheck: cannot mutably borrow borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-after-immut-source)
+        "typecheck: cannot mutably borrow borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-immut-borrow-after-mut-source)
+        "typecheck: cannot immutably borrow mutably borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-call-duplicate-source)
+        "typecheck: cannot mutably borrow borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-assign-source)
+        "typecheck: cannot assign to borrowed place `n`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-live-mut-borrow-array-set-source)
         "typecheck: cannot assign to borrowed place `items.#array.0`")
         unit
         (set! ok false))

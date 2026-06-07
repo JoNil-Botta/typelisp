@@ -2108,7 +2108,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExprBorrow _ inner-box)
+    [(AstExprBorrow _ _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
@@ -2662,7 +2662,7 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
-    [(AstExprBorrow _ inner-box)
+    [(AstExprBorrow _ _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
@@ -4670,7 +4670,8 @@
       (match resolved
         [(AstTyRef _ inner)
           (lower-supported-reference-referent-type? ctx (box-get inner))]
-        [(AstTyMutRef _ _) false]
+        [(AstTyMutRef _ inner)
+          (lower-supported-reference-referent-type? ctx (box-get inner))]
         [(AstTyTuple elems)
           (lower-supported-reference-type-list-with-stack? ctx elems stack)]
         [(AstTyArray elem _)
@@ -5009,6 +5010,18 @@
     (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)
     (match (tc-type-strip-region (tc-resolve-type ctx expr-ty))
       [(AstTyRef _ referent-ty)
+        (if (lower-supported-reference-referent-type? ctx (box-get referent-ty))
+          (lower-borrow-place-address
+            ctx
+            state
+            env
+            type-env
+            inner
+            origin
+            expr-ty)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr origin (lower-reference-support-message))))]
+      [(AstTyMutRef _ referent-ty)
         (if (lower-supported-reference-referent-type? ctx (box-get referent-ty))
           (lower-borrow-place-address
             ctx
@@ -9169,7 +9182,7 @@
                 (OkLowerExpr
                   (lower-cast-value inner-state value inner-ty expr-ty))])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-    [(AstExprBorrow _ inner-box)
+    [(AstExprBorrow _ _ inner-box)
       (let
         [inner : AstExpr (box-get inner-box)]
         (lower-borrow-expr ctx state env type-env inner origin expr-ty))]

@@ -1931,7 +1931,7 @@
           (backend-and4
             (compiler-backend-string-contains? asm ".globl tl_alloc\n")
             (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
-            (compiler-backend-string-contains? asm "    call _write\n")
+            (compiler-backend-string-contains? asm "    call WriteFile\n")
             (compiler-backend-string-contains? asm "    call _read\n"))]
         [process-runtime : bool
           (and
@@ -2008,9 +2008,11 @@
           (compiler-backend-string-contains?
             asm
             ".L_tl_region_reset_win_invalid:\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call _write\n    add $32, %rsp\n    movq $134, %rcx\n")
+          (and
+            (compiler-backend-string-contains? asm "    call GetStdHandle\n")
+            (and
+              (compiler-backend-string-contains? asm "    call WriteFile\n")
+              (compiler-backend-string-contains? asm "    call ExitProcess\n")))
           (compiler-backend-string-contains?
             asm
             "    push %r14\n    movq %rcx, %r12\n")
@@ -2713,7 +2715,9 @@
       (not (compiler-backend-runtime-helper-known? "tl_oob_abort"))
       (not (compiler-backend-runtime-helper-known? "tl_div_abort"))
       (not (compiler-backend-runtime-helper-known? "tl_shift_abort"))
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan ".L_tl_abort")
+      (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+        plan
+        ".L_tl_abort")
       (compiler-backend-runtime-helper-inventory-symbol-ok?
         plan
         "tl_region_mark")
@@ -4036,7 +4040,7 @@
               (compiler-backend-no-public-runtime-symbol?
                 asm
                 "tl_fs_current_dir")
-              (compiler-backend-string-contains? asm "getcwd:\n")
+              (not (compiler-backend-string-contains? asm "getcwd:\n"))
               (not
                 (compiler-backend-string-contains?
                   asm

@@ -41,35 +41,38 @@
 (define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
   (let
     [program : AstProgram (ast-program decls)]
-    (match (build-compiler-symbols program)
-      [(OkCompilerSymbols symbols)
-        (match (build-compiler-registries program)
-          [(OkCompilerRegistries registries)
-            (match (build-compiler-exports-with program symbols registries)
-              [(OkCompilerExports _)
-                (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
-                  (match (tc-program-source-types-policy-ok ctx program)
-                    [(OkTcUnit)
-                      (match (tc-source-expr-policy-ok ctx expr)
-                        [(OkTcUnit)
-                          (match (tc-build-top-env ctx program)
-                            [(OkTcEnv top-env)
-                              (match (tc-check-decls
-                                ctx
-                                top-env
-                                decls
-                                (CompilerTypecheckSummary 0 0 0))
-                                [(OkCompilerTypecheck _)
-                                  (tc-expr ctx top-env expr)]
-                                [(ErrCompilerTypecheck diag)
-                                  (ErrTcType (compiler-diagnostic-message diag))])]
-                            [(ErrTcEnv message) (ErrTcType message)])]
-                        [(ErrTcUnit message) (ErrTcType message)])]
-                    [(ErrTcUnit message) (ErrTcType message)]))]
-              [(ErrCompilerExports message) (ErrTcType message)])]
-          [(ErrCompilerRegistries message) (ErrTcType message)])]
-      [(ErrCompilerSymbols message) (ErrTcType message)])))
+    (begin
+      (tc-clone-able-cache-reset!)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (match (build-compiler-exports-with program symbols registries)
+                [(OkCompilerExports _)
+                  (let
+                    [ctx : TcContext (TcContext program symbols registries "")]
+                    (match (tc-program-source-types-policy-ok ctx program)
+                      [(OkTcUnit)
+                        (match (tc-source-expr-policy-ok ctx expr)
+                          [(OkTcUnit)
+                            (match (tc-build-top-env ctx program)
+                              [(OkTcEnv top-env)
+                                (match (tc-check-decls
+                                  ctx
+                                  top-env
+                                  decls
+                                  (CompilerTypecheckSummary 0 0 0))
+                                  [(OkCompilerTypecheck _)
+                                    (tc-expr ctx top-env expr)]
+                                  [(ErrCompilerTypecheck diag)
+                                    (ErrTcType
+                                      (compiler-diagnostic-message diag))])]
+                              [(ErrTcEnv message) (ErrTcType message)])]
+                          [(ErrTcUnit message) (ErrTcType message)])]
+                      [(ErrTcUnit message) (ErrTcType message)]))]
+                [(ErrCompilerExports message) (ErrTcType message)])]
+            [(ErrCompilerRegistries message) (ErrTcType message)])]
+        [(ErrCompilerSymbols message) (ErrTcType message)]))))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (match (parse-ast-source-diagnostic "" src)

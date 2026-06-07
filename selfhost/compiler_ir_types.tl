@@ -266,8 +266,18 @@
 (define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
   (= (struct-get instrs len) 0))
 
+;; Unchecked: every caller indexes within `[0, len)` (the seq is built once with
+;; `len` slots and iterated by index), so the bounds check is dead weight on this
+;; hot per-instruction accessor; the unchecked body also inlines at opt2.
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
-  (array-ref (struct-get instrs slots) index))
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast
+          (array-data (struct-get instrs slots))
+          :
+          (Ptr CompilerIrInstr))
+        index))))
 
 (define (compiler-ir-block [label : String] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (IrBlock label (compiler-ir-instr-seq-from-list instrs)))

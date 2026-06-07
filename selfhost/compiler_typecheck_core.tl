@@ -1207,7 +1207,16 @@
     [(TcTypeNil) (ErrTcType (string-append "typecheck: unbound name " name))]
     [(TcTypeCache ids values _ _ rest)
       (match (string-i64-map-get ids name)
-        [(StringI64MapFound index) (OkTcType (array-ref values index))]
+        ;; `index` is the map's stored slot for `name`, always in `[0, len)` of the
+        ;; parallel `values` array, so the bounds check is dead weight on this hot
+        ;; name-resolution read.
+        [(StringI64MapFound index)
+          (OkTcType
+            (unsafe
+              (ptr-read
+                (ptr-offset
+                  (ptr-cast (array-data values) : (Ptr AstType))
+                  index))))]
         [(StringI64MapMissing)
           (ErrTcType (string-append "typecheck: unbound name " name))])]
     [(TcTypeBind key ty rest)
@@ -1221,10 +1230,21 @@
       (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))]
     [(TcTypeCache ids values unsafe-flags _ rest)
       (match (string-i64-map-get ids name)
+        ;; `index` is map-validated into the parallel arrays; skip the bounds check.
         [(StringI64MapFound index)
           (OkTcTypeUnsafe
-            (array-ref values index)
-            (= (array-ref unsafe-flags index) 1))]
+            (unsafe
+              (ptr-read
+                (ptr-offset
+                  (ptr-cast (array-data values) : (Ptr AstType))
+                  index)))
+            (=
+              (unsafe
+                (ptr-read
+                  (ptr-offset
+                    (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                    index)))
+              1))]
         [(StringI64MapMissing)
           (ErrTcTypeUnsafe (string-append "typecheck: unbound name " name))])]
     [(TcTypeBind key ty rest)
@@ -6745,16 +6765,46 @@
       "typecheck: "
       (string-append name " is compile-time only; wrap it in (comptime ...)"))))
 
-(define (tc-clone-able-type? [ctx : TcContext] [ty : AstType]) : bool
+;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
+;; type-name map build). It is invariant across a compile, but `tc-clone-able-
+;; type?` is invoked once per `(clone ...)` / `with-escape` body in the program,
+;; so recomputing it each time was a large repeated cost. Cache it per compile:
+;; populated eagerly in the typecheck entry (program arena, so the cached map
+;; never dangles into a scratch arena) and reset per compile in macro-expand-
+;; program / the REPL entry. When not yet populated (e.g. REPL one-shot checks)
+;; the set is rebuilt without caching, preserving correctness.
+(define tc-clone-able-cache-ready : bool
+  false)
+
+(define tc-clone-able-cache : CloneNameSet
+  (clone-name-set-empty))
+
+(define (tc-clone-able-cache-reset!) : unit
+  (set! tc-clone-able-cache-ready false))
+
+(define (tc-clone-able-set-build [ctx : TcContext]) : CloneNameSet
   (match (tc-context-program ctx)
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (clone-field-type-able?
-          (tc-type-without-regions (tc-resolve-type ctx ty))
-          (clone-fixpoint
-            decls
-            (clone-all-type-names decls (clone-name-set-empty)))))]))
+        (clone-fixpoint
+          decls
+          (clone-all-type-names decls (clone-name-set-empty))))]))
+
+(define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
+  (begin
+    (set! tc-clone-able-cache (tc-clone-able-set-build ctx))
+    (set! tc-clone-able-cache-ready true)))
+
+(define (tc-clone-able-set [ctx : TcContext]) : CloneNameSet
+  (if tc-clone-able-cache-ready
+    tc-clone-able-cache
+    (tc-clone-able-set-build ctx)))
+
+(define (tc-clone-able-type? [ctx : TcContext] [ty : AstType]) : bool
+  (clone-field-type-able?
+    (tc-type-without-regions (tc-resolve-type ctx ty))
+    (tc-clone-able-set ctx)))
 
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
@@ -18677,6 +18727,8 @@
           ;; (or the next program in a multi-program process) never reuses a stale
           ;; or another program's metadata. The cache is repopulated eagerly below.
           (set! macro-expand-ctfe-env-ready false)
+          ;; Same per-compile reset for the clone-able type set cache.
+          (tc-clone-able-cache-reset!)
           ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
           ;; the program actually contains a `(type T)` literal -- the sole entry
           ;; point for every CTFE reflection/layout query.
@@ -19522,19 +19574,21 @@
                           [(AstProgram decls-box)
                             (let
                               [decls : AstDeclList (box-get decls-box)]
-                              (match (tc-check-decls-with-paths
-                                ctx
-                                top-env
-                                decls
-                                paths
-                                (CompilerTypecheckSummary 0 0 0))
-                                [(OkCompilerTypecheck summary)
-                                  (OkCompilerTypecheckChecked
-                                    summary
-                                    ctx
-                                    top-env)]
-                                [(ErrCompilerTypecheck diag)
-                                  (ErrCompilerTypecheckChecked diag)]))])]
+                              (begin
+                                (tc-clone-able-cache-populate! ctx)
+                                (match (tc-check-decls-with-paths
+                                  ctx
+                                  top-env
+                                  decls
+                                  paths
+                                  (CompilerTypecheckSummary 0 0 0))
+                                  [(OkCompilerTypecheck summary)
+                                    (OkCompilerTypecheckChecked
+                                      summary
+                                      ctx
+                                      top-env)]
+                                  [(ErrCompilerTypecheck diag)
+                                    (ErrCompilerTypecheckChecked diag)])))])]
                       [(ErrTcEnv message)
                         (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
                   [(ErrTcUnit message)

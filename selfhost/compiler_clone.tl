@@ -33,6 +33,13 @@
 (define (clone-name-set-empty) : CloneNameSet
   (CloneNameSet (string-i64-map-with-capacity 8)))
 
+;; The fixpoint rebuilds its accepted set on each step over the whole-program
+;; type universe; seeding that accumulator at the input set's capacity (it can
+;; only shrink relative to the input) avoids the rehash+fill-empty grow chain a
+;; capacity-8 seed would walk on every step.
+(define (clone-name-set-with-capacity [capacity : i64]) : CloneNameSet
+  (CloneNameSet (string-i64-map-with-capacity capacity)))
+
 (define (clone-name-set-map [names : CloneNameSet]) : StringI64Map
   (struct-get names map))
 
@@ -198,7 +205,10 @@
 (define (clone-fixpoint [decls : AstDeclList] [names : CloneNameSet]) : CloneNameSet
   (let
     [next : CloneNameSet
-      (clone-fixpoint-step decls names (clone-name-set-empty))]
+      (clone-fixpoint-step
+        decls
+        names
+        (clone-name-set-with-capacity (clone-name-set-capacity names)))]
     (if (= (clone-name-set-len next) (clone-name-set-len names))
       next
       (clone-fixpoint decls next))))

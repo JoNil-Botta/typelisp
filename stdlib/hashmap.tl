@@ -103,6 +103,16 @@
       0
       next)))
 
+;: Unchecked slot read. Probe/iteration indices are always in [0, capacity)
+;: (masked bucket index, wrapped with next-index), so the array-ref bounds check
+;: is dead weight; this body inlines to gep+load+return at opt2.
+(define (string-i64-map-slot-at
+  [slots : (Array StringI64MapSlot)]
+  [index : i64]) : StringI64MapSlot
+  (unsafe
+    (ptr-read
+      (ptr-offset (ptr-cast (array-data slots) : (Ptr StringI64MapSlot)) index))))
+
 ;: Pick the insertion slot for an absent key: reuse the first tombstone seen
 ;: (`first-tombstone` >= 0) so deletes do not strand keys, otherwise the empty
 ;: slot the probe stopped on.
@@ -128,7 +138,7 @@
     [first : i64 first-tombstone]
     (begin
       (while (< walked capacity)
-        (match (array-ref slots cursor)
+        (match (string-i64-map-slot-at slots cursor)
           [(StringI64MapEmpty)
             (return
               (StringI64MapProbeAbsent
@@ -193,7 +203,7 @@
     [first : i64 first-tombstone]
     (begin
       (while (< walked capacity)
-        (match (array-ref slots cursor)
+        (match (string-i64-map-slot-at slots cursor)
           [(StringI64MapEmpty)
             (return
               (StringI64MapProbeAbsent
@@ -342,7 +352,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array-ref slots cursor)
+            (match (string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty) (return (StringI64MapMissing))]
               [(StringI64MapTombstone)
                 (let
@@ -389,7 +399,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array-ref slots cursor)
+            (match (string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty) (return false)]
               [(StringI64MapTombstone)
                 (let
@@ -448,7 +458,7 @@
         [first : i64 -1]
         (begin
           (while (< walked capacity)
-            (match (array-ref slots cursor)
+            (match (string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty)
                 (let
                   [index : i64
@@ -534,7 +544,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array-ref slots cursor)
+            (match (string-i64-map-slot-at slots cursor)
               [(StringI64MapEmpty) (return (StringI64MapRemoveMissing map))]
               [(StringI64MapTombstone)
                 (let
@@ -592,7 +602,7 @@
         (while (if done
           false
           (< walked capacity))
-          (match (array-ref slots cursor)
+          (match (string-i64-map-slot-at slots cursor)
             [(StringI64MapEmpty)
               (begin
                 (array-set! slots cursor (StringI64MapOccupied key value hash))
@@ -614,7 +624,7 @@
   (if (>= index count)
     unit
     (begin
-      (match (array-ref src index)
+      (match (string-i64-map-slot-at src index)
         [(StringI64MapOccupied key value hash)
           (string-i64-map-insert-into-empty dst dst-capacity key value hash)]
         [(StringI64MapEmpty) unit]
@@ -701,7 +711,7 @@
   [capacity : i64]) : i64
   (if (>= index capacity)
     capacity
-    (match (array-ref slots index)
+    (match (string-i64-map-slot-at slots index)
       [(StringI64MapOccupied _ _ _) index]
       [(StringI64MapEmpty)
         (string-i64-map-next-occupied-from slots (+ index 1) capacity)]
@@ -759,7 +769,7 @@
       true
       (>= index (array-length slots)))
       (StringI64MapEntryNone)
-      (match (array-ref slots index)
+      (match (string-i64-map-slot-at slots index)
         [(StringI64MapOccupied key value _) (StringI64MapEntrySome key value)]
         [(StringI64MapEmpty) (StringI64MapEntryNone)]
         [(StringI64MapTombstone) (StringI64MapEntryNone)]))))

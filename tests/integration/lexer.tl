@@ -27,6 +27,8 @@
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 (import "stdlib/string.tl")
@@ -62,21 +64,24 @@
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (core/and (>= c #0') (<= c #9')))
 
 ;; `c` is an ASCII letter (A-Z, a-z) or `_`: the set of characters that may
 ;; start an identifier.
 (define (is-alpha [c : char]) : bool
-  (or (= c #_') (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z')))))
+  (core/or
+    (= c #_')
+    (core/and (>= c #A') (<= c #Z'))
+    (core/and (>= c #a') (<= c #z'))))
 
 ;; `c` may appear in an identifier after the first char: a letter, `_`, or a
 ;; digit.
 (define (is-ident-char [c : char]) : bool
-  (or (is-alpha c) (is-digit c)))
+  (core/or (is-alpha c) (is-digit c)))
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
+  (core/or (= c #\space') (= c #\tab') (= c #\newline')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64
@@ -106,7 +111,7 @@
   (let
     [j : i64 start]
     (begin
-      (while (and (< j n) (is-ident-char (string-ref src j)))
+      (while (core/and (< j n) (is-ident-char (string-ref src j)))
         (set! j (+ j 1)))
       j)))
 
@@ -160,7 +165,7 @@
               (let
                 [acc : i64 0]
                 (begin
-                  (while (and (< i n) (is-digit (string-ref src i)))
+                  (while (core/and (< i n) (is-digit (string-ref src i)))
                     (begin
                       (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                       (set! i (+ i 1))))

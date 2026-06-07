@@ -1,3 +1,5 @@
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 ; refs #215: compiled programs can observe argc/argv preserved from _start.
@@ -5,8 +7,9 @@
   (begin
     (print-string (arg 1))
     (print-string "\n")
-    (if (and
-      (and (= (arg-count) 3) (> (string-length (arg 0)) 0))
+    (if (core/and
+      (= (arg-count) 3)
+      (> (string-length (arg 0)) 0)
       (string-eq (arg 2) "beta"))
       7
       1)))

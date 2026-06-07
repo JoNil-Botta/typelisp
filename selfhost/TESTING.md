@@ -339,6 +339,14 @@ the no-Rust runner exercises the same import graph reviewers see locally. The
 same script also owns host-specific backend/compiler-driver fixture checks that
 are too low-level for a manifest row.
 
+For Windows import-only regressions that fail before a native executable is
+linked, use the published stage0 directly from PowerShell:
+
+```powershell
+tools\stage0\typelisp.exe run selfhost\compiler_parse_core.tl --stdlib-root stdlib --stdlib-root selfhost
+tools\stage0\typelisp.exe run selfhost\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root selfhost
+```
+
 ### Selfhost native generated programs
 
 `scripts/verify-native-link-linux.sh` covers Linux-only cases where a selfhost

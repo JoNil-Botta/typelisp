@@ -12145,6 +12145,24 @@
                     vars3
                     spans3)])])])]))
 
+(define (opt-inline-structure-ok? [blocks : CompilerIrBlockList]) : bool
+  (if (opt-cfg-block-labels-unique? blocks)
+    (if (opt-cfg-successor-targets-known? blocks)
+      (let
+        [pred-map : OptPredMap (OptPredMap (opt-cfg-index-build blocks))]
+        (opt-verify-ok? (opt-verify-phi-predecessors-blocks pred-map blocks)))
+      false)
+    false))
+
+(define (opt-inline-revert-or-keep
+  [fallback : CompilerIrFunction]
+  [next : CompilerIrFunction]) : CompilerIrFunction
+  (match next
+    [(IrFunction _ _ _ _ blocks)
+      (if (opt-inline-structure-ok? blocks)
+        next
+        fallback)]))
+
 (define (opt-inline-function
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]) : CompilerIrFunction
@@ -12152,7 +12170,9 @@
     [(IrFunction name params ret vars blocks)
       (match (opt-inline-blocks blocks index name vars)
         [(OptInlineBlocks new-blocks new-vars)
-          (IrFunction name params ret new-vars new-blocks)])]))
+          (opt-inline-revert-or-keep
+            func
+            (IrFunction name params ret new-vars new-blocks))])]))
 
 (define (opt-inline-function-with-spans
   [func : CompilerIrFunction]
@@ -12169,11 +12189,16 @@
         source-spans
         out-spans)
         [(OptInlineSpanBlocks new-blocks new-vars next-spans)
-          (OptInlineSpanProgram
-            (compiler-ir-function-cons
-              (IrFunction name params ret new-vars new-blocks)
-              IrFunctionNil)
-            next-spans)])]))
+          (let
+            [next : CompilerIrFunction
+              (IrFunction name params ret new-vars new-blocks)]
+            (if (opt-inline-structure-ok? new-blocks)
+              (OptInlineSpanProgram
+                (compiler-ir-function-cons next IrFunctionNil)
+                next-spans)
+              (OptInlineSpanProgram
+                (compiler-ir-function-cons func IrFunctionNil)
+                out-spans)))])]))
 
 (define (opt-inline-function-list
   [functions : CompilerIrFunctionList]
@@ -15627,6 +15652,27 @@
     [devirt-reach : CompilerIrFunctionList
       (opt-program-functions
         (optimize-program-with-level (opt-devirt-reach-program) 2))]
+    [valid-structure : bool
+      (opt-inline-structure-ok? (opt-function-blocks (opt-inline-frame-caller)))]
+    [duplicate-def-structure : bool
+      (opt-inline-structure-ok?
+        (opt-function-blocks (opt-ssa-duplicate-def-function)))]
+    [duplicate-label-revert : CompilerIrFunction
+      (opt-inline-revert-or-keep
+        (opt-inline-frame-caller)
+        (opt-ssa-duplicate-label-function))]
+    [unknown-successor-revert : CompilerIrFunction
+      (opt-inline-revert-or-keep
+        (opt-inline-frame-caller)
+        (opt-ssa-unknown-successor-function))]
+    [bad-phi-revert : CompilerIrFunction
+      (opt-inline-revert-or-keep
+        (opt-inline-frame-caller)
+        (opt-ssa-bad-phi-function))]
+    [valid-keep : CompilerIrFunction
+      (opt-inline-revert-or-keep
+        (opt-inline-frame-caller)
+        (opt-inline-frame-callee))]
     (match (opt-function-list-find optimized "main")
       [(OptSomeFunction main)
         (let
@@ -15692,9 +15738,32 @@
                             "kept_target"))
                         17]
                       [(opt-function-list-defines? devirt-reach "dead") 18]
+                      [(not valid-structure) 19]
+                      ;; The structural gate intentionally does not run full
+                      ;; SSA verification; duplicate defs from `set!`/loops are
+                      ;; allowed here and remain gated by later SSA-only passes.
+                      [(not duplicate-def-structure) 20]
+                      [(not
+                          (opt-function-eq
+                            duplicate-label-revert
+                            (opt-inline-frame-caller)))
+                        21]
+                      [(not
+                          (opt-function-eq
+                            unknown-successor-revert
+                            (opt-inline-frame-caller)))
+                        22]
+                      [(not
+                          (opt-function-eq
+                            bad-phi-revert
+                            (opt-inline-frame-caller)))
+                        23]
+                      [(not
+                          (opt-function-eq valid-keep (opt-inline-frame-callee)))
+                        24]
                       [else 42]))]
-                [(OptNoFunction) 19])]))]
-      [(OptNoFunction) 20])))
+                [(OptNoFunction) 25])]))]
+      [(OptNoFunction) 26])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

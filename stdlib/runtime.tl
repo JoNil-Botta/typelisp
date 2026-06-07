@@ -16,7 +16,7 @@
 ;# Usage: imported implicitly; programs do not need to import it by hand.
 ;#
 ;# This module imports nothing: it must be the always-linked prelude, so it
-;# only uses builtins (string-length/string-data, make-array, syscall, casts)
+;# only uses builtins (string-length/string-data, syscall, pointer casts/reads)
 ;# and its own externs. Keeping it import-free also avoids a shared-module
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
@@ -40,6 +40,9 @@
 (cfg
   windows
   (extern runtime-windows-exit-process (:symbol "ExitProcess") : (-> i32 never)))
+
+;: Runtime active-arena allocator used to provide WinAPI out-parameter scratch.
+(cfg windows (extern runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8))))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
 (define (runtime-ptr-arg [ptr : (Ptr u8)]) : i64
@@ -65,18 +68,18 @@
     windows
     (let
       [handle : i64 (runtime-windows-fd-handle fd)]
-      [written : (Array i32) (make-array i32 1)]
+      [written : (MutPtr i32)
+        (unsafe
+          (ptr-cast (runtime-alloc 4) : (MutPtr i32)))]
       [ok : i32
-        (runtime-windows-write-file
-          handle
-          buf
-          (cast count : i32)
-          (unsafe
-            (ptr-cast (array-data written) : (MutPtr i32)))
-          0)]
+        (runtime-windows-write-file handle buf (cast count : i32) written 0)]
       (if (= ok (cast 0 : i32))
         -1
-        (cast (array-ref written 0) : i64)))
+        (cast
+          (unsafe
+            (ptr-read (ptr-cast written : (Ptr i32))))
+          :
+          i64)))
     (syscall 1 fd (runtime-ptr-arg buf) count)))
 
 ;: Terminate the process with `code`; never returns. Linux uses the

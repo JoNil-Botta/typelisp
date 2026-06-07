@@ -1300,41 +1300,45 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/typelisp/release/selfhost_opt_pkg/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/typelisp/dev/selfhost_opt_pkg/selfhost_opt_pkg.s"
+    SELFHOST_OPT_FOLDED_MUL='    movq $42, %rax'
+    SELFHOST_OPT_UNFOLDED_MUL="    imulq %r8, %rax"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package default build did not keep release assembly"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_FOLDED_MUL"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-dev "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_DEV_ASM" ] || fail "selfhost opt package dev profile build did not keep dev assembly"
-    assert_contains "$SELFHOST_OPT_DEV_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep release assembly"
-    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_FOLDED_MUL"
+    assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-release-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_RELEASE_ASM" ] || fail "selfhost opt package release profile --opt-level 0 build did not keep release assembly"
-    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "imul"
+    assert_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT_UNFOLDED_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
     run_cmd selfhost-build-package-profile-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast

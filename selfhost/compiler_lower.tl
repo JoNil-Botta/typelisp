@@ -1692,11 +1692,17 @@
   [all-functions : StringI64Map]
   [names : LowerNameCache]
   [state : LowerReachState]
-  [source-name : String]) : LowerReachState
+  [source-name : String])
+  :
+  LowerReachState
+  ;; References introduced by macro expansion carry the hygiene-global prefix
+  ;; (e.g. `__tl_macro_global$string-append`); strip it before resolving so the
+  ;; underlying function counts as reachable. Otherwise a function called only
+  ;; from a macro expansion is pruned, then fails to resolve during lowering.
   (lower-reach-add-logical
     all-functions
     state
-    (lower-name-cache-resolve names source-name)))
+    (lower-name-cache-resolve names (lower-hygiene-source-name source-name))))
 
 (define (lower-reach-expr-list
   [all-functions : StringI64Map]
@@ -11302,134 +11308,150 @@
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan func)
-    [(AstExprVar name)
-      (match (sym-i64-lookup env name)
-        [(SomeI64 local-id)
-          (match (tc-lookup type-env name)
-            [(OkTcType fn-ty)
-              (if (lower-function-type? fn-ty)
-                (lower-indirect-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  (IrValueVar local-id)
-                  args
-                  result-ty
-                  origin)
-                (ErrLowerExpr
-                  (lower-diagnostic-at-expr
-                    func
-                    "lower: call target is not a function")))]
-            [(ErrTcType message)
-              (ErrLowerExpr (lower-diagnostic-at-expr func message))])]
-        [(NoneI64)
-          ;; `array-length`/`length` on a dynamic array, and
-          ;; `string-length`/`length` on a String, load the fat value's length
-          ;; field directly instead of calling a runtime symbol (#528, #527).
-          ;; Other `length` argument types keep the ordinary direct-call path.
-          ;; `string-ref`/`char-at` likewise recover their String byte-index
-          ;; builtin here unless shadowed (#677).
-          (let
-            [builtin-available : bool
-              (not (lower-top-level-value-defined? ctx name))]
-            (cond
-              [(and builtin-available (tc-layout-query-name? name))
-                (ErrLowerExpr
-                  (lower-diagnostic-at-expr
-                    origin
-                    (string-append
-                      "lower: "
+    [(AstExprVar raw-name)
+      ;; Builtins reached from a macro expansion arrive hygiene-renamed
+      ;; (`__tl_macro_global$string-length`); strip the prefix so the builtin
+      ;; dispatch below (length/string-length inline loads, etc.) fires just as it
+      ;; does for hand-written calls. `raw-name` still keys the local-variable
+      ;; lookup, and the generic call path strips the prefix itself.
+      (let
+        [name : String (lower-hygiene-source-name raw-name)]
+        (match (sym-i64-lookup env raw-name)
+          [(SomeI64 local-id)
+            (match (tc-lookup type-env raw-name)
+              [(OkTcType fn-ty)
+                (if (lower-function-type? fn-ty)
+                  (lower-indirect-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    (IrValueVar local-id)
+                    args
+                    result-ty
+                    origin)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      func
+                      "lower: call target is not a function")))]
+              [(ErrTcType message)
+                (ErrLowerExpr (lower-diagnostic-at-expr func message))])]
+          [(NoneI64)
+            ;; `array-length`/`length` on a dynamic array, and
+            ;; `string-length`/`length` on a String, load the fat value's length
+            ;; field directly instead of calling a runtime symbol (#528, #527).
+            ;; Other `length` argument types keep the ordinary direct-call path.
+            ;; `string-ref`/`char-at` likewise recover their String byte-index
+            ;; builtin here unless shadowed (#677).
+            (let
+              [builtin-available : bool
+                (not (lower-top-level-value-defined? ctx name))]
+              (cond
+                [(and builtin-available (tc-layout-query-name? name))
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
                       (string-append
-                        name
-                        " is compile-time only; wrap it in (comptime ...)"))))]
-              [(and
-                  builtin-available
-                  (or (string-eq name "string-ref") (string-eq name "char-at")))
-                (lower-string-ref-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin)]
-              [(and
-                  builtin-available
-                  (or
-                    (string-eq name "array-length")
+                        "lower: "
+                        (string-append
+                          name
+                          " is compile-time only; wrap it in (comptime ...)"))))]
+                [(and
+                    builtin-available
                     (or
-                      (string-eq name "length")
-                      (string-eq name "string-length"))))
-                (lower-array-length
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin)]
-              [(and builtin-available (lower-string-runtime-builtin? name))
-                (lower-string-runtime-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin)]
-              [(and builtin-available (string-eq name "cpuid"))
-                (lower-cpuid-call ctx state env type-env args result-ty origin)]
-              [(and builtin-available (string-eq name "xgetbv"))
-                (lower-xgetbv-call ctx state env type-env args origin)]
-              [(and builtin-available (string-eq name "clone"))
-                (match args
-                  [(AstExprCons arg tail)
-                    (let
-                      [arg : AstExpr (box-get arg)]
-                      [tail : AstExprList (box-get tail)]
-                      (match tail
-                        [(AstExprNil)
-                          (lower-clone-call ctx state env type-env arg)]
-                        [_
-                          (ErrLowerExpr
-                            (lower-diagnostic
-                              "lower: clone expects one argument"))]))]
-                  [_
-                    (ErrLowerExpr
-                      (lower-diagnostic "lower: clone expects one argument"))])]
-              [(and builtin-available (lower-arena-builtin? name))
-                (lower-arena-builtin-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty)]
-              [(and builtin-available (lower-bootstrap-runtime-builtin? name))
-                (lower-bootstrap-runtime-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin)]
-              [else
-                (lower-call-non-builtin
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin)]))])]
+                      (string-eq name "string-ref")
+                      (string-eq name "char-at")))
+                  (lower-string-ref-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)]
+                [(and
+                    builtin-available
+                    (or
+                      (string-eq name "array-length")
+                      (or
+                        (string-eq name "length")
+                        (string-eq name "string-length"))))
+                  (lower-array-length
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)]
+                [(and builtin-available (lower-string-runtime-builtin? name))
+                  (lower-string-runtime-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)]
+                [(and builtin-available (string-eq name "cpuid"))
+                  (lower-cpuid-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    args
+                    result-ty
+                    origin)]
+                [(and builtin-available (string-eq name "xgetbv"))
+                  (lower-xgetbv-call ctx state env type-env args origin)]
+                [(and builtin-available (string-eq name "clone"))
+                  (match args
+                    [(AstExprCons arg tail)
+                      (let
+                        [arg : AstExpr (box-get arg)]
+                        [tail : AstExprList (box-get tail)]
+                        (match tail
+                          [(AstExprNil)
+                            (lower-clone-call ctx state env type-env arg)]
+                          [_
+                            (ErrLowerExpr
+                              (lower-diagnostic
+                                "lower: clone expects one argument"))]))]
+                    [_
+                      (ErrLowerExpr
+                        (lower-diagnostic "lower: clone expects one argument"))])]
+                [(and builtin-available (lower-arena-builtin? name))
+                  (lower-arena-builtin-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty)]
+                [(and builtin-available (lower-bootstrap-runtime-builtin? name))
+                  (lower-bootstrap-runtime-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)]
+                [else
+                  (lower-call-non-builtin
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)]))]))]
     [_
       (match (lower-expr ctx state env type-env func)
         [(OkLowerExpr lowered-func)
@@ -18084,11 +18106,18 @@
 
 (define (lower-compiler-program-unlocated-mode
   [program : AstProgram]
-  [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match (macro-expand-program program)
-    [(OkMacroExpand expanded)
-      (lower-compiler-expanded-program-unlocated-mode expanded mode)]
-    [(ErrMacroExpand diag) (ErrCompilerLower diag)]))
+  [mode : CompilerLowerMode])
+  :
+  ResultCompilerLower
+  ;; Generate declaration families before macro expansion (see
+  ;; typecheck-compiler-program-with-paths for why).
+  (match (gen-normalize-program program)
+    [(OkGenProgram generated)
+      (match (macro-expand-program generated)
+        [(OkMacroExpand expanded)
+          (lower-compiler-expanded-program-unlocated-mode expanded mode)]
+        [(ErrMacroExpand diag) (ErrCompilerLower diag)])]
+    [(ErrGenProgram diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
@@ -18262,16 +18291,28 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-start))
-    (match (macro-expand-program program)
-      [(OkMacroExpand expanded)
-        (begin
-          (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
-          (lower-compiler-expanded-program-with-decl-paths-mode
-            entry-path
-            expanded
-            paths
-            mode))]
-      [(ErrMacroExpand diag)
+    ;; Generate declaration families before macro expansion (see
+    ;; typecheck-compiler-program-with-paths for why).
+    (match (gen-normalize-program-with-paths program paths entry-path)
+      [(OkGenProgramWithPaths generated generated-paths)
+        (match (macro-expand-program generated)
+          [(OkMacroExpand expanded)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish "macro_expand"))
+              (lower-compiler-expanded-program-with-decl-paths-mode
+                entry-path
+                expanded
+                generated-paths
+                mode))]
+          [(ErrMacroExpand diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-lower-profile-finish "macro_expand"))
+              (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])]
+      [(ErrGenProgramWithPaths diag)
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
           (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])))
@@ -21628,6 +21669,44 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-generated-path-source) : String
+  "(comptime-decl (:generated point-family Point \"same\")
+  (defstruct Point (x i64)))
+(comptime-decl (:generated point-family Point \"same\")
+  (defstruct Point (x i64)))
+(define (after [x : i64]) : i64 (+ x 1))
+(define (main) : i64 (after 41))")
+
+(define (compiler-lower-generated-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "gen.tl"
+    (ast-decl-path-cons
+      "gen.tl"
+      (ast-decl-path-cons "lib.tl" (ast-decl-path-cons "app.tl" AstDeclPathNil)))))
+
+(define (compiler-lower-generated-paths-preserved-ok?) : bool
+  (match (parse-ast-source (compiler-lower-generated-path-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-generated-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (and
+                (lower-test-function-defined? functions "lib.tl::after")
+                (and
+                  (lower-test-function-defined? functions "main")
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      "lib.tl::after")
+                    1)))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-lower-module-symbol-source) : String
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x answer))
@@ -24352,6 +24431,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-generated-paths-preserved-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-symbols-ok?)

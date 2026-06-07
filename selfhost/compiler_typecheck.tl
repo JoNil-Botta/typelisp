@@ -9,18 +9,31 @@
 
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheck
-  (match (macro-expand-program program)
-    [(OkMacroExpand expanded)
-      (if (compiler-specialize-needed? expanded)
-        (match (compiler-specialize-program expanded)
-          [(OkSpecProgram specialized)
+  [paths : AstDeclPathList])
+  :
+  ResultCompilerTypecheck
+  ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
+  ;; expansion type-directs some sub-expressions (let-init / match-scrutinee
+  ;; typing), which must be able to see generated functions; the later template
+  ;; specialization pass would otherwise produce them too late and any program
+  ;; that both defines a macro and uses a generated function would fail to
+  ;; typecheck. The downstream specialize call re-normalizes harmlessly.
+  (match (gen-normalize-program-with-paths program paths "")
+    [(OkGenProgramWithPaths generated generated-paths)
+      (match (macro-expand-program generated)
+        [(OkMacroExpand expanded)
+          (if (compiler-specialize-needed? expanded)
+            (match (compiler-specialize-program expanded)
+              [(OkSpecProgram specialized)
+                (typecheck-compiler-specialized-program-with-paths
+                  specialized
+                  AstDeclPathNil)]
+              [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
             (typecheck-compiler-specialized-program-with-paths
-              specialized
-              AstDeclPathNil)]
-          [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
-        (typecheck-compiler-specialized-program-with-paths expanded paths))]
-    [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)]))
+              expanded
+              generated-paths))]
+        [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
+    [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))

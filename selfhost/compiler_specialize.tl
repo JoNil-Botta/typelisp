@@ -150,6 +150,14 @@
   (OkGenProgram AstProgram)
   (ErrGenProgram CompilerDiagnostic))
 
+(defenum ResultGenDeclsWithPaths
+  (OkGenDeclsWithPaths AstDeclList AstDeclPathList GenRegistry String)
+  (ErrGenDeclsWithPaths CompilerDiagnostic))
+
+(defenum ResultGenProgramWithPaths
+  (OkGenProgramWithPaths AstProgram AstDeclPathList)
+  (ErrGenProgramWithPaths CompilerDiagnostic))
+
 (define (spec-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -2916,6 +2924,70 @@
               [(ErrGenDecls diag) (ErrGenDecls diag)])]
           [(ErrGenDecl diag) (ErrGenDecls diag)]))]))
 
+(define (gen-path-list-head-or [paths : AstDeclPathList] [fallback : String]) : String
+  (match paths
+    [(AstDeclPathCons path _) path]
+    [(AstDeclPathNil) fallback]))
+
+(define (gen-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
+  (match paths
+    [(AstDeclPathCons _ rest-box)
+      (let
+        [rest : AstDeclPathList (box-get rest-box)]
+        rest)]
+    [(AstDeclPathNil) AstDeclPathNil]))
+
+(define (gen-path-list-for-decls
+  [decls : AstDeclList]
+  [path : String]
+  [rest-paths : AstDeclPathList]) : AstDeclPathList
+  (match decls
+    [(AstDeclNil) rest-paths]
+    [(AstDeclCons _ rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        (ast-decl-path-cons path (gen-path-list-for-decls rest path rest-paths)))]))
+
+(define (gen-rewrite-decls-with-paths
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [module : String]
+  [registry : GenRegistry]
+  [env : CtfeEnv]) : ResultGenDeclsWithPaths
+  (match decls
+    [(AstDeclNil)
+      (OkGenDeclsWithPaths AstDeclNil AstDeclPathNil registry module)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String (gen-path-list-head-or paths fallback-path)]
+        [rest-paths : AstDeclPathList (gen-path-list-tail paths)]
+        (match (gen-rewrite-decl decl module registry env)
+          [(OkGenDecl rewritten-decls decl-registry decl-module)
+            (match (gen-rewrite-decls-with-paths
+              rest
+              rest-paths
+              fallback-path
+              decl-module
+              decl-registry
+              env)
+              [(OkGenDeclsWithPaths
+                  rewritten-rest
+                  rewritten-rest-paths
+                  rest-registry
+                  rest-module)
+                (OkGenDeclsWithPaths
+                  (spec-decl-list-append rewritten-decls rewritten-rest)
+                  (gen-path-list-for-decls
+                    rewritten-decls
+                    decl-path
+                    rewritten-rest-paths)
+                  rest-registry
+                  rest-module)]
+              [(ErrGenDeclsWithPaths diag) (ErrGenDeclsWithPaths diag)])]
+          [(ErrGenDecl diag) (ErrGenDeclsWithPaths diag)]))]))
+
 (define (gen-normalize-program [program : AstProgram]) : ResultGenProgram
   (match program
     [(AstProgram decls-box)
@@ -2926,6 +2998,27 @@
         (match (gen-rewrite-decls decls "" GenRegistryNil env)
           [(OkGenDecls rewritten _ _) (OkGenProgram (ast-program rewritten))]
           [(ErrGenDecls diag) (ErrGenProgram diag)]))]))
+
+(define (gen-normalize-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fallback-path : String]) : ResultGenProgramWithPaths
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [env : CtfeEnv
+          (ctfe-env-with-reflections (ctfe-reflections-from-program program))]
+        (match (gen-rewrite-decls-with-paths
+          decls
+          paths
+          fallback-path
+          ""
+          GenRegistryNil
+          env)
+          [(OkGenDeclsWithPaths rewritten rewritten-paths _ _)
+            (OkGenProgramWithPaths (ast-program rewritten) rewritten-paths)]
+          [(ErrGenDeclsWithPaths diag) (ErrGenProgramWithPaths diag)]))]))
 
 (define (gen-decl-needs-normalize? [decl : AstDecl]) : bool
   (match decl

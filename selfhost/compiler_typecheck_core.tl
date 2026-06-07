@@ -1144,6 +1144,8 @@
     [out : TcTypeEnv env]
     (begin
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
+      (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
+      (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-bool?" (tc-fn1 expr (AstTyBool))))
@@ -1155,6 +1157,9 @@
       (set!
         out
         (tc-bind out "expr-list-empty?" (tc-fn1 (AstTyExprList) (AstTyBool))))
+      (set!
+        out
+        (tc-bind out "expr-list-length" (tc-fn1 (AstTyExprList) (AstTyI64))))
       (set! out (tc-bind out "expr-list-head" (tc-fn1 (AstTyExprList) expr)))
       (set!
         out
@@ -6517,29 +6522,40 @@
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
-    [(AstExprVar name)
-      (cond
-        [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
-          (tc-layout-query-runtime-call name args)]
-        [(or
-            (string-eq name "array-length")
-            (or (string-eq name "length") (string-eq name "string-length")))
-          (tc-array-length-call ctx env name func args)]
-        [(and
-            (or (string-eq name "string-ref") (string-eq name "char-at"))
-            (not (tc-name-bound? env name)))
-          (tc-string-ref-call ctx env args)]
-        [(and
-            (tc-borrowed-string-builtin-name? name)
-            (tc-default-builtin-unshadowed? env name))
-          (tc-borrowed-string-builtin-call ctx env name args)]
-        [(and
-            (ctfe-reflection-query-name? name)
-            (not (tc-name-bound? env name)))
-          (tc-reflection-query-runtime-call name)]
-        [(and (string-eq name "clone") (not (tc-name-bound? env name)))
-          (tc-clone-call ctx env args)]
-        [else (tc-call-expr ctx env func args)])]
+    [(AstExprVar raw-name)
+      ;; A builtin called from a macro expansion arrives hygiene-renamed
+      ;; (`__tl_macro_global$string-length`), which would miss the literal-name
+      ;; checks below and fall through to the strict registered signature. Strip
+      ;; the hygiene-global prefix so macro-generated builtin calls dispatch
+      ;; exactly like hand-written ones; `func` keeps the original name for the
+      ;; ordinary call/resolution paths.
+      (let
+        [name : String
+          (if (tc-hygiene-global-name? raw-name)
+            (tc-hygiene-global-base raw-name)
+            raw-name)]
+        (cond
+          [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+            (tc-layout-query-runtime-call name args)]
+          [(or
+              (string-eq name "array-length")
+              (or (string-eq name "length") (string-eq name "string-length")))
+            (tc-array-length-call ctx env name func args)]
+          [(and
+              (or (string-eq name "string-ref") (string-eq name "char-at"))
+              (not (tc-name-bound? env name)))
+            (tc-string-ref-call ctx env args)]
+          [(and
+              (tc-borrowed-string-builtin-name? name)
+              (tc-default-builtin-unshadowed? env name))
+            (tc-borrowed-string-builtin-call ctx env name args)]
+          [(and
+              (ctfe-reflection-query-name? name)
+              (not (tc-name-bound? env name)))
+            (tc-reflection-query-runtime-call name)]
+          [(and (string-eq name "clone") (not (tc-name-bound? env name)))
+            (tc-clone-call ctx env args)]
+          [else (tc-call-expr ctx env func args)]))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings
@@ -15642,48 +15658,57 @@
   [body : AstExpr]
   [args : AstExprList]
   [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroExpr
-  (match (macro-bind-params
-    ctx
-    type-env
-    params
-    args
-    (tc-ctfe-env ctx)
-    call-expr)
-    [(OkMacroEnv env)
-      (match (ctfe-eval-node
-        body
-        (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
-        (ctfe-fuel-limit))
-        [(OkCtfe value _)
-          (match value
-            [(CtfeExpr expanded produced)
-              (if (or
-                (tc-type-eq produced (AstTyExpr))
-                (tc-type-compatible?
-                  (tc-resolve-type ctx ret)
-                  (tc-resolve-type ctx produced)))
-                (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  (+ depth 1)
-                  (macro-hygiene-expr
-                    expanded
-                    MacroHygieneNil
-                    macro-name
-                    (+ depth 1)))
-                (ErrMacroExpr
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "typecheck: macro expansion produced type does not match declaration")))]
-            [_
-              (ErrMacroExpr
-                (ctfe-diagnostic-at-expr
-                  call-expr
-                  "macro transformer did not produce an Expr"))])]
-        [(ErrCtfe diag) (ErrMacroExpr diag)])]
-    [(ErrMacroEnv diag) (ErrMacroExpr diag)]))
+  [call-expr : AstExpr])
+  :
+  ResultMacroExpr
+  ;; Expand the operands first so a macro call passed as an argument (e.g. a
+  ;; nested `str-cat`) is reduced to a plain expression before it is typechecked
+  ;; and bound; otherwise the operand typecheck sees the inner macro name as an
+  ;; unbound value.
+  (match (macro-expand-exprs ctx type-env decls depth args)
+    [(OkMacroExprList expanded-args)
+      (match (macro-bind-params
+        ctx
+        type-env
+        params
+        expanded-args
+        (tc-ctfe-env ctx)
+        call-expr)
+        [(OkMacroEnv env)
+          (match (ctfe-eval-node
+            body
+            (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+            (ctfe-fuel-limit))
+            [(OkCtfe value _)
+              (match value
+                [(CtfeExpr expanded produced)
+                  (if (or
+                    (tc-type-eq produced (AstTyExpr))
+                    (tc-type-compatible?
+                      (tc-resolve-type ctx ret)
+                      (tc-resolve-type ctx produced)))
+                    (macro-expand-expr
+                      ctx
+                      type-env
+                      decls
+                      (+ depth 1)
+                      (macro-hygiene-expr
+                        expanded
+                        MacroHygieneNil
+                        macro-name
+                        (+ depth 1)))
+                    (ErrMacroExpr
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: macro expansion produced type does not match declaration")))]
+                [_
+                  (ErrMacroExpr
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "macro transformer did not produce an Expr"))])]
+            [(ErrCtfe diag) (ErrMacroExpr diag)])]
+        [(ErrMacroEnv diag) (ErrMacroExpr diag)])]
+    [(ErrMacroExprList diag) (ErrMacroExpr diag)]))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -15994,7 +16019,12 @@
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprBegin nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprUnsafe exprs)
-        (match (macro-expand-exprs ctx env decls depth exprs)
+        ;; Expansion typechecks some sub-expressions (e.g. `match` scrutinees) via
+        ;; `tc-expr`; descend with the unsafe marker set so those checks see the
+        ;; enclosing `unsafe` context, matching the real typecheck pass. Without
+        ;; this, an `unsafe`-only primitive under an `(unsafe ...)` reachable here
+        ;; is wrongly rejected once the program defines a macro.
+        (match (macro-expand-exprs ctx (tc-enter-unsafe env) decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprUnsafe nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprTuple exprs)

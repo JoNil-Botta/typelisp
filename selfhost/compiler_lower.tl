@@ -600,6 +600,21 @@
         cleanup-name
         (lower-decl-logical-name entry-path decl-path module cleanup-name))]))
 
+(define (lower-name-env-add-enum-cleanup-in-module
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [cleanup : AstEnumCleanup]) : LowerNameEnv
+  (match cleanup
+    [(AstEnumNoCleanup) names]
+    [(AstEnumCleanupFn cleanup-name)
+      (lower-name-env-add-module-binding
+        names
+        module
+        cleanup-name
+        (lower-decl-logical-name entry-path decl-path module cleanup-name))]))
+
 (define (lower-name-env-add-local-struct-cleanup
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
@@ -608,6 +623,19 @@
   (match cleanup
     [(AstStructNoCleanup) names]
     [(AstStructCleanupFn cleanup-name)
+      (LowerNameBind
+        cleanup-name
+        (lower-current-decl-logical-name-cache name-cache module cleanup-name)
+        (box names))]))
+
+(define (lower-name-env-add-local-enum-cleanup
+  [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
+  [module : String]
+  [cleanup : AstEnumCleanup]) : LowerNameEnv
+  (match cleanup
+    [(AstEnumNoCleanup) names]
+    [(AstEnumCleanupFn cleanup-name)
       (LowerNameBind
         cleanup-name
         (lower-current-decl-logical-name-cache name-cache module cleanup-name)
@@ -780,6 +808,20 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
+    [(AstDeclDefEnum _ cleanup _)
+      (lower-name-env-add-enum-cleanup-in-module
+        names
+        entry-path
+        decl-path
+        module
+        cleanup)]
+    [(AstDeclDefEnumLifetimes _ _ cleanup _)
+      (lower-name-env-add-enum-cleanup-in-module
+        names
+        entry-path
+        decl-path
+        module
+        cleanup)]
     [(AstDeclDefStruct _ _ cleanup _)
       (lower-name-env-add-struct-cleanup-in-module
         names
@@ -1213,6 +1255,10 @@
         name
         (lower-current-decl-logical-name-cache name-cache module name)
         (box names))]
+    [(AstDeclDefEnum _ cleanup _)
+      (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
+    [(AstDeclDefEnumLifetimes _ _ cleanup _)
+      (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
     [(AstDeclDefStruct _ _ cleanup _)
       (lower-name-env-add-local-struct-cleanup names name-cache module cleanup)]
     [(AstDeclDefStructLifetimes _ _ _ cleanup _)
@@ -1243,7 +1289,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (match (lower-module-local-type-env-bind-qualified
               top-env
               env
@@ -1271,8 +1317,38 @@
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclExtern name _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
-    [(AstDeclDefEnum _ variants)
-      (lower-module-local-type-env-add-variants top-env env module variants)]
+    [(AstDeclDefEnum _ cleanup variants)
+      (match (lower-module-local-type-env-add-variants
+        top-env
+        env
+        module
+        variants)
+        [(OkTcEnv next-env)
+          (match cleanup
+            [(AstEnumNoCleanup) (OkTcEnv next-env)]
+            [(AstEnumCleanupFn cleanup-name)
+              (lower-module-local-type-env-bind-qualified
+                top-env
+                next-env
+                module
+                cleanup-name)])]
+        [(ErrTcEnv message) (ErrTcEnv message)])]
+    [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+      (match (lower-module-local-type-env-add-variants
+        top-env
+        env
+        module
+        variants)
+        [(OkTcEnv next-env)
+          (match cleanup
+            [(AstEnumNoCleanup) (OkTcEnv next-env)]
+            [(AstEnumCleanupFn cleanup-name)
+              (lower-module-local-type-env-bind-qualified
+                top-env
+                next-env
+                module
+                cleanup-name)])]
+        [(ErrTcEnv message) (ErrTcEnv message)])]
     [(AstDeclDefStruct name _ cleanup _)
       (match (lower-module-local-type-env-bind-qualified
         top-env
@@ -1511,7 +1587,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (lower-clone-root-add-variant-list
               ctx
               decls
@@ -1531,7 +1607,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclDefEnum decl-name variants)
+          [(AstDeclDefEnum decl-name _ variants)
             (if (string-eq decl-name name)
               (lower-clone-root-add-variant-list ctx decls able roots variants)
               (lower-clone-root-add-named-deps ctx rest able roots name))]
@@ -3923,7 +3999,7 @@
 
 (define (lower-variant-storage-size [ctx : TcContext] [variant : AstVariantDef]) : i64
   (match variant
-    [(AstVariantDef _ fields) (lower-variant-fields-storage-size ctx fields)]))
+    [(AstVariantDef _ fields _) (lower-variant-fields-storage-size ctx fields)]))
 
 (define (lower-nullary-variant-object-name
   [enum-name : String]
@@ -3943,7 +4019,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef variant-name fields)
+          [(AstVariantDef variant-name fields _)
             (let
               [next : CompilerIrGlobalList
                 (match fields
@@ -4480,7 +4556,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (and
               (lower-supported-reference-type-list-subst-with-stack?
                 ctx
@@ -6076,7 +6152,7 @@
                               next-label))
                           variant-label)]
                       (match variant
-                        [(AstVariantDef _ fields)
+                        [(AstVariantDef _ fields _)
                           (match (lower-capture-snapshot-type-list
                             ctx
                             branch-state
@@ -17809,7 +17885,7 @@
               dispatch-variants
               mode
               module)]
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (lower-decls-in-module
               ctx
               top-env
@@ -17829,7 +17905,7 @@
               dispatch-variants
               mode
               module)]
-          [(AstDeclDefEnumLifetimes name _ variants)
+          [(AstDeclDefEnumLifetimes name _ _ variants)
             (lower-decls-in-module
               ctx
               top-env

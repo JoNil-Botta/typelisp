@@ -153,6 +153,13 @@
   (OkTcStructDecl TcStructDecl)
   (ErrTcStructDecl String))
 
+(defenum TcEnumDecl
+  (TcEnumDecl AstEnumCleanup AstVariantDefList))
+
+(defenum ResultTcEnumDecl
+  (OkTcEnumDecl TcEnumDecl)
+  (ErrTcEnumDecl String))
+
 (defenum TcLayoutInfo
   (TcLayoutInfo i64 i64))
 
@@ -815,6 +822,9 @@
 (define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
   (tc-fn1 struct-ty (AstTyUnit)))
 
+(define (tc-enum-cleanup-function-type [enum-ty : AstType]) : AstType
+  (tc-fn1 enum-ty (AstTyUnit)))
+
 (define (tc-bind-struct-cleanup-module-name
   [env : TcTypeEnv]
   [module : String]
@@ -829,6 +839,20 @@
         cleanup-name
         (tc-struct-cleanup-function-type struct-ty))]))
 
+(define (tc-bind-enum-cleanup-module-name
+  [env : TcTypeEnv]
+  [module : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind-module-name
+        env
+        module
+        cleanup-name
+        (tc-enum-cleanup-function-type enum-ty))]))
+
 (define (tc-bind-struct-cleanup-local
   [env : TcTypeEnv]
   [cleanup : AstStructCleanup]
@@ -837,6 +861,15 @@
     [(AstStructNoCleanup) env]
     [(AstStructCleanupFn cleanup-name)
       (tc-bind env cleanup-name (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-enum-cleanup-local
+  [env : TcTypeEnv]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind env cleanup-name (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-bind-struct-cleanup-alias
   [env : TcTypeEnv]
@@ -850,6 +883,19 @@
         env
         (compiler-symbol-module-key alias cleanup-name)
         (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-enum-cleanup-alias
+  [env : TcTypeEnv]
+  [alias : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind
+        env
+        (compiler-symbol-module-key alias cleanup-name)
+        (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
@@ -2456,11 +2502,11 @@
             (tc-nominal-owner-name-list rest target index next-module)]
           [(AstDeclTest _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclDefEnum name _)
+          [(AstDeclDefEnum name _ _)
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclDefEnumLifetimes name _ _)
+          [(AstDeclDefEnumLifetimes name _ _ _)
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
@@ -2476,11 +2522,11 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum name _)
+                [(AstDeclDefEnum name _ _)
                   (if (= target index)
                     (OkTcString (compiler-symbol-module-key module name))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDeclDefEnumLifetimes name _ _)
+                [(AstDeclDefEnumLifetimes name _ _ _)
                   (if (= target index)
                     (OkTcString (compiler-symbol-module-key module name))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
@@ -2618,8 +2664,8 @@
 
 (define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
   (match decl
-    [(AstDeclDefEnum _ _) (OkTcLifetimeList AstLifetimeNil)]
-    [(AstDeclDefEnumLifetimes _ lifetimes _) (OkTcLifetimeList lifetimes)]
+    [(AstDeclDefEnum _ _ _) (OkTcLifetimeList AstLifetimeNil)]
+    [(AstDeclDefEnumLifetimes _ lifetimes _ _) (OkTcLifetimeList lifetimes)]
     [(AstDeclDefStruct _ _ _ _) (OkTcLifetimeList AstLifetimeNil)]
     [(AstDeclDefStructLifetimes _ lifetimes _ _ _) (OkTcLifetimeList lifetimes)]
     [_ (ErrTcLifetimeList "typecheck: nominal type not found")]))
@@ -2774,7 +2820,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (match (tc-source-type-list-policy-ok ctx fields)
               [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
@@ -2852,7 +2898,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (match (tc-source-type-list-lifetimes-policy-ok ctx params fields)
               [(OkTcUnit)
                 (tc-source-variant-list-lifetimes-policy-ok ctx params rest)]
@@ -3281,11 +3327,11 @@
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstDeclDefEnum name variants)
+    [(AstDeclDefEnum name _ variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
         [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
+    [(AstDeclDefEnumLifetimes name lifetimes _ variants)
       (if (tc-lifetime-list-duplicates? lifetimes)
         (ErrTcUnit "typecheck: duplicate lifetime parameter")
         (match (tc-source-variant-list-lifetimes-policy-ok
@@ -4351,7 +4397,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name fields)
+          [(AstVariantDef name fields _)
             (let
               [scoped-enum : String
                 (compiler-symbol-module-key module enum-name)]
@@ -4419,22 +4465,44 @@
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefEnum name variants)
-      (tc-bind-enum-variants-in-module
-        (tc-context-with-module ctx module)
-        env
-        module
-        name
-        AstLifetimeNil
-        variants)]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
-      (tc-bind-enum-variants-in-module
-        (tc-context-with-module ctx module)
-        env
-        module
-        name
-        lifetimes
-        variants)]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [scoped-name : String (compiler-symbol-module-key module name)]
+        [enum-ty : AstType (AstTyEnum scoped-name)]
+        (match (tc-bind-enum-variants-in-module
+          (tc-context-with-module ctx module)
+          env
+          module
+          name
+          AstLifetimeNil
+          variants)
+          [(OkTcEnv with-variants)
+            (OkTcEnv
+              (tc-bind-enum-cleanup-module-name
+                with-variants
+                module
+                cleanup
+                enum-ty))]
+          [(ErrTcEnv message) (ErrTcEnv message)]))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [scoped-name : String (compiler-symbol-module-key module name)]
+        [enum-ty : AstType (AstTyEnumArgs scoped-name lifetimes)]
+        (match (tc-bind-enum-variants-in-module
+          (tc-context-with-module ctx module)
+          env
+          module
+          name
+          lifetimes
+          variants)
+          [(OkTcEnv with-variants)
+            (OkTcEnv
+              (tc-bind-enum-cleanup-module-name
+                with-variants
+                module
+                cleanup
+                enum-ty))]
+          [(ErrTcEnv message) (ErrTcEnv message)]))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
         [scoped-name : String (compiler-symbol-module-key module name)]
@@ -4526,7 +4594,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name fields)
+          [(AstVariantDef name fields _)
             (tc-bind-enum-variant-aliases
               ctx
               (tc-bind
@@ -4592,24 +4660,37 @@
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefEnum name variants)
-      (OkTcEnv
-        (tc-bind-enum-variant-aliases
-          (tc-context-with-module ctx module)
-          env
-          alias
-          (compiler-symbol-module-key module name)
-          AstLifetimeNil
-          variants))]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
-      (OkTcEnv
-        (tc-bind-enum-variant-aliases
-          (tc-context-with-module ctx module)
-          env
-          alias
-          (compiler-symbol-module-key module name)
-          lifetimes
-          variants))]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [enum-ty : AstType (AstTyEnum (compiler-symbol-module-key module name))]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-alias
+            (tc-bind-enum-variant-aliases
+              (tc-context-with-module ctx module)
+              env
+              alias
+              (compiler-symbol-module-key module name)
+              AstLifetimeNil
+              variants)
+            alias
+            cleanup
+            enum-ty)))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [enum-ty : AstType
+          (AstTyEnumArgs (compiler-symbol-module-key module name) lifetimes)]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-alias
+            (tc-bind-enum-variant-aliases
+              (tc-context-with-module ctx module)
+              env
+              alias
+              (compiler-symbol-module-key module name)
+              lifetimes
+              variants)
+            alias
+            cleanup
+            enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
         [struct-ty : AstType
@@ -4784,7 +4865,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name fields)
+          [(AstVariantDef name fields _)
             (tc-bind-enum-variants-local
               ctx
               (tc-bind
@@ -4835,24 +4916,35 @@
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclDefEnum name variants)
-      (OkTcEnv
-        (tc-bind-enum-variants-local
-          ctx
-          env
-          name
-          (compiler-symbol-module-key module name)
-          AstLifetimeNil
-          variants))]
-    [(AstDeclDefEnumLifetimes name lifetimes variants)
-      (OkTcEnv
-        (tc-bind-enum-variants-local
-          ctx
-          env
-          name
-          (compiler-symbol-module-key module name)
-          lifetimes
-          variants))]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [enum-ty : AstType (AstTyEnum (compiler-symbol-module-key module name))]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-local
+            (tc-bind-enum-variants-local
+              ctx
+              env
+              name
+              (compiler-symbol-module-key module name)
+              AstLifetimeNil
+              variants)
+            cleanup
+            enum-ty)))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [enum-ty : AstType
+          (AstTyEnumArgs (compiler-symbol-module-key module name) lifetimes)]
+        (OkTcEnv
+          (tc-bind-enum-cleanup-local
+            (tc-bind-enum-variants-local
+              ctx
+              env
+              name
+              (compiler-symbol-module-key module name)
+              lifetimes
+              variants)
+            cleanup
+            enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
         [struct-ty : AstType
@@ -8517,13 +8609,13 @@
         (match decl
           [(AstDeclModule next-module)
             (tc-program-enum-variants-list-in-module rest enum-name next-module)]
-          [(AstDeclDefEnum name variants)
+          [(AstDeclDefEnum name _ variants)
             (if (or
               (string-eq name enum-name)
               (string-eq (compiler-symbol-module-key module name) enum-name))
               (OkAstVariantDefList variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDeclDefEnumLifetimes name _ variants)
+          [(AstDeclDefEnumLifetimes name _ _ variants)
             (if (or
               (string-eq name enum-name)
               (string-eq (compiler-symbol-module-key module name) enum-name))
@@ -8533,7 +8625,7 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum name variants)
+                [(AstDeclDefEnum name _ variants)
                   (if (or
                     (string-eq name enum-name)
                     (string-eq
@@ -8544,7 +8636,7 @@
                       rest
                       enum-name
                       module))]
-                [(AstDeclDefEnumLifetimes name _ variants)
+                [(AstDeclDefEnumLifetimes name _ _ variants)
                   (if (or
                     (string-eq name enum-name)
                     (string-eq
@@ -8580,8 +8672,8 @@
           (compiler-symbol-handle-index handle))
           [(OkAstDecl decl)
             (match decl
-              [(AstDeclDefEnum _ variants) (OkAstVariantDefList variants)]
-              [(AstDeclDefEnumLifetimes _ _ variants)
+              [(AstDeclDefEnum _ _ variants) (OkAstVariantDefList variants)]
+              [(AstDeclDefEnumLifetimes _ _ _ variants)
                 (OkAstVariantDefList variants)]
               [_
                 (ErrAstVariantDefList
@@ -8788,6 +8880,31 @@
           (ErrTcStructDecl
             (string-append "typecheck: unknown struct " struct-name))])]))
 
+(define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
+  (match ctx
+    [(TcContext _ symbols _ _)
+      (match (compiler-symbols-lookup-type symbols enum-name)
+        [(SomeI64 handle)
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defenum))
+            (match (compiler-symbols-decl-at-index
+              symbols
+              (compiler-symbol-handle-index handle))
+              [(OkAstDecl decl)
+                (match decl
+                  [(AstDeclDefEnum _ cleanup variants)
+                    (OkTcEnumDecl (TcEnumDecl cleanup variants))]
+                  [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+                    (OkTcEnumDecl (TcEnumDecl cleanup variants))]
+                  [_
+                    (ErrTcEnumDecl
+                      "typecheck: enum symbol owner is not an enum")])]
+              [(ErrAstDecl message) (ErrTcEnumDecl message)])
+            (ErrTcEnumDecl (string-append "typecheck: unknown enum " enum-name)))]
+        [(NoneI64)
+          (ErrTcEnumDecl (string-append "typecheck: unknown enum " enum-name))])]))
+
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
   (match stack
     [(TcStringNil) ""]
@@ -8852,7 +8969,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (match (tc-inline-aggregate-type-list-finite-ok ctx fields stack)
               [(OkTcUnit)
                 (tc-inline-aggregate-variants-finite-ok ctx rest stack)]
@@ -9106,7 +9223,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef variant-name fields)
+          [(AstVariantDef variant-name fields _)
             (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
               [(OkTcInlinePayloadFieldsLayout payload-layout)
                 (match payload-layout
@@ -9532,7 +9649,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclDefEnum name _)
+          [(AstDeclDefEnum name _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9541,7 +9658,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclDefEnumLifetimes name _ _)
+          [(AstDeclDefEnumLifetimes name _ _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9572,7 +9689,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
-                [(AstDeclDefEnum name _)
+                [(AstDeclDefEnum name _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9581,7 +9698,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
-                [(AstDeclDefEnumLifetimes name _ _)
+                [(AstDeclDefEnumLifetimes name _ _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
@@ -9784,9 +9901,9 @@
         (match tail
           [(AstVariantDefCons second AstVariantDefNil)
             (match first
-              [(AstVariantDef first-name first-fields)
+              [(AstVariantDef first-name first-fields _)
                 (match second
-                  [(AstVariantDef second-name second-fields)
+                  [(AstVariantDef second-name second-fields _)
                     (tc-result-info-two-variants
                       ctx
                       enum-name
@@ -9915,18 +10032,18 @@
               [template : AstDecl (box-get template-box)]
               (if (= target index)
                 (match template
-                  [(AstDeclDefEnum name _)
+                  [(AstDeclDefEnum name _ _)
                     (OkTcString (compiler-symbol-module-key module name))]
-                  [(AstDeclDefEnumLifetimes name _ _)
+                  [(AstDeclDefEnumLifetimes name _ _ _)
                     (OkTcString (compiler-symbol-module-key module name))]
                   [_ (ErrTcString "typecheck: variant owner is not enum")])
                 (tc-variant-owner-name-list rest target (+ index 1) module)))]
           [_
             (if (= target index)
               (match decl
-                [(AstDeclDefEnum name _)
+                [(AstDeclDefEnum name _ _)
                   (OkTcString (compiler-symbol-module-key module name))]
-                [(AstDeclDefEnumLifetimes name _ _)
+                [(AstDeclDefEnumLifetimes name _ _ _)
                   (OkTcString (compiler-symbol-module-key module name))]
                 [_ (ErrTcString "typecheck: variant owner is not enum")])
               (tc-variant-owner-name-list rest target (+ index 1) module))]))]))
@@ -10526,7 +10643,7 @@
         (match rest
           [(AstVariantDefNil)
             (match variant
-              [(AstVariantDef name _)
+              [(AstVariantDef name _ _)
                 (tc-variant-name-matches? ctx enum-name variant-name name)])]
           [_ false]))]
     [_ false]))
@@ -10649,7 +10766,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (and
               (tc-match-arms-cover-variant? ctx arms enum-name name)
               (tc-enum-variants-covered? ctx enum-name rest arms))]))]))
@@ -15516,6 +15633,27 @@
         [(ErrTcStructDecl _) false])]
     [_ false]))
 
+(define (tc-cleanup-owning-enum-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum enum-name)
+      (match (tc-enum-decl ctx enum-name)
+        [(OkTcEnumDecl decl)
+          (match decl
+            [(TcEnumDecl cleanup _) (ast-enum-cleanup? cleanup)])]
+        [(ErrTcEnumDecl _) false])]
+    [(AstTyEnumArgs enum-name _)
+      (match (tc-enum-decl ctx enum-name)
+        [(OkTcEnumDecl decl)
+          (match decl
+            [(TcEnumDecl cleanup _) (ast-enum-cleanup? cleanup)])]
+        [(ErrTcEnumDecl _) false])]
+    [_ false]))
+
+(define (tc-cleanup-owning-aggregate-type? [ctx : TcContext] [ty : AstType]) : bool
+  (or
+    (tc-cleanup-owning-struct-type? ctx ty)
+    (tc-cleanup-owning-enum-type? ctx ty)))
+
 (define (tc-struct-field-cleanup-outside-message
   [struct-name : String]
   [field-name : String]) : String
@@ -15598,7 +15736,7 @@
       (let
         [resolved-ty : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
         [field-cleanup-owning : bool
-          (tc-cleanup-owning-struct-type? ctx resolved-ty)]
+          (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
         (if (not (ast-struct-cleanup? struct-cleanup))
           (if (ast-field-cleanup? field-cleanup)
             (ErrTcUnit
@@ -15672,6 +15810,237 @@
       (ErrTcUnit (tc-struct-cleanup-repr-c-message struct-name))
       (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
 
+(define (tc-enum-cleanup-fn-mismatch-message
+  [enum-name : String]
+  [cleanup-name : String]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3 " cleanup function " cleanup-name " type mismatch")))
+
+(define (tc-enum-payload-cleanup-outside-message
+  [enum-name : String]
+  [variant-name : String]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      " has payload cleanup metadata but enum is not cleanup-owning")))
+
+(define (tc-enum-payload-cleanup-owning-without-owned-message
+  [enum-name : String]
+  [variant-name : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      (tc-cat3
+        " stores cleanup-owning type "
+        (tc-type-render ty)
+        " without :owned"))))
+
+(define (tc-enum-payload-owned-non-cleanup-message
+  [enum-name : String]
+  [variant-name : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      (tc-cat3
+        " uses :owned but type "
+        (tc-type-render ty)
+        " is not cleanup-owning"))))
+
+(define (tc-enum-payload-cleanup-fn-mismatch-message
+  [enum-name : String]
+  [variant-name : String]
+  [cleanup-name : String]) : String
+  (tc-cat3
+    "typecheck: enum "
+    enum-name
+    (tc-cat3
+      " variant "
+      variant-name
+      (tc-cat3 " cleanup function " cleanup-name " type mismatch"))))
+
+(define (tc-check-enum-cleanup-fn
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : ResultTcUnit
+  (match cleanup
+    [(AstEnumNoCleanup) OkTcUnit]
+    [(AstEnumCleanupFn cleanup-name)
+      (match (tc-lookup-visible ctx env cleanup-name)
+        [(OkTcType cleanup-ty)
+          (tc-expect
+            cleanup-ty
+            (tc-fn1 (tc-type-without-regions enum-ty) (AstTyUnit))
+            (tc-enum-cleanup-fn-mismatch-message enum-name cleanup-name))]
+        [(ErrTcType message) (ErrTcUnit message)])]))
+
+(define (tc-check-enum-payload-cleanup-fn
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [variant-name : String]
+  [cleanup-name : String]
+  [payload-ty : AstType]) : ResultTcUnit
+  (match (tc-lookup-visible ctx env cleanup-name)
+    [(OkTcType cleanup-ty)
+      (tc-expect
+        cleanup-ty
+        (tc-fn1 (tc-type-without-regions payload-ty) (AstTyUnit))
+        (tc-enum-payload-cleanup-fn-mismatch-message
+          enum-name
+          variant-name
+          cleanup-name))]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
+(define (tc-check-cleanup-enum-payloads
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [variant-name : String]
+  [enum-cleanup : AstEnumCleanup]
+  [payloads : AstTypeList]
+  [payload-cleanups : AstVariantPayloadCleanupList]) : ResultTcUnit
+  (match payloads
+    [(AstTypeNil)
+      (match payload-cleanups
+        [(AstVariantPayloadCleanupNil) OkTcUnit]
+        [_ (ErrTcUnit "typecheck: malformed enum payload cleanup metadata")])]
+    [(AstTypeCons payload-box rest-payloads-box)
+      (match payload-cleanups
+        [(AstVariantPayloadCleanupCons payload-cleanup rest-cleanups-box)
+          (let
+            [payload-ty : AstType (box-get payload-box)]
+            [resolved-ty : AstType
+              (tc-type-strip-region (tc-resolve-type ctx payload-ty))]
+            [rest-payloads : AstTypeList (box-get rest-payloads-box)]
+            [rest-cleanups : AstVariantPayloadCleanupList
+              (box-get rest-cleanups-box)]
+            [payload-cleanup-owning : bool
+              (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
+            [step : ResultTcUnit
+              (if (not (ast-enum-cleanup? enum-cleanup))
+                (if (ast-variant-payload-cleanup? payload-cleanup)
+                  (ErrTcUnit
+                    (tc-enum-payload-cleanup-outside-message
+                      enum-name
+                      variant-name))
+                  (if payload-cleanup-owning
+                    (ErrTcUnit
+                      (tc-enum-payload-cleanup-owning-without-owned-message
+                        enum-name
+                        variant-name
+                        resolved-ty))
+                    OkTcUnit))
+                (match payload-cleanup
+                  [(AstVariantPayloadOwnedCleanup)
+                    (if payload-cleanup-owning
+                      OkTcUnit
+                      (ErrTcUnit
+                        (tc-enum-payload-owned-non-cleanup-message
+                          enum-name
+                          variant-name
+                          resolved-ty)))]
+                  [(AstVariantPayloadCleanupFn cleanup-name)
+                    (if payload-cleanup-owning
+                      (ErrTcUnit
+                        (tc-enum-payload-cleanup-owning-without-owned-message
+                          enum-name
+                          variant-name
+                          resolved-ty))
+                      (tc-check-enum-payload-cleanup-fn
+                        ctx
+                        env
+                        enum-name
+                        variant-name
+                        cleanup-name
+                        resolved-ty))]
+                  [(AstVariantPayloadNoCleanup)
+                    (if payload-cleanup-owning
+                      (ErrTcUnit
+                        (tc-enum-payload-cleanup-owning-without-owned-message
+                          enum-name
+                          variant-name
+                          resolved-ty))
+                      OkTcUnit)]))]
+            (match step
+              [(OkTcUnit)
+                (tc-check-cleanup-enum-payloads
+                  ctx
+                  env
+                  enum-name
+                  variant-name
+                  enum-cleanup
+                  rest-payloads
+                  rest-cleanups)]
+              [(ErrTcUnit message) (ErrTcUnit message)]))]
+        [_ (ErrTcUnit "typecheck: malformed enum payload cleanup metadata")])]))
+
+(define (tc-check-cleanup-enum-variant
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [variant : AstVariantDef]) : ResultTcUnit
+  (match variant
+    [(AstVariantDef variant-name payloads payload-cleanups)
+      (tc-check-cleanup-enum-payloads
+        ctx
+        env
+        enum-name
+        variant-name
+        cleanup
+        payloads
+        payload-cleanups)]))
+
+(define (tc-check-cleanup-enum-variants
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [enum-name : String]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match (tc-check-cleanup-enum-variant ctx env enum-name cleanup variant)
+          [(OkTcUnit)
+            (tc-check-cleanup-enum-variants ctx env enum-name cleanup rest)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]))
+
+(define (tc-check-cleanup-enum-decl
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (let
+    [enum-name : String
+      (compiler-symbol-module-key (tc-context-module ctx) name)]
+    [enum-ty : AstType
+      (match lifetimes
+        [(AstLifetimeNil) (AstTyEnum enum-name)]
+        [_ (AstTyEnumArgs enum-name lifetimes)])]
+    (match (tc-check-enum-cleanup-fn ctx env enum-name cleanup enum-ty)
+      [(OkTcUnit)
+        (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]
+      [(ErrTcUnit message) (ErrTcUnit message)])))
+
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -15741,6 +16110,16 @@
       (match (tc-dispatch-decl-type ctx name variants)
         [(OkTcType _) OkTcUnit]
         [(ErrTcType message) (ErrTcUnit message)])]
+    [(AstDeclDefEnum name cleanup variants)
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        name
+        AstLifetimeNil
+        cleanup
+        variants)]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (tc-check-cleanup-enum-decl ctx top-env name lifetimes cleanup variants)]
     [(AstDeclDefStruct name repr cleanup fields)
       (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
     [(AstDeclDefStructLifetimes name _ repr cleanup fields)

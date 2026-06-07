@@ -2348,6 +2348,95 @@
         (set! ok false))
       ok)))
 
+(define (compiler-typecheck-cleanup-enum-valid-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(define (close-code [code : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defenum MaybeHandle
+  (:cleanup cleanup-maybe-handle)
+  (None)
+  (Some FileHandle (:owned))
+  (Code i64 (:cleanup close-code)))
+(define (main [m : MaybeHandle]) : i64 0)")
+
+(define (compiler-typecheck-cleanup-enum-ordinary-store-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defenum Bad
+  (Some FileHandle))")
+
+(define (compiler-typecheck-cleanup-enum-cleanup-mismatch-source) : String
+  "(define (close-bool [fd : bool]) : unit unit)
+(defenum Bad
+  (:cleanup cleanup-bad)
+  (A i64 (:cleanup close-bool)))")
+
+(define (compiler-typecheck-cleanup-enum-cleanup-return-source) : String
+  "(define (close-fd [fd : i64]) : i64 fd)
+(defenum Bad
+  (:cleanup cleanup-bad)
+  (A i64 (:cleanup close-fd)))")
+
+(define (compiler-typecheck-cleanup-enum-owned-noncleanup-source) : String
+  "(defenum Bad
+  (:cleanup cleanup-bad)
+  (A i64 (:owned)))")
+
+(define (compiler-typecheck-cleanup-enum-payload-outside-ast-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (AstDeclDefEnum
+        "Bad"
+        (AstEnumNoCleanup)
+        (ast-variant-def-cons
+          (AstVariantDef
+            "A"
+            (ast-type-cons (AstTyI64) AstTypeNil)
+            (ast-variant-payload-cleanup-cons
+              (AstVariantPayloadCleanupFn "close-fd")
+              AstVariantPayloadCleanupNil))
+          AstVariantDefNil))
+      AstDeclNil)))
+
+(define (compiler-typecheck-cleanup-enum-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cleanup-enum-valid-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-enum-ordinary-store-source)
+        "typecheck: enum Bad variant Some stores cleanup-owning type FileHandle without :owned")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-enum-cleanup-mismatch-source)
+        "typecheck: enum Bad variant A cleanup function close-bool type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-enum-cleanup-return-source)
+        "typecheck: enum Bad variant A cleanup function close-fd type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-enum-owned-noncleanup-source)
+        "typecheck: enum Bad variant A uses :owned but type i64 is not cleanup-owning")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-program-error-ok?
+        (compiler-typecheck-cleanup-enum-payload-outside-ast-program)
+        "typecheck: enum Bad variant A has payload cleanup metadata but enum is not cleanup-owning")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-result-try-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-result-try-source))
@@ -6750,6 +6839,9 @@
     (if (compiler-typecheck-cleanup-struct-tests-ok?)
       unit
       (panic "typecheck: cleanup struct metadata tests failed"))
+    (if (compiler-typecheck-cleanup-enum-tests-ok?)
+      unit
+      (panic "typecheck: cleanup enum metadata tests failed"))
     (if (compiler-typecheck-raw-pointer-tests-ok?)
       unit
       (panic "typecheck: raw pointer type tests failed"))

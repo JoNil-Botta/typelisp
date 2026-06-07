@@ -507,7 +507,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (match (compiler-symbols-add-variant-value-in-module
               symbols
               module
@@ -868,6 +868,20 @@
         cleanup-name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
+(define (compiler-symbols-add-enum-cleanup-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [cleanup : AstEnumCleanup]
+  [index : i64]) : ResultCompilerSymbols
+  (match cleanup
+    [(AstEnumNoCleanup) (OkCompilerSymbols symbols)]
+    [(AstEnumCleanupFn cleanup-name)
+      (compiler-symbols-add-value-in-module
+        symbols
+        module
+        cleanup-name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
+
 (define (compiler-symbols-add-decl-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -906,33 +920,47 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
-    [(AstDeclDefEnum name variants)
+    [(AstDeclDefEnum name cleanup variants)
       (match (compiler-symbols-add-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-variant-values-in-module
+          (match (compiler-symbols-add-variant-values-in-module
             next
             module
             variants
             index
-            0)]
+            0)
+            [(OkCompilerSymbols with-variants)
+              (compiler-symbols-add-enum-cleanup-in-module
+                with-variants
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
-    [(AstDeclDefEnumLifetimes name _ variants)
+    [(AstDeclDefEnumLifetimes name _ cleanup variants)
       (match (compiler-symbols-add-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-variant-values-in-module
+          (match (compiler-symbols-add-variant-values-in-module
             next
             module
             variants
             index
-            0)]
+            0)
+            [(OkCompilerSymbols with-variants)
+              (compiler-symbols-add-enum-cleanup-in-module
+                with-variants
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclDefStruct name _ cleanup _)
       (match (compiler-symbols-add-type-in-module
@@ -1040,6 +1068,20 @@
         cleanup-name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
+(define (compiler-symbols-add-local-enum-cleanup-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [cleanup : AstEnumCleanup]
+  [index : i64]) : ResultCompilerSymbols
+  (match cleanup
+    [(AstEnumNoCleanup) (OkCompilerSymbols symbols)]
+    [(AstEnumCleanupFn cleanup-name)
+      (compiler-symbols-add-local-value-in-module
+        symbols
+        module
+        cleanup-name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
+
 (define (compiler-symbols-add-local-variant-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -1066,7 +1108,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (match (compiler-symbols-add-local-variant-value-in-module
               symbols
               module
@@ -1120,33 +1162,47 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
-    [(AstDeclDefEnum name variants)
+    [(AstDeclDefEnum name cleanup variants)
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-local-variant-values-in-module
+          (match (compiler-symbols-add-local-variant-values-in-module
             next
             module
             variants
             index
-            0)]
+            0)
+            [(OkCompilerSymbols with-variants)
+              (compiler-symbols-add-local-enum-cleanup-in-module
+                with-variants
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
-    [(AstDeclDefEnumLifetimes name _ variants)
+    [(AstDeclDefEnumLifetimes name _ cleanup variants)
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
-          (compiler-symbols-add-local-variant-values-in-module
+          (match (compiler-symbols-add-local-variant-values-in-module
             next
             module
             variants
             index
-            0)]
+            0)
+            [(OkCompilerSymbols with-variants)
+              (compiler-symbols-add-local-enum-cleanup-in-module
+                with-variants
+                module
+                cleanup
+                index)]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclDefStruct name _ cleanup _)
       (match (compiler-symbols-add-local-type-in-module
@@ -1222,7 +1278,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (compiler-symbols-add-variant-value-aliases
               (compiler-symbols-add-value-alias
                 symbols
@@ -1248,6 +1304,19 @@
         symbols
         (compiler-symbol-module-key alias cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
+
+(define (compiler-symbols-add-enum-cleanup-alias
+  [symbols : CompilerSymbols]
+  [alias : String]
+  [cleanup : AstEnumCleanup]
+  [index : i64]) : CompilerSymbols
+  (match cleanup
+    [(AstEnumNoCleanup) symbols]
+    [(AstEnumCleanupFn cleanup-name)
+      (compiler-symbols-add-value-alias
+        symbols
+        (compiler-symbol-module-key alias cleanup-name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
 
 (define (compiler-symbols-add-decl-alias-in-module
   [symbols : CompilerSymbols]
@@ -1282,26 +1351,34 @@
         symbols
         (compiler-symbol-module-key alias name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
-    [(AstDeclDefEnum name variants)
-      (compiler-symbols-add-variant-value-aliases
-        (compiler-symbols-add-type-alias
-          symbols
-          (compiler-symbol-module-key alias name)
-          (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+    [(AstDeclDefEnum name cleanup variants)
+      (compiler-symbols-add-enum-cleanup-alias
+        (compiler-symbols-add-variant-value-aliases
+          (compiler-symbols-add-type-alias
+            symbols
+            (compiler-symbol-module-key alias name)
+            (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+          alias
+          variants
+          index
+          0)
         alias
-        variants
-        index
-        0)]
-    [(AstDeclDefEnumLifetimes name _ variants)
-      (compiler-symbols-add-variant-value-aliases
-        (compiler-symbols-add-type-alias
-          symbols
-          (compiler-symbol-module-key alias name)
-          (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+        cleanup
+        index)]
+    [(AstDeclDefEnumLifetimes name _ cleanup variants)
+      (compiler-symbols-add-enum-cleanup-alias
+        (compiler-symbols-add-variant-value-aliases
+          (compiler-symbols-add-type-alias
+            symbols
+            (compiler-symbol-module-key alias name)
+            (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+          alias
+          variants
+          index
+          0)
         alias
-        variants
-        index
-        0)]
+        cleanup
+        index)]
     [(AstDeclDefStruct name _ cleanup _)
       (compiler-symbols-add-struct-cleanup-alias
         (compiler-symbols-add-value-alias
@@ -1464,8 +1541,8 @@
 
 (define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
   (match decl
-    [(AstDeclDefEnum name _) (compiler-symbol-module-key module name)]
-    [(AstDeclDefEnumLifetimes name _ _)
+    [(AstDeclDefEnum name _ _) (compiler-symbol-module-key module name)]
+    [(AstDeclDefEnumLifetimes name _ _ _)
       (compiler-symbol-module-key module name)]
     [(AstDeclDefStruct name _ _ _) (compiler-symbol-module-key module name)]
     [(AstDeclDefStructLifetimes name _ _ _ _)
@@ -1740,7 +1817,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (compiler-registries-add-variant-aliases-list
               (compiler-registries-add-variant-alias
                 registries
@@ -1787,14 +1864,14 @@
   [decl : AstDecl]
   [index : i64]) : CompilerRegistries
   (match decl
-    [(AstDeclDefEnum _ variants)
+    [(AstDeclDefEnum _ _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
         alias
         variants
         index
         0)]
-    [(AstDeclDefEnumLifetimes _ _ variants)
+    [(AstDeclDefEnumLifetimes _ _ _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
         alias
@@ -1957,7 +2034,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _)
+          [(AstVariantDef name _ _)
             (match (compiler-registries-add-variant-in-module
               registries
               module
@@ -2054,7 +2131,7 @@
               registries
               index
               module)]
-          [(AstDeclDefEnum _ variants)
+          [(AstDeclDefEnum _ _ variants)
             (match (build-compiler-variant-registry-list-in-module
               variants
               registries
@@ -2068,7 +2145,7 @@
                   (+ index 1)
                   module)]
               [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclDefEnumLifetimes _ _ variants)
+          [(AstDeclDefEnumLifetimes _ _ _ variants)
             (match (build-compiler-variant-registry-list-in-module
               variants
               registries
@@ -2116,7 +2193,7 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum _ variants)
+                [(AstDeclDefEnum _ _ variants)
                   (match (build-compiler-variant-registry-list-in-module
                     variants
                     registries
@@ -2131,7 +2208,7 @@
                         module)]
                     [(ErrCompilerRegistries message)
                       (ErrCompilerRegistries message)])]
-                [(AstDeclDefEnumLifetimes _ _ variants)
+                [(AstDeclDefEnumLifetimes _ _ _ variants)
                   (match (build-compiler-variant-registry-list-in-module
                     variants
                     registries
@@ -2451,7 +2528,7 @@
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields)
+          [(AstVariantDef _ fields _)
             (if (= target index)
               (OkAstTypeList fields)
               (compiler-variant-types-at-index rest target (+ index 1)))]))]))
@@ -2479,12 +2556,12 @@
     (compiler-registry-handle-owner-index handle))
     [(OkAstDecl decl)
       (match decl
-        [(AstDeclDefEnum _ variants)
+        [(AstDeclDefEnum _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDeclDefEnumLifetimes _ _ variants)
+        [(AstDeclDefEnumLifetimes _ _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
@@ -2500,12 +2577,12 @@
     (compiler-registry-handle-owner-index handle))
     [(OkAstDecl decl)
       (match decl
-        [(AstDeclDefEnum _ variants)
+        [(AstDeclDefEnum _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDeclDefEnumLifetimes _ _ variants)
+        [(AstDeclDefEnumLifetimes _ _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)

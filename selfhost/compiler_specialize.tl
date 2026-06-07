@@ -488,8 +488,8 @@
   (match decl
     [(AstDeclDef name _ _) (SpecSomeString name)]
     [(AstDeclDefFn name _ _ _ _) (SpecSomeString name)]
-    [(AstDeclDefEnum name _) (SpecSomeString name)]
-    [(AstDeclDefEnumLifetimes name _ _) (SpecSomeString name)]
+    [(AstDeclDefEnum name _ _) (SpecSomeString name)]
+    [(AstDeclDefEnumLifetimes name _ _ _) (SpecSomeString name)]
     [(AstDeclDefStruct name _ _ _) (SpecSomeString name)]
     [(AstDeclDefStructLifetimes name _ _ _ _) (SpecSomeString name)]
     [(AstDeclComptimeDecl _ inner-box)
@@ -603,14 +603,64 @@
         [(AstStructCleanupFn b-name) (string-eq a-name b-name)]
         [_ false])]))
 
+(define (gen-enum-cleanup-eq? [a : AstEnumCleanup] [b : AstEnumCleanup]) : bool
+  (match a
+    [(AstEnumNoCleanup)
+      (match b
+        [(AstEnumNoCleanup) true]
+        [_ false])]
+    [(AstEnumCleanupFn a-name)
+      (match b
+        [(AstEnumCleanupFn b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (gen-variant-payload-cleanup-eq?
+  [a : AstVariantPayloadCleanup]
+  [b : AstVariantPayloadCleanup]) : bool
+  (match a
+    [(AstVariantPayloadNoCleanup)
+      (match b
+        [(AstVariantPayloadNoCleanup) true]
+        [_ false])]
+    [(AstVariantPayloadCleanupFn a-name)
+      (match b
+        [(AstVariantPayloadCleanupFn b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstVariantPayloadOwnedCleanup)
+      (match b
+        [(AstVariantPayloadOwnedCleanup) true]
+        [_ false])]))
+
+(define (gen-variant-payload-cleanup-list-eq?
+  [a : AstVariantPayloadCleanupList]
+  [b : AstVariantPayloadCleanupList]) : bool
+  (match a
+    [(AstVariantPayloadCleanupNil)
+      (match b
+        [(AstVariantPayloadCleanupNil) true]
+        [_ false])]
+    [(AstVariantPayloadCleanupCons a-head a-rest)
+      (let
+        [a-rest : AstVariantPayloadCleanupList (box-get a-rest)]
+        (match b
+          [(AstVariantPayloadCleanupCons b-head b-rest)
+            (let
+              [b-rest : AstVariantPayloadCleanupList (box-get b-rest)]
+              (and
+                (gen-variant-payload-cleanup-eq? a-head b-head)
+                (gen-variant-payload-cleanup-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
 (define (gen-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
   (match a
-    [(AstVariantDef a-name a-payloads)
+    [(AstVariantDef a-name a-payloads a-cleanups)
       (match b
-        [(AstVariantDef b-name b-payloads)
+        [(AstVariantDef b-name b-payloads b-cleanups)
           (and
             (string-eq a-name b-name)
-            (ctfe-type-list-eq a-payloads b-payloads))])]))
+            (and
+              (ctfe-type-list-eq a-payloads b-payloads)
+              (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups)))])]))
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
   (match a
@@ -673,21 +723,25 @@
                       (gen-expr-eq? a-body b-body)
                       (gen-fn-export-eq? a-export b-export))))))]
           [_ false]))]
-    [(AstDeclDefEnum a-name a-variants)
+    [(AstDeclDefEnum a-name a-cleanup a-variants)
       (match b
-        [(AstDeclDefEnum b-name b-variants)
+        [(AstDeclDefEnum b-name b-cleanup b-variants)
           (and
             (string-eq a-name b-name)
-            (gen-variant-list-eq? a-variants b-variants))]
+            (and
+              (gen-enum-cleanup-eq? a-cleanup b-cleanup)
+              (gen-variant-list-eq? a-variants b-variants)))]
         [_ false])]
-    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-variants)
+    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
       (match b
-        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-variants)
+        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
           (and
             (string-eq a-name b-name)
             (and
               (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
-              (gen-variant-list-eq? a-variants b-variants)))]
+              (and
+                (gen-enum-cleanup-eq? a-cleanup b-cleanup)
+                (gen-variant-list-eq? a-variants b-variants))))]
         [_ false])]
     [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
       (match b

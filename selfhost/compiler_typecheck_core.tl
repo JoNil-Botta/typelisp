@@ -10963,9 +10963,11 @@
 (define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
   (if macro-expand-ctfe-env-ready
     macro-expand-ctfe-env-value
-    (ctfe-env-with-metadata
-      (tc-ctfe-layouts ctx)
-      (ctfe-reflections-from-program (tc-context-program ctx)))))
+    (if ctfe-needs-metadata
+      (ctfe-env-with-metadata
+        (tc-ctfe-layouts ctx)
+        (ctfe-reflections-from-program (tc-context-program ctx)))
+      (ctfe-env-empty))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -16526,6 +16528,13 @@
 (define macro-expand-ctfe-env-value : CtfeEnv
   (ctfe-env-empty))
 
+;; Whether the current compile needs the CTFE reflection/layout metadata at all
+;; (i.e. the program contains a `(type T)` literal). Set per compile at the top of
+;; macro-expand-program; when false, tc-ctfe-env returns an empty env and skips
+;; the whole-program metadata build. Defaults true (build) for safety.
+(define ctfe-needs-metadata : bool
+  true)
+
 (define (macro-collect-decl-name [decl : AstDecl] [acc : TcStringList]) : TcStringList
   (match decl
     [(AstDeclDefMacro name _ _ _) (tc-string-list-add acc name)]
@@ -18323,6 +18332,161 @@
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
     [_ false]))
 
+;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
+;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
+;; and every reflection/layout builtin -- size-of/struct-field-*/enum-variant-*/
+;; …) take a type-literal argument, and type literals are comptime-only (they
+;; can't appear in runtime code). So a program with no type literal never queries
+;; the CTFE metadata, and `tc-ctfe-env` can hand back an empty env instead of
+;; building the whole-program reflection + layout tables (tens of MB, O(types^2)).
+;; Conservative: any unrecognized expression returns `true` (build), so a future
+;; node that could host a type literal is never silently skipped.
+(define (ctfe-node-has-type-literal? [id : i64]) : bool
+  (ctfe-expr-has-type-literal? (ast-node-get id)))
+
+(define (ctfe-exprs-have-type-literal? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (or
+        (ctfe-node-has-type-literal? head)
+        (ctfe-exprs-have-type-literal? (box-get rest)))]))
+
+(define (ctfe-arms-have-type-literal? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (or
+        (match arm
+          [(AstMatchArm _ body-box) (ctfe-node-has-type-literal? body-box)])
+        (ctfe-arms-have-type-literal? (box-get rest)))]))
+
+(define (ctfe-bindings-have-type-literal? [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (or
+        (match binding
+          [(AstLetBinding _ _ init-box) (ctfe-node-has-type-literal? init-box)])
+        (ctfe-bindings-have-type-literal? (box-get rest)))]))
+
+(define (ctfe-expr-has-type-literal? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprTypeLiteral _) true]
+    [(AstExprLiteral _) false]
+    [(AstExprVar _) false]
+    [(AstExprInit _) false]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrAddrOf _) false]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [(AstExprSpanned inner-box _) (ctfe-node-has-type-literal? inner-box)]
+    [(AstExprCall func-box args)
+      (or
+        (ctfe-node-has-type-literal? func-box)
+        (ctfe-exprs-have-type-literal? args))]
+    [(AstExprBinary _ l r)
+      (or (ctfe-node-has-type-literal? l) (ctfe-node-has-type-literal? r))]
+    [(AstExprUnary _ i) (ctfe-node-has-type-literal? i)]
+    [(AstExprIf c t e)
+      (or
+        (ctfe-node-has-type-literal? c)
+        (or (ctfe-node-has-type-literal? t) (ctfe-node-has-type-literal? e)))]
+    [(AstExprLet bindings body)
+      (or
+        (ctfe-bindings-have-type-literal? bindings)
+        (ctfe-node-has-type-literal? body))]
+    [(AstExprLambda _ _ body) (ctfe-node-has-type-literal? body)]
+    [(AstExprTuple exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [(AstExprTupleRef a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprArray exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [(AstExprMakeArray _ len) (ctfe-node-has-type-literal? len)]
+    [(AstExprArrayRef a i)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? i))]
+    [(AstExprArraySet a i v)
+      (or
+        (ctfe-node-has-type-literal? a)
+        (or (ctfe-node-has-type-literal? i) (ctfe-node-has-type-literal? v)))]
+    [(AstExprArrayPush a v)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? v))]
+    [(AstExprStringRef a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprWhile c b)
+      (or (ctfe-node-has-type-literal? c) (ctfe-node-has-type-literal? b))]
+    [(AstExprBegin exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [(AstExprUnsafe exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [(AstExprSet _ rhs) (ctfe-node-has-type-literal? rhs)]
+    [(AstExprAnn i _) (ctfe-node-has-type-literal? i)]
+    [(AstExprCast i _) (ctfe-node-has-type-literal? i)]
+    [(AstExprBorrow _ _ i) (ctfe-node-has-type-literal? i)]
+    [(AstExprMatch scrut arms)
+      (or
+        (ctfe-node-has-type-literal? scrut)
+        (ctfe-arms-have-type-literal? arms))]
+    [(AstExprForeach _ _ s e b)
+      (or
+        (ctfe-node-has-type-literal? s)
+        (or (ctfe-node-has-type-literal? e) (ctfe-node-has-type-literal? b)))]
+    [(AstExprStructGet i _) (ctfe-node-has-type-literal? i)]
+    [(AstExprWithRegion _ exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [(AstExprWithEscape i exprs)
+      (or (ctfe-node-has-type-literal? i) (ctfe-exprs-have-type-literal? exprs))]
+    [(AstExprBox i) (ctfe-node-has-type-literal? i)]
+    [(AstExprBoxGet i) (ctfe-node-has-type-literal? i)]
+    [(AstExprComptime i) (ctfe-node-has-type-literal? i)]
+    [(AstExprQuote i) (ctfe-node-has-type-literal? i)]
+    [(AstExprQuasiquote i) (ctfe-node-has-type-literal? i)]
+    [(AstExprUnquote i) (ctfe-node-has-type-literal? i)]
+    [(AstExprUnquoteSplicing i) (ctfe-node-has-type-literal? i)]
+    [(AstExprTry i) (ctfe-node-has-type-literal? i)]
+    [(AstExprReturn i) (ctfe-node-has-type-literal? i)]
+    [(AstExprPtrNullCheck i) (ctfe-node-has-type-literal? i)]
+    [(AstExprPtrRead i) (ctfe-node-has-type-literal? i)]
+    [(AstExprPtrWrite a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprPtrOffset a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprPtrCast i _) (ctfe-node-has-type-literal? i)]
+    [(AstExprPtrToInt i) (ctfe-node-has-type-literal? i)]
+    [(AstExprIntToPtr i _) (ctfe-node-has-type-literal? i)]
+    [(AstExprStringData i) (ctfe-node-has-type-literal? i)]
+    [(AstExprStringFromBytes a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprArrayData i) (ctfe-node-has-type-literal? i)]
+    [(AstExprCpuIdEax a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprCpuIdEbx a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprCpuIdEcx a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprCpuIdEdx a b)
+      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+    [(AstExprXgetbv i) (ctfe-node-has-type-literal? i)]
+    [(AstExprSyscall exprs) (ctfe-exprs-have-type-literal? exprs)]
+    [_ true]))
+
+(define (ctfe-decl-has-type-literal? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef _ _ expr-box) (ctfe-node-has-type-literal? expr-box)]
+    [(AstDeclDefFn _ _ _ body-box _) (ctfe-node-has-type-literal? body-box)]
+    [(AstDeclTest _ expr-box _) (ctfe-node-has-type-literal? expr-box)]
+    [(AstDeclDefMacro _ _ _ body-box) (ctfe-node-has-type-literal? body-box)]
+    [(AstDeclUnsafe inner-box)
+      (ctfe-decl-has-type-literal? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (ctfe-decl-has-type-literal? (box-get template-box))]
+    [_ false]))
+
+(define (ctfe-program-has-type-literal? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (ctfe-decl-has-type-literal? decl)
+        (ctfe-program-has-type-literal? (box-get rest)))]))
+
 (define (macro-expand-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -18455,6 +18619,10 @@
           ;; (or the next program in a multi-program process) never reuses a stale
           ;; or another program's metadata. The cache is repopulated eagerly below.
           (set! macro-expand-ctfe-env-ready false)
+          ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
+          ;; the program actually contains a `(type T)` literal -- the sole entry
+          ;; point for every CTFE reflection/layout query.
+          (set! ctfe-needs-metadata (ctfe-program-has-type-literal? decls))
           (if (or has-defmacro (macro-program-needs-expansion? decls))
             (begin
               (cfg compile-profile (compiler-tc-profile-start))

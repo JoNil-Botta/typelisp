@@ -65,16 +65,18 @@
     windows
     (let
       [handle : i64 (runtime-windows-fd-handle fd)]
+      [written : (Array i32) (make-array i32 1)]
       [ok : i32
         (runtime-windows-write-file
           handle
           buf
           (cast count : i32)
-          (ptr-null : (MutPtr i32))
+          (unsafe
+            (ptr-cast (array-data written) : (MutPtr i32)))
           0)]
       (if (= ok (cast 0 : i32))
         -1
-        count))
+        (cast (array-ref written 0) : i64)))
     (syscall 1 fd (runtime-ptr-arg buf) count)))
 
 ;: Terminate the process with `code`; never returns. Linux uses the

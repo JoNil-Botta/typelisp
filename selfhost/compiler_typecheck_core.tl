@@ -14668,6 +14668,43 @@
         (ErrTcMove (tc-move-cleanup-owner-exit-message name))
         (tc-move-check-cleanup-owner-exit moved (box-get rest)))]))
 
+(define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
+  (match names
+    [(TcStringNil) locals]
+    [(TcStringCons name rest)
+      (tc-move-add-bound-names (tc-moved-add locals name) (box-get rest))]))
+
+(define (tc-move-remove-bound-root-states
+  [moved : TcMovedSet]
+  [names : TcStringList]) : TcMovedSet
+  (match names
+    [(TcStringNil) moved]
+    [(TcStringCons name rest)
+      (tc-move-remove-bound-root-states
+        (tc-moved-remove-root-state moved name)
+        (box-get rest))]))
+
+(define (tc-move-pattern-bound-names
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : TcStringList
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyEnum _)
+      (match pattern
+        [(AstPatVariant _ patterns-box)
+          (let
+            [patterns : AstPatternList (box-get patterns-box)]
+            (tc-pattern-list-add-bound-names patterns TcStringNil))]
+        [_ TcStringNil])]
+    [(AstTyEnumArgs _ _)
+      (match pattern
+        [(AstPatVariant _ patterns-box)
+          (let
+            [patterns : AstPatternList (box-get patterns-box)]
+            (tc-pattern-list-add-bound-names patterns TcStringNil))]
+        [_ TcStringNil])]
+    [_ (tc-pattern-add-bound-names pattern TcStringNil)]))
+
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
 ;; a place moved on any arm is considered moved after the match.
 (define (tc-move-check-arms
@@ -14676,6 +14713,7 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
+  [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcMoveResult
   (match arms
     [(AstMatchArmNil) (OkTcMove moved)]
@@ -14683,28 +14721,44 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body-box)
+          [(AstMatchArm pattern body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (match (tc-move-check-expr
-                ctx
-                env
-                (tc-moved-clone locals)
-                (tc-moved-clone loop-carried)
-                (tc-moved-clone moved)
-                body)
-                [(OkTcMove arm-moved)
-                  (match (tc-move-check-arms
+              [bound : TcStringList
+                (tc-move-pattern-bound-names ctx scrut-ty pattern)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (tc-move-check-expr
                     ctx
-                    env
-                    (tc-moved-clone locals)
-                    (tc-moved-clone loop-carried)
-                    (tc-moved-clone moved)
-                    rest)
-                    [(OkTcMove rest-moved)
-                      (OkTcMove (tc-moved-union arm-moved rest-moved))]
+                    arm-env
+                    (tc-move-add-bound-names (tc-moved-clone locals) bound)
+                    (tc-move-remove-bound-root-states
+                      (tc-moved-clone loop-carried)
+                      bound)
+                    (tc-move-remove-bound-root-states
+                      (tc-moved-clone moved)
+                      bound)
+                    body)
+                    [(OkTcMove arm-moved)
+                      (let
+                        [visible-arm-moved : TcMovedSet
+                          (tc-moved-union
+                            moved
+                            (tc-move-remove-bound-root-states arm-moved bound))]
+                        (match (tc-move-check-arms
+                          ctx
+                          env
+                          (tc-moved-clone locals)
+                          (tc-moved-clone loop-carried)
+                          (tc-moved-clone moved)
+                          scrut-ty
+                          rest)
+                          [(OkTcMove rest-moved)
+                            (OkTcMove
+                              (tc-moved-union visible-arm-moved rest-moved))]
+                          [(ErrTcMove message) (ErrTcMove message)]))]
                     [(ErrTcMove message) (ErrTcMove message)])]
-                [(ErrTcMove message) (ErrTcMove message)]))]))]))
+                [(ErrTcEnv message) (ErrTcMove message)]))]))]))
 
 (define (tc-move-check-expr
   [ctx : TcContext]
@@ -14975,9 +15029,17 @@
                     moveds
                     scrut
                     scrut-ty)
+                  scrut-ty
                   arms)]
               [(ErrTcType _)
-                (tc-move-check-arms ctx env locals loop-carried moveds arms)])]
+                (tc-move-check-arms
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moveds
+                  (AstTyUnit)
+                  arms)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprForeach index index-ty start-box end-box body-box)
       (let

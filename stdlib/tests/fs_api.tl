@@ -88,6 +88,25 @@
 (define (test-fs-path-join [left : String] [right : String]) : String
   (fs-path-join (& left) (& right)))
 
+(define (test-fs-path-join-many0) : String
+  (fs-path-join-many))
+
+(define (test-fs-path-join-many1 [a : String]) : String
+  (fs-path-join-many a))
+
+(define (test-fs-path-join-many2 [a : String] [b : String]) : String
+  (fs-path-join-many a b))
+
+(define (test-fs-path-join-many3 [a : String] [b : String] [c : String]) : String
+  (fs-path-join-many a b c))
+
+(define (test-fs-path-join-many4
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]) : String
+  (fs-path-join-many a b c d))
+
 (define (test-fs-path-starts-separator? [path : String]) : bool
   (fs-path-starts-separator? (& path)))
 
@@ -445,6 +464,36 @@
         (test-fs-path-join "left/" "/right")
         "left/right"
         "path join avoids duplicate separator")
+      (assert-owned-string-eq
+        (test-fs-path-join-many0)
+        ""
+        "path join many zero segments")
+      (assert-owned-string-eq
+        (test-fs-path-join-many1 "solo")
+        "solo"
+        "path join many one segment")
+      (assert-owned-string-eq
+        (test-fs-path-join-many2 "left path" "right file")
+        expected-join
+        "path join many two segments")
+      (assert-owned-string-eq
+        (test-fs-path-join-many3 "left" "middle" "right")
+        (string-append
+          (string-append (string-append "left" (fs-path-separator)) "middle")
+          (string-append (fs-path-separator) "right"))
+        "path join many three segments")
+      (assert-owned-string-eq
+        (test-fs-path-join-many4 "left" "middle" "right" "leaf")
+        (string-append
+          (string-append
+            (string-append (string-append "left" (fs-path-separator)) "middle")
+            (string-append (fs-path-separator) "right"))
+          (string-append (fs-path-separator) "leaf"))
+        "path join many four segments")
+      (assert-owned-string-eq
+        (test-fs-path-join-many3 "left/" "/right" "leaf")
+        (string-append "left/right" (string-append (fs-path-separator) "leaf"))
+        "path join many avoids duplicate separator")
       ;; #822: pure path-string helpers (separator-agnostic; `/` cases are
       ;; stable on both Linux and Windows).
       (assert-owned-string-eq

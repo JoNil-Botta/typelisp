@@ -70,6 +70,8 @@ Coverage notes:
 - `ffi_api.tl` covers caller-owned C string buffers: required byte counts,
   exact-capacity copies, trailing NUL writes, too-small buffers, and interior
   NUL rejection using an explicitly unsafe test-only string fixture.
+- `fs_path_join_many_api.tl` covers the variadic path-join macro for zero,
+  single, two, three, four, and duplicate-separator joins.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
   creation, recoverable cleanup helpers, Linux file/directory rename behavior,
   directory iteration, missing and empty rename paths, and Windows unsupported

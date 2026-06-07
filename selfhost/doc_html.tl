@@ -9,19 +9,7 @@
 
 (import "../stdlib/string.tl")
 
-(define (doc-html-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
-(define (doc-html-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-append a (string-append b (string-append c d))))
-
-(define (doc-html-cat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (string-append a (string-append b (string-append c (string-append d e)))))
+(import "../stdlib/str_cat.tl")
 
 (define (doc-html-escape-one [text : String] [idx : i64]) : String
   (let
@@ -67,7 +55,7 @@
       out)))
 
 (define (doc-html-page-open [title : String]) : String
-  (doc-html-cat5
+  (str-cat
     "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>"
     (doc-html-escape title)
     "</title>\n<link rel=\"stylesheet\" href=\"typelisp-docs.css\">\n</head>\n<body class=\"tl-docs\">\n"
@@ -78,7 +66,7 @@
   "</body>\n</html>\n")
 
 (define (doc-html-header [title : String] [subtitle : String]) : String
-  (doc-html-cat5
+  (str-cat
     "<header class=\"tl-doc-header\">\n<h1>"
     (doc-html-escape title)
     "</h1>\n<p><code>"
@@ -90,11 +78,8 @@
   [doc-text : String]
   [empty-text : String]) : String
   (if (= (string-length doc-text) 0)
-    (doc-html-cat3
-      "<p class=\"tl-doc-empty\">"
-      (doc-html-escape empty-text)
-      "</p>\n")
-    (doc-html-cat5
+    (str-cat "<p class=\"tl-doc-empty\">" (doc-html-escape empty-text) "</p>\n")
+    (str-cat
       "<div class=\""
       class-name
       "\"><p>"
@@ -104,14 +89,14 @@
 (define (doc-html-code-block-meta-attr [meta : String]) : String
   (if (= (string-length meta) 0)
     ""
-    (doc-html-cat3 " data-meta=\"" (doc-html-escape meta) "\"")))
+    (str-cat " data-meta=\"" (doc-html-escape meta) "\"")))
 
 (define (doc-html-code-block-with-info
   [language : String]
   [meta : String]
   [source : String]) : String
-  (doc-html-cat3
-    (doc-html-cat5
+  (str-cat
+    (str-cat
       "<pre><code class=\"language-"
       (doc-html-escape language)
       "\""
@@ -127,7 +112,7 @@
   (let
     [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
-    (doc-html-cat5
+    (str-cat
       "<li><a href=\"#"
       anchor
       "\"><code>"
@@ -146,7 +131,7 @@
   (match items
     [(DocItemNil) ""]
     [_
-      (doc-html-cat3
+      (str-cat
         "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
         (doc-html-item-nav-entries items)
         "</ul>\n</nav>\n")]))
@@ -156,17 +141,17 @@
     [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
     [kind : String (doc-kind-name (doc-item-kind item))]
-    (doc-html-cat5
+    (str-cat
       "<a id=\""
       anchor
       "\"></a>\n<section class=\"tl-doc-item\">\n<h3><a href=\"#"
       anchor
-      (doc-html-cat5
+      (str-cat
         "\">"
         (doc-html-escape name)
         "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
         (doc-html-escape kind)
-        (doc-html-cat5
+        (str-cat
           "</dd></dl>\n"
           (doc-html-code-block (doc-item-signature item))
           (doc-html-doc-block
@@ -191,7 +176,7 @@
   (let
     [path : String (doc-module-path module)]
     [anchor : String (doc-render-anchor (doc-module-path module))]
-    (doc-html-cat5
+    (str-cat
       "<li><a href=\"#"
       anchor
       "\">"
@@ -210,7 +195,7 @@
   (match modules
     [(DocModuleNil) "<p class=\"tl-doc-empty\">No modules.</p>\n"]
     [_
-      (doc-html-cat3
+      (str-cat
         "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
         (doc-html-module-nav-entries modules)
         "</ul>\n</nav>\n")]))
@@ -220,17 +205,17 @@
     [path : String (doc-module-path module)]
     [docs : DocExtraction (doc-module-docs module)]
     [anchor : String (doc-render-anchor (doc-module-path module))]
-    (doc-html-cat5
+    (str-cat
       "<section class=\"tl-doc-module\" id=\""
       anchor
       "\">\n<h2><a href=\"#"
       anchor
-      (doc-html-cat5
+      (str-cat
         "\">"
         (doc-html-escape path)
         "</a></h2>\n<p class=\"tl-doc-source\"><code>"
         (doc-html-escape path)
-        (doc-html-cat5
+        (str-cat
           "</code></p>\n"
           (doc-html-doc-block
             "tl-doc-module-text"
@@ -250,24 +235,24 @@
 
 (define (doc-html-render-module-page [path : String] [docs : DocExtraction]) : String
   (let
-    [title : String (doc-html-cat3 "TypeLisp API: " path "")]
-    (doc-html-cat5
+    [title : String (str-cat "TypeLisp API: " path "")]
+    (str-cat
       (doc-html-page-open title)
       (doc-html-header "TypeLisp API" path)
       "<main>\n"
       (doc-html-module-section (DocModule path docs))
-      (doc-html-cat3 "</main>\n" (doc-html-page-close) ""))))
+      (str-cat "</main>\n" (doc-html-page-close) ""))))
 
 (define (doc-html-render-source [path : String] [source : String]) : String
   (doc-html-render-module-page path (doc-extract-source source)))
 
 (define (doc-html-render-module-graph [modules : DocModuleList]) : String
-  (doc-html-cat5
+  (str-cat
     (doc-html-page-open "TypeLisp API")
     (doc-html-header "TypeLisp API" "module index")
     (doc-html-module-nav modules)
     "<main>\n"
-    (doc-html-cat3
+    (str-cat
       (doc-html-module-sections modules)
       "</main>\n"
       (doc-html-page-close))))

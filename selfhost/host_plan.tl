@@ -7,20 +7,19 @@
 
 (import "../stdlib/string.tl")
 
-(define (host-plan-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
+(import "../stdlib/str_cat.tl")
 
 (define (host-plan-header) : String
   "typelisp-host-plan v1\n")
 
 (define (host-plan-word-line [name : String] [value : String]) : String
-  (host-plan-cat3 name " " (string-append value "\n")))
+  (str-cat name " " (string-append value "\n")))
 
 (define (host-plan-netstring [value : String]) : String
-  (host-plan-cat3 (int->string (string-length value)) ":" value))
+  (str-cat (int->string (string-length value)) ":" value))
 
 (define (host-plan-netline [name : String] [value : String]) : String
-  (host-plan-cat3 name " " (string-append (host-plan-netstring value) "\n")))
+  (str-cat name " " (string-append (host-plan-netstring value) "\n")))
 
 (define (host-plan-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))

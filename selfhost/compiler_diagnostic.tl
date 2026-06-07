@@ -5,7 +5,7 @@
 
 (import "compiler_ast_types.tl")
 
-(import "../stdlib/string.tl")
+(import "../stdlib/str_cat.tl")
 
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
@@ -46,12 +46,6 @@
   (help CompilerDiagnosticMaybeString)
   (secondary CompilerDiagnosticLabelList)
   (notes CompilerDiagnosticNoteList))
-
-(define (compiler-diagnostic-cat3
-  [left : String]
-  [middle : String]
-  [right : String]) : String
-  (string-append left (string-append middle right)))
 
 (define (compiler-diagnostic-span-path [span : CompilerDiagnosticSpan]) : String
   (struct-get span path))
@@ -436,30 +430,27 @@
     [level-text : String (compiler-diagnostic-level-render level)]
     (match code
       [(CompilerDiagnosticSomeString code-text)
-        (compiler-diagnostic-cat3
+        (str-cat
           level-text
           "["
-          (compiler-diagnostic-cat3
+          (str-cat
             code-text
             "]: "
             (string-append (compiler-diagnostic-message diag) "\n")))]
       [CompilerDiagnosticNoString
-        (compiler-diagnostic-cat3
+        (str-cat
           level-text
           ": "
           (string-append (compiler-diagnostic-message diag) "\n"))])))
 
 (define (compiler-diagnostic-render-location [diag : CompilerDiagnostic]) : String
-  (compiler-diagnostic-cat3
+  (str-cat
     "  --> "
     (compiler-diagnostic-path diag)
-    (compiler-diagnostic-cat3
+    (str-cat
       ":"
       (int->string (compiler-diagnostic-line diag))
-      (compiler-diagnostic-cat3
-        ":"
-        (int->string (compiler-diagnostic-col diag))
-        "\n"))))
+      (str-cat ":" (int->string (compiler-diagnostic-col diag)) "\n"))))
 
 (define (compiler-diagnostic-render-source-snippet
   [diag : CompilerDiagnostic]
@@ -477,17 +468,13 @@
             " "
             (compiler-diagnostic-column-padding (compiler-diagnostic-col diag)))]
         (string-append
-          (compiler-diagnostic-cat3 gutter " | " (string-append line-text "\n"))
-          (compiler-diagnostic-cat3
-            blank
-            " | "
-            (compiler-diagnostic-cat3 padding "^" "\n"))))]
+          (str-cat gutter " | " (string-append line-text "\n"))
+          (str-cat blank " | " (str-cat padding "^" "\n"))))]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-help [help : CompilerDiagnosticMaybeString]) : String
   (match help
-    [(CompilerDiagnosticSomeString text)
-      (compiler-diagnostic-cat3 "   = help: " text "\n")]
+    [(CompilerDiagnosticSomeString text) (str-cat "   = help: " text "\n")]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-notes
@@ -495,7 +482,7 @@
   (match notes
     [(CompilerDiagnosticNoteNil) ""]
     [(CompilerDiagnosticNoteCons note rest)
-      (compiler-diagnostic-cat3
+      (str-cat
         "   = note: "
         note
         (string-append

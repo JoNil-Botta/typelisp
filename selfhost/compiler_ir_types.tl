@@ -5,6 +5,8 @@
 ;; contain typed instructions, and instructions use explicit vars/values.
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (import "compiler_ast_types.tl")
 
 (import "../stdlib/string.tl")
@@ -755,9 +757,6 @@
         (compiler-ir-clone-function-list functions)
         (compiler-ir-clone-extern-list externs))]))
 
-(define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
 (define (compiler-ir-type-list-render [types : AstTypeList]) : String
   (match types
     [(AstTypeNil) ""]
@@ -786,7 +785,7 @@
 (define (compiler-ir-nominal-lifetime-render
   [name : String]
   [lifetimes : AstLifetimeList]) : String
-  (compiler-ir-cat3
+  (str-cat
     "("
     name
     (string-append
@@ -814,39 +813,39 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (compiler-ir-cat3
+      (str-cat
         "(-> "
         (compiler-ir-type-list-render args)
         (string-append
           " "
           (string-append (compiler-ir-type-render (box-get ret)) ")")))]
     [(AstTyTuple elems)
-      (compiler-ir-cat3 "(Tuple " (compiler-ir-type-list-render elems) ")")]
+      (str-cat "(Tuple " (compiler-ir-type-list-render elems) ")")]
     [(AstTyArray elem count)
-      (compiler-ir-cat3
+      (str-cat
         "(Array "
         (compiler-ir-type-render (box-get elem))
-        (compiler-ir-cat3 " " (int->string count) ")"))]
+        (str-cat " " (int->string count) ")"))]
     [(AstTyDynArray elem)
-      (compiler-ir-cat3 "(Array " (compiler-ir-type-render (box-get elem)) ")")]
+      (str-cat "(Array " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyBox elem)
-      (compiler-ir-cat3 "(Box " (compiler-ir-type-render (box-get elem)) ")")]
+      (str-cat "(Box " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyRegion region inner)
-      (compiler-ir-cat3
+      (str-cat
         "(Region "
         region
         (string-append
           " "
           (string-append (compiler-ir-type-render (box-get inner)) ")")))]
     [(AstTyRef region inner)
-      (compiler-ir-cat3
+      (str-cat
         "(& "
         region
         (string-append
           " "
           (string-append (compiler-ir-type-render (box-get inner)) ")")))]
     [(AstTyMutRef region inner)
-      (compiler-ir-cat3
+      (str-cat
         "(&mut "
         region
         (string-append
@@ -862,9 +861,9 @@
     [(AstTyVarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyPtr elem)
-      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-render (box-get elem)) ")")]
+      (str-cat "(Ptr " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-render (box-get elem)) ")")]))
+      (str-cat "(MutPtr " (compiler-ir-type-render (box-get elem)) ")")]))
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
@@ -946,10 +945,7 @@
     [(IrCallArgsNil) ""]
     [(IrCallArgsOne a) (compiler-ir-value-render a)]
     [(IrCallArgsTwo a b)
-      (compiler-ir-cat3
-        (compiler-ir-value-render a)
-        ", "
-        (compiler-ir-value-render b))]
+      (str-cat (compiler-ir-value-render a) ", " (compiler-ir-value-render b))]
     [(IrCallArgsArray values) (compiler-ir-call-args-array-render values 0)]))
 
 (define (compiler-ir-call-args-count [args : CompilerIrCallArgs]) : i64
@@ -963,13 +959,13 @@
   [name : String]
   [args : CompilerIrCallArgs]
   [ty : AstType]) : String
-  (compiler-ir-cat3
+  (str-cat
     "  tailcall "
     name
-    (compiler-ir-cat3
+    (str-cat
       "("
       (compiler-ir-call-args-render args)
-      (compiler-ir-cat3 ") : " (compiler-ir-type-render ty) ""))))
+      (str-cat ") : " (compiler-ir-type-render ty) ""))))
 
 (define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
   (match instr
@@ -1864,28 +1860,6 @@
         (compiler-ir-function-list-call-arg-count functions)
         (compiler-ir-function-list-phi-input-count functions))]))
 
-(define (compiler-ir-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-append a (string-append b (string-append c d))))
-
-(define (compiler-ir-cat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (string-append a (string-append b (string-append c (string-append d e)))))
-
-(define (compiler-ir-cat6
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]
-  [f : String]) : String
-  (string-append
-    a
-    (string-append b (string-append c (string-append d (string-append e f))))))
-
 (define (compiler-ir-type-list-name [types : AstTypeList]) : String
   (match types
     [(AstTypeNil) ""]
@@ -1893,7 +1867,7 @@
       (let
         [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
-        (compiler-ir-cat3
+        (str-cat
           " "
           (compiler-ir-type-name head)
           (compiler-ir-type-list-name tail)))]))
@@ -1919,76 +1893,56 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (compiler-ir-cat4
+      (str-cat
         "(->"
         (compiler-ir-type-list-name args)
         " "
-        (compiler-ir-cat3 (compiler-ir-type-name (box-get ret)) ")" ""))]
+        (str-cat (compiler-ir-type-name (box-get ret)) ")" ""))]
     [(AstTyTuple elems)
-      (compiler-ir-cat3 "(Tuple" (compiler-ir-type-list-name elems) ")")]
+      (str-cat "(Tuple" (compiler-ir-type-list-name elems) ")")]
     [(AstTyArray elem count)
-      (compiler-ir-cat5
+      (str-cat
         "(Array "
         (compiler-ir-type-name (box-get elem))
         " "
         (int->string count)
         ")")]
     [(AstTyDynArray elem)
-      (compiler-ir-cat3 "(Array " (compiler-ir-type-name (box-get elem)) ")")]
+      (str-cat "(Array " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyBox elem)
-      (compiler-ir-cat3 "(Box " (compiler-ir-type-name (box-get elem)) ")")]
+      (str-cat "(Box " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyRegion region inner)
-      (compiler-ir-cat5
-        "(in "
-        region
-        " "
-        (compiler-ir-type-name (box-get inner))
-        ")")]
+      (str-cat "(in " region " " (compiler-ir-type-name (box-get inner)) ")")]
     [(AstTyRef region inner)
-      (compiler-ir-cat5
-        "(& "
-        region
-        " "
-        (compiler-ir-type-name (box-get inner))
-        ")")]
+      (str-cat "(& " region " " (compiler-ir-type-name (box-get inner)) ")")]
     [(AstTyMutRef region inner)
-      (compiler-ir-cat5
-        "(&mut "
-        region
-        " "
-        (compiler-ir-type-name (box-get inner))
-        ")")]
+      (str-cat "(&mut " region " " (compiler-ir-type-name (box-get inner)) ")")]
     [(AstTyEnum name) name]
     [(AstTyEnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyStruct name) name]
     [(AstTyStructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
-    [(AstTyVar name) (compiler-ir-cat3 "'" name "'")]
+    [(AstTyVar name) (str-cat "'" name "'")]
     [(AstTyVarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyPtr elem)
-      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name (box-get elem)) ")")]
+      (str-cat "(Ptr " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-name (box-get elem)) ")")]))
+      (str-cat "(MutPtr " (compiler-ir-type-name (box-get elem)) ")")]))
 
 (define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String
-  (compiler-ir-cat5
-    "(Vector "
-    (compiler-ir-type-name elem)
-    " "
-    (int->string lanes)
-    ")"))
+  (str-cat "(Vector " (compiler-ir-type-name elem) " " (int->string lanes) ")"))
 
 (define (compiler-ir-mask-type-name [lanes : i64]) : String
-  (compiler-ir-cat3 "(Mask " (int->string lanes) ")"))
+  (str-cat "(Mask " (int->string lanes) ")"))
 
 (define (compiler-ir-value-describe [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id) (compiler-ir-cat3 "%" (int->string id) "")]
-    [(IrValueGlobal name) (compiler-ir-cat3 "@" name "")]
-    [(IrValueGlobalAddr name) (compiler-ir-cat3 "&@" name "")]
-    [(IrValueFunction name) (compiler-ir-cat3 "fn@" name "")]
+    [(IrValueVar id) (str-cat "%" (int->string id) "")]
+    [(IrValueGlobal name) (str-cat "@" name "")]
+    [(IrValueGlobalAddr name) (str-cat "&@" name "")]
+    [(IrValueFunction name) (str-cat "fn@" name "")]
     [(IrValueI64 n) (int->string n)]
     [(IrValueF64 n) n]
     [(IrValueBool b)
@@ -2006,7 +1960,7 @@
       (match (box-get tail)
         [(IrValueNil) (compiler-ir-value-describe head)]
         [_
-          (compiler-ir-cat3
+          (str-cat
             (compiler-ir-value-describe head)
             ", "
             (compiler-ir-value-list-describe (box-get tail)))])]))
@@ -2029,7 +1983,7 @@
     [(IrCallArgsNil) ""]
     [(IrCallArgsOne a) (compiler-ir-value-describe a)]
     [(IrCallArgsTwo a b)
-      (compiler-ir-cat3
+      (str-cat
         (compiler-ir-value-describe a)
         ", "
         (compiler-ir-value-describe b))]
@@ -2073,22 +2027,22 @@
     [(IrMaskReduceAny) "any"]))
 
 (define (compiler-ir-lane-type-name [lanes : i64] [elem : AstType]) : String
-  (compiler-ir-cat3 (int->string lanes) " x " (compiler-ir-type-name elem)))
+  (str-cat (int->string lanes) " x " (compiler-ir-type-name elem)))
 
 (define (compiler-ir-vector-suffix [lanes : i64] [elem : AstType]) : String
-  (compiler-ir-cat3 " : " (compiler-ir-lane-type-name lanes elem) ""))
+  (str-cat " : " (compiler-ir-lane-type-name lanes elem) ""))
 
 (define (compiler-ir-instr-describe [instr : CompilerIrInstr]) : String
   (match instr
     [(IrInstrLaneId dst lanes ty)
-      (compiler-ir-cat5
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = lane_id "
         (compiler-ir-lane-type-name lanes ty)
         "")]
     [(IrInstrSplat dst value lanes ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = splat "
@@ -2096,42 +2050,39 @@
         (compiler-ir-vector-suffix lanes ty)
         "")]
     [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (compiler-ir-cat3 " = vector_" (compiler-ir-binop-name op) " ")
+        (str-cat " = vector_" (compiler-ir-binop-name op) " ")
         (compiler-ir-value-describe lhs)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe rhs) "")
+        (str-cat ", " (compiler-ir-value-describe rhs) "")
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrVectorReduce dst op src lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (compiler-ir-cat3
-          " = vector_reduce_"
-          (compiler-ir-vector-reduce-op-name op)
-          " ")
+        (str-cat " = vector_reduce_" (compiler-ir-vector-reduce-op-name op) " ")
         (compiler-ir-value-describe src)
         (compiler-ir-vector-suffix lanes elem-ty)
         "")]
     [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (compiler-ir-cat3 " = vector_cmp_" (compiler-ir-binop-name op) " ")
+        (str-cat " = vector_cmp_" (compiler-ir-binop-name op) " ")
         (compiler-ir-value-describe lhs)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe rhs) "")
+        (str-cat ", " (compiler-ir-value-describe rhs) "")
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (compiler-ir-cat3 " = " (compiler-ir-mask-binop-name op) " ")
+        (str-cat " = " (compiler-ir-mask-binop-name op) " ")
         (compiler-ir-value-describe lhs)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe rhs) " : ")
+        (str-cat ", " (compiler-ir-value-describe rhs) " : ")
         (int->string lanes))]
     [(IrInstrMaskNot dst src lanes)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = mask_not "
@@ -2139,23 +2090,20 @@
         " : "
         (int->string lanes))]
     [(IrInstrMaskReduce dst op src lanes)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
-        (compiler-ir-cat3
-          " = mask_reduce_"
-          (compiler-ir-mask-reduce-op-name op)
-          " ")
+        (str-cat " = mask_reduce_" (compiler-ir-mask-reduce-op-name op) " ")
         (compiler-ir-value-describe src)
         " : "
         (int->string lanes))]
     [(IrInstrSelect dst mask on-true on-false lanes ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = select "
         (compiler-ir-value-describe mask)
-        (compiler-ir-cat5
+        (str-cat
           ", "
           (compiler-ir-value-describe on-true)
           ", "
@@ -2163,27 +2111,27 @@
           "")
         (compiler-ir-vector-suffix lanes ty))]
     [(IrInstrVectorLoad dst base index lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = vector_load "
         (compiler-ir-value-describe base)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe index) "")
+        (str-cat ", " (compiler-ir-value-describe index) "")
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrVectorStore base index value lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  vector_store "
         (compiler-ir-value-describe base)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe index) "")
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe value) "")
+        (str-cat ", " (compiler-ir-value-describe index) "")
+        (str-cat ", " (compiler-ir-value-describe value) "")
         (compiler-ir-vector-suffix lanes elem-ty)
         "")]
     [(IrInstrPredicatedStore base index value mask lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  predicated_store "
         (compiler-ir-value-describe base)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe index) "")
-        (compiler-ir-cat5
+        (str-cat ", " (compiler-ir-value-describe index) "")
+        (str-cat
           ", "
           (compiler-ir-value-describe value)
           ", "
@@ -2192,12 +2140,12 @@
         (compiler-ir-vector-suffix lanes elem-ty)
         "")]
     [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = predicated_load "
         (compiler-ir-value-describe base)
-        (compiler-ir-cat5
+        (str-cat
           ", "
           (compiler-ir-value-describe index)
           ", "
@@ -2205,12 +2153,12 @@
           "")
         (compiler-ir-vector-suffix lanes elem-ty))]
     [(IrInstrTailMask dst index len lanes)
-      (compiler-ir-cat6
+      (str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = tail_mask "
         (compiler-ir-value-describe index)
-        (compiler-ir-cat3 ", " (compiler-ir-value-describe len) " : ")
+        (str-cat ", " (compiler-ir-value-describe len) " : ")
         (int->string lanes))]
     [_ "non-vector-mask-instr"]))
 

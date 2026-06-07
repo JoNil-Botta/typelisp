@@ -19,6 +19,8 @@
 ;# ```
 (import "string.tl")
 
+(import "str_cat.tl")
+
 (import "text_buf.tl")
 
 ;: Canonical JSON value model used by the stdlib parser and serializer.
@@ -73,14 +75,6 @@
 ;: ASCII printable lookup table used to materialize supported codepoints.
 (define json-ascii-printable-table : String
   " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
-
-;: Concatenate three strings, allocating the joined result in the active arena.
-(define (json-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
-;: Concatenate four strings, allocating the joined result in the active arena.
-(define (json-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string-append a (string-append b (string-append c d))))
 
 ;: Return the numeric scalar code for `c`.
 (define (json-char-code [c : char]) : i64
@@ -257,7 +251,7 @@
     [(= code 12) "\\f"]
     [(= code 13) "\\r"]
     [else
-      (json-cat4
+      (str-cat
         "\\u00"
         (json-hex-digit (/ code 16))
         (json-hex-digit (- code (* (/ code 16) 16)))
@@ -367,11 +361,10 @@
         "true"
         "false")]
     [(JsonNumber text) text]
-    [(JsonString text) (json-cat3 "\"" (json-escape-string (& text)) "\"")]
-    [(JsonArray items)
-      (json-cat3 "[" (json-stringify-list (box-get items)) "]")]
+    [(JsonString text) (str-cat "\"" (json-escape-string (& text)) "\"")]
+    [(JsonArray items) (str-cat "[" (json-stringify-list (box-get items)) "]")]
     [(JsonObject members)
-      (json-cat3 "{" (json-stringify-members (box-get members)) "}")]))
+      (str-cat "{" (json-stringify-members (box-get members)) "}")]))
 
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:

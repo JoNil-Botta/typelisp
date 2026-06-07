@@ -14,6 +14,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum MdStringList
   (MdStringNil)
   (MdStringCons String (Box MdStringList)))
@@ -765,7 +767,7 @@
         (substring text (+ lbracket 1) (- jclose (+ lbracket 1))))]
     [url : String
       (doc-html-escape (substring text (+ jclose 2) (- kclose (+ jclose 2))))]
-    (doc-html-cat5 "<a href=\"" url "\">" label "</a>")))
+    (str-cat "<a href=\"" url "\">" label "</a>")))
 
 ;: Inline-render `text` to HTML: `code`, *em*/_em_, [t](u), everything else
 ;: HTML-escaped; unmatched markers are emitted literally.
@@ -786,7 +788,7 @@
                   (begin
                     (set!
                       out
-                      (doc-html-cat3
+                      (str-cat
                         (string-append out "<code>")
                         (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
                         "</code>"))
@@ -801,7 +803,7 @@
                   (begin
                     (set!
                       out
-                      (doc-html-cat3
+                      (str-cat
                         (string-append out "<em>")
                         (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
                         "</em>"))
@@ -850,15 +852,15 @@
   (let
     [level-text : String (int->string level)]
     [anchor : String (doc-render-anchor text)]
-    (doc-html-cat5
+    (str-cat
       "<h"
       level-text
       " id=\""
       (doc-html-escape anchor)
-      (doc-html-cat5 "\">" (md-render-inline text) "</h" level-text ">\n"))))
+      (str-cat "\">" (md-render-inline text) "</h" level-text ">\n"))))
 
 (define (md-render-paragraph [text : String]) : String
-  (doc-html-cat3 "<p>" (md-render-inline text) "</p>\n"))
+  (str-cat "<p>" (md-render-inline text) "</p>\n"))
 
 (define (md-render-inline-lines [lines : MdStringList]) : String
   (match lines
@@ -867,13 +869,13 @@
       (match (box-get rest)
         [(MdStringNil) (md-render-inline head)]
         [_
-          (doc-html-cat3
+          (str-cat
             (md-render-inline head)
             "<br>\n"
             (md-render-inline-lines (box-get rest)))])]))
 
 (define (md-render-blockquote [lines : MdStringList]) : String
-  (doc-html-cat5
+  (str-cat
     "<blockquote>\n<p>"
     (md-render-inline-lines lines)
     "</p>\n"
@@ -884,17 +886,17 @@
   (match items
     [(MdStringNil) ""]
     [(MdStringCons head rest)
-      (doc-html-cat4
+      (str-cat
         "<li>"
         (md-render-inline head)
         "</li>\n"
         (md-render-list-items (box-get rest)))]))
 
 (define (md-render-bullet-list [items : MdStringList]) : String
-  (doc-html-cat3 "<ul>\n" (md-render-list-items items) "</ul>\n"))
+  (str-cat "<ul>\n" (md-render-list-items items) "</ul>\n"))
 
 (define (md-render-numbered-list [items : MdStringList]) : String
-  (doc-html-cat3 "<ol>\n" (md-render-list-items items) "</ol>\n"))
+  (str-cat "<ol>\n" (md-render-list-items items) "</ol>\n"))
 
 (define (md-render-code-fence [lang : String] [meta : String] [body : String]) : String
   (doc-html-code-block-with-info lang meta body))
@@ -903,7 +905,7 @@
   (match cells
     [(MdStringNil) ""]
     [(MdStringCons head rest)
-      (doc-html-cat4
+      (str-cat
         "<th>"
         (md-render-inline head)
         "</th>"
@@ -913,7 +915,7 @@
   (match cells
     [(MdStringNil) ""]
     [(MdStringCons head rest)
-      (doc-html-cat4
+      (str-cat
         "<td>"
         (md-render-inline head)
         "</td>"
@@ -922,7 +924,7 @@
 (define (md-render-table-row [row : MdTableRow]) : String
   (match row
     [(MdTableRow cells)
-      (doc-html-cat3 "<tr>" (md-render-table-data-cells cells) "</tr>\n")]))
+      (str-cat "<tr>" (md-render-table-data-cells cells) "</tr>\n")]))
 
 (define (md-render-table-rows [rows : MdTableRowList]) : String
   (match rows
@@ -933,7 +935,7 @@
         (md-render-table-rows (box-get rest)))]))
 
 (define (md-render-table [header : MdStringList] [rows : MdTableRowList]) : String
-  (doc-html-cat5
+  (str-cat
     "<table>\n<thead>\n<tr>"
     (md-render-table-header-cells header)
     "</tr>\n</thead>\n<tbody>\n"
@@ -1000,7 +1002,7 @@
       (unless
         (md-string-contains?
           html
-          (doc-html-cat5
+          (str-cat
             "<h1 id=\""
             (doc-render-anchor "Title `x`")
             "\">Title <code>x</code></h1>\n"

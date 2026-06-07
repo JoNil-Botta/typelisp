@@ -13,6 +13,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum SourceToolCommandStatus
   (SourceToolCommandOk)
   (SourceToolCommandErr String))
@@ -41,9 +43,6 @@
 (defenum ResultSourceToolLinkInputs
   (OkSourceToolLinkInputs SourceToolLinkInputs)
   (ErrSourceToolLinkInputs String))
-
-(define (source-tool-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (source-tool-target-name [target : CompilerBackendTarget]) : String
   (match target
@@ -79,7 +78,7 @@
     [(string-eq value "avx512") (OkSourceToolBackendMode (BackendModeAvx512))]
     [else
       (ErrSourceToolBackendMode
-        (source-tool-cat3 command ": unknown backend mode " value))]))
+        (str-cat command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or
@@ -637,8 +636,7 @@
   (match (try-write-file (& path) (& contents))
     [(OkIoUnit) SourceToolCommandOk]
     [(ErrIoUnit error)
-      (SourceToolCommandErr
-        (source-tool-cat3 context ": " (io-error-message error)))]))
+      (SourceToolCommandErr (str-cat context ": " (io-error-message error)))]))
 
 (define (source-tool-forward-output [output : ProcessOutput]) : unit
   (begin

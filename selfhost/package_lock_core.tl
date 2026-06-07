@@ -5,6 +5,8 @@
 ;; fetch/replay behavior remains owned by the package build pipeline.
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (import "read.tl")
 
 (import "package_cache_core.tl")
@@ -58,9 +60,6 @@
 
 (define package-lock-version : String
   "v1")
-
-(define (package-lock-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (package-lock-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -140,7 +139,7 @@
       (cond
         [(string-eq (struct-get head alias) (struct-get entry alias))
           (ErrPackageLockEntryList
-            (package-lock-cat3
+            (str-cat
               "package-lock: duplicate dependency alias `"
               (struct-get entry alias)
               "`"))]
@@ -164,22 +163,16 @@
             [(SNil) (OkPackageLockString val)]
             [_
               (ErrPackageLockString
-                (package-lock-cat3
+                (str-cat
                   "package-lock: field `"
                   fname
                   "` takes a single string value"))])]
         [_
           (ErrPackageLockString
-            (package-lock-cat3
-              "package-lock: field `"
-              fname
-              "` must have a string value"))])]
+            (str-cat "package-lock: field `" fname "` must have a string value"))])]
     [_
       (ErrPackageLockString
-        (package-lock-cat3
-          "package-lock: field `"
-          fname
-          "` must have a string value"))]))
+        (str-cat "package-lock: field `" fname "` must have a string value"))]))
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
   (cond
@@ -357,7 +350,7 @@
                           true)]))]
                 [else
                   (ErrPackageLockEntry
-                    (package-lock-cat3
+                    (str-cat
                       "package-lock: unknown dependency field `"
                       fname
                       "`"))])]
@@ -423,10 +416,7 @@
           (ErrPackageLockFile "package-lock: missing required field `version`")]
         [(not (string-eq version package-lock-version))
           (ErrPackageLockFile
-            (package-lock-cat3
-              "package-lock: unsupported version `"
-              version
-              "`"))]
+            (str-cat "package-lock: unsupported version `" version "`"))]
         [(not has-deps)
           (ErrPackageLockFile
             "package-lock: missing required field `dependencies`")]
@@ -471,10 +461,7 @@
                           true)]))]
                 [else
                   (ErrPackageLockFile
-                    (package-lock-cat3
-                      "package-lock: unknown field `"
-                      fname
-                      "`"))])]
+                    (str-cat "package-lock: unknown field `" fname "`"))])]
             [_
               (ErrPackageLockFile
                 "package-lock: fields must start with a field name")])]
@@ -494,10 +481,7 @@
               (PackageLockEntryNil)
               false)
             (ErrPackageLockFile
-              (package-lock-cat3
-                "expected `typelisp-lock` form, got `"
-                name
-                "`")))]
+              (str-cat "expected `typelisp-lock` form, got `" name "`")))]
         [_
           (ErrPackageLockFile
             "package-lock: lockfile must start with `typelisp-lock`")])]

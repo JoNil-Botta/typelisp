@@ -7,6 +7,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList])
@@ -1540,7 +1542,7 @@
     [ok : bool true]
     (begin
       (if (compiler-typecheck-error-ok?
-        (tc-cat3
+        (str-cat
           (compiler-typecheck-inline-unboxed-list-source)
           "\n"
           "(define (main [x : BadList]) : i64 0)")

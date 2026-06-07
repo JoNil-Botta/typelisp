@@ -11,6 +11,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum LspFrameRead
   (LspFrameOk String)
   (LspFrameEof)
@@ -50,17 +52,6 @@
 (defenum LspHandleResult
   (LspContinue LspDocuments)
   (LspExit LspDocuments))
-
-(define (lsp-frame-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
-(define (lsp-frame-cat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (string-append a (string-append b (string-append c (string-append d e)))))
 
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
@@ -225,7 +216,7 @@
 (define (lsp-frame-write-body [body : String]) : unit
   (begin
     (lsp-frame-stdout-write
-      (lsp-frame-cat5
+      (str-cat
         "Content-Length: "
         (int->string (string-length body))
         "\r\n\r\n"
@@ -572,7 +563,7 @@
               (set! out (string-append out (substring path i 1)))
               (set!
                 out
-                (lsp-frame-cat3
+                (str-cat
                   out
                   "%"
                   (string-append

@@ -11,6 +11,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum CleanConfig
   (CleanSourceConfig String bool)
   (CleanPackageConfig String bool bool))
@@ -18,9 +20,6 @@
 (defenum ResultCleanConfig
   (OkCleanConfig CleanConfig)
   (ErrCleanConfig String))
-
-(define (clean-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (clean-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
@@ -128,7 +127,7 @@
         [(ErrIoUnit error)
           (begin
             (print-error
-              (clean-cat3
+              (str-cat
                 "clean: failed to remove file "
                 path
                 (string-append ": " (io-error-message error))))
@@ -149,7 +148,7 @@
         [(ErrIoUnit error)
           (begin
             (print-error
-              (clean-cat3
+              (str-cat
                 "clean: failed to remove directory "
                 path
                 (string-append ": " (io-error-message error))))
@@ -254,7 +253,7 @@
   (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-file dry-run path)
     (begin
-      (print-error (clean-cat3 "clean: refusing unsafe artifact path " path ""))
+      (print-error (str-cat "clean: refusing unsafe artifact path " path ""))
       1)))
 
 (define (clean-remove-package-dir
@@ -265,7 +264,7 @@
   (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-dir dry-run path)
     (begin
-      (print-error (clean-cat3 "clean: refusing unsafe artifact path " path ""))
+      (print-error (str-cat "clean: refusing unsafe artifact path " path ""))
       1)))
 
 (define (clean-package-from-path [manifest-path : String] [dry-run : bool]) : i64
@@ -282,7 +281,7 @@
         (if (not (clean-package-name-safe? name))
           (begin
             (print-error
-              (clean-cat3 "clean: refusing unsafe package name " name ""))
+              (str-cat "clean: refusing unsafe package name " name ""))
             1)
           (begin
             (set!

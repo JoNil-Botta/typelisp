@@ -20,6 +20,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum TestMode
   (TestModeRun)
   (TestModeCheck))
@@ -49,19 +51,16 @@
   (ErrTestPackageTotals i64))
 
 (define (tltest-unknown-target [value : String]) : String
-  (source-tool-cat3 "test: unknown target " value ""))
+  (str-cat "test: unknown target " value ""))
 
 (define (tltest-unknown-mode [value : String]) : String
-  (source-tool-cat3 "test: unknown backend mode " value ""))
+  (str-cat "test: unknown backend mode " value ""))
 
 (define (tltest-unsupported-mode [value : String]) : String
-  (source-tool-cat3 "test: backend mode " value " is not implemented"))
+  (str-cat "test: backend mode " value " is not implemented"))
 
 (define (tltest-invalid-opt-level [value : String]) : String
-  (source-tool-cat3
-    "test: invalid --opt-level "
-    value
-    "; expected 0, 1, 2, or 3"))
+  (str-cat "test: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
 
 (define (tltest-config-finish
   [source : String]

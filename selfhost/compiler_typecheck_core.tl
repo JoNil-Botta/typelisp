@@ -13,6 +13,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType (Box TcTypeEnv))
@@ -1005,9 +1007,6 @@
 (define (tc-fn3 [a : AstType] [b : AstType] [c : AstType] [ret : AstType]) : AstType
   (ast-ty-func (tc-type-list3 a b c) ret))
 
-(define (tc-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
 (define (tc-type-list-render [types : AstTypeList]) : String
   (match types
     [(AstTypeNil) ""]
@@ -1036,7 +1035,7 @@
 (define (tc-render-nominal-lifetime-type
   [name : String]
   [lifetimes : AstLifetimeList]) : String
-  (tc-cat3
+  (str-cat
     "("
     name
     (string-append " " (string-append (tc-lifetime-list-render lifetimes) ")"))))
@@ -1062,34 +1061,34 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (tc-cat3
+      (str-cat
         "(-> "
         (tc-type-list-render args)
         (string-append " " (string-append (tc-type-render (box-get ret)) ")")))]
-    [(AstTyTuple elems) (tc-cat3 "(Tuple " (tc-type-list-render elems) ")")]
+    [(AstTyTuple elems) (str-cat "(Tuple " (tc-type-list-render elems) ")")]
     [(AstTyArray elem count)
-      (tc-cat3
+      (str-cat
         "(Array "
         (tc-type-render (box-get elem))
-        (tc-cat3 " " (int->string count) ")"))]
+        (str-cat " " (int->string count) ")"))]
     [(AstTyDynArray elem)
-      (tc-cat3 "(Array " (tc-type-render (box-get elem)) ")")]
-    [(AstTyBox elem) (tc-cat3 "(Box " (tc-type-render (box-get elem)) ")")]
-    [(AstTyPtr elem) (tc-cat3 "(Ptr " (tc-type-render (box-get elem)) ")")]
+      (str-cat "(Array " (tc-type-render (box-get elem)) ")")]
+    [(AstTyBox elem) (str-cat "(Box " (tc-type-render (box-get elem)) ")")]
+    [(AstTyPtr elem) (str-cat "(Ptr " (tc-type-render (box-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (tc-cat3 "(MutPtr " (tc-type-render (box-get elem)) ")")]
+      (str-cat "(MutPtr " (tc-type-render (box-get elem)) ")")]
     [(AstTyRef region inner)
-      (tc-cat3
+      (str-cat
         "(& "
         region
         (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
     [(AstTyMutRef region inner)
-      (tc-cat3
+      (str-cat
         "(&mut "
         region
         (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
     [(AstTyRegion region inner)
-      (tc-cat3
+      (str-cat
         "(Region "
         region
         (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
@@ -2814,7 +2813,7 @@
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
 (define (tc-struct-cleanup-repr-c-message [struct-name : String]) : String
-  (tc-cat3 "typecheck: cleanup-owning struct " struct-name " cannot use repr c"))
+  (str-cat "typecheck: cleanup-owning struct " struct-name " cannot use repr c"))
 
 (define (tc-source-variant-list-policy-ok
   [ctx : TcContext]
@@ -8929,22 +8928,22 @@
         [tail : String (tc-inline-aggregate-cycle-stack-render (box-get rest))]
         (if (string-eq tail "")
           head
-          (tc-cat3 tail " -> " head)))]))
+          (str-cat tail " -> " head)))]))
 
 (define (tc-inline-aggregate-cycle-path [stack : TcStringList] [name : String]) : String
   (let
     [prefix : String (tc-inline-aggregate-cycle-stack-render stack)]
     (if (string-eq prefix "")
       name
-      (tc-cat3 prefix " -> " name))))
+      (str-cat prefix " -> " name))))
 
 (define (tc-inline-aggregate-cycle-message
   [name : String]
   [stack : TcStringList]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: inline aggregate layout cycle "
     (tc-inline-aggregate-cycle-path stack name)
-    (tc-cat3 "; insert (Box " name ") at the recursive edge")))
+    (str-cat "; insert (Box " name ") at the recursive edge")))
 
 (define (tc-inline-aggregate-type-list-finite-ok
   [ctx : TcContext]
@@ -9419,10 +9418,10 @@
   [owner : String]
   [field : String]
   [ty : AstType]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: repr c struct "
     owner
-    (tc-cat3
+    (str-cat
       " field "
       field
       (string-append " has unsupported field type " (tc-type-render ty)))))
@@ -9461,10 +9460,10 @@
                         (tc-repr-c-layout-align layout)))]
                   [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
                 (ErrTcLayoutInfo
-                  (tc-cat3
+                  (str-cat
                     "typecheck: repr c struct "
                     owner
-                    (tc-cat3
+                    (str-cat
                       " field "
                       field
                       (string-append
@@ -9485,10 +9484,10 @@
                         (tc-repr-c-layout-align layout)))]
                   [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
                 (ErrTcLayoutInfo
-                  (tc-cat3
+                  (str-cat
                     "typecheck: repr c struct "
                     owner
-                    (tc-cat3
+                    (str-cat
                       " field "
                       field
                       (string-append
@@ -15550,10 +15549,10 @@
     unit))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: macro operand type mismatch: expected "
     (tc-type-render expected)
-    (tc-cat3 ", got " (tc-type-render actual) "")))
+    (str-cat ", got " (tc-type-render actual) "")))
 
 (define (macro-check-operand
   [ctx : TcContext]
@@ -16501,10 +16500,10 @@
 (define (tc-struct-field-cleanup-outside-message
   [struct-name : String]
   [field-name : String]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: struct "
     struct-name
-    (tc-cat3
+    (str-cat
       " field "
       field-name
       " has cleanup metadata but struct is not cleanup-owning")))
@@ -16513,13 +16512,13 @@
   [struct-name : String]
   [field-name : String]
   [ty : AstType]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: struct "
     struct-name
-    (tc-cat3
+    (str-cat
       " field "
       field-name
-      (tc-cat3
+      (str-cat
         " stores cleanup-owning type "
         (tc-type-render ty)
         " without :owned"))))
@@ -16528,13 +16527,13 @@
   [struct-name : String]
   [field-name : String]
   [ty : AstType]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: struct "
     struct-name
-    (tc-cat3
+    (str-cat
       " field "
       field-name
-      (tc-cat3
+      (str-cat
         " uses :owned but type "
         (tc-type-render ty)
         " is not cleanup-owning"))))
@@ -16543,13 +16542,13 @@
   [struct-name : String]
   [field-name : String]
   [cleanup-name : String]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: struct "
     struct-name
-    (tc-cat3
+    (str-cat
       " field "
       field-name
-      (tc-cat3 " cleanup function " cleanup-name " type mismatch"))))
+      (str-cat " cleanup function " cleanup-name " type mismatch"))))
 
 (define (tc-check-struct-field-cleanup-fn
   [ctx : TcContext]
@@ -16657,18 +16656,18 @@
 (define (tc-enum-cleanup-fn-mismatch-message
   [enum-name : String]
   [cleanup-name : String]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: enum "
     enum-name
-    (tc-cat3 " cleanup function " cleanup-name " type mismatch")))
+    (str-cat " cleanup function " cleanup-name " type mismatch")))
 
 (define (tc-enum-payload-cleanup-outside-message
   [enum-name : String]
   [variant-name : String]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: enum "
     enum-name
-    (tc-cat3
+    (str-cat
       " variant "
       variant-name
       " has payload cleanup metadata but enum is not cleanup-owning")))
@@ -16677,13 +16676,13 @@
   [enum-name : String]
   [variant-name : String]
   [ty : AstType]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: enum "
     enum-name
-    (tc-cat3
+    (str-cat
       " variant "
       variant-name
-      (tc-cat3
+      (str-cat
         " stores cleanup-owning type "
         (tc-type-render ty)
         " without :owned"))))
@@ -16692,13 +16691,13 @@
   [enum-name : String]
   [variant-name : String]
   [ty : AstType]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: enum "
     enum-name
-    (tc-cat3
+    (str-cat
       " variant "
       variant-name
-      (tc-cat3
+      (str-cat
         " uses :owned but type "
         (tc-type-render ty)
         " is not cleanup-owning"))))
@@ -16707,13 +16706,13 @@
   [enum-name : String]
   [variant-name : String]
   [cleanup-name : String]) : String
-  (tc-cat3
+  (str-cat
     "typecheck: enum "
     enum-name
-    (tc-cat3
+    (str-cat
       " variant "
       variant-name
-      (tc-cat3 " cleanup function " cleanup-name " type mismatch"))))
+      (str-cat " cleanup function " cleanup-name " type mismatch"))))
 
 (define (tc-check-enum-cleanup-fn
   [ctx : TcContext]

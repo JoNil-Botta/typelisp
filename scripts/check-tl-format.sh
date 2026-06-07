@@ -66,29 +66,29 @@ build_current_cli_for_format() {
     CURRENT_CLI_OBJ="$WORKDIR/current-cli.$NL_OBJ_EXT"
     CURRENT_CLI_BIN="$WORKDIR/current-cli$NL_BIN_EXT"
 
-    echo "Building current CLI for current-syntax-aware TypeLisp formatting."
+    echo "Building current formatter for current-syntax-aware TypeLisp formatting."
     if ! run_with_heartbeat_capture \
-        "compile current cli for format" \
+        "compile current formatter for format" \
         "$CURRENT_CLI_COMPILE_STDOUT" \
         "$CURRENT_CLI_COMPILE_STDERR" \
-        "$COMPILER" compile selfhost/cli.tl -o "$CURRENT_CLI_ASM" \
+        "$COMPILER" compile selfhost/format.tl -o "$CURRENT_CLI_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root selfhost \
         --opt-level 1; then
-        echo "Failed to compile current CLI for current-syntax-aware formatting." >&2
+        echo "Failed to compile current formatter for current-syntax-aware formatting." >&2
         sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDOUT" >&2 || true
         sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDERR" >&2 || true
         exit 1
     fi
 
     [ -s "$CURRENT_CLI_ASM" ] || {
-        echo "Current CLI compile did not produce assembly: $CURRENT_CLI_ASM" >&2
+        echo "Current formatter compile did not produce assembly: $CURRENT_CLI_ASM" >&2
         exit 1
     }
 
-    assemble_and_link "current-cli-format" "$CURRENT_CLI_ASM" "$CURRENT_CLI_OBJ" "$CURRENT_CLI_BIN"
+    assemble_and_link "current-formatter" "$CURRENT_CLI_ASM" "$CURRENT_CLI_OBJ" "$CURRENT_CLI_BIN"
 }
 
 # Check every git-tracked *.tl file in the repository so TypeLisp code in any
@@ -147,9 +147,9 @@ fi
 if [ -s "$METADATA_FILES" ]; then
     echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
     build_current_cli_for_format
-    if ! xargs "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
+    if ! xargs "$CURRENT_CLI_BIN" --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
-        echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2
+        echo "Run: $CURRENT_CLI_BIN --check \$(cat $METADATA_FILES)" >&2
         exit 1
     fi
 fi

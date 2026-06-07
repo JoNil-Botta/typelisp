@@ -2395,6 +2395,70 @@
       (ErrCtfe
         (ctfe-diagnostic-at-expr expr "expr-splice expects exactly one arg"))]))
 
+;; `(expr-int n)` builds an i64 literal Expr from a comptime integer, letting a
+;; macro splice a computed count or index as a literal (unquote requires an Expr,
+;; so a bare i64 cannot be spliced directly).
+(define (ctfe-eval-expr-int-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (box-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (match value
+                  [(CtfeI64 n)
+                    (OkCtfe
+                      (CtfeExpr (AstExprLiteral (AstLitInt n)) (AstTyI64))
+                      arg-fuel)]
+                  [_
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr expr "expr-int expects i64"))])]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr expr "expr-int expects exactly one arg"))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "expr-int expects exactly one arg"))]))
+
+;; `(expr-var name)` builds a variable-reference Expr from a comptime string.
+(define (ctfe-eval-expr-var-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (box-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (match value
+                  [(CtfeString name)
+                    (OkCtfe
+                      (CtfeExpr (ctfe-expr-var name) (AstTyExpr))
+                      arg-fuel)]
+                  [_
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr expr "expr-var expects String"))])]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr expr "expr-var expects exactly one arg"))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "expr-var expects exactly one arg"))]))
+
 (define (ctfe-expr-inspector-name? [name : String]) : bool
   (or
     (string-eq name "expr-bool?")
@@ -2409,7 +2473,9 @@
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
   (or
     (string-eq name "expr-list-empty?")
-    (or (string-eq name "expr-list-head") (string-eq name "expr-list-tail"))))
+    (or
+      (string-eq name "expr-list-length")
+      (or (string-eq name "expr-list-head") (string-eq name "expr-list-tail")))))
 
 (define (ctfe-eval-expr-inspector-call
   [name : String]
@@ -2500,6 +2566,10 @@
                       [(string-eq name "expr-list-empty?")
                         (OkCtfe
                           (CtfeBool (ctfe-expr-list-empty? nodes))
+                          arg-fuel)]
+                      [(string-eq name "expr-list-length")
+                        (OkCtfe
+                          (CtfeI64 (ctfe-expr-list-length nodes))
                           arg-fuel)]
                       [(ctfe-expr-list-empty? nodes)
                         (ErrCtfe
@@ -2661,6 +2731,10 @@
           (ctfe-eval-int-to-string-call args expr env fuel)]
         [(string-eq name "expr-bool")
           (ctfe-eval-expr-bool-call args expr env fuel)]
+        [(string-eq name "expr-int")
+          (ctfe-eval-expr-int-call args expr env fuel)]
+        [(string-eq name "expr-var")
+          (ctfe-eval-expr-var-call args expr env fuel)]
         [(string-eq name "expr-splice")
           (ctfe-eval-expr-splice-call args expr env fuel)]
         [(string-eq name "expr-if") (ctfe-eval-expr-if-call args expr env fuel)]

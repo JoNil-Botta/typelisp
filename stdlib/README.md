@@ -94,6 +94,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
   including append/concat, substring, equality, integer rendering, and integer parsing
   helpers. Import it with `(import "stdlib/string.tl")`.
+- `str_cat.tl`: the variadic `str-cat` concatenation macro, which expands to a
+  single-allocation copy regardless of arity. Kept separate from
+  `core_macros.tl` so importing it does not shadow the builtin guard/boolean
+  forms. Import it with `(import "stdlib/str_cat.tl")` alongside
+  `stdlib/string.tl`.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it

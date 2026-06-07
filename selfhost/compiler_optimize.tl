@@ -10041,16 +10041,15 @@
                           globals
                           optimized-functions
                           externs)]
-                      (let
-                        [optimized : CompilerIrProgram
-                          (IrProgram globals final-functions externs)]
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-opt-profile-finish "post_prune"))
-                          (CompilerOptimizedProgram
-                            optimized
-                            (opt-remap-spans-program inline-spans optimized))))))))])))]))
+                      [optimized : CompilerIrProgram
+                        (IrProgram globals final-functions externs)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-finish "post_prune"))
+                        (CompilerOptimizedProgram
+                          optimized
+                          (opt-remap-spans-program inline-spans optimized)))))))])))]))
 
 (define (optimize-program-with-spans
   [program : CompilerIrProgram]

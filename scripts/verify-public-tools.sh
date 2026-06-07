@@ -451,6 +451,29 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+UNSAFE_REACH="$WORKDIR/unsafe-import-reach"
+mkdir -p "$UNSAFE_REACH"
+cat > "$UNSAFE_REACH/lib.tl" <<'EOF'
+(define (unsafe-helper [x : i64]) : i64 (+ x 1))
+(unsafe
+  (define (unsafe-entry [x : i64]) : i64 (unsafe-helper x)))
+EOF
+cat > "$UNSAFE_REACH/main.tl" <<'EOF'
+(import "lib.tl")
+(define (main) : i64 (unsafe (unsafe-entry 41)))
+EOF
+UNSAFE_REACH_TARGET=windows-x86_64
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    UNSAFE_REACH_TARGET=$HOST_TARGET
+fi
+run_cmd unsafe-import-reach-compile "$COMPILER" compile "$UNSAFE_REACH/main.tl" --target "$UNSAFE_REACH_TARGET" -o "$UNSAFE_REACH/main.s" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+    assert_contains "$out" "Generated:"
+fi
+assert_contains "$UNSAFE_REACH/main.s" "main:"
+
 echo "[public-tools] CLI command matrix and diagnostics"
 CLI_MATRIX="$WORKDIR/cli-matrix"
 mkdir -p "$CLI_MATRIX"

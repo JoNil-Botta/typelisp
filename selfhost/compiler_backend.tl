@@ -17948,9 +17948,14 @@ tl_process_output:
                 (or
                   (compiler-backend-plan-provides? plan "tl_shift_abort")
                   (compiler-backend-plan-provides? plan "tl_region_reset"))))))]
+      [needs-get-std-handle : bool
+        (or
+          needs-write-exit
+          (compiler-backend-plan-provides? plan "tl_process_output"))]
       (string-append
         "    .extern VirtualAlloc
     .extern VirtualFree
+    .extern ExitProcess
 "
         (string-append
           (if (compiler-backend-plan-provides? plan ".L_tl_fs_read_dir_status")
@@ -17963,12 +17968,14 @@ tl_process_output:
             "")
           (string-append
             (if needs-write-exit
-              "    .extern _write
-    .extern exit
+              "    .extern WriteFile
 "
               "")
             (string-append
-              ""
+              (if needs-get-std-handle
+                "    .extern GetStdHandle
+"
+                "")
               (string-append
                 (if (compiler-backend-plan-provides? plan "tl_print_f64")
                   "    .extern _snprintf
@@ -18000,7 +18007,6 @@ tl_process_output:
     .extern WaitForSingleObject
     .extern GetExitCodeProcess
     .extern CloseHandle
-    .extern GetStdHandle
 "
                     ""))))))))
     ""))

@@ -12,6 +12,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "compiler_load.tl")
 
 (defstruct PackageSourceSet
@@ -91,14 +93,14 @@
 
 (define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
   (if (file-exists? path)
-    (match (compiler-load-parse-manifest (read-file path))
-      [(ErrCompilerPkgManifest message)
+    (match (compiler-load-parse-manifest-diagnostic path (read-file path))
+      [(ErrCompilerPkgManifestDiagnostic diag)
         (ErrPackageSourceSet
           (package-source-cat3
             "invalid package manifest '"
-            path
-            (string-append "': " message)))]
-      [(OkCompilerPkgManifest manifest)
+            (compiler-diagnostic-path diag)
+            (string-append "': " (compiler-diagnostic-message diag))))]
+      [(OkCompilerPkgManifestDiagnostic manifest)
         (OkPackageSourceSet
           (PackageSourceSet
             path

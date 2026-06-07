@@ -1299,13 +1299,17 @@
           "compiler-load: dependency package manifest not found for "
           source-path))]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest (read-file manifest-path))
-        [(ErrCompilerPkgManifest message)
+      (match (compiler-load-parse-manifest-diagnostic
+        manifest-path
+        (read-file manifest-path))
+        [(ErrCompilerPkgManifestDiagnostic diag)
           (ErrPkgResolve
             (string-append
               "compiler-load: invalid dependency package manifest '"
-              (string-append manifest-path (string-append "': " message))))]
-        [(OkCompilerPkgManifest manifest)
+              (string-append
+                manifest-path
+                (string-append "': " (compiler-diagnostic-message diag)))))]
+        [(OkCompilerPkgManifestDiagnostic manifest)
           (OkPkgResolve
             (compiler-load-normalize-path
               (compiler-load-join-root-path
@@ -2367,10 +2371,15 @@
   (entry String)
   (deps CompilerPkgDeps))
 
-;: Parse result: the manifest or a diagnostic.
+;: Parse result: the manifest or a legacy string diagnostic.
 (defenum ResultCompilerPkgManifest
   (OkCompilerPkgManifest CompilerPkgManifest)
   (ErrCompilerPkgManifest String))
+
+;: Source-facing parse result: the manifest or a path/span-bearing diagnostic.
+(defenum ResultCompilerPkgManifestDiagnostic
+  (OkCompilerPkgManifestDiagnostic CompilerPkgManifest)
+  (ErrCompilerPkgManifestDiagnostic CompilerDiagnostic))
 
 ;: Internal: a single extracted string field value, or a diagnostic.
 (defenum ResultPkgString
@@ -2980,11 +2989,52 @@
         [_ (ErrCompilerPkgManifest "manifest must start with `package`")])]
     [_ (ErrCompilerPkgManifest "manifest must be a `(package ...)` form")]))
 
-;: Parse a `typelisp.pkg` manifest source string into a structured manifest.
+;: Preserve the legacy `manifest: ...` syntax-error message while attaching the
+;: reader span to the source-facing diagnostic result.
+(define (compiler-load-manifest-source-error-diagnostic
+  [path : String]
+  [err : SourceError]) : CompilerDiagnostic
+  (compiler-diagnostic-from-span
+    path
+    (source-error-span err)
+    (string-append "manifest: " (source-error-message err))))
+
+(define (compiler-load-manifest-validation-diagnostic
+  [path : String]
+  [form : SpannedSexpr]
+  [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-from-span path (spanned-sexpr-span form) message))
+
+;: Parse a `typelisp.pkg` manifest source string into a structured manifest,
+;: preserving manifest path/span identity for source-facing errors.
+(define (compiler-load-parse-manifest-diagnostic
+  [path : String]
+  [source : String]) : ResultCompilerPkgManifestDiagnostic
+  (match (lex-spanned-result source)
+    [(ErrSpannedTokens err)
+      (ErrCompilerPkgManifestDiagnostic
+        (compiler-load-manifest-source-error-diagnostic path err))]
+    [(OkSpannedTokens toks)
+      (match (read-spanned-result toks)
+        [(ErrSpannedSexpr err)
+          (ErrCompilerPkgManifestDiagnostic
+            (compiler-load-manifest-source-error-diagnostic path err))]
+        [(OkSpannedSexpr form)
+          (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
+            [(OkCompilerPkgManifest manifest)
+              (OkCompilerPkgManifestDiagnostic manifest)]
+            [(ErrCompilerPkgManifest message)
+              (ErrCompilerPkgManifestDiagnostic
+                (compiler-load-manifest-validation-diagnostic path form message))])])]))
+
+;: Parse a manifest source string into a structured manifest. This compatibility
+;: wrapper keeps existing in-memory parser callers and message-only tests stable.
 (define (compiler-load-parse-manifest [source : String]) : ResultCompilerPkgManifest
-  (match (read-result (lex source))
-    [(ErrSexpr msg) (ErrCompilerPkgManifest (string-append "manifest: " msg))]
-    [(OkSexpr form) (compiler-load-manifest-from-form form)]))
+  (match (compiler-load-parse-manifest-diagnostic "" source)
+    [(OkCompilerPkgManifestDiagnostic manifest)
+      (OkCompilerPkgManifest manifest)]
+    [(ErrCompilerPkgManifestDiagnostic diag)
+      (ErrCompilerPkgManifest (compiler-diagnostic-message diag))]))
 
 ;: Self-test: a full manifest parses with the expected fields + dependency
 ;: count.
@@ -3100,6 +3150,48 @@
     [(ErrCompilerPkgManifest m) (string-eq m expected)]
     [(OkCompilerPkgManifest _) false]))
 
+(define (compiler-load-manifest-diagnostic-span-forward?
+  [diag : CompilerDiagnostic]) : bool
+  (or
+    (> (compiler-diagnostic-end-line diag) (compiler-diagnostic-line diag))
+    (and
+      (= (compiler-diagnostic-end-line diag) (compiler-diagnostic-line diag))
+      (>= (compiler-diagnostic-end-col diag) (compiler-diagnostic-col diag)))))
+
+(define (compiler-load-manifest-diagnostic-rejects?
+  [path : String]
+  [source : String]
+  [expected : String]
+  [line : i64]
+  [col : i64]) : bool
+  (match (compiler-load-parse-manifest-diagnostic path source)
+    [(ErrCompilerPkgManifestDiagnostic diag)
+      (and
+        (string-eq (compiler-diagnostic-path diag) path)
+        (and
+          (= (compiler-diagnostic-line diag) line)
+          (and
+            (= (compiler-diagnostic-col diag) col)
+            (and
+              (compiler-load-manifest-diagnostic-span-forward? diag)
+              (string-eq (compiler-diagnostic-message diag) expected)))))]
+    [(OkCompilerPkgManifestDiagnostic _) false]))
+
+(define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
+  (and
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "("
+      "manifest: reader: unterminated list (missing ')')"
+      1
+      2)
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "(module foo)"
+      "expected `package` form, got `module`"
+      1
+      1)))
+
 (define (compiler-load-pkg-manifest-github-validation-ok?) : bool
   (and
     (compiler-load-manifest-rejects?
@@ -3192,7 +3284,9 @@
                   (compiler-load-pkg-manifest-validation-ok?)
                   (and
                     (compiler-load-manifest-github-deps-ok?)
-                    (compiler-load-pkg-manifest-github-validation-ok?)))))))))))
+                    (and
+                      (compiler-load-pkg-manifest-github-validation-ok?)
+                      (compiler-load-pkg-manifest-diagnostic-ok?))))))))))))
 
 ;: --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
 ;: Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
@@ -3322,9 +3416,11 @@
   (match (compiler-load-discover-manifest importer-path)
     [(CompilerLoadNoPath) (OkPkgResolve import-path)]
     [(CompilerLoadSomePath manifest-path)
-      (match (compiler-load-parse-manifest (read-file manifest-path))
-        [(ErrCompilerPkgManifest _) (OkPkgResolve import-path)]
-        [(OkCompilerPkgManifest manifest)
+      (match (compiler-load-parse-manifest-diagnostic
+        manifest-path
+        (read-file manifest-path))
+        [(ErrCompilerPkgManifestDiagnostic _) (OkPkgResolve import-path)]
+        [(OkCompilerPkgManifestDiagnostic manifest)
           (compiler-load-resolve-pkg-import
             import-path
             (compiler-load-dirname manifest-path)

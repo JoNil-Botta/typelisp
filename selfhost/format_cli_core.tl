@@ -59,35 +59,34 @@
     (fmt-config-finish check paths manifest-path has-manifest)
     (let
       [current : String (arg idx)]
-      (cond
-        [(string-eq current "--check")
-          (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)]
-        [(string-eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ErrFmtConfig "fmt: --manifest-path requires a value")
-            (if has-manifest
-              (ErrFmtConfig "fmt: duplicate --manifest-path")
-              (fmt-parse-args (+ idx 2) count check paths (arg (+ idx 1)) true)))]
-        [(string-eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ErrFmtConfig "fmt: --stdlib-root requires a value")
-            (fmt-parse-args
-              (+ idx 2)
-              count
-              check
-              paths
-              manifest-path
-              has-manifest))]
-        [(fmt-flag? current)
-          (ErrFmtConfig (string-append "fmt: unknown flag " current))]
-        [else
+      (core/cond
+        (string-eq current "--check")
+        (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)
+        (string-eq current "--manifest-path")
+        (if (>= (+ idx 1) count)
+          (ErrFmtConfig "fmt: --manifest-path requires a value")
+          (if has-manifest
+            (ErrFmtConfig "fmt: duplicate --manifest-path")
+            (fmt-parse-args (+ idx 2) count check paths (arg (+ idx 1)) true)))
+        (string-eq current "--stdlib-root")
+        (if (>= (+ idx 1) count)
+          (ErrFmtConfig "fmt: --stdlib-root requires a value")
           (fmt-parse-args
-            (+ idx 1)
+            (+ idx 2)
             count
             check
-            (fmt-path-list-append paths current)
+            paths
             manifest-path
-            has-manifest)]))))
+            has-manifest))
+        (fmt-flag? current)
+        (ErrFmtConfig (string-append "fmt: unknown flag " current))
+        (fmt-parse-args
+          (+ idx 1)
+          count
+          check
+          (fmt-path-list-append paths current)
+          manifest-path
+          has-manifest)))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
   (fmt-parse-args start count false StringNil "" false))

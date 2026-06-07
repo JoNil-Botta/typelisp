@@ -1085,16 +1085,21 @@
           buf
           "(define ("
           prefix
-          "-normalized-bucket-index\n  [hash : i64]\n  [capacity : i64]) : i64\n"))
-      (set!
-        buf
-        (gen-tb3 buf "  (if (" prefix "-power-two-capacity? capacity)\n"))
+          "-round-capacity [capacity : i64]) : i64\n"))
       (set!
         buf
         (gen-tb2
           buf
-          "    (bit-and hash (- capacity 1))\n    (% hash capacity)))\n"
+          "  (let\n    [rounded : i64 1]\n    (begin\n      (while (< rounded capacity)\n        (set! rounded (* rounded 2)))\n      rounded)))\n"
           ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-normalized-bucket-index\n  [hash : i64]\n  [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb2 buf "  (bit-and hash (- capacity 1)))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -1296,15 +1301,22 @@
       (set!
         buf
         (gen-tb3 buf "(define (" prefix "-with-capacity [capacity : i64]) : "))
-      (set! buf (gen-tb2 buf map-name "\n  (let\n    [slots : (Array "))
-      (set! buf (gen-tb4 buf slot ") (make-array " slot " capacity)]\n"))
+      (set!
+        buf
+        (gen-tb2 buf map-name "\n  (let\n    [rounded-capacity : i64 ("))
+      (set!
+        buf
+        (gen-tb2 buf prefix "-round-capacity capacity)]\n    [slots : (Array "))
+      (set!
+        buf
+        (gen-tb4 buf slot ") (make-array " slot " rounded-capacity)]\n"))
       (set!
         buf
         (gen-tb4
           buf
           "    (begin\n      ("
           prefix
-          "-fill-empty slots 0 capacity)\n      ("
+          "-fill-empty slots 0 rounded-capacity)\n      ("
           map-name))
       (set! buf (gen-tb2 buf " slots 0 0))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-get-borrowed [map : "))
@@ -1634,26 +1646,42 @@
           "-capacity map)]\n"))
       (set!
         buf
+        (gen-tb3
+          buf
+          "    [requested-capacity : i64\n      (if (> ("
+          prefix
+          "-len map) new-capacity)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "        ("
+          prefix
+          "-len map)\n        new-capacity)]\n    [rounded-capacity : i64 ("
+          prefix
+          "-round-capacity requested-capacity)]\n"))
+      (set!
+        buf
         (gen-tb5
           buf
           "    [dst : (Array "
           slot
           ") (make-array "
           slot
-          " new-capacity)]\n"))
+          " rounded-capacity)]\n"))
       (set!
         buf
         (gen-tb3
           buf
           "    (begin\n      ("
           prefix
-          "-fill-empty dst 0 new-capacity)\n      ("))
+          "-fill-empty dst 0 rounded-capacity)\n      ("))
       (set!
         buf
         (gen-tb4
           buf
           prefix
-          "-rehash-from src dst new-capacity 0 old-capacity)\n      ("
+          "-rehash-from src dst rounded-capacity 0 old-capacity)\n      ("
           map-name
           " dst ("))
       (set!
@@ -1666,7 +1694,11 @@
           "-grow-capacity [capacity : i64]) : i64\n"))
       (set!
         buf
-        (gen-tb2 buf "  (if (< capacity 4)\n    8\n    (* capacity 2)))\n" ""))
+        (gen-tb3
+          buf
+          "  (if (< capacity 4)\n    8\n    (* ("
+          prefix
+          "-round-capacity capacity) 2)))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-grow [map : "))
       (set!
         buf
@@ -1899,16 +1931,21 @@
           buf
           "(define ("
           prefix
-          "-normalized-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
-      (set!
-        buf
-        (gen-tb3 buf "  (if (" prefix "-power-two-capacity? capacity)\n"))
+          "-round-capacity [capacity : i64]) : i64\n"))
       (set!
         buf
         (gen-tb2
           buf
-          "    (bit-and hash (- capacity 1))\n    (% hash capacity)))\n"
+          "  (let\n    [rounded : i64 1]\n    (begin\n      (while (< rounded capacity)\n        (set! rounded (* rounded 2)))\n      rounded)))\n"
           ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(define ("
+          prefix
+          "-normalized-bucket-index [hash : i64] [capacity : i64]) : i64\n"))
+      (set! buf (gen-tb2 buf "  (bit-and hash (- capacity 1)))\n" ""))
       (set!
         buf
         (gen-tb3
@@ -2076,15 +2113,22 @@
       (set!
         buf
         (gen-tb3 buf "(define (" prefix "-with-capacity [capacity : i64]) : "))
-      (set! buf (gen-tb2 buf map-name "\n  (let\n    [slots : (Array "))
-      (set! buf (gen-tb4 buf slot ") (make-array " slot " capacity)]\n"))
+      (set!
+        buf
+        (gen-tb2 buf map-name "\n  (let\n    [rounded-capacity : i64 ("))
+      (set!
+        buf
+        (gen-tb2 buf prefix "-round-capacity capacity)]\n    [slots : (Array "))
+      (set!
+        buf
+        (gen-tb4 buf slot ") (make-array " slot " rounded-capacity)]\n"))
       (set!
         buf
         (gen-tb4
           buf
           "    (begin\n      ("
           prefix
-          "-fill-empty slots 0 capacity)\n      ("
+          "-fill-empty slots 0 rounded-capacity)\n      ("
           map-name))
       (set! buf (gen-tb2 buf " slots 0 0))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-get [map : "))
@@ -2420,26 +2464,42 @@
           "-capacity map)]\n"))
       (set!
         buf
+        (gen-tb3
+          buf
+          "    [requested-capacity : i64\n      (if (> ("
+          prefix
+          "-len map) new-capacity)\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "        ("
+          prefix
+          "-len map)\n        new-capacity)]\n    [rounded-capacity : i64 ("
+          prefix
+          "-round-capacity requested-capacity)]\n"))
+      (set!
+        buf
         (gen-tb5
           buf
           "    [dst : (Array "
           slot
           ") (make-array "
           slot
-          " new-capacity)]\n"))
+          " rounded-capacity)]\n"))
       (set!
         buf
         (gen-tb3
           buf
           "    (begin\n      ("
           prefix
-          "-fill-empty dst 0 new-capacity)\n      ("))
+          "-fill-empty dst 0 rounded-capacity)\n      ("))
       (set!
         buf
         (gen-tb4
           buf
           prefix
-          "-rehash-from src dst new-capacity 0 old-capacity)\n      ("
+          "-rehash-from src dst rounded-capacity 0 old-capacity)\n      ("
           map-name
           " dst ("))
       (set!
@@ -2452,7 +2512,11 @@
           "-grow-capacity [capacity : i64]) : i64\n"))
       (set!
         buf
-        (gen-tb2 buf "  (if (< capacity 4)\n    8\n    (* capacity 2)))\n" ""))
+        (gen-tb3
+          buf
+          "  (if (< capacity 4)\n    8\n    (* ("
+          prefix
+          "-round-capacity capacity) 2)))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-grow [map : "))
       (set!
         buf
@@ -6266,6 +6330,31 @@
       "HashMapSlot")
     2))
 
+(define (compiler-generated-hashmap-mask-source-ok?) : bool
+  (let
+    [string-source : String
+      (gen-hashmap-source-string-key
+        "StringStringMap"
+        "string-string-map"
+        "String")]
+    [i64-source : String
+      (gen-hashmap-source-i64-key "I64I64Map" "i64-i64-map" "i64")]
+    [string-round-needle : String "string-string-map-round-capacity"]
+    [i64-round-needle : String "i64-i64-map-round-capacity"]
+    [mask-needle : String "(bit-and hash (- capacity 1))"]
+    [modulo-needle : String "(% hash capacity)"]
+    (and
+      (string-contains (& string-source) (& string-round-needle))
+      (and
+        (string-contains (& i64-source) (& i64-round-needle))
+        (and
+          (string-contains (& string-source) (& mask-needle))
+          (and
+            (string-contains (& i64-source) (& mask-needle))
+            (and
+              (not (string-contains (& string-source) (& modulo-needle)))
+              (not (string-contains (& i64-source) (& modulo-needle))))))))))
+
 (define (compiler-generated-hashmap-family-bundle-ok?) : bool
   (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))
     [(OkAstProgram program)
@@ -6305,6 +6394,10 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "string-string-map-get-borrowed")]
+                  [string-round-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "string-string-map-round-capacity")]
                   [i64-map-count : i64
                     (compiler-specialize-decl-list-count-visible
                       decls
@@ -6313,21 +6406,53 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "i64-i64-map-put")]
-                  (and
-                    (= slot-count 1)
-                    (and
-                      (= map-count 1)
-                      (and
-                        (= entry-count 1)
-                        (and
-                          (= len-count 1)
-                          (and
-                            (= put-count 1)
-                            (and
-                              (= string-map-count 1)
-                              (and
-                                (= string-borrowed-count 1)
-                                (and (= i64-map-count 1) (= i64-put-count 1))))))))))])]
+                  [i64-round-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-i64-map-round-capacity")]
+                  [i64-string-round-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-string-map-round-capacity")]
+                  [ok : bool true]
+                  (begin
+                    (if (= slot-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= entry-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= len-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= put-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= string-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= string-borrowed-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= string-round-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-put-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-round-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-string-round-count 1)
+                      unit
+                      (set! ok false))
+                    ok))])]
           [(ErrSpecProgram _) false]))]
     [(ErrAstProgram _) false]))
 
@@ -6406,6 +6531,7 @@
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-hashmap-descriptor-distinct-ok?) (return 0))
+    (unless (compiler-generated-hashmap-mask-source-ok?) (return 0))
     (unless (compiler-generated-hashmap-family-bundle-ok?) (return 0))
     (unless
       (compiler-generated-hashmap-family-unsupported-key-rejected?)

@@ -1,9 +1,10 @@
-/* benchmarks/hashmap_get/baseline.c - clang C baseline for hashmap_get (#2166).
+/* benchmarks/hashmap_insert/baseline.c - clang C baseline for hashmap_insert (#2165).
  *
- * Equivalent to benchmarks/hashmap_get/bench.tl: pre-populate a fixed-capacity
- * i64 -> i64 map, then alternate deterministic hit and miss lookups. uint64_t
- * gives modulo-2^64 wrapping compatible with TypeLisp i64 arithmetic for this
- * benchmark's low-byte exit code.
+ * Equivalent to benchmarks/hashmap_insert/bench.tl: repeatedly build a fresh
+ * power-of-two i64 -> i64 map, insert deterministic keys, and sample a lookup
+ * so the populated map contents stay observable. uint64_t gives modulo-2^64
+ * wrapping compatible with TypeLisp i64 arithmetic for this benchmark's
+ * low-byte exit code.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -43,11 +44,11 @@ static uint64_t next_index(uint64_t index, uint64_t capacity) {
     return next >= capacity ? 0ULL : next;
 }
 
-static uint64_t get_key(uint64_t i) {
-    return i * 17ULL + 5ULL;
+static uint64_t insert_key(uint64_t round, uint64_t i) {
+    return round * 1000003ULL + i * 17ULL + 5ULL;
 }
 
-static uint64_t get_value(uint64_t key) {
+static uint64_t insert_value(uint64_t key) {
     return key * 33ULL + 7ULL;
 }
 
@@ -102,31 +103,24 @@ static uint64_t get_or(const Map *map, uint64_t key, uint64_t fallback) {
 
 int main(int argc, char **argv) {
     (void)argv;
-    const uint64_t rounds = 1200ULL + (uint64_t)argc;
-    const uint64_t size = 2048ULL;
-    Map map = make_map(4096ULL);
-    if (!map.slots) {
-        return 2;
-    }
-
-    for (uint64_t i = 0ULL; i < size; i++) {
-        uint64_t key = get_key(i);
-        insert(&map, key, get_value(key));
-    }
-
+    const uint64_t rounds = 640ULL + (uint64_t)argc;
+    const uint64_t size = 1024ULL;
     uint64_t acc = 0ULL;
+
     for (uint64_t round = 0ULL; round < rounds; round++) {
-        for (uint64_t hit = 0ULL; hit < size; hit++) {
-            uint64_t key = get_key(hit);
-            acc += get_or(&map, key, UINT64_MAX);
+        Map map = make_map(2048ULL);
+        if (!map.slots) {
+            return 2;
         }
-        for (uint64_t miss = 0ULL; miss < size; miss++) {
-            uint64_t key = get_key(miss) + 1ULL;
-            acc += get_or(&map, key, 3ULL);
+        for (uint64_t i = 0ULL; i < size; i++) {
+            uint64_t key = insert_key(round, i);
+            insert(&map, key, insert_value(key));
         }
+        uint64_t sample = round % size;
+        uint64_t sample_key = insert_key(round, sample);
+        acc += map.len + get_or(&map, sample_key, UINT64_MAX);
+        free(map.slots);
     }
 
-    acc += map.len;
-    free(map.slots);
     return (int)(acc & 0xFFULL);
 }

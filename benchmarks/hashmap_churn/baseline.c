@@ -36,15 +36,8 @@ static uint64_t hash_key(uint64_t key) {
     return hash_normalize(key);
 }
 
-static int power_two_capacity(uint64_t capacity) {
-    return capacity > 0ULL && (capacity & (capacity - 1ULL)) == 0ULL;
-}
-
 static uint64_t normalized_bucket_index(uint64_t hash, uint64_t capacity) {
-    if (power_two_capacity(capacity)) {
-        return hash & (capacity - 1ULL);
-    }
-    return hash % capacity;
+    return hash & (capacity - 1ULL);
 }
 
 static uint64_t next_index(uint64_t index, uint64_t capacity) {

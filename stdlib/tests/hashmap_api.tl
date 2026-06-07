@@ -244,10 +244,10 @@
           (i64-string-map-contains? fixture1 9)
           "i64->String fixture generated contains helper")))
     ;; --- bucket-index math + wraparound ---
-    (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 % 4")
-    (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 % 4")
+    (assert-i64-eq (string-i64-map-bucket-index 5 4) 1 "bucket 5 mask 4")
+    (assert-i64-eq (string-i64-map-bucket-index 8 4) 0 "bucket 8 mask 4")
     ;; negative hash is normalized into [0, modulus) first: -1 -> 2147483646,
-    ;; and 2147483646 % 4 = 2.
+    ;; and 2147483646 & 3 = 2.
     (assert-i64-eq (string-i64-map-bucket-index -1 4) 2 "bucket negative")
     (assert-true
       (string-i64-map-power-two-capacity? 8)
@@ -256,13 +256,18 @@
       (string-i64-map-power-two-capacity? 10)
       "non-power-of-two capacity rejected")
     (assert-i64-eq
+      (string-i64-map-round-capacity 0)
+      1
+      "zero requested capacity rounds to one")
+    (assert-i64-eq (string-i64-map-round-capacity 3) 4 "capacity 3 rounds to 4")
+    (assert-i64-eq
+      (string-i64-map-round-capacity 10)
+      16
+      "capacity 10 rounds to 16")
+    (assert-i64-eq
       (string-i64-map-normalized-bucket-index 13 8)
       5
-      "normalized bucket masks power-of-two capacity")
-    (assert-i64-eq
-      (string-i64-map-normalized-bucket-index 13 10)
-      3
-      "normalized bucket falls back to modulo")
+      "normalized bucket masks capacity")
     (assert-i64-eq (string-i64-map-next-index 3 4) 0 "next wraps 3 -> 0")
     (assert-i64-eq (string-i64-map-next-index 1 4) 2 "next 1 -> 2")
     ;; --- zero / one capacity ---
@@ -375,6 +380,10 @@
       [m0 : StringI64Map (string-i64-map-with-capacity 8)]
       (begin
         (assert-i64-eq (string-i64-map-len m0) 0 "fresh map len 0")
+        (assert-i64-eq
+          (string-i64-map-capacity (string-i64-map-with-capacity 10))
+          16
+          "manual map rounds requested capacity")
         (assert-false (string-i64-map-contains? m0 "x") "fresh map has no key")
         (let
           [m1 : StringI64Map
@@ -495,9 +504,9 @@
     (assert-false
       (string-i64-map-needs-grow? (string-i64-map-with-capacity 4))
       "fresh cap-4 below load threshold")
-    (assert-true
+    (assert-false
       (string-i64-map-needs-grow? (string-i64-map-with-capacity 0))
-      "zero-capacity always needs grow")
+      "zero requested capacity rounds to a fresh cap-1 table")
     ;; string-i64-map-put auto-grows past the fixed capacity and preserves every
     ;; entry across the rehash (collision preservation + lookup after rehash).
     (let
@@ -559,11 +568,16 @@
           "one tombstone before resize")
         (let
           [t5 : StringI64Map (string-i64-map-resized t4 16)]
+          [t6 : StringI64Map (string-i64-map-resized t4 10)]
           (begin
             (assert-i64-eq
               (string-i64-map-capacity t5)
               16
               "resized capacity 16")
+            (assert-i64-eq
+              (string-i64-map-capacity t6)
+              16
+              "resized capacity rounds to power of two")
             (assert-i64-eq (string-i64-map-len t5) 2 "resized len 2")
             (assert-i64-eq
               (string-i64-map-deleted t5)

@@ -21147,12 +21147,19 @@
   [path : String]
   [src : String]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match (parse-ast-source src)
-    [(OkAstProgram program)
-      (lower-compiler-program-with-path-mode path program mode)]
-    [(ErrAstProgram message)
-      (ErrCompilerLower
-        (lower-diagnostic-with-path (lower-diagnostic message) path))]))
+  (begin
+    ;; Each standalone single-source compile (smoke self-tests, emit-source,
+    ;; check tools) runs in a fresh arena, so interned name strings from a
+    ;; previous compile are freed. Reset the persistent intern table here so a
+    ;; later compile never probes a dangling key. The multi-file driver compiles
+    ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
+    (intern-reset!)
+    (match (parse-ast-source src)
+      [(OkAstProgram program)
+        (lower-compiler-program-with-path-mode path program mode)]
+      [(ErrAstProgram message)
+        (ErrCompilerLower
+          (lower-diagnostic-with-path (lower-diagnostic message) path))])))
 
 (define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode path src (CompilerLowerScalar)))

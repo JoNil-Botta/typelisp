@@ -1154,69 +1154,50 @@
           buf
           "  [key : (& key str)]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "
           ""))
-      (set! buf (gen-tb2 buf probe "\n  (if (>= steps capacity)\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "    (if (>= first-tombstone 0)\n      ("
-          probe-absent
-          " first-tombstone)\n      ("
-          probe-full
-          "))\n"))
-      (set! buf (gen-tb2 buf "    (match (array-ref slots index)\n      [(" ""))
-      (set! buf (gen-tb5 buf empty ")\n        (" probe-absent " (" prefix))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "-insert-slot first-tombstone index))]\n      [("
-          tombstone
-          ")\n"))
-      (set! buf (gen-tb3 buf "        (" prefix "-probe-borrowed-from\n"))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "          slots\n          capacity\n          key\n          hash\n          ("
-          prefix
-          "-next-index index capacity)\n"))
       (set!
         buf
         (gen-tb2
           buf
-          "          (+ steps 1)\n          (if (>= first-tombstone 0)\n            first-tombstone\n            index))]\n      [("
-          ""))
+          probe
+          "\n  (let\n    [cursor : i64 index]\n    [walked : i64 steps]\n    [first : i64 first-tombstone]\n    (begin\n      (while (< walked capacity)\n        (match (array-ref slots cursor)\n          [("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          empty
+          ")\n            (return\n              ("
+          probe-absent))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "\n                ("
+          prefix
+          "-insert-slot first cursor)))]\n          [("))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          tombstone
+          ")\n            (let\n              [next : i64 (+ cursor 1)]\n              (begin\n                (if (< first 0)\n                  (set! first cursor)\n                  unit)\n                (set!\n                  cursor\n                  (if (>= next capacity)\n                    0\n                    next))\n                (set! walked (+ walked 1))))]\n          [("))
       (set!
         buf
         (gen-tb4
           buf
           occupied
-          " slot-key _ slot-hash)\n        (if (if (= slot-hash hash)\n          ("
+          " slot-key _ slot-hash)\n            (if (if (= slot-hash hash)\n              ("
           prefix
           "-key-eq? (& slot-key) key)\n"))
       (set!
         buf
         (gen-tb5
           buf
-          "          false)\n          ("
+          "              false)\n              (return ("
           probe-found
-          " index)\n          ("
-          prefix
-          "-probe-borrowed-from\n"))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "            slots\n            capacity\n            key\n            hash\n            ("
-          prefix
-          "-next-index index capacity)\n"))
-      (set!
-        buf
-        (gen-tb2
-          buf
-          "            (+ steps 1)\n            first-tombstone))])))\n"
-          ""))
+          " cursor))\n              (let\n                [next : i64 (+ cursor 1)]\n                (begin\n                  (set!\n                    cursor\n                    (if (>= next capacity)\n                      0\n                      next))\n                  (set! walked (+ walked 1)))))]))\n      (if (>= first 0)\n        ("
+          probe-absent
+          " first)\n        ("))
+      (set! buf (gen-tb3 buf probe-full ")))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe-borrowed\n"))
       (set!
         buf
@@ -1974,67 +1955,48 @@
           buf
           "  [key : i64]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "
           ""))
-      (set! buf (gen-tb2 buf probe "\n  (if (>= steps capacity)\n"))
-      (set!
-        buf
-        (gen-tb5
-          buf
-          "    (if (>= first-tombstone 0)\n      ("
-          probe-absent
-          " first-tombstone)\n      ("
-          probe-full
-          "))\n"))
-      (set! buf (gen-tb2 buf "    (match (array-ref slots index)\n      [(" ""))
-      (set! buf (gen-tb5 buf empty ")\n        (" probe-absent " (" prefix))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "-insert-slot first-tombstone index))]\n      [("
-          tombstone
-          ")\n"))
-      (set! buf (gen-tb3 buf "        (" prefix "-probe-from\n"))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "          slots\n          capacity\n          key\n          hash\n          ("
-          prefix
-          "-next-index index capacity)\n"))
       (set!
         buf
         (gen-tb2
           buf
-          "          (+ steps 1)\n          (if (>= first-tombstone 0)\n            first-tombstone\n            index))]\n      [("
-          ""))
+          probe
+          "\n  (let\n    [cursor : i64 index]\n    [walked : i64 steps]\n    [first : i64 first-tombstone]\n    (begin\n      (while (< walked capacity)\n        (match (array-ref slots cursor)\n          [("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          empty
+          ")\n            (return\n              ("
+          probe-absent))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "\n                ("
+          prefix
+          "-insert-slot first cursor)))]\n          [("))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          tombstone
+          ")\n            (let\n              [next : i64 (+ cursor 1)]\n              (begin\n                (if (< first 0)\n                  (set! first cursor)\n                  unit)\n                (set!\n                  cursor\n                  (if (>= next capacity)\n                    0\n                    next))\n                (set! walked (+ walked 1))))]\n          [("))
       (set!
         buf
         (gen-tb2
           buf
           occupied
-          " slot-key _ slot-hash)\n        (if (if (= slot-hash hash)\n          (= slot-key key)\n"))
+          " slot-key _ slot-hash)\n            (if (if (= slot-hash hash)\n              (= slot-key key)\n"))
       (set!
         buf
         (gen-tb5
           buf
-          "          false)\n          ("
+          "              false)\n              (return ("
           probe-found
-          " index)\n          ("
-          prefix
-          "-probe-from\n"))
-      (set!
-        buf
-        (gen-tb3
-          buf
-          "            slots\n            capacity\n            key\n            hash\n            ("
-          prefix
-          "-next-index index capacity)\n"))
-      (set!
-        buf
-        (gen-tb2
-          buf
-          "            (+ steps 1)\n            first-tombstone))])))\n"
-          ""))
+          " cursor))\n              (let\n                [next : i64 (+ cursor 1)]\n                (begin\n                  (set!\n                    cursor\n                    (if (>= next capacity)\n                      0\n                      next))\n                  (set! walked (+ walked 1)))))]))\n      (if (>= first 0)\n        ("
+          probe-absent
+          " first)\n        ("))
+      (set! buf (gen-tb3 buf probe-full ")))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe\n"))
       (set!
         buf

@@ -128,8 +128,7 @@
     [(OkCompilerCheck _) 0]
     [(ErrCompilerCheck diag)
       (begin
-        (print-error
-          (string-append "check: package source failed: " input-path))
+        (print-error "check: package source failed:\n")
         (print-error (compiler-diagnostic-render diag))
         1)]))
 

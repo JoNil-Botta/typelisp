@@ -80,7 +80,7 @@ contains_text() {
     needle=$1
     [ "$compiled" -eq 2 ] && return
     if ! grep -F -- "$needle" "$asm_path" >/dev/null; then
-        if [ "$EXPECTATION_MODE" = stage1 ] && stage1_contains_text "$needle"; then
+        if expectation_contains_text "$needle"; then
             return
         fi
         fail "$case_id assembly is missing expected text [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
@@ -93,8 +93,8 @@ not_contains_text() {
     if grep -F -- "$needle" "$asm_path" >/dev/null; then
         fail "$case_id assembly contains forbidden text [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
     fi
-    if [ "$EXPECTATION_MODE" = stage1 ] && stage1_contains_text "$needle"; then
-        fail "$case_id assembly contains forbidden stage1-qualified text for [$needle] in stage1 mode (assembly: $asm_path)"
+    if expectation_contains_text "$needle"; then
+        fail "$case_id assembly contains forbidden qualified text for [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
     fi
 }
 
@@ -103,15 +103,15 @@ count_at_least() {
     min=$2
     [ "$compiled" -eq 2 ] && return
     count=$(grep -F -- "$needle" "$asm_path" | wc -l | tr -d ' ')
-    if [ "$count" -lt "$min" ] && [ "$EXPECTATION_MODE" = stage1 ]; then
-        count=$(stage1_count_text "$needle")
+    if [ "$count" -lt "$min" ]; then
+        count=$(expectation_count_text "$needle")
     fi
     if [ "$count" -lt "$min" ]; then
         fail "$case_id assembly has $count occurrence(s) of [$needle] in $EXPECTATION_MODE mode, expected at least $min (assembly: $asm_path)"
     fi
 }
 
-stage1_symbol_regex() {
+expectation_symbol_regex() {
     needle=$1
     case "$needle" in
         match_nested)
@@ -154,24 +154,32 @@ stage1_symbol_regex() {
     return 1
 }
 
-stage1_contains_text() {
+expectation_contains_text() {
     needle=$1
-    if regex=$(stage1_symbol_regex "$needle"); then
+    if regex=$(expectation_symbol_regex "$needle"); then
         grep -E -- "$regex" "$asm_path" >/dev/null && return 0
     fi
-    stage1_compact_contains_text "$needle"
+    if [ "$EXPECTATION_MODE" = stage1 ]; then
+        stage1_compact_contains_text "$needle"
+        return $?
+    fi
+    return 1
 }
 
-stage1_count_text() {
+expectation_count_text() {
     needle=$1
-    if regex=$(stage1_symbol_regex "$needle"); then
+    if regex=$(expectation_symbol_regex "$needle"); then
         count=$(grep -E -- "$regex" "$asm_path" | wc -l | tr -d ' ')
         if [ "$count" -gt 0 ]; then
             printf '%s\n' "$count"
             return
         fi
     fi
-    stage1_compact_count_text "$needle"
+    if [ "$EXPECTATION_MODE" = stage1 ]; then
+        stage1_compact_count_text "$needle"
+        return
+    fi
+    printf '0\n'
 }
 
 stage1_compact_readable_symbol() {

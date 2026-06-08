@@ -13029,9 +13029,9 @@
           arms
           expected)
           [(OkTcType result-ty)
-            (if (tc-match-exhaustive? ctx coverage-ty arms)
-              (OkTcType result-ty)
-              (ErrTcType "typecheck: non-exhaustive match"))]
+            (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
+              [(OkTcUnit) (OkTcType result-ty)]
+              [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)])]
       [(ErrTcUnit message) (ErrTcType message)])))
 

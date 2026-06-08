@@ -3943,6 +3943,13 @@
         (OkTcType b)
         (ErrTcType "typecheck: if branches must match")))))
 
+(define (tc-match-arm-merge-message [previous : AstType] [current : AstType]) : String
+  (string-append
+    "typecheck: match arms must agree: previous arm type "
+    (string-append
+      (tc-type-render previous)
+      (string-append ", current arm type " (tc-type-render current)))))
+
 (define (tc-integer-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
@@ -12586,7 +12593,7 @@
             (match (tc-merge-branch-type want got)
               [(OkTcType merged)
                 (tc-match-rest-types ctx env scrut-ty rest merged)]
-              [(ErrTcType _) (ErrTcType "typecheck: match arms must agree")])]
+              [(ErrTcType _) (ErrTcType (tc-match-arm-merge-message want got))])]
           [(ErrTcType message) (ErrTcType message)]))]))
 
 (define (tc-check-match-arm-types

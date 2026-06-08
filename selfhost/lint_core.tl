@@ -1095,7 +1095,7 @@
         [inner : AstDecl (box-get inner-box)]
         (lint-walk-decl inner threshold acc))]
     [(AstDeclModule _) acc]
-    [(AstDeclExtern _ _ _) acc]
+    [(AstDeclExtern _ _ _ _) acc]
     [(AstDeclDefEnum _ _ _) acc]
     [(AstDeclDefEnumLifetimes _ _ _ _) acc]
     [(AstDeclDefStruct _ _ _ _) acc]

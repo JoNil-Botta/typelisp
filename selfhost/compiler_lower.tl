@@ -828,7 +828,7 @@
         module
         name
         (lower-decl-logical-name entry-path decl-path module name))]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
@@ -1041,7 +1041,7 @@
         (compiler-symbol-module-key alias name)
         (lower-alias-logical-name entry-path decl-path module name path-aware)
         (box names))]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (LowerNameBind (compiler-symbol-module-key alias name) name (box names))]
     [(AstDeclDefStruct _ _ cleanup _)
       (match cleanup
@@ -1274,7 +1274,7 @@
         name
         (lower-current-decl-logical-name names module name)
         (box names))]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (LowerNameBind
         name
         (lower-current-decl-logical-name-cache name-cache module name)
@@ -1339,7 +1339,7 @@
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclDefDispatch name _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclDefEnum _ cleanup variants)
       (match (lower-module-local-type-env-add-variants
@@ -5782,6 +5782,54 @@
     [(AstTyFunc _ _) true]
     [_ false]))
 
+(define (lower-extern-function-decl? [ctx : TcContext] [name : String]) : bool
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    (match (compiler-symbols-lookup-value
+      symbols
+      (lower-hygiene-source-name name))
+      [(SomeI64 handle)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-extern))
+          (match (compiler-symbols-decl-at-index
+            symbols
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (match decl
+                [(AstDeclExtern _ kind _ _)
+                  (match kind
+                    [(AstExternFunction) true]
+                    [(AstExternValue) false])]
+                [_ false])]
+            [(ErrAstDecl _) false])
+          false)]
+      [(NoneI64) false])))
+
+(define (lower-extern-value-decl? [ctx : TcContext] [name : String]) : bool
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    (match (compiler-symbols-lookup-value
+      symbols
+      (lower-hygiene-source-name name))
+      [(SomeI64 handle)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-extern))
+          (match (compiler-symbols-decl-at-index
+            symbols
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (match decl
+                [(AstDeclExtern _ kind _ _)
+                  (match kind
+                    [(AstExternFunction) false]
+                    [(AstExternValue) true])]
+                [_ false])]
+            [(ErrAstDecl _) false])
+          false)]
+      [(NoneI64) false])))
+
 ;; The symbol table is keyed by the module key (module/name) and the bare source
 ;; name alias, never by the `::` logical/mangled name returned by
 ;; lower-resolve-name. Look up the bare source name so a function used as a value
@@ -5803,9 +5851,7 @@
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-function-define))
           (or
-            (=
-              (compiler-symbol-handle-kind handle)
-              (compiler-symbol-kind-extern))
+            (lower-extern-function-decl? ctx name)
             (=
               (compiler-symbol-handle-kind handle)
               (compiler-symbol-kind-defdispatch))))]
@@ -5817,12 +5863,33 @@
   [env : SymI64Env]
   [name : String]
   [ty : AstType]) : ResultLowerExpr
-  (if (and
-    (lower-function-type? ty)
-    (lower-symbol-function-value? ctx state name))
-    (OkLowerExpr
-      (LowerExpr state (IrValueFunction (lower-resolve-name state name)) ty))
-    (lower-var state env name ty)))
+  (match (sym-i64-lookup env name)
+    [(SomeI64 _) (lower-var state env name ty)]
+    [(NoneI64)
+      (if (lower-extern-value-decl? ctx name)
+        (match (lower-var state env name ty)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr value-state value _)
+                (match (lower-state-alloc-var value-state)
+                  [(LowerAlloc allocated var-id)
+                    (OkLowerExpr
+                      (LowerExpr
+                        (lower-state-emit
+                          allocated
+                          (IrInstrMov var-id value ty))
+                        (IrValueVar var-id)
+                        ty))])])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)])
+        (if (and
+          (lower-function-type? ty)
+          (lower-symbol-function-value? ctx state name))
+          (OkLowerExpr
+            (LowerExpr
+              state
+              (IrValueFunction (lower-resolve-name state name))
+              ty))
+          (lower-var state env name ty)))]))
 
 (define (lower-lambda-captures-env?
   [outer-env : SymI64Env]
@@ -10891,10 +10958,26 @@
             (tc-context-symbols ctx)
             (lower-hygiene-source-name name))
             [(SomeI64 handle)
-              (=
-                (compiler-symbol-handle-kind handle)
-                (compiler-symbol-kind-extern))]
+              (and
+                (=
+                  (compiler-symbol-handle-kind handle)
+                  (compiler-symbol-kind-extern))
+                (lower-extern-function-decl? ctx name))]
             [(NoneI64) false]))])))
+
+(define (lower-c-abi-extern-value-call?
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]) : bool
+  (if (not (lower-mode-c-abi? (lower-state-mode state)))
+    false
+    (match (sym-i64-lookup env name)
+      [(SomeI64 _) false]
+      [(NoneI64)
+        (if (lower-c-abi-runtime-handle-extern? name)
+          false
+          (lower-extern-value-decl? ctx name))])))
 
 (define (lower-c-abi-integer-field-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -11136,6 +11219,90 @@
                   origin))])])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
+(define (lower-indirect-c-abi-call-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [func-value : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-c-abi-aggregate-class ctx (lower-state-mode state) result-ty)
+    [(LowerCAbiUnsupportedAggregate message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+    [(LowerCAbiNoAggregate)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated var-id)
+          (let
+            [instr : CompilerIrInstr
+              (IrInstrCallIndirectC
+                var-id
+                func-value
+                (compiler-ir-call-args-from-list values)
+                result-ty)]
+            (lower-c-abi-finish-call-result
+              (lower-state-emit-at-expr allocated instr origin)
+              (IrValueVar var-id)
+              result-ty
+              (LowerCAbiNoAggregate)
+              origin))])]
+    [(LowerCAbiIntegerAggregate scalar-ty size)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated var-id)
+          (let
+            [instr : CompilerIrInstr
+              (IrInstrCallIndirectC
+                var-id
+                func-value
+                (compiler-ir-call-args-from-list values)
+                scalar-ty)]
+            (lower-c-abi-finish-call-result
+              (lower-state-emit-at-expr allocated instr origin)
+              (IrValueVar var-id)
+              result-ty
+              (LowerCAbiIntegerAggregate scalar-ty size)
+              origin))])]))
+
+(define (lower-extern-value-c-abi-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [param-types : AstTypeList]
+  [fn-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-var state env name fn-ty)
+    [(OkLowerExpr lowered-func)
+      (match lowered-func
+        [(LowerExpr func-state func-value _)
+          (match (lower-state-alloc-var func-state)
+            [(LowerAlloc allocated func-var)
+              (let
+                [loaded-state : LowerState
+                  (lower-state-emit-at-expr
+                    allocated
+                    (IrInstrMov func-var func-value fn-ty)
+                    origin)]
+                (match (lower-c-abi-args-as
+                  ctx
+                  loaded-state
+                  env
+                  type-env
+                  args
+                  param-types)
+                  [(OkLowerArgs args-state values)
+                    (lower-indirect-c-abi-call-values
+                      ctx
+                      args-state
+                      (IrValueVar func-var)
+                      values
+                      result-ty
+                      origin)]
+                  [(ErrLowerArgs message) (ErrLowerExpr message)]))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-direct-call-values
   [state : LowerState]
   [env : SymI64Env]
@@ -11213,12 +11380,24 @@
                   call-param-types
                   result-ty
                   origin)
-                (lower-direct-call-from-args
-                  (lower-args-as ctx state env type-env args call-param-types)
-                  env
-                  name
-                  result-ty
-                  origin))]
+                (if (lower-c-abi-extern-value-call? ctx state env name)
+                  (lower-extern-value-c-abi-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    call-param-types
+                    (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                    result-ty
+                    origin)
+                  (lower-direct-call-from-args
+                    (lower-args-as ctx state env type-env args call-param-types)
+                    env
+                    name
+                    result-ty
+                    origin)))]
             [(ErrTcTypeList message)
               (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
         [_
@@ -20898,7 +21077,7 @@
                           [(ErrLowerFunction init-message)
                             (ErrLowerDecls init-message)])]))]
                 [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))]))]
-          [(AstDeclExtern name metadata ty)
+          [(AstDeclExtern name _ metadata ty)
             (let
               [decl-ctx : TcContext (tc-context-with-module ctx module)]
               (if (tc-type-contains-reference? (tc-resolve-type decl-ctx ty))
@@ -22998,6 +23177,11 @@
     [(IrInstrCallIndirect _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-indirect-c-call-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCallIndirectC _ _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-indirect-unit-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrCallIndirect _ _ _ ty)
@@ -23732,6 +23916,24 @@
           (set! index (+ index 1))))
       acc)))
 
+(define (lower-test-instr-seq-indirect-c-call-count
+  [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-indirect-c-call-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-instr-seq-indirect-unit-count [instrs : CompilerIrInstrSeq]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -24189,6 +24391,16 @@
             (lower-test-instr-seq-indirect-call-count instrs)
             (lower-test-blocks-indirect-call-count (box-get rest)))])]))
 
+(define (lower-test-blocks-indirect-c-call-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instr-seq-indirect-c-call-count instrs)
+            (lower-test-blocks-indirect-c-call-count (box-get rest)))])]))
+
 (define (lower-test-blocks-indirect-unit-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
@@ -24581,6 +24793,18 @@
           (if (string-eq fname name)
             (lower-test-blocks-indirect-call-count blocks)
             (lower-test-function-indirect-call-count (box-get rest) name))])]))
+
+(define (lower-test-function-indirect-c-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-indirect-c-call-count blocks)
+            (lower-test-function-indirect-c-call-count (box-get rest) name))])]))
 
 (define (lower-test-function-indirect-unit-count
   [funcs : CompilerIrFunctionList]
@@ -25324,6 +25548,33 @@
                     (ast-extern-abi-c? abi)
                     (compiler-lower-extern-link-inputs-ok? link-inputs))))]
             [_ false])])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-extern-value-fnptr-source) : String
+  "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
+(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
+(define (main) : i64
+  (+ raw-value (+ (raw-fn 41) (direct-fn 1))))")
+
+(define (compiler-lower-extern-value-fnptr-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-extern-value-fnptr-source)
+    (CompilerLowerLinuxScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "raw-fn") 0)
+            (and
+              (=
+                (lower-test-function-call-count functions "main" "direct-fn")
+                1)
+              (and
+                (= (lower-test-function-indirect-call-count functions "main") 0)
+                (=
+                  (lower-test-function-indirect-c-call-count functions "main")
+                  1))))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-global-source) : String
@@ -28089,6 +28340,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-extern-link-metadata-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-extern-value-fnptr-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-linux-error-ok?

@@ -168,6 +168,7 @@ stdlib-macro migration of parser-owned core forms remains separate.
 (extern (foreign-add [a : i64] [b : i64]) : i64)
 (extern (local-add [a : i64] [b : i64]) : i64 (:symbol "foreign_add_exact"))
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
+(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
@@ -180,11 +181,13 @@ separately, but source that needs recursive aggregates should use explicit
 `(Box T)` fields/payloads at the recursive edge.
 
 `extern` defaults to the target C ABI with the linker symbol equal to the local
-name. `(:symbol "...")` can bind a local TypeLisp declaration to an exact
-foreign linker symbol without applying the `_tl_` prefix used for ordinary
-TypeLisp declarations. C varargs externs can use a function-head declaration:
-bare `...` accepts any C ABI value tail and `[arg : ...T]` requires every
-variadic argument to have type `T`.
+name. Function-head externs are direct external functions. Bare-name externs are
+external data symbols; a bare function type is loaded as a raw C function
+pointer and called indirectly. `(:symbol "...")` can bind a local TypeLisp
+declaration to an exact foreign linker symbol without applying the `_tl_` prefix
+used for ordinary TypeLisp declarations. C varargs externs can use a
+function-head declaration: bare `...` accepts any C ABI value tail and
+`[arg : ...T]` requires every variadic argument to have type `T`.
 
 The compiler still uses the legacy flat import model: imported
 definitions merge into one top-level namespace. The module direction is

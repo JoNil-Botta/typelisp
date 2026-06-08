@@ -241,9 +241,18 @@ ffi_add7:
     movq %rcx, %rax
     addq $7, %rax
     retq
+
+    .data
+    .globl ffi_base_value
+ffi_base_value:
+    .quad 30
+
+    .globl ffi_add7_ptr
+ffi_add7_ptr:
+    .quad ffi_add7
 EOF
 cat > "$WORKDIR/link-main.tl" <<'EOF'
-(extern ffi_add7 : (-> i64 i64))
+(extern (ffi_add7 [x : i64]) : i64)
 (define (main) : i64 (ffi_add7 35))
 EOF
 LINK_SRC="$WORKDIR/link-main.tl"
@@ -314,10 +323,63 @@ fi
 assert_empty "$WORKDIR/run-link.stdout"
 assert_empty "$WORKDIR/run-link.stderr"
 
+LINK_FNPTR_SRC="$WORKDIR/link-fnptr-main.tl"
+cat > "$LINK_FNPTR_SRC" <<'EOF'
+(extern base (:symbol "ffi_base_value") : i64)
+(extern ffi_add7_ptr (:symbol "ffi_add7_ptr") : (-> i64 i64))
+(define (main) : i64 (+ base (ffi_add7_ptr 5)))
+EOF
+LINK_FNPTR_BIN="$WORKDIR/link-fnptr-main.exe"
+LINK_FNPTR_BIN_DISPLAY=$LINK_FNPTR_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    LINK_FNPTR_BIN_DISPLAY=$(cygpath -m "$LINK_FNPTR_BIN")
+fi
+
+echo "[windows-native-link] build --direct extern function pointer"
+if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
+    --direct "$LINK_FNPTR_SRC" --target windows-x86_64 -o "$LINK_FNPTR_BIN" \
+    --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/build-link-fnptr.stdout" 2> "$WORKDIR/build-link-fnptr.stderr"; then
+    sed 's/^/  /' "$WORKDIR/build-link-fnptr.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-link-fnptr.stderr" >&2 || true
+    fail "selfhost build --direct extern function pointer failed"
+fi
+assert_contains "$WORKDIR/build-link-fnptr.stdout" "Built $LINK_FNPTR_BIN_DISPLAY"
+assert_empty "$WORKDIR/build-link-fnptr.stderr"
+[ -x "$LINK_FNPTR_BIN" ] || fail "selfhost extern function-pointer build did not write executable $LINK_FNPTR_BIN"
+
+set +e
+"$LINK_FNPTR_BIN" > "$WORKDIR/built-link-fnptr.stdout" 2> "$WORKDIR/built-link-fnptr.stderr"
+built_link_fnptr_status=$?
+set -e
+if [ "$built_link_fnptr_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/built-link-fnptr.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/built-link-fnptr.stderr" >&2 || true
+    fail "extern function-pointer executable expected exit 42, got $built_link_fnptr_status"
+fi
+assert_empty "$WORKDIR/built-link-fnptr.stdout"
+assert_empty "$WORKDIR/built-link-fnptr.stderr"
+
+echo "[windows-native-link] run --direct extern function pointer"
+set +e
+"$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
+    --direct "$LINK_FNPTR_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/run-link-fnptr.stdout" 2> "$WORKDIR/run-link-fnptr.stderr"
+run_link_fnptr_status=$?
+set -e
+if [ "$run_link_fnptr_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/run-link-fnptr.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/run-link-fnptr.stderr" >&2 || true
+    fail "selfhost run --direct extern function pointer expected exit 42, got $run_link_fnptr_status"
+fi
+assert_empty "$WORKDIR/run-link-fnptr.stdout"
+assert_empty "$WORKDIR/run-link-fnptr.stderr"
+
 LINK_METADATA_SRC="$WORKDIR/link-metadata-main.tl"
 LINK_METADATA_MODULE="$WORKDIR/link-metadata-module.tl"
 cat > "$LINK_METADATA_MODULE" <<EOF
-(extern ffi_add7 (:link-search "$LINK_SEARCH_METADATA") (:link-lib "ffi_add7") : (-> i64 i64))
+(extern (ffi_add7 [x : i64]) : i64 (:link-search "$LINK_SEARCH_METADATA") (:link-lib "ffi_add7"))
 EOF
 cat > "$LINK_METADATA_SRC" <<'EOF'
 (import "link-metadata-module.tl")

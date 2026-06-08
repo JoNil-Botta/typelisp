@@ -328,7 +328,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclExtern _ metadata _)
+          [(AstDeclExtern _ _ metadata _)
             (source-tool-link-inputs-from-decls
               rest
               (source-tool-link-inputs-add-ast-list

@@ -147,6 +147,7 @@
   (IrInstrSyscall i64 CompilerIrCallArgs)
   (IrInstrCall i64 String CompilerIrCallArgs AstType)
   (IrInstrCallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
+  (IrInstrCallIndirectC i64 CompilerIrValue CompilerIrCallArgs AstType)
   (IrInstrTailCall String CompilerIrCallArgs AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
@@ -592,6 +593,12 @@
         (compiler-ir-clone-type ty))]
     [(IrInstrCallIndirect dst callee args ty)
       (IrInstrCallIndirect
+        dst
+        (compiler-ir-clone-value callee)
+        (compiler-ir-clone-call-args args)
+        (compiler-ir-clone-type ty))]
+    [(IrInstrCallIndirectC dst callee args ty)
+      (IrInstrCallIndirectC
         dst
         (compiler-ir-clone-value callee)
         (compiler-ir-clone-call-args args)
@@ -1195,6 +1202,7 @@
     [(IrInstrPredicatedStore _ _ _ _ _ _) IrEffectMemoryWrite]
     [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
     [(IrInstrCallIndirect _ _ _ _) IrEffectUnknown]
+    [(IrInstrCallIndirectC _ _ _ _) IrEffectUnknown]
     [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
@@ -1464,6 +1472,11 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrCallIndirectC dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrStore name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1592,6 +1605,10 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrCallIndirect dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrCallIndirectC dst _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
@@ -1729,6 +1746,7 @@
   (match instr
     [(IrInstrCall _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrCallIndirect _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrCallIndirectC _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrTailCall _ args _) (compiler-ir-call-args-count args)]
     [_ 0]))
 

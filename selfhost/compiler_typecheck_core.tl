@@ -592,7 +592,7 @@
         (begin
           (compiler-tc-decl-profile-count-macro)
           (compiler-tc-decl-profile-add-macro))]
-      [(AstDeclExtern _ _ _)
+      [(AstDeclExtern _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-extern)
           (compiler-tc-decl-profile-add-extern))]
@@ -3584,7 +3584,7 @@
               [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
-    [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstDeclExtern _ _ _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum name _ variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
         [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
@@ -4687,7 +4687,7 @@
     [(AstDeclDefFn _ params ret _ _)
       (OkTcType
         (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
-    [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstDeclExtern _ _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
     [(AstDeclDefDispatch name variants)
       (tc-dispatch-decl-type ctx name variants)]
     [(AstDeclUnsafe inner-box)
@@ -4820,7 +4820,7 @@
               [(OkTcType ty)
                 (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclExtern name _ _)
+          [(AstDeclExtern name _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
@@ -4842,7 +4842,7 @@
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefMacro _ _ _ _) (OkTcEnv env)]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -5011,7 +5011,7 @@
                     (compiler-symbol-module-key alias name)
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclExtern name _ _)
+          [(AstDeclExtern name _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv
@@ -5036,7 +5036,7 @@
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
@@ -5276,7 +5276,7 @@
             (match (tc-top-decl-type ctx inner)
               [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclExtern name _ _)
+          [(AstDeclExtern name _ _ _)
             (match (tc-top-decl-type ctx inner)
               [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
@@ -5293,7 +5293,7 @@
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -6245,8 +6245,11 @@
             (compiler-symbol-handle-index handle))
             [(OkAstDecl decl)
               (match decl
-                [(AstDeclExtern _ metadata _)
-                  (TcSomeExternAbi (ast-extern-metadata-abi metadata))]
+                [(AstDeclExtern _ kind metadata _)
+                  (match kind
+                    [(AstExternFunction)
+                      (TcSomeExternAbi (ast-extern-metadata-abi metadata))]
+                    [(AstExternValue) (TcNoExternAbi)])]
                 [_ (TcNoExternAbi)])]
             [(ErrAstDecl _) (TcNoExternAbi)])
           (TcNoExternAbi))]
@@ -14011,6 +14014,14 @@
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [_ (ErrTcUnit "typecheck: extern must have function type")]))
 
+(define (tc-check-extern-value-c-abi [ty : AstType]) : ResultTcUnit
+  (match ty
+    [(AstTyFunc _ _) (tc-check-extern-c-abi ty)]
+    [_
+      (if (tc-extern-abi-value-type-ok? ty)
+        OkTcUnit
+        (ErrTcUnit (tc-extern-abi-unsupported-message "value" ty)))]))
+
 (define (tc-check-extern-varargs-fixed-count [fixed-count : i64] [ty : AstType]) : ResultTcUnit
   (match ty
     [(AstTyFunc args _)
@@ -14035,26 +14046,33 @@
 
 (define (tc-check-extern-decl
   [ctx : TcContext]
+  [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
     [(AstExternMetadata abi _ _ explicit-abi)
-      (if (and
-        (ast-extern-abi-c? abi)
-        (or explicit-abi (ast-extern-abi-c-varargs? abi)))
-        (let
-          [resolved : AstType (tc-resolve-type ctx ty)]
-          (match (tc-check-extern-c-abi resolved)
-            [(OkTcUnit)
-              (if (ast-extern-abi-c-varargs? abi)
-                (match (tc-check-extern-varargs-fixed-count
-                  (ast-extern-abi-varargs-fixed-count abi)
-                  resolved)
-                  [(OkTcUnit) (tc-check-extern-varargs-tail-type ctx abi)]
-                  [(ErrTcUnit message) (ErrTcUnit message)])
-                OkTcUnit)]
-            [(ErrTcUnit message) (ErrTcUnit message)]))
-        OkTcUnit)]))
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        (match kind
+          [(AstExternFunction)
+            (if (and
+              (ast-extern-abi-c? abi)
+              (or explicit-abi (ast-extern-abi-c-varargs? abi)))
+              (match (tc-check-extern-c-abi resolved)
+                [(OkTcUnit)
+                  (if (ast-extern-abi-c-varargs? abi)
+                    (match (tc-check-extern-varargs-fixed-count
+                      (ast-extern-abi-varargs-fixed-count abi)
+                      resolved)
+                      [(OkTcUnit) (tc-check-extern-varargs-tail-type ctx abi)]
+                      [(ErrTcUnit message) (ErrTcUnit message)])
+                    OkTcUnit)]
+                [(ErrTcUnit message) (ErrTcUnit message)])
+              OkTcUnit)]
+          [(AstExternValue)
+            (if (ast-extern-abi-c-varargs? abi)
+              (ErrTcUnit "typecheck: extern value cannot use c-varargs ABI")
+              (tc-check-extern-value-c-abi resolved))]))]))
 
 (define (tc-summary-add-decl
   [summary : CompilerTypecheckSummary]
@@ -14066,7 +14084,7 @@
           (CompilerTypecheckSummary (+ values 1) functions externs)]
         [(AstDeclDefFn _ _ _ _ _)
           (CompilerTypecheckSummary values (+ functions 1) externs)]
-        [(AstDeclExtern _ _ _)
+        [(AstDeclExtern _ _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
         [(AstDeclComptimeDecl _ template-box)
           (let
@@ -19559,7 +19577,8 @@
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tc-check-defmacro ctx top-env params ret body))]
-    [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
+    [(AstDeclExtern _ kind metadata ty)
+      (tc-check-extern-decl ctx kind metadata ty)]
     [(AstDeclDefDispatch name variants)
       (match (tc-dispatch-decl-type ctx name variants)
         [(OkTcType _) OkTcUnit]

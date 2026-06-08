@@ -276,7 +276,7 @@ verify_compiler_driver_stack_args() {
     _src="$_dir/input.tl"
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
-(extern f : (-> i64 i64 i64 i64 i64 i64 i64 i64))
+(extern (f [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f0 : i64] [g : i64]) : i64)
 (define (main) : i64 (f 1 2 3 4 5 6 7))
 EOF
 
@@ -291,6 +291,58 @@ EOF
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-stack-args
     done
+}
+
+verify_extern_function_pointer_data() {
+    _dir="$WORKDIR/extern-fnptr"
+    mkdir -p "$_dir"
+    _src="$_dir/input.tl"
+    _asm="$_dir/input.s"
+    _obj="$_dir/input.o"
+    _lib_asm="$_dir/ffi_fnptr.s"
+    _lib_obj="$_dir/ffi_fnptr.o"
+    _bin="$_dir/input"
+
+    cat > "$_lib_asm" <<'EOF'
+    .text
+    .globl ffi_add7_impl
+ffi_add7_impl:
+    movq %rdi, %rax
+    addq $7, %rax
+    ret
+
+    .data
+    .globl ffi_base_value
+ffi_base_value:
+    .quad 30
+
+    .globl ffi_add7_ptr
+ffi_add7_ptr:
+    .quad ffi_add7_impl
+EOF
+    cat > "$_src" <<'EOF'
+(extern base (:symbol "ffi_base_value") : i64)
+(extern add7 (:symbol "ffi_add7_ptr") : (-> i64 i64))
+(define (main) : i64 (+ base (add7 5)))
+EOF
+
+    echo "[selfhost-native] extern function-pointer data symbol"
+    "$COMPILER" compile "$_src" --stdlib-root "$ROOT/stdlib" -o "$_asm" \
+        > "$_dir/compile.stdout" 2> "$_dir/compile.stderr"
+    expect_stream "printf:Wrote $_asm\n" "$_dir/compile.stdout" "extern-fnptr.compile.stdout"
+    assert_empty "$_dir/compile.stderr" "extern-fnptr compile stderr"
+    assert_contains "$_asm" ".extern ffi_base_value" extern-fnptr
+    assert_contains "$_asm" "ffi_base_value(%rip)" extern-fnptr
+    assert_contains "$_asm" ".extern ffi_add7_ptr" extern-fnptr
+    assert_contains "$_asm" "ffi_add7_ptr(%rip)" extern-fnptr
+    assert_contains "$_asm" "    call *%rax" extern-fnptr
+    assert_not_contains "$_asm" "    call ffi_add7_ptr" extern-fnptr
+    assert_not_contains "$_asm" "_tl_add7" extern-fnptr
+
+    as "$_asm" -o "$_obj"
+    as "$_lib_asm" -o "$_lib_obj"
+    ld "$_obj" "$_lib_obj" -o "$_bin"
+    run_binary_expect extern-fnptr "$_bin" 42 - -
 }
 
 verify_compiler_driver_import() {
@@ -705,6 +757,7 @@ verify_eval_driver_errors() {
 DRIVER="$WORKDIR/compiler-driver/compiler-driver"
 build_selfhost_compiler_driver "$DRIVER"
 verify_compiler_driver_stack_args "$DRIVER"
+verify_extern_function_pointer_data
 verify_compiler_driver_import "$DRIVER"
 verify_compiler_driver_pkg_import "$DRIVER"
 verify_compiler_driver_string_runtime "$DRIVER"

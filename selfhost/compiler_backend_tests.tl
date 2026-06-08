@@ -990,6 +990,37 @@
           true)]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-extern-value-fnptr-source) : String
+  "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
+(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
+(define (main) : i64
+  (+ raw-value (+ (raw-fn 41) (direct-fn 1))))")
+
+(define (compiler-backend-extern-value-fnptr-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-extern-value-fnptr-source)
+    target)
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_test_raw_value\n")
+        (compiler-backend-string-contains? asm ".extern tl_test_raw_fn\n")
+        (compiler-backend-string-contains? asm ".extern tl_test_direct_fn\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-string-contains? asm "    call tl_test_direct_fn\n")
+        (compiler-backend-string-contains? asm "tl_test_raw_fn(%rip)")
+        (not
+          (compiler-backend-string-contains? asm "    call tl_test_raw_fn\n"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-extern-value-fnptr-ok?) : bool
+  (and
+    (compiler-backend-extern-value-fnptr-target-ok? (BackendTargetLinux))
+    (compiler-backend-extern-value-fnptr-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-program-argv-entry-capture-source) : String
   "(extern (fixture-strlen [arg0 : (Ptr u8)]) : i64 (:symbol \"strlen\"))
 (define (main) : i64
@@ -5331,8 +5362,10 @@
                         (and
                           (compiler-backend-extern-metadata-symbol-ok?)
                           (and
-                            (compiler-backend-varargs-ffi-ok?)
-                            (compiler-backend-c-abi-aggregate-ok?))))
+                            (compiler-backend-extern-value-fnptr-ok?)
+                            (and
+                              (compiler-backend-varargs-ffi-ok?)
+                              (compiler-backend-c-abi-aggregate-ok?)))))
                       (and
                         (backend-and4
                           (compiler-backend-string-ref-shape-ok?)

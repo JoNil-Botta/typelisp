@@ -249,19 +249,20 @@ file to a native executable without running it. Without `-o`, the executable is
 written next to the source path with the `.tl` extension removed. `typelisp
 build [--manifest-path path/to/typelisp.pkg]` remains package-oriented: it
 resolves `entry` relative to the manifest directory and writes outputs under
-`target/typelisp/<profile>/<package-name>/`, where the package build profile
-defaults to `release`. `--profile dev` uses the `dev` profile; `--profile
-release` and `--release` select the release profile. Omitted `entry` defaults
-to `src/main.tl` for binaries and `src/lib.tl` for static libraries. When both
-`kind` and `entry` are omitted from a disk-backed manifest, package loading
-infers `bin` if only `src/main.tl` exists and `staticlib` if only `src/lib.tl`
-exists; if both or neither conventional entry exists, add an explicit `kind` or
-`entry`. `kind "bin"` builds a native executable named after the package;
-`kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
-`<name>.lib` on Windows). `kind "lib"` remains accepted as a compatibility
-alias. Dependency entries may use a local path relative to that same package
-root, an absolute path, or the GitHub shorthand form shown above. `tag` and
-`branch` pins are also accepted, and the shorthand normalizes to
+`target/<profile>/`, where the package build profile defaults to `release`.
+`--profile dev` uses the `dev` profile; `--profile release` and `--release`
+select the release profile. Omitted `entry` defaults to `src/main.tl` for
+binaries and `src/lib.tl` for static libraries. When both `kind` and `entry` are
+omitted from a disk-backed manifest, package loading infers `bin` if only
+`src/main.tl` exists and `staticlib` if only `src/lib.tl` exists; if both or
+neither conventional entry exists, add an explicit `kind` or `entry`. `kind
+"bin"` builds a native executable named after the package; `kind "staticlib"`
+builds a static archive (`lib<name>.a` on Linux, `<name>.lib` on Windows).
+Assembly and object side artifacts use the same `target/<profile>/` directory.
+`kind "lib"` remains accepted as a compatibility alias. Dependency entries may
+use a local path relative to that same package root, an absolute path, or the
+GitHub shorthand form shown above. `tag` and `branch` pins are also accepted,
+and the shorthand normalizes to
 `https://github.com/owner/repo.git#rev=commit`. Remote entries are fetched with
 `git` into `target/typelisp/git-deps/<alias>` below the declaring package root,
 then checked out detached at the requested `rev`, `tag`, or `branch` before the
@@ -302,8 +303,8 @@ directory rename behavior as a failed, non-reusable staging attempt.
 
 The repository root is also a package. From a checkout, `typelisp build` builds
 the unified selfhost CLI from `selfhost/cli.tl` and writes
-`target/typelisp/typelisp/typelisp` (or
-`target/typelisp/typelisp/typelisp.exe` on Windows). Stage0 publication uses
+`target/release/typelisp` (or `target/release/typelisp.exe` on Windows). Stage0
+publication uses
 `scripts/build-stage0.sh`, which compiles `selfhost/cli.tl` directly and links
 it with the host toolchain so a seed compiler does not depend on its own
 `build` command.
@@ -694,7 +695,7 @@ runtime helper policy, and the `clang` + `lld-link` toolchain.
 Source-file `typelisp build`/`typelisp run` and package build (`typelisp build
 [--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2`. Package builds
 also accept `--profile dev|release` and `--release`; the selected profile is
-visible in `target/typelisp/<profile>/<package-name>/`. When `--opt-level` is
+visible in `target/<profile>/`. When `--opt-level` is
 omitted, the release profile uses level 2 and the dev profile uses level 0.
 Explicit `--opt-level` overrides the profile default. `--opt-level 0` builds
 without the IR optimizer (faster compiles, larger/slower code), level 1 runs the

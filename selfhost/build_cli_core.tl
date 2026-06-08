@@ -796,12 +796,8 @@
   [name : String]
   [profile : BuildProfile]) : String
   (compiler-load-join-root-path
-    (compiler-load-join-root-path
-      (compiler-load-join-root-path
-        (compiler-load-join-root-path manifest-dir "target")
-        "typelisp")
-      (build-profile-name profile))
-    name))
+    (compiler-load-join-root-path manifest-dir "target")
+    (build-profile-name profile)))
 
 (define (build-package-asm-path [manifest-dir : String] [name : String]) : String
   (build-package-asm-path-profile manifest-dir name (build-default-profile)))
@@ -896,6 +892,37 @@
       (build-package-bin-path-profile manifest-dir name profile target)]
     [(CompilerPkgKindLib)
       (build-package-lib-path-profile manifest-dir name profile target)]))
+
+(define (build-package-path-layout-smoke-ok?) : bool
+  (and
+    (string-eq
+      (build-package-output-dir-profile "root/app" "pkg" (BuildProfileRelease))
+      "root/app/target/release")
+    (and
+      (string-eq
+        (build-package-asm-path-profile "root/app" "pkg" (BuildProfileDev))
+        "root/app/target/dev/pkg.s")
+      (and
+        (string-eq
+          (build-package-bin-path-profile
+            "root/app"
+            "pkg"
+            (BuildProfileRelease)
+            (BackendTargetWindows))
+          "root/app/target/release/pkg.exe")
+        (string-eq
+          (build-package-lib-path-profile
+            "root/app"
+            "pkg"
+            (BuildProfileRelease)
+            (BackendTargetLinux))
+          "root/app/target/release/libpkg.a")))))
+
+(test
+  build-package-path-layout-smoke
+  (unless
+    (build-package-path-layout-smoke-ok?)
+    (panic "build package path layout smoke failed")))
 
 (define (build-package-kind-lib? [kind : CompilerPkgKind]) : bool
   (match kind
@@ -1959,15 +1986,9 @@
   [profile : BuildProfile]) : bool
   (let
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
-    [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
     [profile-dir : String
-      (compiler-load-join-root-path typelisp-dir (build-profile-name profile))]
-    [package-dir : String (compiler-load-join-root-path profile-dir name)]
-    (and
-      (build-mkdir-ok? target-dir)
-      (and
-        (build-mkdir-ok? typelisp-dir)
-        (and (build-mkdir-ok? profile-dir) (build-mkdir-ok? package-dir))))))
+      (compiler-load-join-root-path target-dir (build-profile-name profile))]
+    (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
 
 (define (build-package-artifact-status
   [kind : CompilerPkgKind]

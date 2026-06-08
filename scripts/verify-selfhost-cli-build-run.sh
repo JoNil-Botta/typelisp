@@ -699,11 +699,11 @@ EOF
 cat > "$PKG_DIR/src/main.tl" <<'EOF'
 (define (main) : i64 29)
 EOF
-PKG_EXE="$PKG_DIR/target/typelisp/release/cli_pkg_smoke/cli_pkg_smoke"
+PKG_EXE="$PKG_DIR/target/release/cli_pkg_smoke"
 if [ "$HOST_OS" = windows ]; then
     PKG_EXE="$PKG_EXE.exe"
 fi
-PKG_DEV_EXE="$PKG_DIR/target/typelisp/dev/cli_pkg_smoke/cli_pkg_smoke"
+PKG_DEV_EXE="$PKG_DIR/target/dev/cli_pkg_smoke"
 if [ "$HOST_OS" = windows ]; then
     PKG_DEV_EXE="$PKG_DEV_EXE.exe"
 fi
@@ -741,7 +741,7 @@ assert_empty package-build-dev "$WORKDIR/package-build-dev.err"
 assert_contains package-build-dev "$WORKDIR/package-build-dev.out" "Built "
 [ -f "$PKG_DEV_EXE" ] || fail "package dev profile build did not write executable $PKG_DEV_EXE"
 
-ROOT_PKG_OUT_DIR="$ROOT/target/typelisp/release/typelisp"
+ROOT_PKG_OUT_DIR="$ROOT/target/release"
 ROOT_PKG_EXE="$ROOT_PKG_OUT_DIR/typelisp"
 if [ "$HOST_OS" = windows ]; then
     ROOT_PKG_EXE="$ROOT_PKG_EXE.exe"
@@ -807,13 +807,13 @@ EOF
 cat > "$CHAIN_LEAF/src/lib.tl" <<'EOF'
 (define (leaf-answer) : i64 42)
 EOF
-CHAIN_EXE="$CHAIN_ROOT/target/typelisp/release/chain_root/chain_root"
-CHAIN_MID_ARCHIVE="$CHAIN_MID/target/typelisp/release/chain_mid/libchain_mid.a"
-CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/typelisp/release/chain_leaf/libchain_leaf.a"
+CHAIN_EXE="$CHAIN_ROOT/target/release/chain_root"
+CHAIN_MID_ARCHIVE="$CHAIN_MID/target/release/libchain_mid.a"
+CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/release/libchain_leaf.a"
 if [ "$HOST_OS" = windows ]; then
     CHAIN_EXE="$CHAIN_EXE.exe"
-    CHAIN_MID_ARCHIVE="$CHAIN_MID/target/typelisp/release/chain_mid/chain_mid.lib"
-    CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/typelisp/release/chain_leaf/chain_leaf.lib"
+    CHAIN_MID_ARCHIVE="$CHAIN_MID/target/release/chain_mid.lib"
+    CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/release/chain_leaf.lib"
 fi
 
 set +e
@@ -859,11 +859,11 @@ EOF
 cat > "$GITHUB_REMOTE/src/lib.tl" <<'EOF'
 (define (remote-answer) : i64 43)
 EOF
-GITHUB_EXE="$GITHUB_ROOT/target/typelisp/release/github_prefetch_root/github_prefetch_root"
-GITHUB_REMOTE_ARCHIVE="$GITHUB_REMOTE/target/typelisp/release/github_prefetch_remote/libgithub_prefetch_remote.a"
+GITHUB_EXE="$GITHUB_ROOT/target/release/github_prefetch_root"
+GITHUB_REMOTE_ARCHIVE="$GITHUB_REMOTE/target/release/libgithub_prefetch_remote.a"
 if [ "$HOST_OS" = windows ]; then
     GITHUB_EXE="$GITHUB_EXE.exe"
-    GITHUB_REMOTE_ARCHIVE="$GITHUB_REMOTE/target/typelisp/release/github_prefetch_remote/github_prefetch_remote.lib"
+    GITHUB_REMOTE_ARCHIVE="$GITHUB_REMOTE/target/release/github_prefetch_remote.lib"
 fi
 
 set +e
@@ -922,7 +922,7 @@ cat > "$GITHUB_CACHE_CONFIG" <<EOF
 [url "$GITHUB_CACHE_REMOTE"]
     insteadOf = $GITHUB_CACHE_URL
 EOF
-GITHUB_CACHE_EXE="$GITHUB_CACHE_ROOT/target/typelisp/release/gc_root/gc_root"
+GITHUB_CACHE_EXE="$GITHUB_CACHE_ROOT/target/release/gc_root"
 if [ "$HOST_OS" = windows ]; then
     GITHUB_CACHE_EXE="$GITHUB_CACHE_EXE.exe"
 fi
@@ -1016,7 +1016,7 @@ cat > "$GITHUB_LOCK_CONFIG" <<EOF
 [url "$GITHUB_LOCK_REMOTE"]
     insteadOf = $GITHUB_LOCK_URL
 EOF
-GITHUB_LOCK_EXE="$GITHUB_LOCK_ROOT/target/typelisp/release/gl_root/gl_root"
+GITHUB_LOCK_EXE="$GITHUB_LOCK_ROOT/target/release/gl_root"
 if [ "$HOST_OS" = windows ]; then
     GITHUB_LOCK_EXE="$GITHUB_LOCK_EXE.exe"
 fi
@@ -1141,15 +1141,15 @@ EOF
 cat > "$DIAMOND_SHARED/src/lib.tl" <<'EOF'
 (define (shared-answer) : i64 21)
 EOF
-DIAMOND_EXE="$DIAMOND_ROOT/target/typelisp/release/diamond_root/diamond_root"
-DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/typelisp/release/diamond_shared/libdiamond_shared.a"
-DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/typelisp/release/diamond_left/libdiamond_left.a"
-DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/typelisp/release/diamond_right/libdiamond_right.a"
+DIAMOND_EXE="$DIAMOND_ROOT/target/release/diamond_root"
+DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/release/libdiamond_shared.a"
+DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/release/libdiamond_left.a"
+DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/release/libdiamond_right.a"
 if [ "$HOST_OS" = windows ]; then
     DIAMOND_EXE="$DIAMOND_EXE.exe"
-    DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/typelisp/release/diamond_shared/diamond_shared.lib"
-    DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/typelisp/release/diamond_left/diamond_left.lib"
-    DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/typelisp/release/diamond_right/diamond_right.lib"
+    DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/release/diamond_shared.lib"
+    DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/release/diamond_left.lib"
+    DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/release/diamond_right.lib"
 fi
 
 set +e
@@ -1311,9 +1311,9 @@ EOF
 cat > "$STATICLIB_DIR/src/lib.tl" <<'EOF'
 (define (static-answer) : i64 42)
 EOF
-STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/release/cli_staticlib_smoke/libcli_staticlib_smoke.a"
+STATICLIB_ARCHIVE="$STATICLIB_DIR/target/release/libcli_staticlib_smoke.a"
 if [ "$HOST_OS" = windows ]; then
-    STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/release/cli_staticlib_smoke/cli_staticlib_smoke.lib"
+    STATICLIB_ARCHIVE="$STATICLIB_DIR/target/release/cli_staticlib_smoke.lib"
 fi
 
 set +e
@@ -1340,9 +1340,9 @@ EOF
 cat > "$STATICLIB_OVERRIDE/custom/entry.tl" <<'EOF'
 (define (override-answer) : i64 77)
 EOF
-STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/release/cli_staticlib_override/libcli_staticlib_override.a"
+STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/release/libcli_staticlib_override.a"
 if [ "$HOST_OS" = windows ]; then
-    STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/release/cli_staticlib_override/cli_staticlib_override.lib"
+    STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/release/cli_staticlib_override.lib"
 fi
 
 set +e
@@ -1376,7 +1376,7 @@ NEW_BIN_DIR="$SCAFFOLD_ROOT/cli_new_bin"
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(kind "bin")'
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(entry "src/main.tl")'
 
-NEW_BIN_EXE="$NEW_BIN_DIR/target/typelisp/release/cli_new_bin/cli_new_bin"
+NEW_BIN_EXE="$NEW_BIN_DIR/target/release/cli_new_bin"
 if [ "$HOST_OS" = windows ]; then
     NEW_BIN_EXE="$NEW_BIN_EXE.exe"
 fi
@@ -1416,9 +1416,9 @@ NEW_LIB_DIR="$SCAFFOLD_ROOT/cli_new_lib"
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
 
-NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/release/cli_new_lib/libcli_new_lib.a"
+NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/release/libcli_new_lib.a"
 if [ "$HOST_OS" = windows ]; then
-    NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/release/cli_new_lib/cli_new_lib.lib"
+    NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/release/cli_new_lib.lib"
 fi
 set +e
 (

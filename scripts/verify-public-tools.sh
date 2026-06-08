@@ -920,7 +920,7 @@ else
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built "
-    BUILD_MATRIX_ASM="$BUILD_MATRIX/target/typelisp/release/backend_mode_build/backend_mode_build.s"
+    BUILD_MATRIX_ASM="$BUILD_MATRIX/target/release/backend_mode_build.s"
     if [ "$HOST_OS" = linux ]; then
         [ -f "$BUILD_MATRIX_ASM" ] || fail "package --backend-mode avx512 did not keep assembly"
         assert_contains "$BUILD_MATRIX_ASM" "%zmm"
@@ -1171,7 +1171,7 @@ EOF
     run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
-    SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/typelisp/release/selfhost_pkg"
+    SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/release"
     SELFHOST_PKG_BIN="$SELFHOST_PKG_OUT_DIR/selfhost_pkg$HOST_EXE_SUFFIX"
     SELFHOST_PKG_ASM="$SELFHOST_PKG_OUT_DIR/selfhost_pkg.s"
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package build did not write executable"
@@ -1209,7 +1209,7 @@ EOF
     run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
-    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/release/selfhost_lib/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
+    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/release/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
     [ -s "$SELFHOST_LIB_ARCHIVE" ] || fail "selfhost package lib build did not write archive"
     assert_contains "$out" "Built $(native_arg_path "$SELFHOST_LIB_ARCHIVE")"
 
@@ -1308,8 +1308,8 @@ EOF
     cat > "$SELFHOST_OPTPKG/src/main.tl" <<'EOF'
 (define (main) : i64 (* 6 7))
 EOF
-    SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/typelisp/release/selfhost_opt_pkg/selfhost_opt_pkg.s"
-    SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/typelisp/dev/selfhost_opt_pkg/selfhost_opt_pkg.s"
+    SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
+    SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
     SELFHOST_OPT_FOLDED_MUL='    movq $42, %rax'
     SELFHOST_OPT_UNFOLDED_MUL="    imulq %r8, %rax"
 
@@ -2026,7 +2026,7 @@ maybe_strip_manifest_kind "$PKG/vendor/math/typelisp.pkg"
 run_cmd package-build "$COMPILER" build --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
-PKG_ASM="$PKG/target/typelisp/release/public_tool_pkg/public_tool_pkg.s"
+PKG_ASM="$PKG/target/release/public_tool_pkg.s"
 [ -f "$PKG_ASM" ] || fail "package build did not write deterministic assembly"
 assert_contains "$out" "Built "
 assert_contains "$PKG_ASM" "main:"
@@ -2045,7 +2045,7 @@ else
     assert_not_contains "$PKG_ASM" "_tl_public_tool_pkg_vendor_math"
 fi
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
-PKG_OUT_DIR="$PKG/target/typelisp/release/public_tool_pkg"
+PKG_OUT_DIR="$PKG/target/release"
 run_cmd package-clean-dry-run "$COMPILER" clean --dry-run --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
@@ -2118,7 +2118,7 @@ EOF
 run_cmd_cwd package-discover-upward "$WALK_PKG/src/nested/deeper" "$COMPILER" build
 assert_success
 assert_stderr_empty
-WALK_ASM="$WALK_PKG/target/typelisp/release/walk_pkg/walk_pkg.s"
+WALK_ASM="$WALK_PKG/target/release/walk_pkg.s"
 [ -f "$WALK_ASM" ] || fail "package discover-upward did not write assembly"
 assert_contains "$out" "Built "
 assert_contains "$WALK_ASM" "main:"

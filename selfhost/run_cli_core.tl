@@ -12,6 +12,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum RunPlanConfig
   (RunPlanConfig String String String String String String))
 
@@ -34,13 +36,13 @@
   (ErrRunCliConfig String))
 
 (define (run-plan-unknown-target [value : String]) : String
-  (host-plan-cat3 "run: unknown target " value ""))
+  (str-cat "run: unknown target " value ""))
 
 (define (run-plan-unknown-mode [value : String]) : String
-  (host-plan-cat3 "run: unknown backend mode " value ""))
+  (str-cat "run: unknown backend mode " value ""))
 
 (define (run-plan-unknown-opt-level [value : String]) : String
-  (host-plan-cat3 "run: unknown opt level " value ""))
+  (str-cat "run: unknown opt level " value ""))
 
 (define (run-plan-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
@@ -205,10 +207,10 @@
         1)]))
 
 (define (run-cli-unknown-target [value : String]) : String
-  (source-tool-cat3 "run: unknown target " value ""))
+  (str-cat "run: unknown target " value ""))
 
 (define (run-cli-unknown-opt-level [value : String]) : String
-  (source-tool-cat3 "run: unknown opt level " value ""))
+  (str-cat "run: unknown opt level " value ""))
 
 (define (run-cli-parse-options
   [idx : i64]

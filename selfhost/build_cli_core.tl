@@ -14,6 +14,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (import "host_plan.tl")
 
 (import "build_run_core.tl")
@@ -2910,10 +2912,10 @@
       (build-args-contain-manifest? (+ idx 1) count))))
 
 (define (build-cli-unknown-target [value : String]) : String
-  (source-tool-cat3 "build: unknown target " value ""))
+  (str-cat "build: unknown target " value ""))
 
 (define (build-cli-unknown-opt-level [value : String]) : String
-  (source-tool-cat3 "build: unknown opt level " value ""))
+  (str-cat "build: unknown opt level " value ""))
 
 (defenum BuildCliOption
   (BuildCliOptionOutput)

@@ -1,6 +1,8 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
 (import "compiler_driver_core.tl")
 
+(import "compiler_object_coff.tl")
+
 (import "../stdlib/env.tl")
 
 (import "../stdlib/fs.tl")
@@ -24,6 +26,11 @@
 (defenum ResultSourceToolString
   (OkSourceToolString String)
   (ErrSourceToolString String))
+
+(defenum SourceToolDirectObjectStatus
+  (SourceToolDirectObjectOk)
+  (SourceToolDirectObjectUnavailable String)
+  (SourceToolDirectObjectErr String))
 
 (defenum ResultSourceToolTarget
   (OkSourceToolTarget CompilerBackendTarget)
@@ -626,6 +633,93 @@
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
+(define (source-tool-windows-direct-object-env-name) : String
+  "TYPELISP_WINDOWS_DIRECT_OBJECT")
+
+(define (source-tool-windows-direct-object-enabled?) : bool
+  (source-tool-env-command-set? (source-tool-windows-direct-object-env-name)))
+
+(define (source-tool-windows-direct-object-linkable?
+  [image : CompilerObjectImage]) : bool
+  (and
+    (compiler-object-coff-image-supported? image)
+    (and
+      (compiler-object-symbol-list-contains?
+        (struct-get image symbols)
+        "_tl_start"
+        (ObjectSymbolExport)
+        (ObjectSymbolFunction))
+      (> (compiler-object-coff-section-raw-size image (ObjectSectionText)) 0))))
+
+(define (source-tool-windows-direct-object-unavailable-message) : String
+  "windows direct object unavailable: object image lacks encoded .text or _tl_start")
+
+(define (source-tool-render-linkable-windows-coff-object
+  [image : CompilerObjectImage]) : ResultSourceToolString
+  (if (source-tool-windows-direct-object-linkable? image)
+    (match (compiler-object-coff-render image)
+      [(OkCompilerObjectCoff obj) (OkSourceToolString obj)]
+      [(ErrCompilerObjectCoff message) (ErrSourceToolString message)])
+    (ErrSourceToolString
+      (source-tool-windows-direct-object-unavailable-message))))
+
+(define (source-tool-emit-windows-coff-object
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
+  (match target
+    [(BackendTargetLinux)
+      (ErrSourceToolString
+        "direct COFF object emission is only available for windows-x86_64")]
+    [(BackendTargetWindows)
+      (match (source-tool-try-read-file source)
+        [(ErrIoString error)
+          (ErrSourceToolString
+            (source-tool-cannot-read-module-message source error))]
+        [(OkIoString _)
+          (match (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
+            source
+            target
+            true
+            stdlib-roots
+            opt-level
+            mode
+            (compiler-cfg-empty)
+            (source-tool-linux-crt-entry? target link-inputs))
+            [(OkCompilerDriverObject image)
+              (source-tool-render-linkable-windows-coff-object image)]
+            [(ErrCompilerDriverObject diag)
+              (ErrSourceToolString (compiler-diagnostic-render diag))])])]))
+
+(define (source-tool-emit-lowered-windows-coff-object
+  [source : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]) : ResultSourceToolString
+  (match target
+    [(BackendTargetLinux)
+      (ErrSourceToolString
+        "direct COFF object emission is only available for windows-x86_64")]
+    [(BackendTargetWindows)
+      (match (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+        source
+        program
+        spans
+        target
+        true
+        (BackendModeScalar)
+        opt-level
+        true
+        false)
+        [(OkCompilerDriverObject image)
+          (source-tool-render-linkable-windows-coff-object image)]
+        [(ErrCompilerDriverObject diag)
+          (ErrSourceToolString (compiler-diagnostic-render diag))])]))
+
 (define (source-tool-noexecstack-note) : String
   "
     .section .note.GNU-stack,\"\",@progbits
@@ -897,6 +991,14 @@
       (source-tool-link-inputs-empty))
     (source-tool-windows-stack-reserve-arg)))
 
+(define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (main) : i64 0)"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (not (source-tool-windows-direct-object-linkable? image))]
+    [(ErrCompilerBackendObject _) false]))
+
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]
   [bin-path : String]
@@ -1071,6 +1173,196 @@
     [(SourceToolCommandOk) (source-tool-archive target obj-path archive-path)]
     [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
 
+(define (source-tool-write-direct-object-and-link
+  [obj-path : String]
+  [bin-path : String]
+  [target : CompilerBackendTarget]
+  [link-inputs : SourceToolLinkInputs]
+  [obj : String]
+  [context : String]) : SourceToolDirectObjectStatus
+  (match (source-tool-write-file obj-path obj context)
+    [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)]
+    [(SourceToolCommandOk)
+      (match (source-tool-link target obj-path bin-path link-inputs)
+        [(SourceToolCommandOk) SourceToolDirectObjectOk]
+        [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)])]))
+
+(define (source-tool-try-windows-direct-object-and-link
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [obj-path : String]
+  [bin-path : String]) : SourceToolDirectObjectStatus
+  (if (and
+    (source-tool-windows-direct-object-enabled?)
+    (compiler-backend-target-windows? target))
+    (match (source-tool-emit-windows-coff-object
+      source
+      target
+      stdlib-roots
+      opt-level
+      mode
+      link-inputs)
+      [(OkSourceToolString obj)
+        (source-tool-write-direct-object-and-link
+          obj-path
+          bin-path
+          target
+          link-inputs
+          obj
+          "source-tool: failed to write direct object artifact")]
+      [(ErrSourceToolString message)
+        (SourceToolDirectObjectUnavailable message)])
+    (SourceToolDirectObjectUnavailable "windows direct object disabled")))
+
+(define (source-tool-try-lowered-windows-direct-object-and-link
+  [source : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]
+  [obj-path : String]
+  [bin-path : String]) : SourceToolDirectObjectStatus
+  (if (and
+    (source-tool-windows-direct-object-enabled?)
+    (compiler-backend-target-windows? target))
+    (match (source-tool-emit-lowered-windows-coff-object
+      source
+      program
+      spans
+      target
+      opt-level)
+      [(OkSourceToolString obj)
+        (source-tool-write-direct-object-and-link
+          obj-path
+          bin-path
+          target
+          link-inputs
+          obj
+          "test: failed to write direct object artifact")]
+      [(ErrSourceToolString message)
+        (SourceToolDirectObjectUnavailable message)])
+    (SourceToolDirectObjectUnavailable "windows direct object disabled")))
+
+(define (source-tool-write-assembly-and-link
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]
+  [asm : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (source-tool-write-file asm-path asm write-context)
+    [(SourceToolCommandErr message) (SourceToolCommandErr message)]
+    [(SourceToolCommandOk)
+      (source-tool-assemble-and-link
+        target
+        asm-path
+        obj-path
+        bin-path
+        link-inputs)]))
+
+(define (source-tool-emit-assembly-and-link
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (source-tool-emit-assembly
+    source
+    target
+    stdlib-roots
+    opt-level
+    mode
+    link-inputs)
+    [(ErrSourceToolString message) (SourceToolCommandErr message)]
+    [(OkSourceToolString asm)
+      (source-tool-write-assembly-and-link
+        target
+        asm-path
+        obj-path
+        bin-path
+        link-inputs
+        asm
+        write-context)]))
+
+(define (source-tool-object-or-assembly-and-link
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (source-tool-try-windows-direct-object-and-link
+    source
+    target
+    stdlib-roots
+    opt-level
+    mode
+    link-inputs
+    obj-path
+    bin-path)
+    [(SourceToolDirectObjectOk) SourceToolCommandOk]
+    [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
+    [(SourceToolDirectObjectUnavailable _)
+      (source-tool-emit-assembly-and-link
+        source
+        target
+        stdlib-roots
+        opt-level
+        mode
+        link-inputs
+        asm-path
+        obj-path
+        bin-path
+        write-context)]))
+
+(define (source-tool-lowered-object-or-assembly-and-link
+  [source : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [asm : String]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (source-tool-try-lowered-windows-direct-object-and-link
+    source
+    program
+    spans
+    target
+    opt-level
+    link-inputs
+    obj-path
+    bin-path)
+    [(SourceToolDirectObjectOk) SourceToolCommandOk]
+    [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
+    [(SourceToolDirectObjectUnavailable _)
+      (source-tool-write-assembly-and-link
+        target
+        asm-path
+        obj-path
+        bin-path
+        link-inputs
+        asm
+        write-context)]))
+
 (define (source-tool-build-source-in-temp
   [source : String]
   [output : String]
@@ -1095,61 +1387,28 @@
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-emit-assembly
+        (match (source-tool-object-or-assembly-and-link
           source
           target
           stdlib-roots
           opt-level
           mode
-          effective-link-inputs)
-          [(ErrSourceToolString message)
+          effective-link-inputs
+          asm-path
+          obj-path
+          bin-path
+          "build: failed to write assembly artifact")
+          [(SourceToolCommandErr message)
             (begin
               (print-error message)
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
               1)]
-          [(OkSourceToolString asm)
-            (match (source-tool-write-file
-              asm-path
-              asm
-              "build: failed to write assembly artifact")
-              [(SourceToolCommandErr message)
-                (begin
-                  (print-error message)
-                  (source-tool-clean-temp
-                    temp-dir
-                    asm-path
-                    obj-path
-                    bin-path
-                    false)
-                  1)]
-              [(SourceToolCommandOk)
-                (match (source-tool-assemble-and-link
-                  target
-                  asm-path
-                  obj-path
-                  bin-path
-                  effective-link-inputs)
-                  [(SourceToolCommandErr message)
-                    (begin
-                      (print-error message)
-                      (source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        false)
-                      1)]
-                  [(SourceToolCommandOk)
-                    (begin
-                      (print-string
-                        (string-append "Built " (string-append bin-path "\n")))
-                      (source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        false)
-                      0)])])])])))
+          [(SourceToolCommandOk)
+            (begin
+              (print-string
+                (string-append "Built " (string-append bin-path "\n")))
+              (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
+              0)])])))
 
 (define (source-tool-build-source
   [source : String]
@@ -1207,88 +1466,55 @@
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-emit-assembly
+        (match (source-tool-object-or-assembly-and-link
           source
           target
           stdlib-roots
           opt-level
           mode
-          effective-link-inputs)
-          [(ErrSourceToolString message)
+          effective-link-inputs
+          asm-path
+          obj-path
+          bin-path
+          "run: failed to write assembly artifact")
+          [(SourceToolCommandErr message)
             (begin
               (print-error message)
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
               1)]
-          [(OkSourceToolString asm)
-            (match (source-tool-write-file
-              asm-path
-              asm
-              "run: failed to write assembly artifact")
-              [(SourceToolCommandErr message)
+          [(SourceToolCommandOk)
+            (match (source-tool-run-executable bin-path target runtime-args)
+              [(OkProcessOutput output)
+                (let
+                  [status : i64 (process-output-status output)]
+                  (begin
+                    (source-tool-forward-output output)
+                    (source-tool-clean-temp
+                      temp-dir
+                      asm-path
+                      obj-path
+                      bin-path
+                      true)
+                    status))]
+              [(ErrProcessOutput error)
                 (begin
-                  (print-error message)
+                  (print-error
+                    (string-append
+                      (string-append
+                        "Error: failed to run executable '"
+                        bin-path)
+                      (string-append
+                        (string-append
+                          "' for target "
+                          (source-tool-target-name target))
+                        (string-append ": " (process-error-message error)))))
                   (source-tool-clean-temp
                     temp-dir
                     asm-path
                     obj-path
                     bin-path
                     true)
-                  1)]
-              [(SourceToolCommandOk)
-                (match (source-tool-assemble-and-link
-                  target
-                  asm-path
-                  obj-path
-                  bin-path
-                  effective-link-inputs)
-                  [(SourceToolCommandErr message)
-                    (begin
-                      (print-error message)
-                      (source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        true)
-                      1)]
-                  [(SourceToolCommandOk)
-                    (match (source-tool-run-executable
-                      bin-path
-                      target
-                      runtime-args)
-                      [(OkProcessOutput output)
-                        (let
-                          [status : i64 (process-output-status output)]
-                          (begin
-                            (source-tool-forward-output output)
-                            (source-tool-clean-temp
-                              temp-dir
-                              asm-path
-                              obj-path
-                              bin-path
-                              true)
-                            status))]
-                      [(ErrProcessOutput error)
-                        (begin
-                          (print-error
-                            (string-append
-                              (string-append
-                                "Error: failed to run executable '"
-                                bin-path)
-                              (string-append
-                                (string-append
-                                  "' for target "
-                                  (source-tool-target-name target))
-                                (string-append
-                                  ": "
-                                  (process-error-message error)))))
-                          (source-tool-clean-temp
-                            temp-dir
-                            asm-path
-                            obj-path
-                            bin-path
-                            true)
-                          1)])])])])])))
+                  1)])])])))
 
 (define (source-tool-run-source
   [source : String]

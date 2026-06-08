@@ -2393,15 +2393,7 @@
     [_ false]))
 
 (define (tc-name-qualified? [name : String]) : bool
-  (let
-    [i : i64 0]
-    [n : i64 (string-length name)]
-    (begin
-      (while (< i n)
-        (if (= (string-ref name i) #/')
-          (return true)
-          (set! i (+ i 1))))
-      false)))
+  (intern-name-qualified? name))
 
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
@@ -2439,11 +2431,11 @@
       (tc-context-symbols ctx)
       (tc-context-registries ctx))
       [(OkCompilerExports exports)
-        (match (compiler-exports-lookup
+        (match (compiler-exports-lookup-id
           exports
-          kind-name
-          target-module
-          export-name)
+          (intern kind-name)
+          (intern target-module)
+          (intern export-name))
           [(SomeI64 _) OkTcUnit]
           [(NoneI64)
             (ErrTcUnit
@@ -2481,10 +2473,10 @@
   [ctx : TcContext]
   [target-module : String]
   [base : String]) : String
-  (match (compiler-symbols-lookup-value-in-module
+  (match (compiler-symbols-lookup-value-in-module-id
     (tc-context-symbols ctx)
-    target-module
-    base)
+    (intern target-module)
+    (intern base))
     [(SomeI64 handle) (tc-value-export-kind-for-handle handle)]
     [(NoneI64) (compiler-export-kind-value)]))
 
@@ -12613,28 +12605,13 @@
           [(ErrTcType message) (ErrTcType message)]))]))
 
 (define (tc-qualified-name-last-slash [name : String]) : i64
-  (let
-    [i : i64 (- (string-length name) 1)]
-    (begin
-      (while (>= i 0)
-        (if (= (string-ref name i) #/')
-          (return i)
-          (set! i (- i 1))))
-      -1)))
+  (intern-name-last-slash name))
 
 (define (tc-qualified-name-module [name : String]) : String
-  (let
-    [slash : i64 (tc-qualified-name-last-slash name)]
-    (if (< slash 0)
-      ""
-      (substring name 0 slash))))
+  (intern-name-module name))
 
 (define (tc-qualified-name-base [name : String]) : String
-  (let
-    [slash : i64 (tc-qualified-name-last-slash name)]
-    (if (< slash 0)
-      name
-      (substring name (+ slash 1) (- (string-length name) (+ slash 1))))))
+  (intern-name-base name))
 
 (define (tc-qualified-variant-name [enum-name : String] [variant-name : String]) : String
   (let
@@ -17569,7 +17546,7 @@
   false)
 
 (define macro-expand-exports-value : CompilerExports
-  (CompilerExports (string-i64-map-with-capacity 1)))
+  (CompilerExports (i64-i64-map-with-capacity 1)))
 
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
 ;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
@@ -18281,11 +18258,11 @@
   [base : String]
   [name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (match (compiler-exports-lookup
+  (match (compiler-exports-lookup-id
     exports
-    (compiler-export-kind-macro)
-    target-module
-    base)
+    (intern (compiler-export-kind-macro))
+    (intern target-module)
+    (intern base))
     [(SomeI64 handle)
       (match (macro-find-decl-by-index
         decls
@@ -18303,10 +18280,10 @@
               call-expr
               (macro-missing-export-message name)))])]
     [(NoneI64)
-      (match (compiler-symbols-lookup-macro-in-module
+      (match (compiler-symbols-lookup-macro-in-module-id
         (tc-context-symbols ctx)
-        target-module
-        base)
+        (intern target-module)
+        (intern base))
         [(SomeI64 _)
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr call-expr (macro-private-message name)))]
@@ -18361,11 +18338,11 @@
   [exports : CompilerExports]
   [decls : AstDeclList]
   [lookup-name : String]) : ResultMacroCallDecl
-  (match (compiler-exports-lookup
+  (match (compiler-exports-lookup-id
     exports
-    (compiler-export-kind-macro)
-    "stdlib.core-macros"
-    lookup-name)
+    (intern (compiler-export-kind-macro))
+    (intern "stdlib.core-macros")
+    (intern lookup-name))
     [(SomeI64 handle)
       (match (macro-find-decl-by-index
         decls
@@ -18420,10 +18397,10 @@
             (intern-str name))]
         (if (tc-name-qualified? lookup-name)
           (macro-qualified-call-decl ctx decls lookup-name call-expr)
-          (match (compiler-symbols-lookup-macro-in-module
+          (match (compiler-symbols-lookup-macro-in-module-id
             (tc-context-symbols ctx)
-            (tc-context-module ctx)
-            lookup-name)
+            (intern (tc-context-module ctx))
+            (intern lookup-name))
             [(SomeI64 handle)
               (if (<
                 (compiler-symbol-handle-index handle)

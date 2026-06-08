@@ -29,6 +29,18 @@
 (define intern-pool-slots : (Array String)
   (make-array String 262144))
 
+(define intern-pool-qualified-slots : (Array bool)
+  (make-array bool 262144))
+
+(define intern-pool-last-slash-slots : (Array i64)
+  (make-array i64 262144))
+
+(define intern-pool-module-id-slots : (Array i64)
+  (make-array i64 262144))
+
+(define intern-pool-base-id-slots : (Array i64)
+  (make-array i64 262144))
+
 (define intern-pool-count : i64
   0)
 
@@ -58,6 +70,60 @@
 ;: Mask `hash` into `[0, capacity)`; capacity is a power of two.
 (define (intern-bucket [hash : i64] [capacity : i64]) : i64
   (bit-and hash (- capacity 1)))
+
+(define (intern-substring [text : String] [start : i64] [len : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 len)]
+    [src : (Ptr u8)
+      (unsafe
+        (string-data (& text)))]
+    [dst : (MutPtr u8)
+      (unsafe
+        (array-data buf))]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst i)
+              (ptr-read (ptr-offset src (+ start i)))))
+          (set! i (+ i 1))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+
+(define (intern-compute-last-slash [name : String]) : i64
+  (let
+    [i : i64 (- (string-length name) 1)]
+    (begin
+      (while (>= i 0)
+        (if (= (string-ref name i) #/')
+          (return i)
+          (set! i (- i 1))))
+      -1)))
+
+(define (intern-record-qualified-metadata [id : i64] [name : String]) : unit
+  (let
+    [slash : i64 (intern-compute-last-slash name)]
+    (begin
+      (array-set! intern-pool-last-slash-slots id slash)
+      (if (< slash 0)
+        (begin
+          (array-set! intern-pool-qualified-slots id false)
+          (array-set! intern-pool-module-id-slots id -1)
+          (array-set! intern-pool-base-id-slots id id))
+        (let
+          [base-start : i64 (+ slash 1)]
+          [module-name : String (intern-substring name 0 slash)]
+          [base-name : String
+            (intern-substring
+              name
+              base-start
+              (- (string-length name) base-start))]
+          (begin
+            (array-set! intern-pool-qualified-slots id true)
+            (array-set! intern-pool-module-id-slots id (intern module-name))
+            (array-set! intern-pool-base-id-slots id (intern base-name))))))))
 
 ;: Set slots `[index, count)` to InternEmpty.
 (define (intern-fill-empty [index : i64] [count : i64]) : unit
@@ -103,6 +169,7 @@
                   (array-set! intern-pool-slots id name)
                   (array-set! intern-map-slots cursor (InternUsed name id hash))
                   (set! intern-pool-count (+ id 1))
+                  (intern-record-qualified-metadata id name)
                   (set! out id)
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
@@ -123,3 +190,101 @@
 
 (define (intern-generation) : i64
   intern-reset-generation)
+
+(define (intern-qualified? [id : i64]) : bool
+  (array-ref intern-pool-qualified-slots id))
+
+(define (intern-qualified-last-slash [id : i64]) : i64
+  (array-ref intern-pool-last-slash-slots id))
+
+(define (intern-qualified-module-id [id : i64]) : i64
+  (array-ref intern-pool-module-id-slots id))
+
+(define (intern-qualified-base-id [id : i64]) : i64
+  (array-ref intern-pool-base-id-slots id))
+
+(define (intern-qualified-module [id : i64]) : String
+  (let
+    [module-id : i64 (intern-qualified-module-id id)]
+    (if (< module-id 0)
+      ""
+      (intern-str module-id))))
+
+(define (intern-qualified-base [id : i64]) : String
+  (intern-str (intern-qualified-base-id id)))
+
+(define (intern-name-qualified? [name : String]) : bool
+  (intern-qualified? (intern name)))
+
+(define (intern-name-last-slash [name : String]) : i64
+  (intern-qualified-last-slash (intern name)))
+
+(define (intern-name-module [name : String]) : String
+  (intern-qualified-module (intern name)))
+
+(define (intern-name-base [name : String]) : String
+  (intern-qualified-base (intern name)))
+
+(define (intern-qualified-metadata-case-ok?
+  [id : i64]
+  [qualified : bool]
+  [last-slash : i64]
+  [module-name : String]
+  [base-name : String]) : bool
+  (and
+    (= (intern-qualified-last-slash id) last-slash)
+    (and
+      (= (intern-qualified? id) qualified)
+      (and
+        (string-eq (intern-qualified-module id) module-name)
+        (string-eq (intern-qualified-base id) base-name)))))
+
+(define (intern-qualified-metadata-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (let
+      [plain : i64 (intern "name")]
+      [qualified : i64 (intern "module/name")]
+      [nested : i64 (intern "pkg/sub/name")]
+      [leading : i64 (intern "/name")]
+      [trailing : i64 (intern "module/")]
+      [slash : i64 (intern "/")]
+      [ok : bool
+        (and
+          (intern-qualified-metadata-case-ok? plain false -1 "" "name")
+          (and
+            (= (intern-qualified-base-id plain) plain)
+            (and
+              (= (intern-qualified-module-id plain) -1)
+              (and
+                (intern-qualified-metadata-case-ok?
+                  qualified
+                  true
+                  6
+                  "module"
+                  "name")
+                (and
+                  (intern-qualified-metadata-case-ok?
+                    nested
+                    true
+                    7
+                    "pkg/sub"
+                    "name")
+                  (and
+                    (intern-qualified-metadata-case-ok?
+                      leading
+                      true
+                      0
+                      ""
+                      "name")
+                    (and
+                      (intern-qualified-metadata-case-ok?
+                        trailing
+                        true
+                        6
+                        "module"
+                        "")
+                      (intern-qualified-metadata-case-ok? slash true 0 "" ""))))))))]
+      (begin
+        (intern-reset!)
+        ok))))

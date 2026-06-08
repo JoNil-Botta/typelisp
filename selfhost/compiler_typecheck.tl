@@ -224,6 +224,10 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
+;; #2357: with the growing ty-node pool a compile that starts with the pool at
+;; capacity grows the backing array and succeeds rather than failing closed with
+;; an exhaustion diagnostic. Verify the typecheck still succeeds under that
+;; pressure (and that the pool grew).
 (define (compiler-typecheck-pool-exhaustion-diagnostic-ok?) : bool
   (let
     [capacity : i64 (ty-node-pool-capacity)]
@@ -233,13 +237,11 @@
       (let
         [result : ResultCompilerTypecheck
           (typecheck-compiler-source "(define (main) : i64 0)")]
+        [grew : bool (> (ty-node-pool-capacity) capacity)]
         [ok : bool
           (match result
-            [(ErrCompilerTypecheck diag)
-              (string-eq
-                (compiler-diagnostic-message diag)
-                (ty-node-pool-exhausted-message))]
-            [(OkCompilerTypecheck _) false])]
+            [(OkCompilerTypecheck _) grew]
+            [(ErrCompilerTypecheck _) false])]
         (begin
           (ty-node-pool-reset!)
           ok)))))

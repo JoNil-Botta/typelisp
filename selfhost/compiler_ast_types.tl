@@ -1819,6 +1819,9 @@
                     [_ false])))]
             [_ false]))])))
 
+;; #2357: the ty-node pool now grows on demand (see ty-node-pool-grow!) rather
+;; than failing closed, so a push at capacity allocates a larger backing array and
+;; assigns the next sequential id -- it never exhausts. Verify that growth.
 (define (compiler-ast-type-pool-exhaustion-smoke?) : bool
   (let
     [capacity : i64 (ty-node-pool-capacity)]
@@ -1829,9 +1832,12 @@
         [id : i64 (ty-node-push (AstTyI64))]
         [len : i64 (ty-node-pool-len)]
         [exhausted : bool (ty-node-pool-exhausted?)]
+        [grew : bool (> (ty-node-pool-capacity) capacity)]
         (begin
           (ty-node-pool-reset!)
-          (and exhausted (and (= id 0) (= len capacity))))))))
+          (and
+            (not exhausted)
+            (and (= id capacity) (and (= len (+ capacity 1)) grew))))))))
 
 (define (compiler-ast-smoke) : i64
   (let

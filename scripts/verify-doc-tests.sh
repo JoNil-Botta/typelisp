@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-doc-tests.sh - auto-discover documented TypeLisp sources and run
-# `typelisp doc --test` for each one. This intentionally uses a built compiler
-# from TYPELISP_BIN so CI can run it without relying on the Rust test harness.
+# verify-doc-tests.sh - auto-discover documented TypeLisp sources and run one
+# batched `typelisp doc --test --batch` process. This intentionally uses a built
+# compiler from TYPELISP_BIN so CI can run it without relying on the Rust test
+# harness.
 # In no-Rust lanes, TYPELISP_BIN is the command-tier compiler selected by the
 # caller. Seed fallback is only a compatibility path for older artifacts and
 # cannot verify future stdlib borrowed-`str` doctests.
@@ -159,8 +160,7 @@ BATCH_STDERR="$WORKDIR/batch.stderr"
 
 echo "[doc-tests] batch $count file(s)"
 if run_with_retry "$BATCH_STDOUT" "$BATCH_STDERR" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
-    sh -c 'xargs "$1" doc --test --stdlib-root "$2" < "$3"' \
-    sh "$COMPILER" "$ROOT/stdlib" "$DISCOVERED"; then
+    "$COMPILER" doc --test --batch "$DISCOVERED" --stdlib-root "$ROOT/stdlib"; then
     summaries=$(grep -c '^Doc tests passed:' "$BATCH_STDOUT" || true)
     if [ "$summaries" -ne "$count" ]; then
         echo "doc test verification failed for batched run: expected $count success summaries, saw $summaries" >&2

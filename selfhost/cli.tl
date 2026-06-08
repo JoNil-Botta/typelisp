@@ -68,6 +68,7 @@ Usage:
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp doc --test --batch <inputs.txt> [--stdlib-root <dir>...]
     typelisp new [--lib] <name>    Scaffold a new package in <name>/
     typelisp init [--lib] <name>   Scaffold a package in the current directory
 
@@ -107,6 +108,7 @@ Options for test:
     --opt-level <0|1|2>          Select selfhost test harness optimization
 Options for doc:
     --test [<file.tl>...]          Check TypeLisp fenced examples in docs
+    --batch <file>                 Read newline-separated doc-test input paths
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
 ")
 

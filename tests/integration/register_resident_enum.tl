@@ -39,9 +39,15 @@
     [a : Dir (South)]
     [b : Dir (South)]
     ;; structural tag compare: two separate (South) constructions are equal.
-    [eq-same : i64 (if (= a b) 1 0)]
+    [eq-same : i64
+      (if (= a b)
+        1
+        0)]
     ;; distinct variants stay unequal.
-    [eq-diff : i64 (if (= (North) (West)) 1 0)]
+    [eq-diff : i64
+      (if (= (North) (West))
+        1
+        0)]
     ;; turn-right twice: North -> East -> South -> code 3.
     [r : Dir (turn-right (turn-right (North)))]
     (+

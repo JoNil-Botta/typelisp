@@ -44,6 +44,11 @@
     (compiler-diagnostic-with-path diag path)
     diag))
 
+(define (compiler-check-reset-pools!) : unit
+  (begin
+    (ast-node-pool-reset!)
+    (ty-node-pool-reset!)))
+
 (define (compiler-check-program-with-paths
   [path : String]
   [decls : AstDeclList]
@@ -100,6 +105,7 @@
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
   (begin
+    (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-file-loaded-with-prelude
       path
@@ -112,6 +118,7 @@
   [path : String]
   [stdlib-roots : StringVec]) : ResultCompilerCheck
   (begin
+    (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-file-loaded-with-prelude
       path
@@ -124,6 +131,7 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
+    (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym-i64-empty)
@@ -149,6 +157,7 @@
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (begin
+    (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots
       (sym-i64-empty)
@@ -173,6 +182,7 @@
   [source : String]
   [stdlib-roots : StringVec]) : ResultCompilerCheck
   (begin
+    (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots
       (sym-i64-empty)

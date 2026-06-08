@@ -532,10 +532,10 @@
     [(TcTypeNil) cache]
     [(TcTypeCache _ _ _ _ rest)
       (lower-type-cache-from-env-into (box-get rest) cache)]
-    [(TcTypeBind name ty rest)
+    [(TcTypeBind name-id ty rest)
       (lower-type-cache-from-env-into
         (box-get rest)
-        (lower-type-cache-add cache name ty))]))
+        (lower-type-cache-add cache (intern-str name-id) ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -586,7 +586,7 @@
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup type-cache (tc-hygiene-global-base name))
       (match (sym-i64-lookup-id env name-id)
-        [(SomeI64 _) (tc-lookup type-env name)]
+        [(SomeI64 _) (tc-lookup-id type-env name-id)]
         [(NoneI64) (lower-lookup-type type-cache env type-env name)]))))
 
 (define (lower-name-env-add-alias-if-free
@@ -6778,8 +6778,78 @@
 (define (lower-cleanup-marker-name) : String
   " __tl_active_cleanup")
 
+(define lower-cleanup-marker-id-cache : i64
+  -1)
+
+(define (lower-cleanup-marker-id) : i64
+  lower-cleanup-marker-id-cache)
+
 (define (lower-region-reset-marker-name) : String
   " __tl_active_region_reset")
+
+(define lower-region-reset-marker-id-cache : i64
+  -1)
+
+(define (lower-region-reset-marker-id) : i64
+  lower-region-reset-marker-id-cache)
+
+(define (lower-spmd-reduce-acc-name) : String
+  "0spmd-reduce-acc")
+
+(define (lower-spmd-reduce-end-name) : String
+  "0spmd-reduce-end")
+
+(define (lower-spmd-reduce-val-name) : String
+  "0spmd-reduce-val")
+
+(define (lower-spmd-reduce-current-name) : String
+  "0spmd-reduce-current")
+
+(define lower-spmd-reduce-acc-id-cache : i64
+  -1)
+
+(define lower-spmd-reduce-end-id-cache : i64
+  -1)
+
+(define lower-spmd-reduce-val-id-cache : i64
+  -1)
+
+(define lower-spmd-reduce-current-id-cache : i64
+  -1)
+
+(define (lower-spmd-reduce-acc-id) : i64
+  lower-spmd-reduce-acc-id-cache)
+
+(define (lower-spmd-reduce-end-id) : i64
+  lower-spmd-reduce-end-id-cache)
+
+(define (lower-spmd-reduce-val-id) : i64
+  lower-spmd-reduce-val-id-cache)
+
+(define (lower-spmd-reduce-current-id) : i64
+  lower-spmd-reduce-current-id-cache)
+
+(define (lower-name-id [name : String]) : i64
+  (cond
+    [(string-eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
+    [(string-eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
+    [(string-eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
+    [(string-eq name (lower-spmd-reduce-current-name))
+      (lower-spmd-reduce-current-id)]
+    [else (intern name)]))
+
+(define (lower-refresh-marker-ids!) : unit
+  (begin
+    (set! lower-cleanup-marker-id-cache (intern (lower-cleanup-marker-name)))
+    (set!
+      lower-region-reset-marker-id-cache
+      (intern (lower-region-reset-marker-name)))
+    (set! lower-spmd-reduce-acc-id-cache (intern (lower-spmd-reduce-acc-name)))
+    (set! lower-spmd-reduce-end-id-cache (intern (lower-spmd-reduce-end-name)))
+    (set! lower-spmd-reduce-val-id-cache (intern (lower-spmd-reduce-val-name)))
+    (set!
+      lower-spmd-reduce-current-id-cache
+      (intern (lower-spmd-reduce-current-name)))))
 
 (define (lower-cleanup-hidden-name [var-id : i64]) : String
   (string-append "__tl_cleanup_resource." (int->string var-id)))
@@ -6802,17 +6872,17 @@
   [type-env : TcTypeEnv]
   [hidden-name : String]
   [cleanup-name : String]) : TcTypeEnv
-  (tc-bind
+  (tc-bind-id
     type-env
-    (lower-cleanup-marker-name)
+    (lower-cleanup-marker-id)
     (lower-cleanup-metadata-type hidden-name cleanup-name)))
 
 (define (lower-type-env-push-region-reset
   [type-env : TcTypeEnv]
   [hidden-name : String]) : TcTypeEnv
-  (tc-bind
+  (tc-bind-id
     type-env
-    (lower-region-reset-marker-name)
+    (lower-region-reset-marker-id)
     (lower-region-reset-metadata-type hidden-name)))
 
 (define (lower-cleanup-name-from-expr [cleanup : AstExpr]) : ResultTcString
@@ -6879,16 +6949,23 @@
     [(LowerCleanupNil) 0]
     [(LowerCleanupCons _ rest) (+ 1 (lower-cleanup-list-count (box-get rest)))]))
 
-(define (lower-emit-active-exits
+(define (lower-emit-active-exits-with
+  [cleanup-marker-id : i64]
+  [region-reset-marker-id : i64]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
     [(TcTypeCache _ _ _ _ rest)
-      (lower-emit-active-exits state env (box-get rest))]
+      (lower-emit-active-exits-with
+        cleanup-marker-id
+        region-reset-marker-id
+        state
+        env
+        (box-get rest))]
     [(TcTypeBind key ty rest)
-      (if (string-eq key (lower-cleanup-marker-name))
+      (if (= key cleanup-marker-id)
         (match ty
           [(AstTyTuple types)
             (match types
@@ -6913,92 +6990,186 @@
                                       hidden-name
                                       cleanup-name)
                                       [(OkLowerState next-state)
-                                        (lower-emit-active-exits
+                                        (lower-emit-active-exits-with
+                                          cleanup-marker-id
+                                          region-reset-marker-id
                                           next-state
                                           env
                                           (box-get rest))]
                                       [(ErrLowerState message)
                                         (ErrLowerState message)])]
                                   [_
-                                    (lower-emit-active-exits
+                                    (lower-emit-active-exits-with
+                                      cleanup-marker-id
+                                      region-reset-marker-id
                                       state
                                       env
                                       (box-get rest))])]
                               [_
-                                (lower-emit-active-exits
+                                (lower-emit-active-exits-with
+                                  cleanup-marker-id
+                                  region-reset-marker-id
                                   state
                                   env
                                   (box-get rest))]))]
-                        [_ (lower-emit-active-exits state env (box-get rest))])]
-                    [_ (lower-emit-active-exits state env (box-get rest))]))]
-              [_ (lower-emit-active-exits state env (box-get rest))])]
-          [_ (lower-emit-active-exits state env (box-get rest))])
-        (if (string-eq key (lower-region-reset-marker-name))
+                        [_
+                          (lower-emit-active-exits-with
+                            cleanup-marker-id
+                            region-reset-marker-id
+                            state
+                            env
+                            (box-get rest))])]
+                    [_
+                      (lower-emit-active-exits-with
+                        cleanup-marker-id
+                        region-reset-marker-id
+                        state
+                        env
+                        (box-get rest))]))]
+              [_
+                (lower-emit-active-exits-with
+                  cleanup-marker-id
+                  region-reset-marker-id
+                  state
+                  env
+                  (box-get rest))])]
+          [_
+            (lower-emit-active-exits-with
+              cleanup-marker-id
+              region-reset-marker-id
+              state
+              env
+              (box-get rest))])
+        (if (= key region-reset-marker-id)
           (match ty
             [(AstTyVar hidden-name)
               (match (lower-emit-region-reset state env hidden-name)
                 [(OkLowerState next-state)
-                  (lower-emit-active-exits next-state env (box-get rest))]
+                  (lower-emit-active-exits-with
+                    cleanup-marker-id
+                    region-reset-marker-id
+                    next-state
+                    env
+                    (box-get rest))]
                 [(ErrLowerState message) (ErrLowerState message)])]
-            [_ (lower-emit-active-exits state env (box-get rest))])
-          (lower-emit-active-exits state env (box-get rest))))]))
+            [_
+              (lower-emit-active-exits-with
+                cleanup-marker-id
+                region-reset-marker-id
+                state
+                env
+                (box-get rest))])
+          (lower-emit-active-exits-with
+            cleanup-marker-id
+            region-reset-marker-id
+            state
+            env
+            (box-get rest))))]))
+
+(define (lower-emit-active-exits
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerState
+  (lower-emit-active-exits-with
+    (lower-cleanup-marker-id)
+    (lower-region-reset-marker-id)
+    state
+    env
+    type-env))
+
+(define (lower-emit-active-cleanups-with
+  [cleanup-marker-id : i64]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerState
+  (match type-env
+    [(TcTypeNil) (OkLowerState state)]
+    [(TcTypeCache _ _ _ _ rest)
+      (lower-emit-active-cleanups-with
+        cleanup-marker-id
+        state
+        env
+        (box-get rest))]
+    [(TcTypeBind key ty rest)
+      (if (= key cleanup-marker-id)
+        (match ty
+          [(AstTyTuple types)
+            (match types
+              [(AstTypeCons hidden-ty type-rest)
+                (let
+                  [hidden-ty : AstType (ty-node-get hidden-ty)]
+                  [type-rest : AstTypeList (box-get type-rest)]
+                  (match hidden-ty
+                    [(AstTyVar hidden-name)
+                      (match type-rest
+                        [(AstTypeCons cleanup-ty end)
+                          (let
+                            [cleanup-ty : AstType (ty-node-get cleanup-ty)]
+                            [end : AstTypeList (box-get end)]
+                            (match cleanup-ty
+                              [(AstTyVar cleanup-name)
+                                (match end
+                                  [(AstTypeNil)
+                                    (match (lower-emit-cleanup-call
+                                      state
+                                      env
+                                      hidden-name
+                                      cleanup-name)
+                                      [(OkLowerState next-state)
+                                        (lower-emit-active-cleanups-with
+                                          cleanup-marker-id
+                                          next-state
+                                          env
+                                          (box-get rest))]
+                                      [(ErrLowerState message)
+                                        (ErrLowerState message)])]
+                                  [_
+                                    (lower-emit-active-cleanups-with
+                                      cleanup-marker-id
+                                      state
+                                      env
+                                      (box-get rest))])]
+                              [_
+                                (lower-emit-active-cleanups-with
+                                  cleanup-marker-id
+                                  state
+                                  env
+                                  (box-get rest))]))]
+                        [_
+                          (lower-emit-active-cleanups-with
+                            cleanup-marker-id
+                            state
+                            env
+                            (box-get rest))])]
+                    [_
+                      (lower-emit-active-cleanups-with
+                        cleanup-marker-id
+                        state
+                        env
+                        (box-get rest))]))]
+              [_
+                (lower-emit-active-cleanups-with
+                  cleanup-marker-id
+                  state
+                  env
+                  (box-get rest))])]
+          [_
+            (lower-emit-active-cleanups-with
+              cleanup-marker-id
+              state
+              env
+              (box-get rest))])
+        (lower-emit-active-cleanups-with
+          cleanup-marker-id
+          state
+          env
+          (box-get rest)))]))
 
 (define (lower-emit-active-cleanups
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
-  (match type-env
-    [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ _ _ rest)
-      (lower-emit-active-cleanups state env (box-get rest))]
-    [(TcTypeBind key ty rest)
-      (if (string-eq key (lower-cleanup-marker-name))
-        (match ty
-          [(AstTyTuple types)
-            (match types
-              [(AstTypeCons hidden-ty type-rest)
-                (let
-                  [hidden-ty : AstType (ty-node-get hidden-ty)]
-                  [type-rest : AstTypeList (box-get type-rest)]
-                  (match hidden-ty
-                    [(AstTyVar hidden-name)
-                      (match type-rest
-                        [(AstTypeCons cleanup-ty end)
-                          (let
-                            [cleanup-ty : AstType (ty-node-get cleanup-ty)]
-                            [end : AstTypeList (box-get end)]
-                            (match cleanup-ty
-                              [(AstTyVar cleanup-name)
-                                (match end
-                                  [(AstTypeNil)
-                                    (match (lower-emit-cleanup-call
-                                      state
-                                      env
-                                      hidden-name
-                                      cleanup-name)
-                                      [(OkLowerState next-state)
-                                        (lower-emit-active-cleanups
-                                          next-state
-                                          env
-                                          (box-get rest))]
-                                      [(ErrLowerState message)
-                                        (ErrLowerState message)])]
-                                  [_
-                                    (lower-emit-active-cleanups
-                                      state
-                                      env
-                                      (box-get rest))])]
-                              [_
-                                (lower-emit-active-cleanups
-                                  state
-                                  env
-                                  (box-get rest))]))]
-                        [_
-                          (lower-emit-active-cleanups state env (box-get rest))])]
-                    [_ (lower-emit-active-cleanups state env (box-get rest))]))]
-              [_ (lower-emit-active-cleanups state env (box-get rest))])]
-          [_ (lower-emit-active-cleanups state env (box-get rest))])
-        (lower-emit-active-cleanups state env (box-get rest)))]))
+  (lower-emit-active-cleanups-with (lower-cleanup-marker-id) state env type-env))
 
 (define (lower-return-form
   [ctx : TcContext]
@@ -8830,6 +9001,7 @@
         (match binding
           [(AstLetBinding name maybe-ty init-box)
             (let
+              [name-id : i64 (lower-name-id name)]
               [init : AstExpr (ast-node-get init-box)]
               (match (lower-let-binding-result-type-fast
                 ctx
@@ -8841,8 +9013,8 @@
                 [(OkTcType binding-ty)
                   (lower-let-bindings-type-env-fast
                     ctx
-                    (sym-i64-bind env name 0)
-                    (tc-bind type-env name binding-ty)
+                    (sym-i64-bind-id env name-id 0)
+                    (tc-bind-id type-env name-id binding-ty)
                     type-cache
                     rest)]
                 [(ErrTcType message) (ErrTcEnv message)]))]))]))
@@ -8857,7 +9029,9 @@
         [rest : AstLetBindingList (box-get rest)]
         (match binding
           [(AstLetBinding name _ _)
-            (lower-let-bindings-local-env (sym-i64-bind env name 0) rest)]))]))
+            (lower-let-bindings-local-env
+              (sym-i64-bind-id env (lower-name-id name) 0)
+              rest)]))]))
 
 (define (lower-projected-result-type-fast
   [ctx : TcContext]
@@ -9021,7 +9195,7 @@
         (lower-expr-result-type-fast ctx env type-env type-cache inner))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
-      (match (lower-lookup-type type-cache env type-env (intern-str name))
+      (match (lower-lookup-type-id type-cache env type-env name)
         [(OkTcType expr-ty) (OkTcType (tc-type-without-regions expr-ty))]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprInit ty)
@@ -9477,12 +9651,13 @@
       (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprSet name value-box)
       (let
+        [name-id : i64 (lower-name-id name)]
         [value : AstExpr (ast-node-get value-box)]
-        (match (lower-lookup-type
+        (match (lower-lookup-type-id
           (lower-state-type-cache state)
           env
           type-env
-          name)
+          name-id)
           [(OkTcType store-ty)
             (let
               [target-ty : AstType
@@ -9498,7 +9673,7 @@
                 [(OkLowerExpr lowered)
                   (match lowered
                     [(LowerExpr value-state value-ir _)
-                      (match (sym-i64-lookup env name)
+                      (match (sym-i64-lookup-id env name-id)
                         [(SomeI64 id)
                           (OkLowerExpr
                             (LowerExpr
@@ -13814,6 +13989,7 @@
         (match binding
           [(AstLetBinding name maybe-ty init-box)
             (let
+              [name-id : i64 (lower-name-id name)]
               [init : AstExpr (ast-node-get init-box)]
               (match (lower-let-init ctx state env type-env maybe-ty init)
                 [(OkLowerExpr lowered)
@@ -13824,14 +14000,17 @@
                           (lower-let-binding-type ctx maybe-ty init-ty)]
                         (match (lower-state-alloc-var init-state)
                           [(LowerAlloc allocated var-id)
-                            (lower-let-bindings
-                              ctx
-                              (lower-state-emit
-                                allocated
-                                (IrInstrMov var-id init-value binding-ty))
-                              (sym-i64-bind env name var-id)
-                              (tc-bind type-env name binding-ty)
-                              rest)]))])]
+                            (let
+                              [next-type-env : TcTypeEnv
+                                (tc-bind-id type-env name-id binding-ty)]
+                              (lower-let-bindings
+                                ctx
+                                (lower-state-emit
+                                  allocated
+                                  (IrInstrMov var-id init-value binding-ty))
+                                (sym-i64-bind-id env name-id var-id)
+                                next-type-env
+                                rest))]))])]
                 [(ErrLowerExpr message) (ErrLowerEnv message)]))]))]))
 
 (define (lower-resource-bindings
@@ -14418,10 +14597,10 @@
 ;; is evaluated exactly once per iteration.
 (define (spmd-reduce-acc-binop-update [op : AstBinOp] [value : i64]) : i64
   (ast-expr-set
-    "0spmd-reduce-acc"
+    (lower-spmd-reduce-acc-name)
     (ast-expr-binary
       op
-      (ast-node-push (AstExprVar (intern "0spmd-reduce-acc")))
+      (ast-node-push (AstExprVar (lower-spmd-reduce-acc-id)))
       value)))
 
 ;; Per-iteration accumulator update for a select fold (`min`/`max`): bind `value`
@@ -14431,17 +14610,17 @@
 (define (spmd-reduce-acc-select-update [cmp : AstBinOp] [value : i64]) : i64
   (ast-expr-let
     (ast-let-binding-cons
-      (ast-let-binding "0spmd-reduce-val" (AstNoType) value)
+      (ast-let-binding (lower-spmd-reduce-val-name) (AstNoType) value)
       (AstLetBindingNil))
     (ast-expr-set
-      "0spmd-reduce-acc"
+      (lower-spmd-reduce-acc-name)
       (ast-expr-if
         (ast-expr-binary
           cmp
-          (ast-node-push (AstExprVar (intern "0spmd-reduce-val")))
-          (ast-node-push (AstExprVar (intern "0spmd-reduce-acc"))))
-        (ast-node-push (AstExprVar (intern "0spmd-reduce-val")))
-        (ast-node-push (AstExprVar (intern "0spmd-reduce-acc")))))))
+          (ast-node-push (AstExprVar (lower-spmd-reduce-val-id)))
+          (ast-node-push (AstExprVar (lower-spmd-reduce-acc-id))))
+        (ast-node-push (AstExprVar (lower-spmd-reduce-val-id)))
+        (ast-node-push (AstExprVar (lower-spmd-reduce-acc-id)))))))
 
 (define (spmd-reduce-acc-update-expr [op : AstReduceOp] [value : i64]) : i64
   (match op
@@ -14479,9 +14658,15 @@
     (ast-node-get
       (ast-expr-let
         (ast-let-binding-cons
-          (ast-let-binding "0spmd-reduce-acc" (AstNoType) (ast-node-push init))
+          (ast-let-binding
+            (lower-spmd-reduce-acc-name)
+            (AstNoType)
+            (ast-node-push init))
           (ast-let-binding-cons
-            (ast-let-binding "0spmd-reduce-end" (AstNoType) (ast-node-push end))
+            (ast-let-binding
+              (lower-spmd-reduce-end-name)
+              (AstNoType)
+              (ast-node-push end))
             (ast-let-binding-cons
               (ast-let-binding
                 index
@@ -14495,7 +14680,7 @@
                 (ast-expr-binary
                   (AstBinLt)
                   (ast-node-push (AstExprVar (intern index)))
-                  (ast-node-push (AstExprVar (intern "0spmd-reduce-end"))))
+                  (ast-node-push (AstExprVar (lower-spmd-reduce-end-id))))
                 (ast-node-push
                   (AstExprBegin
                     (ast-expr-cons
@@ -14509,7 +14694,7 @@
                             (ast-node-push (AstExprLiteral (AstLitInt 1)))))
                         (AstExprNil))))))
               (ast-expr-cons
-                (ast-node-push (AstExprVar (intern "0spmd-reduce-acc")))
+                (ast-node-push (AstExprVar (lower-spmd-reduce-acc-id)))
                 (AstExprNil)))))))))
 
 ;; Scalar lowering for all reduction ops (#1013): `sum` (wrapping `+`, also f64
@@ -15569,8 +15754,8 @@
   [elem-ty : AstType]
   [value-var : i64]) : ResultLowerExpr
   (let
-    [acc-name-id : i64 (intern "0spmd-reduce-acc")]
-    [current-name-id : i64 (intern "0spmd-reduce-current")]
+    [acc-name-id : i64 (lower-spmd-reduce-acc-id)]
+    [current-name-id : i64 (lower-spmd-reduce-current-id)]
     (lower-expr
       ctx
       state
@@ -15578,9 +15763,9 @@
         (sym-i64-bind-id env acc-name-id acc-var)
         current-name-id
         value-var)
-      (tc-bind
-        (tc-bind type-env "0spmd-reduce-acc" elem-ty)
-        "0spmd-reduce-current"
+      (tc-bind-id
+        (tc-bind-id type-env acc-name-id elem-ty)
+        current-name-id
         elem-ty)
       (ast-node-get
         (spmd-reduce-acc-update-expr
@@ -21110,23 +21295,25 @@
   [program : AstProgram]
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (lower-decls
-          ctx
-          top-env
-          decls
-          IrGlobalNil
-          IrFunctionNil
-          IrExternNil
-          (compiler-source-spans-empty)
-          names
-          mode)
-          [(OkLowerDecls globals functions externs spans)
-            (OkCompilerLower (IrProgram globals functions externs) spans)]
-          [(ErrLowerDecls message) (ErrCompilerLower message)]))]))
+  (begin
+    (lower-refresh-marker-ids!)
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (match (lower-decls
+            ctx
+            top-env
+            decls
+            IrGlobalNil
+            IrFunctionNil
+            IrExternNil
+            (compiler-source-spans-empty)
+            names
+            mode)
+            [(OkLowerDecls globals functions externs spans)
+              (OkCompilerLower (IrProgram globals functions externs) spans)]
+            [(ErrLowerDecls message) (ErrCompilerLower message)]))])))
 
 (define (lower-compiler-program-checked-with-names
   [ctx : TcContext]

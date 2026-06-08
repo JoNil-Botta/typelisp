@@ -587,7 +587,7 @@
       [(AstDeclDefFn name _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-fn)
-          (compiler-tc-decl-profile-add-fn-expr-named name))]
+          (compiler-tc-decl-profile-add-fn-expr-named (intern-str name)))]
       [(AstDeclDefMacro _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-macro)
@@ -892,6 +892,15 @@
     (tc-bind env name ty)
     (tc-bind env (compiler-symbol-module-key module name) ty)))
 
+(define (tc-bind-module-name-id
+  [env : TcTypeEnv]
+  [module : String]
+  [name : i64]
+  [ty : AstType]) : TcTypeEnv
+  (if (string-eq module "")
+    (tc-bind-id env name ty)
+    (tc-bind env (compiler-symbol-module-key module (intern-str name)) ty)))
+
 (define (tc-bind-module-name-unsafe
   [env : TcTypeEnv]
   [module : String]
@@ -900,6 +909,18 @@
   (if (string-eq module "")
     (tc-bind-unsafe env name ty)
     (tc-bind-unsafe env (compiler-symbol-module-key module name) ty)))
+
+(define (tc-bind-module-name-unsafe-id
+  [env : TcTypeEnv]
+  [module : String]
+  [name : i64]
+  [ty : AstType]) : TcTypeEnv
+  (if (string-eq module "")
+    (tc-bind-unsafe-id env name ty)
+    (tc-bind-unsafe
+      env
+      (compiler-symbol-module-key module (intern-str name))
+      ty)))
 
 (define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
   (tc-fn1 struct-ty (AstTyUnit)))
@@ -915,7 +936,7 @@
   (match cleanup
     [(AstStructNoCleanup) env]
     [(AstStructCleanupFn cleanup-name)
-      (tc-bind-module-name
+      (tc-bind-module-name-id
         env
         module
         cleanup-name
@@ -929,7 +950,7 @@
   (match cleanup
     [(AstEnumNoCleanup) env]
     [(AstEnumCleanupFn cleanup-name)
-      (tc-bind-module-name
+      (tc-bind-module-name-id
         env
         module
         cleanup-name
@@ -942,7 +963,7 @@
   (match cleanup
     [(AstStructNoCleanup) env]
     [(AstStructCleanupFn cleanup-name)
-      (tc-bind env cleanup-name (tc-struct-cleanup-function-type struct-ty))]))
+      (tc-bind-id env cleanup-name (tc-struct-cleanup-function-type struct-ty))]))
 
 (define (tc-bind-enum-cleanup-local
   [env : TcTypeEnv]
@@ -951,7 +972,7 @@
   (match cleanup
     [(AstEnumNoCleanup) env]
     [(AstEnumCleanupFn cleanup-name)
-      (tc-bind env cleanup-name (tc-enum-cleanup-function-type enum-ty))]))
+      (tc-bind-id env cleanup-name (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-bind-struct-cleanup-alias
   [env : TcTypeEnv]
@@ -963,7 +984,7 @@
     [(AstStructCleanupFn cleanup-name)
       (tc-bind
         env
-        (compiler-symbol-module-key alias cleanup-name)
+        (compiler-symbol-module-key alias (intern-str cleanup-name))
         (tc-struct-cleanup-function-type struct-ty))]))
 
 (define (tc-bind-enum-cleanup-alias
@@ -976,7 +997,7 @@
     [(AstEnumCleanupFn cleanup-name)
       (tc-bind
         env
-        (compiler-symbol-module-key alias cleanup-name)
+        (compiler-symbol-module-key alias (intern-str cleanup-name))
         (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-default-boundary-name) : String
@@ -2113,7 +2134,7 @@
               rest
               (tc-type-collect-reference-lifetimes-into
                 (tc-resolve-type ctx ty)
-                (tc-string-list-add out name)))]))]))
+                (tc-string-list-add out (intern-str name))))]))]))
 
 (define (tc-reference-return-lifetimes-allowed?
   [ctx : TcContext]
@@ -2757,24 +2778,28 @@
           [(AstDeclExport _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclModule next-module)
-            (tc-nominal-owner-name-list rest target index next-module)]
+            (tc-nominal-owner-name-list
+              rest
+              target
+              index
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclDefEnum name _ _)
             (if (= target index)
-              (OkTcString (compiler-symbol-module-key module name))
+              (OkTcString (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
           [(AstDeclDefEnumLifetimes name _ _ _)
             (if (= target index)
-              (OkTcString (compiler-symbol-module-key module name))
+              (OkTcString (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
           [(AstDeclDefStruct name _ _ _)
             (if (= target index)
-              (OkTcString (compiler-symbol-module-key module name))
+              (OkTcString (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
           [(AstDeclDefStructLifetimes name _ _ _ _)
             (if (= target index)
-              (OkTcString (compiler-symbol-module-key module name))
+              (OkTcString (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
           [(AstDeclComptimeDecl _ template-box)
             (let
@@ -2782,19 +2807,23 @@
               (match template
                 [(AstDeclDefEnum name _ _)
                   (if (= target index)
-                    (OkTcString (compiler-symbol-module-key module name))
+                    (OkTcString
+                      (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
                 [(AstDeclDefEnumLifetimes name _ _ _)
                   (if (= target index)
-                    (OkTcString (compiler-symbol-module-key module name))
+                    (OkTcString
+                      (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
                 [(AstDeclDefStruct name _ _ _)
                   (if (= target index)
-                    (OkTcString (compiler-symbol-module-key module name))
+                    (OkTcString
+                      (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
                 [(AstDeclDefStructLifetimes name _ _ _ _)
                   (if (= target index)
-                    (OkTcString (compiler-symbol-module-key module name))
+                    (OkTcString
+                      (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
                 [_ (tc-nominal-owner-name-list rest target (+ index 1) module)]))]
           [_ (tc-nominal-owner-name-list rest target (+ index 1) module)]))]))
@@ -3585,7 +3614,8 @@
     [(AstDeclExtern _ _ _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum name _ variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
-        [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
+        [(OkTcUnit)
+          (tc-source-default-aggregate-layout-finite-ok ctx (intern-str name))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefEnumLifetimes name lifetimes _ variants)
       (if (tc-lifetime-list-duplicates? lifetimes)
@@ -3594,7 +3624,8 @@
           ctx
           lifetimes
           variants)
-          [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
+          [(OkTcUnit)
+            (tc-source-default-aggregate-layout-finite-ok ctx (intern-str name))]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclDefStruct name repr cleanup fields)
       (match (tc-source-field-list-policy-ok ctx fields)
@@ -3602,8 +3633,13 @@
           (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
             (ErrTcUnit
               (tc-struct-cleanup-repr-c-message
-                (compiler-symbol-module-key (tc-context-module ctx) name)))
-            (tc-source-default-struct-layout-finite-ok ctx name repr))]
+                (compiler-symbol-module-key
+                  (tc-context-module ctx)
+                  (intern-str name))))
+            (tc-source-default-struct-layout-finite-ok
+              ctx
+              (intern-str name)
+              repr))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
       (if (tc-lifetime-list-duplicates? lifetimes)
@@ -3613,8 +3649,13 @@
             (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
               (ErrTcUnit
                 (tc-struct-cleanup-repr-c-message
-                  (compiler-symbol-module-key (tc-context-module ctx) name)))
-              (tc-source-default-struct-layout-finite-ok ctx name repr))]
+                  (compiler-symbol-module-key
+                    (tc-context-module ctx)
+                    (intern-str name))))
+              (tc-source-default-struct-layout-finite-ok
+                ctx
+                (intern-str name)
+                repr))]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclDefDispatch _ _) OkTcUnit]
     [(AstDeclIncludeStr _ _)
@@ -3649,7 +3690,10 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (tc-source-decl-list-policy-ok-in-module ctx rest next-module)]
+            (tc-source-decl-list-policy-ok-in-module
+              ctx
+              rest
+              (intern-str next-module))]
           [_
             (match (tc-source-decl-policy-ok
               (tc-context-with-module ctx module)
@@ -4468,7 +4512,7 @@
           [(AstParam name ty _)
             (tc-bind-params
               ctx
-              (tc-bind env name (tc-resolve-type ctx ty))
+              (tc-bind-id env name (tc-resolve-type ctx ty))
               rest)]))]))
 
 (define (tc-bind-macro-params
@@ -4484,7 +4528,7 @@
           [(AstMacroParam name _ variadic)
             (tc-bind-macro-params
               ctx
-              (tc-bind
+              (tc-bind-id
                 env
                 name
                 (if variadic
@@ -4507,11 +4551,11 @@
               ctx
               (ctfe-env-extend
                 env
-                name
+                (intern-str name)
                 (if variadic
                   (CtfeExprList AstExprNil)
                   (CtfeExpr
-                    (ast-node-push (AstExprVar (intern name)))
+                    (ast-node-push (AstExprVar name))
                     (tc-resolve-type ctx ty))))
               rest)]))]))
 
@@ -4687,7 +4731,7 @@
         (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
     [(AstDeclExtern _ _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
     [(AstDeclDefDispatch name variants)
-      (tc-dispatch-decl-type ctx name variants)]
+      (tc-dispatch-decl-type ctx (intern-str name) variants)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4782,7 +4826,7 @@
                 (compiler-symbol-module-key module enum-name)]
               (tc-bind-enum-variants-in-module
                 ctx
-                (tc-bind-module-name
+                (tc-bind-module-name-id
                   env
                   module
                   name
@@ -4816,12 +4860,12 @@
           [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
-                (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
+                (OkTcEnv (tc-bind-module-name-unsafe-id env module name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
-                (OkTcEnv (tc-bind-module-name-unsafe env module name ty))]
+                (OkTcEnv (tc-bind-module-name-unsafe-id env module name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
@@ -4829,30 +4873,31 @@
         (tc-context-with-module ctx module)
         env
         decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name-id env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name-id env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefDispatch name _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name-id env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefMacro _ _ _ _) (OkTcEnv env)]
     [(AstDeclExtern name _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind-module-name env module name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-module-name-id env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefEnum name cleanup variants)
       (let
-        [scoped-name : String (compiler-symbol-module-key module name)]
+        [name-str : String (intern-str name)]
+        [scoped-name : String (compiler-symbol-module-key module name-str)]
         [enum-ty : AstType (AstTyEnum scoped-name)]
         (match (tc-bind-enum-variants-in-module
           (tc-context-with-module ctx module)
           env
           module
-          name
+          name-str
           AstLifetimeNil
           variants)
           [(OkTcEnv with-variants)
@@ -4865,13 +4910,14 @@
           [(ErrTcEnv message) (ErrTcEnv message)]))]
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
       (let
-        [scoped-name : String (compiler-symbol-module-key module name)]
+        [name-str : String (intern-str name)]
+        [scoped-name : String (compiler-symbol-module-key module name-str)]
         [enum-ty : AstType (AstTyEnumArgs scoped-name lifetimes)]
         (match (tc-bind-enum-variants-in-module
           (tc-context-with-module ctx module)
           env
           module
-          name
+          name-str
           lifetimes
           variants)
           [(OkTcEnv with-variants)
@@ -4884,7 +4930,8 @@
           [(ErrTcEnv message) (ErrTcEnv message)]))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
-        [scoped-name : String (compiler-symbol-module-key module name)]
+        [name-str : String (intern-str name)]
+        [scoped-name : String (compiler-symbol-module-key module name-str)]
         [struct-ty : AstType (AstTyStruct scoped-name)]
         [constructor-ty : AstType
           (ast-ty-func
@@ -4892,13 +4939,14 @@
             struct-ty)]
         (OkTcEnv
           (tc-bind-struct-cleanup-module-name
-            (tc-bind-module-name env module name constructor-ty)
+            (tc-bind-module-name-id env module name constructor-ty)
             module
             cleanup
             struct-ty)))]
     [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
       (let
-        [scoped-name : String (compiler-symbol-module-key module name)]
+        [name-str : String (intern-str name)]
+        [scoped-name : String (compiler-symbol-module-key module name-str)]
         [struct-ty : AstType (AstTyStructArgs scoped-name lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func
@@ -4906,7 +4954,7 @@
             struct-ty)]
         (OkTcEnv
           (tc-bind-struct-cleanup-module-name
-            (tc-bind-module-name env module name constructor-ty)
+            (tc-bind-module-name-id env module name constructor-ty)
             module
             cleanup
             struct-ty)))]
@@ -4940,7 +4988,7 @@
               (match decl
                 [(AstDeclModule next-module)
                   (begin
-                    (set! current-module next-module)
+                    (set! current-module (intern-str next-module))
                     (set! cursor rest))]
                 [_
                   (match (tc-build-top-env-bind-decl-in-module
@@ -4978,7 +5026,7 @@
               ctx
               (tc-bind
                 env
-                (compiler-symbol-module-key alias name)
+                (compiler-symbol-module-key alias (intern-str name))
                 (tc-enum-variant-constructor-type
                   ctx
                   enum-name
@@ -5006,7 +5054,7 @@
                 (OkTcEnv
                   (tc-bind-unsafe
                     env
-                    (compiler-symbol-module-key alias name)
+                    (compiler-symbol-module-key alias (intern-str name))
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name _ _ _)
@@ -5015,40 +5063,58 @@
                 (OkTcEnv
                   (tc-bind-unsafe
                     env
-                    (compiler-symbol-module-key alias name)
+                    (compiler-symbol-module-key alias (intern-str name))
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
-          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+          (OkTcEnv
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias (intern-str name))
+              ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
-          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+          (OkTcEnv
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias (intern-str name))
+              ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefDispatch name _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
-          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+          (OkTcEnv
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias (intern-str name))
+              ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclExtern name _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
-          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+          (OkTcEnv
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias (intern-str name))
+              ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefEnum name cleanup variants)
       (let
-        [enum-ty : AstType (AstTyEnum (compiler-symbol-module-key module name))]
+        [name-str : String (intern-str name)]
+        [enum-ty : AstType
+          (AstTyEnum (compiler-symbol-module-key module name-str))]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
-              (compiler-symbol-module-key module name)
+              (compiler-symbol-module-key module name-str)
               AstLifetimeNil
               variants)
             alias
@@ -5056,15 +5122,16 @@
             enum-ty)))]
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
       (let
+        [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnumArgs (compiler-symbol-module-key module name) lifetimes)]
+          (AstTyEnumArgs (compiler-symbol-module-key module name-str) lifetimes)]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
-              (compiler-symbol-module-key module name)
+              (compiler-symbol-module-key module name-str)
               lifetimes
               variants)
             alias
@@ -5072,29 +5139,39 @@
             enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
+        [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStruct (compiler-symbol-module-key module name))]
+          (AstTyStruct (compiler-symbol-module-key module name-str))]
         [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             struct-ty)]
         (OkTcEnv
           (tc-bind-struct-cleanup-alias
-            (tc-bind env (compiler-symbol-module-key alias name) constructor-ty)
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias name-str)
+              constructor-ty)
             alias
             cleanup
             struct-ty)))]
     [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
       (let
+        [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes)]
+          (AstTyStructArgs
+            (compiler-symbol-module-key module name-str)
+            lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             struct-ty)]
         (OkTcEnv
           (tc-bind-struct-cleanup-alias
-            (tc-bind env (compiler-symbol-module-key alias name) constructor-ty)
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias name-str)
+              constructor-ty)
             alias
             cleanup
             struct-ty)))]
@@ -5124,7 +5201,7 @@
               env
               target-module
               alias
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclImport _)
             (tc-bind-import-alias-module-list
               ctx
@@ -5249,7 +5326,7 @@
               ctx
               (tc-bind
                 env
-                name
+                (intern-str name)
                 (tc-enum-variant-constructor-type
                   ctx
                   scoped-enum
@@ -5272,78 +5349,85 @@
         (match inner
           [(AstDeclDefFn name _ _ _ _)
             (match (tc-top-decl-type ctx inner)
-              [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
+              [(OkTcType ty) (OkTcEnv (tc-bind-unsafe-id env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name _ _ _)
             (match (tc-top-decl-type ctx inner)
-              [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
+              [(OkTcType ty) (OkTcEnv (tc-bind-unsafe-id env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
       (match (tc-top-decl-type-with-env ctx env decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-id env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type ctx decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-id env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefDispatch name _)
       (match (tc-top-decl-type ctx decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-id env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclExtern name _ _ _)
       (match (tc-top-decl-type ctx decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
+        [(OkTcType ty) (OkTcEnv (tc-bind-id env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefEnum name cleanup variants)
       (let
-        [enum-ty : AstType (AstTyEnum (compiler-symbol-module-key module name))]
+        [name-str : String (intern-str name)]
+        [enum-ty : AstType
+          (AstTyEnum (compiler-symbol-module-key module name-str))]
         (OkTcEnv
           (tc-bind-enum-cleanup-local
             (tc-bind-enum-variants-local
               ctx
               env
-              name
-              (compiler-symbol-module-key module name)
+              name-str
+              (compiler-symbol-module-key module name-str)
               AstLifetimeNil
               variants)
             cleanup
             enum-ty)))]
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
       (let
+        [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnumArgs (compiler-symbol-module-key module name) lifetimes)]
+          (AstTyEnumArgs (compiler-symbol-module-key module name-str) lifetimes)]
         (OkTcEnv
           (tc-bind-enum-cleanup-local
             (tc-bind-enum-variants-local
               ctx
               env
-              name
-              (compiler-symbol-module-key module name)
+              name-str
+              (compiler-symbol-module-key module name-str)
               lifetimes
               variants)
             cleanup
             enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
       (let
+        [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStruct (compiler-symbol-module-key module name))]
+          (AstTyStruct (compiler-symbol-module-key module name-str))]
         [constructor-ty : AstType
           (ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
         (OkTcEnv
           (tc-bind-struct-cleanup-local
-            (tc-bind env name constructor-ty)
+            (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
     [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
       (let
+        [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes)]
+          (AstTyStructArgs
+            (compiler-symbol-module-key module name-str)
+            lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
         (OkTcEnv
           (tc-bind-struct-cleanup-local
-            (tc-bind env name constructor-ty)
+            (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
     [(AstDeclComptimeDecl _ template-box)
@@ -5365,7 +5449,12 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (tc-module-local-env-list ctx rest env target-module next-module)]
+            (tc-module-local-env-list
+              ctx
+              rest
+              env
+              target-module
+              (intern-str next-module))]
           [_
             (if (string-eq module target-module)
               (match (tc-module-local-env-add-decl ctx env target-module decl)
@@ -7175,7 +7264,7 @@
                                   [(OkTcUnit)
                                     (tc-let-bindings
                                       ctx
-                                      (tc-bind
+                                      (tc-bind-id
                                         env
                                         name
                                         (if (tc-type-contains-any-region
@@ -7198,7 +7287,7 @@
                             [(OkTcUnit)
                               (tc-let-bindings
                                 ctx
-                                (tc-bind env name init-ty)
+                                (tc-bind-id env name init-ty)
                                 rest)]
                             [(ErrTcUnit message) (ErrTcEnv message)])]
                         [(ErrTcUnit message) (ErrTcEnv message)])]
@@ -7280,7 +7369,7 @@
                 (tc-ref-closure-let-binding-list-local-uses-ok?
                   rest
                   name
-                  (tc-string-list-add bound bind-name))))]))]))
+                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
 
 (define (tc-ref-closure-let-rest-and-body-local-uses-ok?
   [bindings : AstLetBindingList]
@@ -7302,7 +7391,7 @@
                   rest
                   body
                   name
-                  (tc-string-list-add bound bind-name))))]))]))
+                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
 
 (define (tc-ref-closure-resource-binding-list-local-uses-ok?
   [bindings : AstResourceBindingList]
@@ -7325,7 +7414,7 @@
                   (tc-ref-closure-resource-binding-list-local-uses-ok?
                     rest
                     name
-                    (tc-string-list-add bound bind-name)))))]))]))
+                    (tc-string-list-add bound (intern-str bind-name))))))]))]))
 
 (define (tc-ref-closure-match-arms-local-uses-ok?
   [arms : AstMatchArmList]
@@ -7478,7 +7567,7 @@
         (and
           (not
             (and
-              (string-eq var-name name)
+              (string-eq (intern-str var-name) name)
               (not (tc-string-list-contains bound name))))
           (tc-ref-closure-local-uses-ok? value name bound)))]
     [(AstExprAnn inner-box _)
@@ -7519,7 +7608,7 @@
             (tc-ref-closure-local-uses-ok?
               body
               name
-              (tc-string-list-add bound index)))))]
+              (tc-string-list-add bound (intern-str index))))))]
     [(AstExprSpmdReduce _ index _ start-box end-box init-box value-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -7535,7 +7624,7 @@
               (tc-ref-closure-local-uses-ok?
                 value
                 name
-                (tc-string-list-add bound index))))))]
+                (tc-string-list-add bound (intern-str index)))))))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -7752,7 +7841,7 @@
               (match (tc-let-binding-init-type
                 ctx
                 env
-                name
+                (intern-str name)
                 maybe-ty
                 init
                 rest
@@ -7777,7 +7866,7 @@
                                   [(OkTcUnit)
                                     (tc-let-bindings-for-body
                                       ctx
-                                      (tc-bind
+                                      (tc-bind-id
                                         env
                                         name
                                         (if (tc-type-contains-any-region
@@ -7798,7 +7887,7 @@
                             [(OkTcUnit)
                               (tc-let-bindings-for-body
                                 ctx
-                                (tc-bind env name init-ty)
+                                (tc-bind-id env name init-ty)
                                 rest
                                 body)]
                             [(ErrTcUnit message) (ErrTcEnv message)])]
@@ -7848,8 +7937,8 @@
                         [(OkTcUnit)
                           (tc-resource-bindings
                             ctx
-                            (tc-bind
-                              (tc-bind-cleanup-owner env name)
+                            (tc-bind-id
+                              (tc-bind-cleanup-owner env (intern-str name))
                               name
                               (tc-type-without-regions init-ty))
                             rest)]
@@ -8035,10 +8124,10 @@
                                 [(AstNoType) init-ty])]
                             (tc-spmd-masked-if-let-bindings
                               ctx
-                              (tc-bind env name bound-ty)
+                              (tc-bind-id env name bound-ty)
                               (tc-spmd-env-bind
                                 next-spmd-env
-                                name
+                                (intern-str name)
                                 bound-ty
                                 init-class
                                 TcSpmdLocal)
@@ -8220,10 +8309,10 @@
                             [(AstNoType) init-ty])]
                         (tc-spmd-let-bindings
                           ctx
-                          (tc-bind env name bound-ty)
+                          (tc-bind-id env name bound-ty)
                           (tc-spmd-env-bind
                             next-spmd-env
-                            name
+                            (intern-str name)
                             bound-ty
                             init-class
                             TcSpmdLocal)
@@ -8704,12 +8793,15 @@
           [(OkTcSpmdExprInfo value-info)
             (match value-info
               [(TcSpmdExprInfo _ value-class value-env)
-                (if (tc-spmd-env-has-local? value-env name)
+                (if (tc-spmd-env-has-local? value-env (intern-str name))
                   (tc-spmd-finish
                     expr-ty
                     TcSpmdUniform
-                    (tc-spmd-env-set-local-class value-env name value-class))
-                  (if (tc-spmd-env-has-outer? value-env name)
+                    (tc-spmd-env-set-local-class
+                      value-env
+                      (intern-str name)
+                      value-class))
+                  (if (tc-spmd-env-has-outer? value-env (intern-str name))
                     (ErrTcSpmdExprInfo
                       "typecheck: foreach cannot set binding declared outside foreach")
                     (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
@@ -8765,7 +8857,7 @@
                                   ctx
                                   env
                                   end-env
-                                  index
+                                  (intern-str index)
                                   (tc-resolve-type ctx index-ty)
                                   body)
                                   [(OkTcUnit)
@@ -9025,7 +9117,9 @@
         [rest : AstParamList (box-get rest)]
         (match param
           [(AstParam name _ _)
-            (tc-param-list-add-bound-names rest (tc-string-list-add bound name))]))]))
+            (tc-param-list-add-bound-names
+              rest
+              (tc-string-list-add bound (intern-str name)))]))]))
 
 (define (tc-param-bound-names [params : AstParamList]) : TcStringList
   (tc-param-list-add-bound-names params TcStringNil))
@@ -9034,13 +9128,13 @@
   [pattern : AstPattern]
   [bound : TcStringList]) : TcStringList
   (match pattern
-    [(AstPatVar name _) (tc-string-list-add bound name)]
+    [(AstPatVar name _) (tc-string-list-add bound (intern-str name))]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
     [(AstPatWildcard) bound]
-    [(AstPatBinding name) (tc-string-list-add bound name)]
+    [(AstPatBinding name) (tc-string-list-add bound (intern-str name))]
     [(AstPatVariant _ patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
@@ -9072,7 +9166,7 @@
           [(AstLetBinding name _ _)
             (tc-let-binding-list-add-bound-names
               rest
-              (tc-string-list-add bound name))]))]))
+              (tc-string-list-add bound (intern-str name)))]))]))
 
 (define (tc-resource-binding-list-add-bound-names
   [bindings : AstResourceBindingList]
@@ -9086,7 +9180,7 @@
           [(AstResourceBinding name _ _)
             (tc-resource-binding-list-add-bound-names
               rest
-              (tc-string-list-add bound name))]))]))
+              (tc-string-list-add bound (intern-str name)))]))]))
 
 (define (tc-expr-list-uses-free-name?
   [exprs : AstExprList]
@@ -9120,7 +9214,7 @@
                 (tc-let-binding-list-uses-free-name?
                   rest
                   name
-                  (tc-string-list-add bound bind-name))))]))]))
+                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
 
 (define (tc-resource-binding-list-uses-free-name?
   [bindings : AstResourceBindingList]
@@ -9143,7 +9237,7 @@
                   (tc-resource-binding-list-uses-free-name?
                     rest
                     name
-                    (tc-string-list-add bound bind-name)))))]))]))
+                    (tc-string-list-add bound (intern-str bind-name))))))]))]))
 
 (define (tc-match-arms-use-free-name?
   [arms : AstMatchArmList]
@@ -9279,7 +9373,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (or
           (and
-            (string-eq var-name name)
+            (string-eq (intern-str var-name) name)
             (not (tc-string-list-contains bound name)))
           (tc-expr-uses-free-name? value name bound)))]
     [(AstExprAnn inner-box _)
@@ -9317,7 +9411,10 @@
           (tc-expr-uses-free-name? start name bound)
           (or
             (tc-expr-uses-free-name? end name bound)
-            (tc-expr-uses-free-name? body name (tc-string-list-add bound index)))))]
+            (tc-expr-uses-free-name?
+              body
+              name
+              (tc-string-list-add bound (intern-str index))))))]
     [(AstExprSpmdReduce _ index _ start-box end-box init-box value-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -9333,7 +9430,7 @@
               (tc-expr-uses-free-name?
                 value
                 name
-                (tc-string-list-add bound index))))))]
+                (tc-string-list-add bound (intern-str index)))))))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -9388,7 +9485,9 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-uses-free-name? inner name bound))]
     [(AstExprPtrAddrOf var-name)
-      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
+      (and
+        (string-eq (intern-str var-name) name)
+        (not (tc-string-list-contains bound name)))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -9507,7 +9606,7 @@
                 (tc-let-binding-list-sets-free-name?
                   rest
                   name
-                  (tc-string-list-add bound bind-name))))]))]))
+                  (tc-string-list-add bound (intern-str bind-name)))))]))]))
 
 (define (tc-resource-binding-list-sets-free-name?
   [bindings : AstResourceBindingList]
@@ -9530,7 +9629,7 @@
                   (tc-resource-binding-list-sets-free-name?
                     rest
                     name
-                    (tc-string-list-add bound bind-name)))))]))]))
+                    (tc-string-list-add bound (intern-str bind-name))))))]))]))
 
 (define (tc-match-arms-set-free-name?
   [arms : AstMatchArmList]
@@ -9661,7 +9760,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (or
           (and
-            (string-eq var-name name)
+            (string-eq (intern-str var-name) name)
             (not (tc-string-list-contains bound name)))
           (tc-expr-sets-free-name? value name bound)))]
     [(AstExprAnn inner-box _)
@@ -9699,7 +9798,10 @@
           (tc-expr-sets-free-name? start name bound)
           (or
             (tc-expr-sets-free-name? end name bound)
-            (tc-expr-sets-free-name? body name (tc-string-list-add bound index)))))]
+            (tc-expr-sets-free-name?
+              body
+              name
+              (tc-string-list-add bound (intern-str index))))))]
     [(AstExprSpmdReduce _ index _ start-box end-box init-box value-box)
       (let
         [start : AstExpr (ast-node-get start-box)]
@@ -9715,7 +9817,7 @@
               (tc-expr-sets-free-name?
                 value
                 name
-                (tc-string-list-add bound index))))))]
+                (tc-string-list-add bound (intern-str index)))))))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -9941,14 +10043,14 @@
         (tc-expr-result-uses-cleanup-owner?
           body
           owners
-          (tc-string-list-add bound index)))]
+          (tc-string-list-add bound (intern-str index))))]
     [(AstExprSpmdReduce _ index _ _ _ _ value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (tc-expr-result-uses-cleanup-owner?
           value
           owners
-          (tc-string-list-add bound index)))]
+          (tc-string-list-add bound (intern-str index))))]
     [(AstExprBegin exprs)
       (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
     [(AstExprUnsafe exprs)
@@ -10174,17 +10276,24 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (tc-program-enum-variants-list-in-module rest enum-name next-module)]
+            (tc-program-enum-variants-list-in-module
+              rest
+              enum-name
+              (intern-str next-module))]
           [(AstDeclDefEnum name _ variants)
             (if (or
-              (string-eq name enum-name)
-              (string-eq (compiler-symbol-module-key module name) enum-name))
+              (string-eq (intern-str name) enum-name)
+              (string-eq
+                (compiler-symbol-module-key module (intern-str name))
+                enum-name))
               (OkAstVariantDefList variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
           [(AstDeclDefEnumLifetimes name _ _ variants)
             (if (or
-              (string-eq name enum-name)
-              (string-eq (compiler-symbol-module-key module name) enum-name))
+              (string-eq (intern-str name) enum-name)
+              (string-eq
+                (compiler-symbol-module-key module (intern-str name))
+                enum-name))
               (OkAstVariantDefList variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
           [(AstDeclComptimeDecl _ template-box)
@@ -10193,9 +10302,9 @@
               (match template
                 [(AstDeclDefEnum name _ variants)
                   (if (or
-                    (string-eq name enum-name)
+                    (string-eq (intern-str name) enum-name)
                     (string-eq
-                      (compiler-symbol-module-key module name)
+                      (compiler-symbol-module-key module (intern-str name))
                       enum-name))
                     (OkAstVariantDefList variants)
                     (tc-program-enum-variants-list-in-module
@@ -10204,9 +10313,9 @@
                       module))]
                 [(AstDeclDefEnumLifetimes name _ _ variants)
                   (if (or
-                    (string-eq name enum-name)
+                    (string-eq (intern-str name) enum-name)
                     (string-eq
-                      (compiler-symbol-module-key module name)
+                      (compiler-symbol-module-key module (intern-str name))
                       enum-name))
                     (OkAstVariantDefList variants)
                     (tc-program-enum-variants-list-in-module
@@ -10693,7 +10802,10 @@
                                 size
                                 align
                                 (TcInlineFieldLayoutCons
-                                  (TcInlineFieldLayout name resolved offset)
+                                  (TcInlineFieldLayout
+                                    (intern-str name)
+                                    resolved
+                                    offset)
                                   (box rest-fields))))])]
                       [(ErrTcInlineFieldsLayout message)
                         (ErrTcInlineFieldsLayout message)]))]
@@ -10818,7 +10930,7 @@
                                   enum-align
                                   (TcInlineVariantLayoutCons
                                     (TcInlineVariantLayout
-                                      variant-name
+                                      (intern-str variant-name)
                                       variant-size
                                       variant-align
                                       payloads)
@@ -11071,7 +11183,12 @@
           [(AstFieldDef name ty _)
             (let
               [resolved : AstType (tc-resolve-type ctx ty)]
-              (match (tc-repr-c-field-layout-info ctx owner name resolved seen)
+              (match (tc-repr-c-field-layout-info
+                ctx
+                owner
+                (intern-str name)
+                resolved
+                seen)
                 [(OkTcLayoutInfo info)
                   (let
                     [field-align : i64 (tc-layout-info-align info)]
@@ -11092,7 +11209,10 @@
                             (tc-repr-c-layout-size rest-layout)
                             (tc-repr-c-layout-align rest-layout)
                             (TcReprCFieldLayoutCons
-                              (TcReprCFieldLayout name resolved offset)
+                              (TcReprCFieldLayout
+                                (intern-str name)
+                                resolved
+                                offset)
                               (box (tc-repr-c-layout-fields rest-layout)))))]
                       [(ErrTcReprCLayout message) (ErrTcReprCLayout message)]))]
                 [(ErrTcLayoutInfo message) (ErrTcReprCLayout message)]))]))]))
@@ -11197,83 +11317,95 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (tc-ctfe-layouts-from-decls ctx rest next-module layouts)]
+            (tc-ctfe-layouts-from-decls
+              ctx
+              rest
+              (intern-str next-module)
+              layouts)]
           [(AstDeclDefStruct name _ _ _)
             (let
-              [key : String (compiler-symbol-module-key module name)]
+              [name-str : String (intern-str name)]
+              [key : String (compiler-symbol-module-key module name-str)]
               [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
                 module
-                (tc-ctfe-layout-add-names layouts info name module)))]
+                (tc-ctfe-layout-add-names layouts info name-str module)))]
           [(AstDeclDefStructLifetimes name _ _ _ _)
             (let
-              [key : String (compiler-symbol-module-key module name)]
+              [name-str : String (intern-str name)]
+              [key : String (compiler-symbol-module-key module name-str)]
               [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
                 module
-                (tc-ctfe-layout-add-names layouts info name module)))]
+                (tc-ctfe-layout-add-names layouts info name-str module)))]
           [(AstDeclDefEnum name _ _)
             (let
-              [key : String (compiler-symbol-module-key module name)]
+              [name-str : String (intern-str name)]
+              [key : String (compiler-symbol-module-key module name-str)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
                 module
-                (tc-ctfe-layout-add-names layouts info name module)))]
+                (tc-ctfe-layout-add-names layouts info name-str module)))]
           [(AstDeclDefEnumLifetimes name _ _ _)
             (let
-              [key : String (compiler-symbol-module-key module name)]
+              [name-str : String (intern-str name)]
+              [key : String (compiler-symbol-module-key module name-str)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
                 module
-                (tc-ctfe-layout-add-names layouts info name module)))]
+                (tc-ctfe-layout-add-names layouts info name-str module)))]
           [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDeclDefStruct name _ _ _)
                   (let
-                    [key : String (compiler-symbol-module-key module name)]
+                    [name-str : String (intern-str name)]
+                    [key : String (compiler-symbol-module-key module name-str)]
                     [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
                       module
-                      (tc-ctfe-layout-add-names layouts info name module)))]
+                      (tc-ctfe-layout-add-names layouts info name-str module)))]
                 [(AstDeclDefStructLifetimes name _ _ _ _)
                   (let
-                    [key : String (compiler-symbol-module-key module name)]
+                    [name-str : String (intern-str name)]
+                    [key : String (compiler-symbol-module-key module name-str)]
                     [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
                       module
-                      (tc-ctfe-layout-add-names layouts info name module)))]
+                      (tc-ctfe-layout-add-names layouts info name-str module)))]
                 [(AstDeclDefEnum name _ _)
                   (let
-                    [key : String (compiler-symbol-module-key module name)]
+                    [name-str : String (intern-str name)]
+                    [key : String (compiler-symbol-module-key module name-str)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
                       module
-                      (tc-ctfe-layout-add-names layouts info name module)))]
+                      (tc-ctfe-layout-add-names layouts info name-str module)))]
                 [(AstDeclDefEnumLifetimes name _ _ _)
                   (let
-                    [key : String (compiler-symbol-module-key module name)]
+                    [name-str : String (intern-str name)]
+                    [key : String (compiler-symbol-module-key module name-str)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
                       module
-                      (tc-ctfe-layout-add-names layouts info name module)))]
+                      (tc-ctfe-layout-add-names layouts info name-str module)))]
                 [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]
           [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]))
 
@@ -11483,9 +11615,9 @@
                     (tc-result-info-two-variants
                       ctx
                       enum-name
-                      first-name
+                      (intern-str first-name)
                       first-fields
-                      second-name
+                      (intern-str second-name)
                       second-fields)])])]
           [_
             (ErrTcResultInfo
@@ -11600,7 +11732,11 @@
           [(AstDeclExport _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDeclModule next-module)
-            (tc-variant-owner-name-list rest target index next-module)]
+            (tc-variant-owner-name-list
+              rest
+              target
+              index
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDeclComptimeDecl _ template-box)
@@ -11609,18 +11745,22 @@
               (if (= target index)
                 (match template
                   [(AstDeclDefEnum name _ _)
-                    (OkTcString (compiler-symbol-module-key module name))]
+                    (OkTcString
+                      (compiler-symbol-module-key module (intern-str name)))]
                   [(AstDeclDefEnumLifetimes name _ _ _)
-                    (OkTcString (compiler-symbol-module-key module name))]
+                    (OkTcString
+                      (compiler-symbol-module-key module (intern-str name)))]
                   [_ (ErrTcString "typecheck: variant owner is not enum")])
                 (tc-variant-owner-name-list rest target (+ index 1) module)))]
           [_
             (if (= target index)
               (match decl
                 [(AstDeclDefEnum name _ _)
-                  (OkTcString (compiler-symbol-module-key module name))]
+                  (OkTcString
+                    (compiler-symbol-module-key module (intern-str name)))]
                 [(AstDeclDefEnumLifetimes name _ _ _)
-                  (OkTcString (compiler-symbol-module-key module name))]
+                  (OkTcString
+                    (compiler-symbol-module-key module (intern-str name)))]
                 [_ (ErrTcString "typecheck: variant owner is not enum")])
               (tc-variant-owner-name-list rest target (+ index 1) module))]))]))
 
@@ -11776,7 +11916,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (tc-borrow-place ctx env receiver)
           [(OkTcBorrowPlace place)
-            (tc-borrow-place-struct-field ctx place field)]
+            (tc-borrow-place-struct-field ctx place (intern-str field))]
           [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)]))]
     [(AstExprTupleRef tuple-box index)
       (let
@@ -12013,7 +12153,7 @@
   (let
     [ty : AstType (tc-resolve-type ctx field-ty)]
     (match pattern
-      [(AstPatBinding name) (OkTcEnv (tc-bind env name ty))]
+      [(AstPatBinding name) (OkTcEnv (tc-bind-id env name ty))]
       [(AstPatWildcard) (OkTcEnv env)]
       [(AstPatLiteral lit)
         (if (tc-literal-pattern-compatible? lit ty)
@@ -12028,7 +12168,7 @@
                 ctx
                 env
                 enum-name
-                name
+                (intern-str name)
                 AstLifetimeNil
                 args
                 (tc-type-outer-region ty))]
@@ -12037,7 +12177,7 @@
                 ctx
                 env
                 enum-name
-                name
+                (intern-str name)
                 lifetimes
                 args
                 (tc-type-outer-region ty))]
@@ -12151,7 +12291,7 @@
     [ty : AstType (tc-resolve-type ctx field-ty)]
     (match pattern
       [(AstPatBinding name)
-        (OkTcEnv (tc-bind env name (tc-borrowed-field-ref-type lifetime ty)))]
+        (OkTcEnv (tc-bind-id env name (tc-borrowed-field-ref-type lifetime ty)))]
       [(AstPatWildcard) (OkTcEnv env)]
       [(AstPatLiteral lit)
         (if (tc-literal-pattern-compatible? lit ty)
@@ -12167,7 +12307,7 @@
                 env
                 lifetime
                 enum-name
-                name
+                (intern-str name)
                 AstLifetimeNil
                 args)]
             [(AstTyEnumArgs enum-name lifetimes)
@@ -12176,7 +12316,7 @@
                 env
                 lifetime
                 enum-name
-                name
+                (intern-str name)
                 lifetimes
                 args)]
             [_
@@ -12198,7 +12338,7 @@
         env
         lifetime
         enum-name
-        variant-name
+        (intern-str variant-name)
         enum-lifetimes
         AstPatternNil)]
     [(AstPatVariant variant-name args-box)
@@ -12209,7 +12349,7 @@
           env
           lifetime
           enum-name
-          variant-name
+          (intern-str variant-name)
           enum-lifetimes
           args))]
     [_ (ErrTcEnv "typecheck: unsupported enum match pattern")]))
@@ -12245,7 +12385,7 @@
           [_
             (match pattern
               [(AstPatWildcard) (OkTcEnv env)]
-              [(AstPatBinding name) (OkTcEnv (tc-bind env name scrut-ty))]
+              [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
               [(AstPatLiteral lit)
                 (if (tc-literal-pattern-compatible? lit scrut-ty)
                   (OkTcEnv env)
@@ -12261,7 +12401,7 @@
             ctx
             env
             enum-name
-            variant-name
+            (intern-str variant-name)
             AstLifetimeNil
             AstPatternNil
             (tc-type-outer-region scrut-ty))]
@@ -12272,7 +12412,7 @@
               ctx
               env
               enum-name
-              variant-name
+              (intern-str variant-name)
               AstLifetimeNil
               args
               (tc-type-outer-region scrut-ty)))]
@@ -12285,7 +12425,7 @@
             ctx
             env
             enum-name
-            variant-name
+            (intern-str variant-name)
             lifetimes
             AstPatternNil
             (tc-type-outer-region scrut-ty))]
@@ -12296,7 +12436,7 @@
               ctx
               env
               enum-name
-              variant-name
+              (intern-str variant-name)
               lifetimes
               args
               (tc-type-outer-region scrut-ty)))]
@@ -12304,7 +12444,7 @@
     [_
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
-        [(AstPatBinding name) (OkTcEnv (tc-bind env name scrut-ty))]
+        [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
         [(AstPatLiteral lit)
           (if (tc-literal-pattern-compatible? lit scrut-ty)
             (OkTcEnv env)
@@ -12433,7 +12573,11 @@
           [(AstVariantDefNil)
             (match variant
               [(AstVariantDef name _ _)
-                (tc-variant-name-matches? ctx enum-name variant-name name)])]
+                (tc-variant-name-matches?
+                  ctx
+                  enum-name
+                  variant-name
+                  (intern-str name))])]
           [_ false]))]
     [_ false]))
 
@@ -12474,15 +12618,31 @@
           [(AstTyEnum enum-name)
             (match (tc-context-enum-variants ctx enum-name)
               [(OkAstVariantDefList variants)
-                (if (tc-enum-has-single-variant? ctx variants enum-name name)
-                  (tc-variant-pattern-irrefutable? ctx enum-name name args)
+                (if (tc-enum-has-single-variant?
+                  ctx
+                  variants
+                  enum-name
+                  (intern-str name))
+                  (tc-variant-pattern-irrefutable?
+                    ctx
+                    enum-name
+                    (intern-str name)
+                    args)
                   false)]
               [(ErrAstVariantDefList _) false])]
           [(AstTyEnumArgs enum-name _)
             (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
               [(OkAstVariantDefList variants)
-                (if (tc-enum-has-single-variant? ctx variants enum-name name)
-                  (tc-variant-pattern-irrefutable? ctx enum-name name args)
+                (if (tc-enum-has-single-variant?
+                  ctx
+                  variants
+                  enum-name
+                  (intern-str name))
+                  (tc-variant-pattern-irrefutable?
+                    ctx
+                    enum-name
+                    (intern-str name)
+                    args)
                   false)]
               [(ErrAstVariantDefList _) false])]
           [_ false]))]
@@ -12519,13 +12679,17 @@
   (match pattern
     [(AstPatWildcard) true]
     [(AstPatBinding name)
-      (tc-variant-name-matches? ctx enum-name name variant-name)]
+      (tc-variant-name-matches? ctx enum-name (intern-str name) variant-name)]
     [(AstPatVariant name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
         (and
-          (tc-variant-name-matches? ctx enum-name name variant-name)
-          (tc-variant-pattern-irrefutable? ctx enum-name name args)))]
+          (tc-variant-name-matches?
+            ctx
+            enum-name
+            (intern-str name)
+            variant-name)
+          (tc-variant-pattern-irrefutable? ctx enum-name (intern-str name) args)))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
@@ -12557,7 +12721,11 @@
         (match variant
           [(AstVariantDef name _ _)
             (and
-              (tc-match-arms-cover-variant? ctx arms enum-name name)
+              (tc-match-arms-cover-variant?
+                ctx
+                arms
+                enum-name
+                (intern-str name))
               (tc-enum-variants-covered? ctx enum-name rest arms))]))]))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
@@ -13806,7 +13974,7 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (match (tc-lookup-visible ctx env name)
+        (match (tc-lookup-visible-id ctx env name)
           [(OkTcType var-ty)
             (match (tc-expr-with-expected-or-actual ctx env value var-ty)
               [(OkTcType value-ty)
@@ -13825,7 +13993,7 @@
                           [(OkTcUnit)
                             (match (tc-ensure-reference-value-can-assign
                               env
-                              name
+                              (intern-str name)
                               value-ty)
                               [(OkTcUnit) (OkTcType (AstTyUnit))]
                               [(ErrTcUnit message) (ErrTcType message)])]
@@ -13907,7 +14075,7 @@
                     (if (tc-integer-type? end-ty)
                       (let
                         [body-env : TcTypeEnv
-                          (tc-bind env index resolved-index-ty)]
+                          (tc-bind-id env index resolved-index-ty)]
                         (match (tc-expr ctx body-env body)
                           [(OkTcType body-ty)
                             (match (tc-expect
@@ -13918,7 +14086,7 @@
                                 (match (tc-spmd-check-foreach-body
                                   ctx
                                   env
-                                  index
+                                  (intern-str index)
                                   resolved-index-ty
                                   body)
                                   [(OkTcUnit) (OkTcType (AstTyUnit))]
@@ -13955,7 +14123,7 @@
                               [(OkTcUnit)
                                 (let
                                   [value-env : TcTypeEnv
-                                    (tc-bind env index resolved-index-ty)]
+                                    (tc-bind-id env index resolved-index-ty)]
                                   (match (tc-expr-with-expected-or-actual
                                     ctx
                                     value-env
@@ -13993,7 +14161,7 @@
           [(OkTcType receiver-ty)
             (match (tc-type-strip-region receiver-ty)
               [(AstTyStruct struct-name)
-                (match (tc-struct-field-type ctx struct-name field)
+                (match (tc-struct-field-type ctx struct-name (intern-str field))
                   [(OkTcType field-ty)
                     (OkTcType
                       (tc-project-from-region-container receiver-ty field-ty))]
@@ -14003,7 +14171,7 @@
                   ctx
                   struct-name
                   lifetimes
-                  field)
+                  (intern-str field))
                   [(OkTcType field-ty)
                     (OkTcType
                       (tc-project-from-region-container receiver-ty field-ty))]
@@ -14109,7 +14277,7 @@
                 (ErrTcType
                   "typecheck: ptr-null? requires a raw pointer operand")])]
           [(ErrTcType message) (ErrTcType message)]))]
-    [(AstExprPtrAddrOf name) (tc-ptr-addr-of-expr ctx env name)]
+    [(AstExprPtrAddrOf name) (tc-ptr-addr-of-expr ctx env (intern-str name))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -14766,7 +14934,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-move-direct-root-base-path inner)
-          [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
+          [(TcSomeString base)
+            (TcSomeString (tc-move-path-append base (intern-str field)))]
           [(TcNoString) (TcNoString)]))]
     [(AstExprTupleRef inner-box index)
       (let
@@ -14807,7 +14976,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-move-direct-root-base-path inner)
-          [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
+          [(TcSomeString base)
+            (TcSomeString (tc-move-path-append base (intern-str field)))]
           [(TcNoString) (TcNoString)]))]
     [_ (TcNoString)]))
 
@@ -14988,7 +15158,7 @@
         [rest : AstParamList (box-get rest)]
         (match param
           [(AstParam name _ _)
-            (tc-move-params-locals rest (tc-moved-add acc name))]))]))
+            (tc-move-params-locals rest (tc-moved-add acc (intern-str name)))]))]))
 
 ;; Mark the source variable moved when an init/rhs is a bare move-only variable
 ;; that names a tracked local/parameter (not an enum constructor or global).
@@ -15342,13 +15512,15 @@
                     [(OkTcMove moved2)
                       (tc-move-check-let-bindings
                         ctx
-                        (tc-bind
+                        (tc-bind-id
                           env
                           name
                           (tc-move-binding-type ctx env maybe-ty init))
-                        (tc-moved-add locals name)
-                        (tc-moved-remove-root-state loop-carried name)
-                        (tc-moved-remove-root-state moved2 name)
+                        (tc-moved-add locals (intern-str name))
+                        (tc-moved-remove-root-state
+                          loop-carried
+                          (intern-str name))
+                        (tc-moved-remove-root-state moved2 (intern-str name))
                         rest)]
                     [(ErrTcMove message) (ErrTcMoveBindings message)])]
                 [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
@@ -15384,13 +15556,17 @@
                         [(OkTcType init-ty)
                           (match (tc-move-check-resource-bindings
                             ctx
-                            (tc-bind
-                              (tc-bind-cleanup-owner env name)
+                            (tc-bind-id
+                              (tc-bind-cleanup-owner env (intern-str name))
                               name
                               (tc-type-without-regions init-ty))
-                            (tc-moved-add locals name)
-                            (tc-moved-remove-root-state loop-carried name)
-                            (tc-moved-remove-root-state moved2 name)
+                            (tc-moved-add locals (intern-str name))
+                            (tc-moved-remove-root-state
+                              loop-carried
+                              (intern-str name))
+                            (tc-moved-remove-root-state
+                              moved2
+                              (intern-str name))
                             rest)
                             [(OkTcMoveResourceBindings
                                 env2
@@ -15403,7 +15579,7 @@
                                 moved3
                                 locals2
                                 loop-carried2
-                                (tc-string-list-add roots name))]
+                                (tc-string-list-add roots (intern-str name)))]
                             [(ErrTcMoveResourceBindings message)
                               (ErrTcMoveResourceBindings message)])]
                         [(ErrTcType message)
@@ -15778,7 +15954,7 @@
           [(OkTcMove moved1)
             (match (tc-move-after-bind ctx env locals loop-carried moved1 rhs)
               [(OkTcMove moved2)
-                (OkTcMove (tc-moved-remove-root-state moved2 name))]
+                (OkTcMove (tc-moved-remove-root-state moved2 (intern-str name)))]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprAnn inner-box _)
@@ -15837,9 +16013,11 @@
                     (tc-moved-union locals (tc-moved-clone loop-carried))]
                   (match (tc-move-check-expr
                     ctx
-                    (tc-bind env index (tc-resolve-type ctx index-ty))
-                    (tc-moved-add (tc-moved-clone locals) index)
-                    (tc-moved-remove-root-state body-loop-carried index)
+                    (tc-bind-id env index (tc-resolve-type ctx index-ty))
+                    (tc-moved-add (tc-moved-clone locals) (intern-str index))
+                    (tc-moved-remove-root-state
+                      body-loop-carried
+                      (intern-str index))
                     (tc-moved-clone moved2)
                     body)
                     [(OkTcMove _) (OkTcMove moved2)]
@@ -15947,8 +16125,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
     [(AstExprPtrAddrOf name)
-      (if (tc-moved-contains? moved name)
-        (ErrTcMove (tc-move-use-message name))
+      (if (tc-moved-contains? moved (intern-str name))
+        (ErrTcMove (tc-move-use-message (intern-str name)))
         (OkTcMove moved))]
     [(AstExprPtrRead inner-box)
       (let
@@ -16375,12 +16553,14 @@
                     [(OkTcBorrowCheck borrowed2)
                       (tc-borrow-check-let-bindings
                         ctx
-                        (tc-bind
+                        (tc-bind-id
                           env
                           name
                           (tc-move-binding-type ctx env maybe-ty init))
-                        (tc-moved-add locals name)
-                        (tc-borrow-check-remove-root-state borrowed2 name)
+                        (tc-moved-add locals (intern-str name))
+                        (tc-borrow-check-remove-root-state
+                          borrowed2
+                          (intern-str name))
                         rest)]
                     [(ErrTcBorrowCheck message)
                       (ErrTcBorrowCheckBindings message)])]
@@ -16415,12 +16595,14 @@
                         [(OkTcType init-ty)
                           (tc-borrow-check-resource-bindings
                             ctx
-                            (tc-bind
-                              (tc-bind-cleanup-owner env name)
+                            (tc-bind-id
+                              (tc-bind-cleanup-owner env (intern-str name))
                               name
                               (tc-type-without-regions init-ty))
-                            (tc-moved-add locals name)
-                            (tc-borrow-check-remove-root-state borrowed2 name)
+                            (tc-moved-add locals (intern-str name))
+                            (tc-borrow-check-remove-root-state
+                              borrowed2
+                              (intern-str name))
                             rest)]
                         [(ErrTcType message)
                           (ErrTcBorrowCheckResourceBindings message)])]
@@ -16713,7 +16895,10 @@
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-check-after-bind ctx env locals borrowed1 rhs)
               [(OkTcBorrowCheck borrowed2)
-                (match (tc-borrow-check-assignment locals borrowed2 name)
+                (match (tc-borrow-check-assignment
+                  locals
+                  borrowed2
+                  (intern-str name))
                   [(OkTcUnit) (OkTcBorrowCheck borrowed2)]
                   [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
@@ -16761,11 +16946,11 @@
               [(OkTcBorrowCheck borrowed2)
                 (match (tc-borrow-check-expr
                   ctx
-                  (tc-bind env index (tc-resolve-type ctx index-ty))
-                  (tc-moved-add (tc-moved-clone locals) index)
+                  (tc-bind-id env index (tc-resolve-type ctx index-ty))
+                  (tc-moved-add (tc-moved-clone locals) (intern-str index))
                   (tc-borrow-check-remove-root-state
                     (tc-moved-clone borrowed2)
-                    index)
+                    (intern-str index))
                   body)
                   [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed2)]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
@@ -17105,7 +17290,7 @@
 
 (define (macro-collect-decl-name [decl : AstDecl] [acc : TcStringList]) : TcStringList
   (match decl
-    [(AstDeclDefMacro name _ _ _) (tc-string-list-add acc name)]
+    [(AstDeclDefMacro name _ _ _) (tc-string-list-add acc (intern-str name))]
     [(AstDeclUnsafe inner-box)
       (macro-collect-decl-name (box-get inner-box) acc)]
     [(AstDeclComptimeDecl _ template-box)
@@ -17203,12 +17388,16 @@
         [rest : AstParamList (box-get rest)]
         (match param
           [(AstParam name ty comptime?)
-            (match (macro-hygiene-bind-name env macro-name depth name)
+            (match (macro-hygiene-bind-name
+              env
+              macro-name
+              depth
+              (intern-str name))
               [(MacroHygieneName renamed next-env)
                 (match (macro-hygiene-param-list rest next-env macro-name depth)
                   [(MacroHygieneParams nrest final-env)
                     (MacroHygieneParams
-                      (ast-param-cons (AstParam renamed ty comptime?) nrest)
+                      (ast-param-cons (ast-param renamed ty comptime?) nrest)
                       final-env)])])]))]))
 
 (define (macro-hygiene-pattern-list
@@ -17237,9 +17426,9 @@
   [depth : i64]) : MacroHygienePattern
   (match pattern
     [(AstPatVar name maybe-ty)
-      (match (macro-hygiene-bind-name env macro-name depth name)
+      (match (macro-hygiene-bind-name env macro-name depth (intern-str name))
         [(MacroHygieneName renamed next-env)
-          (MacroHygienePattern (AstPatVar renamed maybe-ty) next-env)])]
+          (MacroHygienePattern (AstPatVar (intern renamed) maybe-ty) next-env)])]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
@@ -17248,15 +17437,15 @@
             (MacroHygienePattern (ast-pat-tuple npatterns) next-env)]))]
     [(AstPatWildcard) (MacroHygienePattern AstPatWildcard env)]
     [(AstPatBinding name)
-      (match (macro-hygiene-bind-name env macro-name depth name)
+      (match (macro-hygiene-bind-name env macro-name depth (intern-str name))
         [(MacroHygieneName renamed next-env)
-          (MacroHygienePattern (AstPatBinding renamed) next-env)])]
+          (MacroHygienePattern (ast-pat-binding renamed) next-env)])]
     [(AstPatVariant name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
         (match (macro-hygiene-pattern-list args env macro-name depth)
           [(MacroHygienePatternList nargs next-env)
-            (MacroHygienePattern (ast-pat-variant name nargs) next-env)]))]
+            (MacroHygienePattern (ast-pat-variant-id name nargs) next-env)]))]
     [(AstPatLiteral lit) (MacroHygienePattern (AstPatLiteral lit) env)]))
 
 (define (macro-hygiene-let-bindings
@@ -17274,7 +17463,11 @@
             (let
               [init : AstExpr (ast-node-get init-box)]
               [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
-              (match (macro-hygiene-bind-name env macro-name depth name)
+              (match (macro-hygiene-bind-name
+                env
+                macro-name
+                depth
+                (intern-str name))
                 [(MacroHygieneName renamed next-env)
                   (match (macro-hygiene-let-bindings
                     rest
@@ -17306,7 +17499,11 @@
               [cleanup : AstExpr (ast-node-get cleanup-box)]
               [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
               [ncleanup : i64 (macro-hygiene-expr cleanup env macro-name depth)]
-              (match (macro-hygiene-bind-name env macro-name depth name)
+              (match (macro-hygiene-bind-name
+                env
+                macro-name
+                depth
+                (intern-str name))
                 [(MacroHygieneName renamed next-env)
                   (match (macro-hygiene-resource-bindings
                     rest
@@ -17463,7 +17660,7 @@
       (let
         [rhs : AstExpr (ast-node-get rhs-box)]
         (ast-expr-set
-          (macro-hygiene-rename-var env macro-name name)
+          (macro-hygiene-rename-var env macro-name (intern-str name))
           (macro-hygiene-expr rhs env macro-name depth)))]
     [(AstExprAnn inner-box ty)
       (let
@@ -17491,7 +17688,7 @@
         [start : AstExpr (ast-node-get start-box)]
         [end : AstExpr (ast-node-get end-box)]
         [body : AstExpr (ast-node-get body-box)]
-        (match (macro-hygiene-bind-name env macro-name depth index)
+        (match (macro-hygiene-bind-name env macro-name depth (intern-str index))
           [(MacroHygieneName nindex body-env)
             (ast-expr-foreach
               nindex
@@ -17505,7 +17702,7 @@
         [end : AstExpr (ast-node-get end-box)]
         [init : AstExpr (ast-node-get init-box)]
         [value : AstExpr (ast-node-get value-box)]
-        (match (macro-hygiene-bind-name env macro-name depth index)
+        (match (macro-hygiene-bind-name env macro-name depth (intern-str index))
           [(MacroHygieneName nindex body-env)
             (ast-expr-spmd-reduce
               op
@@ -17520,7 +17717,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (ast-expr-struct-get
           (macro-hygiene-expr inner env macro-name depth)
-          field))]
+          (intern-str field)))]
     [(AstExprWithRegion name body)
       (match (macro-hygiene-bind-name env macro-name depth name)
         [(MacroHygieneName nname body-env)
@@ -17569,7 +17766,8 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         (ast-expr-ptr-null-check (macro-hygiene-expr ptr env macro-name depth)))]
     [(AstExprPtrAddrOf name)
-      (ast-expr-ptr-addr-of (macro-hygiene-rename-var env macro-name name))]
+      (ast-expr-ptr-addr-of
+        (macro-hygiene-rename-var env macro-name (intern-str name)))]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -17668,8 +17866,8 @@
           [(AstDeclDefMacro mname params ret body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (if (string-eq mname name)
-                (MacroSomeDecl mname params ret body)
+              (if (string-eq (intern-str mname) name)
+                (MacroSomeDecl (intern-str mname) params ret body)
                 (macro-find-decl rest name)))]
           [_ (macro-find-decl rest name)]))]))
 
@@ -17678,7 +17876,7 @@
     [(AstDeclDefMacro name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
-        (MacroSomeDecl name params ret body))]
+        (MacroSomeDecl (intern-str name) params ret body))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -17732,7 +17930,7 @@
               rest
               current-module
               alias
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclImport (AstImportSpec _ expected maybe-alias))
             (match maybe-alias
               [(AstSomeImportAlias import-alias)
@@ -18027,7 +18225,11 @@
             (if variadic
               (match (macro-check-variadic-operands ctx type-env pty args)
                 [(OkMacroCheck)
-                  (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) (box env)))]
+                  (OkMacroEnv
+                    (CtfeEnvCons
+                      (intern-str pname)
+                      (CtfeExprList args)
+                      (box env)))]
                 [(ErrMacroCheck diag) (ErrMacroEnv diag)])
               (match args
                 [(AstExprNil)
@@ -18050,7 +18252,7 @@
                           rest-params
                           rest-args
                           (CtfeEnvCons
-                            pname
+                            (intern-str pname)
                             (CtfeExpr arg (tc-resolve-type ctx pty))
                             (box env))
                           call-expr)]
@@ -18197,7 +18399,7 @@
                     ctx
                     env
                     (ast-let-binding-cons
-                      (ast-let-binding name maybe-ty ninit)
+                      (ast-let-binding-id name maybe-ty ninit)
                       AstLetBindingNil))
                     [(OkTcEnv next-env)
                       (match (macro-expand-bindings
@@ -18209,7 +18411,7 @@
                         [(OkMacroLetBindings nrest final-env)
                           (OkMacroLetBindings
                             (ast-let-binding-cons
-                              (ast-let-binding name maybe-ty ninit)
+                              (ast-let-binding-id name maybe-ty ninit)
                               nrest)
                             final-env)]
                         [(ErrMacroLetBindings diag) (ErrMacroLetBindings diag)])]
@@ -18484,13 +18686,13 @@
                 [(OkMacroExpr nend)
                   (match (macro-expand-expr
                     ctx
-                    (tc-bind env index (tc-resolve-type ctx index-ty))
+                    (tc-bind-id env index (tc-resolve-type ctx index-ty))
                     decls
                     depth
                     body)
                     [(OkMacroExpr nbody)
                       (OkMacroExpr
-                        (ast-expr-foreach index index-ty nstart nend nbody))]
+                        (ast-expr-foreach-id index index-ty nstart nend nbody))]
                     [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
                 [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
@@ -18531,7 +18733,7 @@
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
             [(OkMacroExpr ninner)
-              (OkMacroExpr (ast-expr-struct-get ninner field))]
+              (OkMacroExpr (ast-expr-struct-get-id ninner field))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
       [(AstExprArrayRef array-box index-box)
         (let
@@ -18587,7 +18789,7 @@
         (let
           [rhs : AstExpr (ast-node-get rhs-box)]
           (match (macro-expand-expr ctx env decls depth rhs)
-            [(OkMacroExpr nrhs) (OkMacroExpr (ast-expr-set name nrhs))]
+            [(OkMacroExpr nrhs) (OkMacroExpr (ast-expr-set-id name nrhs))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
       [(AstExprStringData inner-box)
         (let
@@ -18681,7 +18883,7 @@
           [expr : AstExpr (ast-node-get expr-box)]
           (match (macro-expand-expr ctx global-env decls 0 expr)
             [(OkMacroExpr nexpr)
-              (OkMacroDecl (ast-decl-def name maybe-ty nexpr))]
+              (OkMacroDecl (ast-decl-def-id name maybe-ty nexpr))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
       [(AstDeclDefFn name params ret body-box export)
         (let
@@ -18696,13 +18898,14 @@
             body)
             [(OkMacroExpr nbody)
               (OkMacroDecl
-                (ast-decl-def-fn-export name params ret nbody export))]
+                (ast-decl-def-fn-export-id name params ret nbody export))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
       [(AstDeclTest name expr-box span)
         (let
           [expr : AstExpr (ast-node-get expr-box)]
           (match (macro-expand-expr ctx global-env decls 0 expr)
-            [(OkMacroExpr nexpr) (OkMacroDecl (ast-decl-test name nexpr span))]
+            [(OkMacroExpr nexpr)
+              (OkMacroDecl (ast-decl-test-id name nexpr span))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
       [(AstDeclUnsafe inner-box)
         (let
@@ -19120,7 +19323,7 @@
         (match decl
           [(AstDeclModule next-module)
             (begin
-              (set! macro-expand-active-module next-module)
+              (set! macro-expand-active-module (intern-str next-module))
               (match (macro-expand-decls
                 ctx
                 top-env
@@ -19411,9 +19614,9 @@
   [env : TcTypeEnv]
   [struct-name : String]
   [field-name : String]
-  [cleanup-name : String]
+  [cleanup-name : i64]
   [field-ty : AstType]) : ResultTcUnit
-  (match (tc-lookup-visible ctx env cleanup-name)
+  (match (tc-lookup-visible-id ctx env cleanup-name)
     [(OkTcType cleanup-ty)
       (tc-expect
         cleanup-ty
@@ -19421,7 +19624,7 @@
         (tc-struct-field-cleanup-fn-mismatch-message
           struct-name
           field-name
-          cleanup-name))]
+          (intern-str cleanup-name)))]
     [(ErrTcType message) (ErrTcUnit message)]))
 
 (define (tc-check-cleanup-struct-field
@@ -19433,18 +19636,21 @@
   (match field
     [(AstFieldDef field-name ty field-cleanup)
       (let
+        [field-name-str : String (intern-str field-name)]
         [resolved-ty : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
         [field-cleanup-owning : bool
           (tc-cleanup-owning-aggregate-type? ctx resolved-ty)]
         (if (not (ast-struct-cleanup? struct-cleanup))
           (if (ast-field-cleanup? field-cleanup)
             (ErrTcUnit
-              (tc-struct-field-cleanup-outside-message struct-name field-name))
+              (tc-struct-field-cleanup-outside-message
+                struct-name
+                field-name-str))
             (if field-cleanup-owning
               (ErrTcUnit
                 (tc-struct-field-cleanup-owning-without-owned-message
                   struct-name
-                  field-name
+                  field-name-str
                   resolved-ty))
               OkTcUnit))
           (match field-cleanup
@@ -19454,20 +19660,20 @@
                 (ErrTcUnit
                   (tc-struct-field-owned-non-cleanup-message
                     struct-name
-                    field-name
+                    field-name-str
                     resolved-ty)))]
             [(AstFieldCleanupFn cleanup-name)
               (if field-cleanup-owning
                 (ErrTcUnit
                   (tc-struct-field-cleanup-owning-without-owned-message
                     struct-name
-                    field-name
+                    field-name-str
                     resolved-ty))
                 (tc-check-struct-field-cleanup-fn
                   ctx
                   env
                   struct-name
-                  field-name
+                  field-name-str
                   cleanup-name
                   resolved-ty))]
             [(AstFieldNoCleanup)
@@ -19475,7 +19681,7 @@
                 (ErrTcUnit
                   (tc-struct-field-cleanup-owning-without-owned-message
                     struct-name
-                    field-name
+                    field-name-str
                     resolved-ty))
                 OkTcUnit)])))]))
 
@@ -19579,12 +19785,14 @@
   (match cleanup
     [(AstEnumNoCleanup) OkTcUnit]
     [(AstEnumCleanupFn cleanup-name)
-      (match (tc-lookup-visible ctx env cleanup-name)
+      (match (tc-lookup-visible-id ctx env cleanup-name)
         [(OkTcType cleanup-ty)
           (tc-expect
             cleanup-ty
             (tc-fn1 (tc-type-without-regions enum-ty) (AstTyUnit))
-            (tc-enum-cleanup-fn-mismatch-message enum-name cleanup-name))]
+            (tc-enum-cleanup-fn-mismatch-message
+              enum-name
+              (intern-str cleanup-name)))]
         [(ErrTcType message) (ErrTcUnit message)])]))
 
 (define (tc-check-enum-payload-cleanup-fn
@@ -19592,9 +19800,9 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [variant-name : String]
-  [cleanup-name : String]
+  [cleanup-name : i64]
   [payload-ty : AstType]) : ResultTcUnit
-  (match (tc-lookup-visible ctx env cleanup-name)
+  (match (tc-lookup-visible-id ctx env cleanup-name)
     [(OkTcType cleanup-ty)
       (tc-expect
         cleanup-ty
@@ -19602,7 +19810,7 @@
         (tc-enum-payload-cleanup-fn-mismatch-message
           enum-name
           variant-name
-          cleanup-name))]
+          (intern-str cleanup-name)))]
     [(ErrTcType message) (ErrTcUnit message)]))
 
 (define (tc-check-cleanup-enum-payloads
@@ -19700,7 +19908,7 @@
         ctx
         env
         enum-name
-        variant-name
+        (intern-str variant-name)
         cleanup
         payloads
         payload-cleanups)]))
@@ -19810,23 +20018,41 @@
     [(AstDeclExtern _ kind metadata ty)
       (tc-check-extern-decl ctx kind metadata ty)]
     [(AstDeclDefDispatch name variants)
-      (match (tc-dispatch-decl-type ctx name variants)
+      (match (tc-dispatch-decl-type ctx (intern-str name) variants)
         [(OkTcType _) OkTcUnit]
         [(ErrTcType message) (ErrTcUnit message)])]
     [(AstDeclDefEnum name cleanup variants)
       (tc-check-cleanup-enum-decl
         ctx
         top-env
-        name
+        (intern-str name)
         AstLifetimeNil
         cleanup
         variants)]
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
-      (tc-check-cleanup-enum-decl ctx top-env name lifetimes cleanup variants)]
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        (intern-str name)
+        lifetimes
+        cleanup
+        variants)]
     [(AstDeclDefStruct name repr cleanup fields)
-      (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+      (tc-check-cleanup-struct-decl
+        ctx
+        top-env
+        (intern-str name)
+        repr
+        cleanup
+        fields)]
     [(AstDeclDefStructLifetimes name _ repr cleanup fields)
-      (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+      (tc-check-cleanup-struct-decl
+        ctx
+        top-env
+        (intern-str name)
+        repr
+        cleanup
+        fields)]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -19864,7 +20090,12 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (tc-check-decls-in-module ctx top-env rest summary next-module)]
+            (tc-check-decls-in-module
+              ctx
+              top-env
+              rest
+              summary
+              (intern-str next-module))]
           [_
             (match (tc-module-local-env ctx top-env module)
               [(OkTcEnv local-env)
@@ -19908,7 +20139,7 @@
 (define (tc-generated-clone-decl-with-path? [decl : AstDecl] [path : String]) : bool
   (if (string-eq path "")
     (match decl
-      [(AstDeclDefFn name _ _ _ _) (tc-generated-clone-name? name)]
+      [(AstDeclDefFn name _ _ _ _) (tc-generated-clone-name? (intern-str name))]
       [_ false])
     false))
 
@@ -20004,7 +20235,11 @@
           [(AstDeclModule next-module)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-start-section))
-              (match (tc-module-local-env-cached ctx top-env next-module cache)
+              (match (tc-module-local-env-cached
+                ctx
+                top-env
+                (intern-str next-module)
+                cache)
                 [(OkTcModuleLocalEnv next-local-env next-cache)
                   (begin
                     (cfg
@@ -20016,7 +20251,7 @@
                       rest
                       rest-paths
                       summary
-                      next-module
+                      (intern-str next-module)
                       next-cache
                       next-local-env
                       (tc-hygiene-global-env next-local-env)))]

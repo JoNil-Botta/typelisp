@@ -23,6 +23,37 @@
   (OkFmtConfig FmtConfig)
   (ErrFmtConfig String))
 
+(defenum ResultFmtWrite
+  (OkFmtWrite)
+  (ErrFmtWrite String))
+
+(define (fmt-write-error-message [path : String] [error : IoError]) : String
+  (string-append
+    "fmt: failed to write "
+    (string-append path (string-append ": " (io-error-message error)))))
+
+(define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
+  (match (try-write-file (& path) (& formatted))
+    [(OkIoUnit) OkFmtWrite]
+    [(ErrIoUnit error) (ErrFmtWrite (fmt-write-error-message path error))]))
+
+(define (fmt-write-formatted-file [path : String] [formatted : String]) : i64
+  (match (fmt-try-write-formatted-file path formatted)
+    [(OkFmtWrite) 0]
+    [(ErrFmtWrite message)
+      (begin
+        (print-error (string-append message "\n"))
+        1)]))
+
+(test
+  fmt-write-failure-diagnostic-includes-path-and-reason
+  (match (fmt-try-write-formatted-file "" "(define x 1)\n")
+    [(OkFmtWrite) (panic "fmt write unexpectedly succeeded")]
+    [(ErrFmtWrite message)
+      (if (string-eq message "fmt: failed to write : io: invalid path: ")
+        unit
+        (panic message))]))
+
 (define (fmt-flag? [value : String]) : bool
   (core/and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
@@ -104,9 +135,7 @@
           1))
       (if (string-eq source formatted)
         0
-        (begin
-          (write-file path formatted)
-          0)))))
+        (fmt-write-formatted-file path formatted)))))
 
 (define (fmt-files [check : bool] [paths : StringList] [status : i64]) : i64
   (match paths

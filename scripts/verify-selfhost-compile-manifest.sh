@@ -21,6 +21,7 @@ esac
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
+BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-16}
 
 case "$EXPECTATION_MODE" in
     stage0 | stage1) ;;
@@ -29,6 +30,17 @@ case "$EXPECTATION_MODE" in
         exit 1
         ;;
 esac
+
+case "$BATCH_CHUNK_SIZE" in
+    "" | *[!0-9]*)
+        echo "invalid compile manifest batch size: $BATCH_CHUNK_SIZE" >&2
+        exit 1
+        ;;
+esac
+if [ "$BATCH_CHUNK_SIZE" -lt 1 ]; then
+    echo "invalid compile manifest batch size: $BATCH_CHUNK_SIZE" >&2
+    exit 1
+fi
 
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
@@ -53,6 +65,7 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 MANIFEST_INPUT="$WORKDIR/compile-manifest.normalized.txt"
 BATCH_INPUT="$WORKDIR/compile-batch.txt"
+BATCH_CHUNK_DIR="$WORKDIR/compile-batch-chunks"
 tr -d '\r' < "$MANIFEST" > "$MANIFEST_INPUT"
 
 check_selfhost_manifest_sync() {
@@ -358,6 +371,8 @@ stage1_compact_count_text() {
 
 prepare_compile_batch() {
     : > "$BATCH_INPUT"
+    rm -rf "$BATCH_CHUNK_DIR"
+    mkdir -p "$BATCH_CHUNK_DIR"
     prep_case_id=
     prep_case_source=
     prep_case_mode=
@@ -422,27 +437,50 @@ prepare_compile_batch() {
     if [ -n "$prep_case_id" ]; then
         fail "manifest ended before case $prep_case_id had an end directive"
     fi
+
+    awk -v outdir="$BATCH_CHUNK_DIR" -v size="$BATCH_CHUNK_SIZE" '
+        {
+            chunk = int((NR - 1) / size)
+            path = sprintf("%s/compile-batch.%04d.txt", outdir, chunk)
+            print $0 >> path
+            if (NR % size == 0) {
+                close(path)
+            }
+        }
+    ' "$BATCH_INPUT"
 }
 
 run_compile_batch() {
-    batch_out="$WORKDIR/compile-batch.out"
-    batch_err="$WORKDIR/compile-batch.err"
-    echo "[selfhost-compile] batch compile manifest"
-    set +e
-    run_with_heartbeat_capture \
-        "batch compile manifest" \
-        "$batch_out" \
-        "$batch_err" \
-        "$COMPILER" compile --batch "$BATCH_INPUT" --stdlib-root "$ROOT/stdlib"
-    code=$?
-    set -e
-    if [ "$code" -ne 0 ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$batch_out" >&2
-        echo "stderr:" >&2
-        sed 's/^/  /' "$batch_err" >&2
-        fail "batch compile manifest exited $code in $EXPECTATION_MODE mode"
+    batch_chunk_count=$(find "$BATCH_CHUNK_DIR" -type f -name 'compile-batch.*.txt' | wc -l | tr -d ' ')
+    if [ "$batch_chunk_count" -eq 0 ]; then
+        fail "batch compile manifest has no chunks"
     fi
+
+    echo "[selfhost-compile] batch compile manifest ($batch_chunk_count chunk(s), size $BATCH_CHUNK_SIZE)"
+    batch_chunk_index=0
+    for batch_chunk in "$BATCH_CHUNK_DIR"/compile-batch.*.txt; do
+        [ -f "$batch_chunk" ] || fail "batch compile manifest chunk is missing: $batch_chunk"
+        batch_chunk_index=$((batch_chunk_index + 1))
+        batch_label="batch compile manifest chunk $batch_chunk_index/$batch_chunk_count"
+        batch_out="$batch_chunk.out"
+        batch_err="$batch_chunk.err"
+        echo "[selfhost-compile] $batch_label"
+        set +e
+        run_with_heartbeat_capture \
+            "$batch_label" \
+            "$batch_out" \
+            "$batch_err" \
+            "$COMPILER" compile --batch "$batch_chunk" --stdlib-root "$ROOT/stdlib"
+        code=$?
+        set -e
+        if [ "$code" -ne 0 ]; then
+            echo "stdout:" >&2
+            sed 's/^/  /' "$batch_out" >&2
+            echo "stderr:" >&2
+            sed 's/^/  /' "$batch_err" >&2
+            fail "$batch_label exited $code in $EXPECTATION_MODE mode"
+        fi
+    done
 }
 
 main_label_count() {

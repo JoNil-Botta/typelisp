@@ -565,6 +565,30 @@ EOF
     assert_empty "$WORKDIR/test-check.stderr"
     assert_contains "$WORKDIR/test-check.stdout" "TypeLisp test typecheck passed: 1 test(s)"
 
+    TEST_BATCH_SRC="$WORKDIR/inline-test-batch.tl"
+    cat > "$TEST_BATCH_SRC" <<'EOF'
+(import "stdlib/test.tl")
+
+(test batch-one
+  (assert-i64-eq (+ 20 22) 42 "batch one"))
+
+(test batch-two
+  (assert-i64-eq (* 6 7) 42 "batch two"))
+EOF
+    TEST_BATCH_LIST="$WORKDIR/inline-test-batch.txt"
+    printf '%s\n' "$TEST_SRC" "$TEST_BATCH_SRC" > "$TEST_BATCH_LIST"
+    run_capture test-check-batch "$COMPILER" test --check --batch "$TEST_BATCH_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
+    assert_empty "$WORKDIR/test-check-batch.stderr"
+    assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test file: $TEST_SRC (1 test(s))"
+    assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test typecheck passed: 1 test(s)"
+    assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test file: $TEST_BATCH_SRC (2 test(s))"
+    assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test typecheck passed: 2 test(s)"
+    assert_contains "$WORKDIR/test-check-batch.stdout" "TypeLisp test batch typecheck passed: 3 test(s) in 2 file(s)"
+    run_expect_failure test-check-batch-with-file "$COMPILER" test --check --batch "$TEST_BATCH_LIST" "$TEST_SRC" --stdlib-root "$ROOT/stdlib"
+    assert_contains "$WORKDIR/test-check-batch-with-file.stderr" "test: cannot combine input paths with --batch"
+    run_expect_failure test-check-batch-run-mode "$COMPILER" test --batch "$TEST_BATCH_LIST" --stdlib-root "$ROOT/stdlib"
+    assert_contains "$WORKDIR/test-check-batch-run-mode.stderr" "test: --batch requires --check"
+
     echo "[host-action-cli] test"
     run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 1 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-run.stdout"

@@ -960,6 +960,7 @@ case|selfhost_test|selfhost/test.tl|assembly|skip|direct
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_run_direct:
+contains|_tl_tltest_run_batch_check:
 contains|_tl_tltest_run_package:
 contains|_tl_tltest_package_run_sources:
 contains|_tl_tltest_run_harness_in_temp:
@@ -971,6 +972,8 @@ contains|_tl_opt_inline_program_functions_with_spans:
 contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
 contains|could not find typelisp.pkg
 contains|TypeLisp package tests passed:
+contains|TypeLisp test batch typecheck passed:
+contains|test: --batch requires --check
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level
 contains|typelisp test: test executable exited with exit status:

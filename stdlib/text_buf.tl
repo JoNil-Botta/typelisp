@@ -21,6 +21,8 @@
 ;# The buffer and rendered strings allocate in the active arena: the default
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
+(import "core_macros.tl" module stdlib.core-macros as core)
+
 (import "io.tl")
 
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
@@ -64,13 +66,16 @@
 (define (text-buf-char-string [c : char]) : String
   (let
     [code : i64 (cast c : i64)]
-    (cond
-      [(= code 9) "\t"]
-      [(= code 10) "\n"]
-      [(= code 13) "\r"]
-      [(and (>= code 32) (<= code 126))
-        (substring text-buf-ascii-printable-table (- code 32) 1)]
-      [else (panic "text-buf: unsupported non-printable char")])))
+    (core/cond
+      (= code 9)
+      "\t"
+      (= code 10)
+      "\n"
+      (= code 13)
+      "\r"
+      (and (>= code 32) (<= code 126))
+      (substring text-buf-ascii-printable-table (- code 32) 1)
+      (panic "text-buf: unsupported non-printable char"))))
 
 ;: Append one char byte to `buf`.
 (define (text-buf-append-char [buf : TextBuf] [c : char]) : TextBuf

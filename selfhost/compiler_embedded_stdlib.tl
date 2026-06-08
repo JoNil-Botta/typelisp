@@ -1,4 +1,6 @@
 ;; compiler_embedded_stdlib.tl - Checked-in stdlib source payloads (#1509).
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (defenum CompilerEmbeddedStdlibSource
   (CompilerEmbeddedStdlibNoSource)
   (CompilerEmbeddedStdlibSomeSource String))
@@ -122,7 +124,7 @@
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
-  (cond
+  (core/cond
     (string-eq suffix "arena.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)
     (string-eq suffix "cpu.tl")

@@ -10,6 +10,8 @@
 ;;
 ;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
 ;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "doc_html.tl")
 
 (import "../stdlib/string.tl")
@@ -705,16 +707,22 @@
     [line : String (substring src pos (- line-end pos))]
     [next : i64 (md-next-line-start src line-end n)]
     [level : i64 (md-heading-level line)]
-    (cond
-      [(md-blank-line? line) (MdScanBlock next (MdBlank))]
-      [(md-code-fence-start? line) (md-scan-code-fence src pos n)]
-      [(> level 0)
-        (MdScanBlock next (MdHeading level (md-heading-text line level)))]
-      [(md-table-start-at? src pos n) (md-scan-table src pos n)]
-      [(md-blockquote-start? line) (md-scan-blockquote src pos n)]
-      [(md-bullet-start? line) (md-scan-bullet-list src pos n)]
-      [(md-numbered-start? line) (md-scan-numbered-list src pos n)]
-      [else (md-scan-paragraph src pos n)])))
+    (core/cond
+      (md-blank-line? line)
+      (MdScanBlock next (MdBlank))
+      (md-code-fence-start? line)
+      (md-scan-code-fence src pos n)
+      (> level 0)
+      (MdScanBlock next (MdHeading level (md-heading-text line level)))
+      (md-table-start-at? src pos n)
+      (md-scan-table src pos n)
+      (md-blockquote-start? line)
+      (md-scan-blockquote src pos n)
+      (md-bullet-start? line)
+      (md-scan-bullet-list src pos n)
+      (md-numbered-start? line)
+      (md-scan-numbered-list src pos n)
+      (md-scan-paragraph src pos n))))
 
 (define (md-scan-blocks [src : String]) : MdBlockList
   (let
@@ -778,71 +786,68 @@
       (while (< i n)
         (let
           [c : char (string-ref text i)]
-          (cond
-            [(= c #`')
-              (let
-                [j : i64 (md-find-char text (+ i 1) #`')]
-                (if (< j n)
-                  (begin
-                    (set!
-                      out
-                      (doc-html-cat3
-                        (string-append out "<code>")
-                        (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
-                        "</code>"))
-                    (set! i (+ j 1)))
-                  (begin
-                    (set! out (string-append out (md-escape-char text i)))
-                    (set! i (+ i 1)))))]
-            [(or (= c #*') (= c #_'))
-              (let
-                [j : i64 (md-find-char text (+ i 1) c)]
-                (if (< j n)
-                  (begin
-                    (set!
-                      out
-                      (doc-html-cat3
-                        (string-append out "<em>")
-                        (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
-                        "</em>"))
-                    (set! i (+ j 1)))
-                  (begin
-                    (set! out (string-append out (md-escape-char text i)))
-                    (set! i (+ i 1)))))]
-            [(= c #[')
-              (let
-                [jclose : i64 (md-find-char text (+ i 1) #]')]
-                (if (< jclose n)
-                  (if (< (+ jclose 1) n)
-                    (if (= (string-ref text (+ jclose 1)) #(')
-                      (let
-                        [kclose : i64 (md-find-char text (+ jclose 2) #)')]
-                        (if (< kclose n)
-                          (begin
-                            (set!
+          (core/cond
+            (= c #`')
+            (let
+              [j : i64 (md-find-char text (+ i 1) #`')]
+              (if (< j n)
+                (begin
+                  (set!
+                    out
+                    (doc-html-cat3
+                      (string-append out "<code>")
+                      (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
+                      "</code>"))
+                  (set! i (+ j 1)))
+                (begin
+                  (set! out (string-append out (md-escape-char text i)))
+                  (set! i (+ i 1)))))
+            (or (= c #*') (= c #_'))
+            (let
+              [j : i64 (md-find-char text (+ i 1) c)]
+              (if (< j n)
+                (begin
+                  (set!
+                    out
+                    (doc-html-cat3
+                      (string-append out "<em>")
+                      (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
+                      "</em>"))
+                  (set! i (+ j 1)))
+                (begin
+                  (set! out (string-append out (md-escape-char text i)))
+                  (set! i (+ i 1)))))
+            (= c #[')
+            (let
+              [jclose : i64 (md-find-char text (+ i 1) #]')]
+              (if (< jclose n)
+                (if (< (+ jclose 1) n)
+                  (if (= (string-ref text (+ jclose 1)) #(')
+                    (let
+                      [kclose : i64 (md-find-char text (+ jclose 2) #)')]
+                      (if (< kclose n)
+                        (begin
+                          (set!
+                            out
+                            (string-append
                               out
-                              (string-append
-                                out
-                                (md-render-link text i jclose kclose)))
-                            (set! i (+ kclose 1)))
-                          (begin
-                            (set!
-                              out
-                              (string-append out (md-escape-char text i)))
-                            (set! i (+ i 1)))))
-                      (begin
-                        (set! out (string-append out (md-escape-char text i)))
-                        (set! i (+ i 1))))
+                              (md-render-link text i jclose kclose)))
+                          (set! i (+ kclose 1)))
+                        (begin
+                          (set! out (string-append out (md-escape-char text i)))
+                          (set! i (+ i 1)))))
                     (begin
                       (set! out (string-append out (md-escape-char text i)))
                       (set! i (+ i 1))))
                   (begin
                     (set! out (string-append out (md-escape-char text i)))
-                    (set! i (+ i 1)))))]
-            [else
-              (begin
-                (set! out (string-append out (md-escape-char text i)))
-                (set! i (+ i 1)))])))
+                    (set! i (+ i 1))))
+                (begin
+                  (set! out (string-append out (md-escape-char text i)))
+                  (set! i (+ i 1)))))
+            (begin
+              (set! out (string-append out (md-escape-char text i)))
+              (set! i (+ i 1))))))
       out)))
 
 ;: Render a heading with the same deterministic anchor scheme used by API docs.

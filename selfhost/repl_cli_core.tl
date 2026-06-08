@@ -289,14 +289,17 @@
 (define (__tl_repl_char_string [c : char]) : String
   (let
     [code : i64 (cast c : i64)]
-    (cond
-      [(= code 9) \"\t\"]
-      [(= code 10) \"
-\"]
-      [(= code 13) \"\r\"]
-      [(and (>= code 32) (<= code 126))
-        (substring __tl_repl_ascii_printable_table (- code 32) 1)]
-      [else \"?\"])))
+    (core/cond
+      (= code 9)
+      \"\t\"
+      (= code 10)
+      \"
+\"
+      (= code 13)
+      \"\r\"
+      (and (>= code 32) (<= code 126))
+      (substring __tl_repl_ascii_printable_table (- code 32) 1)
+      \"?\")))
 
 (define (__tl_repl_print_char [c : char]) : unit
   (begin
@@ -401,7 +404,7 @@
     [(OkReplString body)
       (OkReplString
         (string-append
-          "(import \"stdlib/io.tl\")\n"
+          "(import \"stdlib/io.tl\")\n(import \"stdlib/core_macros.tl\" module stdlib.core-macros as core)\n"
           (string-append
             session-source
             (string-append

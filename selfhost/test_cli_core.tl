@@ -358,12 +358,15 @@
                   runtime-paths
                   tests)))]
           [(AstDeclImport _)
-            (tltest-collect-in
-              rest
-              rest-paths
-              runtime-decls
-              runtime-paths
-              tests)]
+            (begin
+              (array-push! runtime-decls decl)
+              (array-push! runtime-paths decl-path)
+              (tltest-collect-in
+                rest
+                rest-paths
+                runtime-decls
+                runtime-paths
+                tests))]
           [(AstDeclIncludeStr _ _)
             (tltest-collect-in
               rest
@@ -1284,6 +1287,50 @@
   (if (tltest-vector-builders-self-test?)
     unit
     (panic "test CLI vector builder order mismatch")))
+
+(define (tltest-import-alias-preserved? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport
+        (AstImportSpec _ (AstSomeModuleName module) (AstSomeImportAlias alias)))
+      (and (string-eq module "stdlib.core-macros") (string-eq alias "core"))]
+    [_ false]))
+
+(define (tltest-import-alias-preserved-self-test?) : bool
+  (let
+    [import-decl : AstDecl
+      (AstDeclImport
+        (AstImportSpec
+          "stdlib/core_macros.tl"
+          (AstSomeModuleName "stdlib.core-macros")
+          (AstSomeImportAlias "core")))]
+    [span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        import-decl
+        (ast-decl-cons
+          (ast-decl-test
+            "uses-qualified-macro-alias"
+            (ast-node-push (AstExprLiteral (AstLitUnit)))
+            span)
+          AstDeclNil))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "alias.tl"
+        (ast-decl-path-cons "alias.tl" AstDeclPathNil))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (match (box-get harness-decls-box)
+              [(AstDeclCons first _)
+                (and (= count 1) (tltest-import-alias-preserved? first))]
+              [_ false])])])))
+
+(test
+  test-cli-inline-harness-preserves-import-aliases
+  (if (tltest-import-alias-preserved-self-test?)
+    unit
+    (panic "test CLI inline harness dropped import alias")))
 
 (define (tltest-check-only
   [program : AstProgram]

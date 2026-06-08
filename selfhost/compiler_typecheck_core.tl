@@ -12045,12 +12045,214 @@
               (ErrTcEnv "typecheck: nested variant pattern requires enum field")]))]
       [_ (ErrTcEnv "typecheck: unsupported nested match pattern")])))
 
+(define (tc-borrowed-field-ref-type [lifetime : String] [field-ty : AstType]) : AstType
+  (ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
+
+(define (tc-bind-borrowed-sub-pattern-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [patterns : AstPatternList]
+  [types : AstTypeList]) : ResultTcEnv
+  (match patterns
+    [(AstPatternNil)
+      (match types
+        [(AstTypeNil) (OkTcEnv env)]
+        [_ (ErrTcEnv "typecheck: pattern arity mismatch")])]
+    [(AstPatternCons pattern rest-patterns)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest-patterns : AstPatternList (box-get rest-patterns)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (ty-node-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)
+                [(OkTcEnv next-env)
+                  (tc-bind-borrowed-sub-pattern-list
+                    ctx
+                    next-env
+                    lifetime
+                    rest-patterns
+                    rest-types)]
+                [(ErrTcEnv message) (ErrTcEnv message)]))]
+          [(AstTypeNil) (ErrTcEnv "typecheck: pattern arity mismatch")]))]))
+
+(define (tc-bind-borrowed-variant-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [enum-name : String]
+  [variant-name : String]
+  [enum-lifetimes : AstLifetimeList]
+  [args : AstPatternList]) : ResultTcEnv
+  (let
+    [lookup-name : String (tc-variant-name-for-enum enum-name variant-name)]
+    (match (compiler-registries-lookup-variant
+      (tc-context-registries ctx)
+      lookup-name)
+      [(SomeI64 handle)
+        (match (tc-qualified-variant-visible-ok ctx lookup-name)
+          [(OkTcUnit)
+            (match (tc-variant-owner-name ctx handle)
+              [(OkTcString owner)
+                (if (string-eq owner enum-name)
+                  (match (compiler-registries-variant-fields-indexed
+                    (tc-context-symbols ctx)
+                    handle)
+                    [(OkAstTypeList fields)
+                      (match enum-lifetimes
+                        [(AstLifetimeNil)
+                          (tc-bind-borrowed-sub-pattern-list
+                            ctx
+                            env
+                            lifetime
+                            args
+                            (tc-resolve-type-list ctx fields))]
+                        [_
+                          (match (tc-lifetime-subst-from-nominal-args
+                            ctx
+                            enum-name
+                            enum-lifetimes)
+                            [(OkTcLifetimeSubst subst)
+                              (tc-bind-borrowed-sub-pattern-list
+                                ctx
+                                env
+                                lifetime
+                                args
+                                (tc-resolve-type-list
+                                  ctx
+                                  (tc-lifetime-subst-type-list subst fields)))]
+                            [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                    [(ErrAstTypeList message) (ErrTcEnv message)])
+                  (ErrTcEnv
+                    (string-append
+                      "typecheck: variant "
+                      (string-append
+                        variant-name
+                        (string-append
+                          " belongs to enum "
+                          (string-append
+                            owner
+                            (string-append ", not " enum-name)))))))]
+              [(ErrTcString message) (ErrTcEnv message)])]
+          [(ErrTcUnit message) (ErrTcEnv message)])]
+      [(NoneI64)
+        (ErrTcEnv (string-append "typecheck: unknown variant " variant-name))])))
+
+(define (tc-bind-borrowed-sub-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [pattern : AstPattern]
+  [field-ty : AstType]) : ResultTcEnv
+  (let
+    [ty : AstType (tc-resolve-type ctx field-ty)]
+    (match pattern
+      [(AstPatBinding name)
+        (OkTcEnv (tc-bind env name (tc-borrowed-field-ref-type lifetime ty)))]
+      [(AstPatWildcard) (OkTcEnv env)]
+      [(AstPatLiteral lit)
+        (if (tc-literal-pattern-compatible? lit ty)
+          (OkTcEnv env)
+          (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+      [(AstPatVariant name args-box)
+        (let
+          [args : AstPatternList (box-get args-box)]
+          (match (tc-type-strip-region ty)
+            [(AstTyEnum enum-name)
+              (tc-bind-borrowed-variant-pattern
+                ctx
+                env
+                lifetime
+                enum-name
+                name
+                AstLifetimeNil
+                args)]
+            [(AstTyEnumArgs enum-name lifetimes)
+              (tc-bind-borrowed-variant-pattern
+                ctx
+                env
+                lifetime
+                enum-name
+                name
+                lifetimes
+                args)]
+            [_
+              (ErrTcEnv "typecheck: nested variant pattern requires enum field")]))]
+      [_ (ErrTcEnv "typecheck: unsupported nested match pattern")])))
+
+(define (tc-bind-borrowed-enum-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [enum-name : String]
+  [enum-lifetimes : AstLifetimeList]
+  [pattern : AstPattern]) : ResultTcEnv
+  (match pattern
+    [(AstPatWildcard) (OkTcEnv env)]
+    [(AstPatBinding variant-name)
+      (tc-bind-borrowed-variant-pattern
+        ctx
+        env
+        lifetime
+        enum-name
+        variant-name
+        enum-lifetimes
+        AstPatternNil)]
+    [(AstPatVariant variant-name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (tc-bind-borrowed-variant-pattern
+          ctx
+          env
+          lifetime
+          enum-name
+          variant-name
+          enum-lifetimes
+          args))]
+    [_ (ErrTcEnv "typecheck: unsupported enum match pattern")]))
+
 (define (tc-bind-match-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [pattern : AstPattern]) : ResultTcEnv
   (match (tc-type-strip-region scrut-ty)
+    [(AstTyRef lifetime referent-box)
+      (let
+        [referent-ty : AstType
+          (tc-type-strip-region
+            (tc-resolve-type ctx (ty-node-get referent-box)))]
+        (match referent-ty
+          [(AstTyEnum enum-name)
+            (tc-bind-borrowed-enum-match-pattern
+              ctx
+              env
+              lifetime
+              enum-name
+              AstLifetimeNil
+              pattern)]
+          [(AstTyEnumArgs enum-name lifetimes)
+            (tc-bind-borrowed-enum-match-pattern
+              ctx
+              env
+              lifetime
+              enum-name
+              lifetimes
+              pattern)]
+          [_
+            (match pattern
+              [(AstPatWildcard) (OkTcEnv env)]
+              [(AstPatBinding name) (OkTcEnv (tc-bind env name scrut-ty))]
+              [(AstPatLiteral lit)
+                (if (tc-literal-pattern-compatible? lit scrut-ty)
+                  (OkTcEnv env)
+                  (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+              [_
+                (ErrTcEnv
+                  "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))]
     [(AstTyEnum enum-name)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -12431,6 +12633,19 @@
   [arms : AstMatchArmList]) : ResultTcUnit
   (tc-match-arm-reachability-loop ctx scrut-ty arms false))
 
+(define (tc-match-coverage-type [ctx : TcContext] [scrut-ty : AstType]) : AstType
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyRef _ referent-box)
+      (let
+        [referent-ty : AstType
+          (tc-type-strip-region
+            (tc-resolve-type ctx (ty-node-get referent-box)))]
+        (match referent-ty
+          [(AstTyEnum _) referent-ty]
+          [(AstTyEnumArgs _ _) referent-ty]
+          [_ scrut-ty]))]
+    [_ scrut-ty]))
+
 (define (tc-match-exhaustive?
   [ctx : TcContext]
   [scrut-ty : AstType]
@@ -12459,15 +12674,17 @@
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : ResultTcType
-  (match (tc-match-arm-reachability-ok ctx scrut-ty arms)
-    [(OkTcUnit)
-      (match (tc-check-match-arm-types ctx env scrut-ty arms)
-        [(OkTcType result-ty)
-          (if (tc-match-exhaustive? ctx scrut-ty arms)
-            (OkTcType result-ty)
-            (ErrTcType "typecheck: non-exhaustive match"))]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(ErrTcUnit message) (ErrTcType message)]))
+  (let
+    [coverage-ty : AstType (tc-match-coverage-type ctx scrut-ty)]
+    (match (tc-match-arm-reachability-ok ctx coverage-ty arms)
+      [(OkTcUnit)
+        (match (tc-check-match-arm-types ctx env scrut-ty arms)
+          [(OkTcType result-ty)
+            (if (tc-match-exhaustive? ctx coverage-ty arms)
+              (OkTcType result-ty)
+              (ErrTcType "typecheck: non-exhaustive match"))]
+          [(ErrTcType message) (ErrTcType message)])]
+      [(ErrTcUnit message) (ErrTcType message)])))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
 ;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
@@ -15224,7 +15441,8 @@
   [ctx : TcContext]
   [scrut-ty : AstType]
   [pattern : AstPattern]) : TcStringList
-  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-match-coverage-type ctx scrut-ty)))
     [(AstTyEnum _)
       (match pattern
         [(AstPatVariant _ patterns-box)
@@ -16048,7 +16266,8 @@
   [scrut-ty : AstType]
   [pattern : AstPattern]
   [locals : TcMovedSet]) : TcMovedSet
-  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-match-coverage-type ctx scrut-ty)))
     [(AstTyEnum _)
       (match pattern
         [(AstPatVariant _ patterns-box)

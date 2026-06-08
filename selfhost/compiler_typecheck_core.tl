@@ -715,14 +715,41 @@
 (define (tc-empty-env) : TcTypeEnv
   TcTypeNil)
 
-(define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
+(define (tc-local-cache-threshold) : i64
+  32)
+
+(define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty (box env)))
+
+(define (tc-env-uncached-prefix-reaches-cache?
+  [env : TcTypeEnv]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    (match env
+      [(TcTypeCache _ _ _ _ _) true]
+      [_ false])
+    (match env
+      [(TcTypeBind _ _ rest)
+        (tc-env-uncached-prefix-reaches-cache? (box-get rest) (- remaining 1))]
+      [_ false])))
+
+(define (tc-env-compact-local-if-threshold [env : TcTypeEnv]) : TcTypeEnv
+  (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
+    (tc-env-with-cache env)
+    env))
+
+(define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
+  (tc-env-compact-local-if-threshold (tc-bind-raw env name ty)))
 
 (define (tc-unsafe-decl-marker-name [name : String]) : String
   (string-append " __tl_unsafe_decl:" name))
 
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-bind (tc-bind env (tc-unsafe-decl-marker-name name) (AstTyUnit)) name ty))
+  (tc-env-compact-local-if-threshold
+    (tc-bind-raw
+      (tc-bind-raw env (tc-unsafe-decl-marker-name name) (AstTyUnit))
+      name
+      ty)))
 
 (define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -1000,19 +1027,24 @@
 (define (tc-enter-unsafe [env : TcTypeEnv]) : TcTypeEnv
   (tc-bind env (tc-unsafe-marker-name) (AstTyUnit)))
 
-(define (tc-in-unsafe? [env : TcTypeEnv]) : bool
+(define (tc-in-unsafe-scan? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
-        (tc-in-unsafe? (box-get rest)))]))
+        (tc-in-unsafe-scan? (box-get rest)))]))
+
+(define (tc-in-unsafe? [env : TcTypeEnv]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ rest) (tc-in-unsafe-scan? (box-get rest))]
+    [_ (tc-in-unsafe-scan? env)]))
 
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
   (tc-bind env (tc-return-type-name) ty))
 
-(define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
+(define (tc-current-return-type-scan [env : TcTypeEnv]) : ResultTcType
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
@@ -1021,7 +1053,12 @@
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
         (OkTcType ty)
-        (tc-current-return-type (box-get rest)))]))
+        (tc-current-return-type-scan (box-get rest)))]))
+
+(define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
+  (match env
+    [(TcTypeCache _ _ _ _ rest) (tc-current-return-type-scan (box-get rest))]
+    [_ (tc-current-return-type-scan env)]))
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
   (ast-type-cons a AstTypeNil))
@@ -1317,7 +1354,7 @@
 (define (tc-hygiene-global-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (tc-hygiene-global-binding-unsafe-scan env env name))
 
-(define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
+(define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
     [(TcTypeCache _ _ _ _ _) (TcNoString)]
@@ -1325,8 +1362,13 @@
       (if (string-eq key (tc-region-marker-name))
         (match ty
           [(AstTyVar region) (TcSomeString region)]
-          [_ (tc-active-region (box-get rest))])
-        (tc-active-region (box-get rest)))]))
+          [_ (tc-active-region-scan (box-get rest))])
+        (tc-active-region-scan (box-get rest)))]))
+
+(define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
+  (match env
+    [(TcTypeCache _ _ _ _ rest) (tc-active-region-scan (box-get rest))]
+    [_ (tc-active-region-scan env)]))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
   (tc-bind env (tc-region-marker-name) (AstTyVar region)))
@@ -1370,14 +1412,20 @@
     [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
-(define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
+(define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (tc-cleanup-owner-marker-head? (box-get rest) name)
-        (tc-cleanup-owner-active? (box-get rest) name))]))
+        (tc-cleanup-owner-active-scan? (box-get rest) name))]))
+
+(define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-cleanup-owner-active-scan? (box-get rest) name)]
+    [_ (tc-cleanup-owner-active-scan? env name)]))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
@@ -1397,7 +1445,10 @@
           owners))]))
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
-  (tc-active-cleanup-owners-scan env env))
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-active-cleanup-owners-scan env (box-get rest))]
+    [_ (tc-active-cleanup-owners-scan env env)]))
 
 (define (tc-string-list-eq [a : TcStringList] [b : TcStringList]) : bool
   (match a
@@ -1558,14 +1609,20 @@
         [_ false])
       false)))
 
-(define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
+(define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
-        (tc-lifetime-visible? (box-get rest) lifetime))]))
+        (tc-lifetime-visible-scan? (box-get rest) lifetime))]))
+
+(define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-lifetime-visible-scan? (box-get rest) lifetime)]
+    [_ (tc-lifetime-visible-scan? env lifetime)]))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
@@ -1577,7 +1634,7 @@
         (tc-lifetime-visible? env lifetime)
         (tc-reference-lifetimes-visible? env (box-get rest)))]))
 
-(define (tc-lifetime-outlives-binding-scan
+(define (tc-lifetime-outlives-binding-scan-inner
   [env : TcTypeEnv]
   [lifetime : String]
   [target : String]
@@ -1588,11 +1645,26 @@
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         seen-target
-        (tc-lifetime-outlives-binding-scan
+        (tc-lifetime-outlives-binding-scan-inner
           (box-get rest)
           lifetime
           target
           (or seen-target (string-eq key target))))]))
+
+(define (tc-lifetime-outlives-binding-scan
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [target : String]
+  [seen-target : bool]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-lifetime-outlives-binding-scan-inner
+        (box-get rest)
+        lifetime
+        target
+        seen-target)]
+    [_
+      (tc-lifetime-outlives-binding-scan-inner env lifetime target seen-target)]))
 
 (define (tc-lifetime-outlives-binding?
   [env : TcTypeEnv]
@@ -1611,7 +1683,7 @@
         (tc-lifetime-outlives-binding? env lifetime target)
         (tc-reference-lifetimes-outlive-binding? env (box-get rest) target))]))
 
-(define (tc-lifetime-outlives-lifetime-scan
+(define (tc-lifetime-outlives-lifetime-scan-inner
   [env : TcTypeEnv]
   [value-lifetime : String]
   [target-lifetime : String]
@@ -1624,13 +1696,32 @@
       [(TcTypeBind key ty rest)
         (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
           seen-target
-          (tc-lifetime-outlives-lifetime-scan
+          (tc-lifetime-outlives-lifetime-scan-inner
             (box-get rest)
             value-lifetime
             target-lifetime
             (or
               seen-target
               (tc-env-binding-matches-lifetime? key ty target-lifetime))))])))
+
+(define (tc-lifetime-outlives-lifetime-scan
+  [env : TcTypeEnv]
+  [value-lifetime : String]
+  [target-lifetime : String]
+  [seen-target : bool]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-lifetime-outlives-lifetime-scan-inner
+        (box-get rest)
+        value-lifetime
+        target-lifetime
+        seen-target)]
+    [_
+      (tc-lifetime-outlives-lifetime-scan-inner
+        env
+        value-lifetime
+        target-lifetime
+        seen-target)]))
 
 (define (tc-lifetime-outlives-lifetime?
   [env : TcTypeEnv]
@@ -2096,7 +2187,7 @@
 ;; Region-tagged aggregate flow uses the same lexical owner ordering as
 ;; references, but only considers arena owners. A value from an outer region can
 ;; flow into an inner target; an inner-region value cannot flow outward.
-(define (tc-region-outlives-or-matches
+(define (tc-region-outlives-or-matches-scan
   [env : TcTypeEnv]
   [value-region : String]
   [target-region : String]) : bool
@@ -2113,19 +2204,31 @@
                 false
                 (if (string-eq region target-region)
                   true
-                  (tc-region-outlives-or-matches
+                  (tc-region-outlives-or-matches-scan
                     (box-get rest)
                     value-region
                     target-region)))]
             [_
-              (tc-region-outlives-or-matches
+              (tc-region-outlives-or-matches-scan
                 (box-get rest)
                 value-region
                 target-region)])
-          (tc-region-outlives-or-matches
+          (tc-region-outlives-or-matches-scan
             (box-get rest)
             value-region
             target-region))])))
+
+(define (tc-region-outlives-or-matches
+  [env : TcTypeEnv]
+  [value-region : String]
+  [target-region : String]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-region-outlives-or-matches-scan
+        (box-get rest)
+        value-region
+        target-region)]
+    [_ (tc-region-outlives-or-matches-scan env value-region target-region)]))
 
 (define (tc-region-can-flow-into-any
   [env : TcTypeEnv]
@@ -4123,6 +4226,81 @@
               [(TcSomeString region) (string-eq region "arena")]
               [_ false])
             (tc-lifetime-visible? env "arena")))))))
+
+(define (tc-type-env-cache-head? [env : TcTypeEnv]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ _) true]
+    [_ false]))
+
+(define (tc-type-env-bind-many [env : TcTypeEnv] [count : i64]) : TcTypeEnv
+  (let
+    [i : i64 0]
+    [out : TcTypeEnv env]
+    (begin
+      (while (< i count)
+        (begin
+          (set!
+            out
+            (tc-bind out (string-append "local" (int->string i)) (AstTyI64)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (tc-type-env-local-cache-behavior-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache (tc-bind (tc-empty-env) "global" (AstTyString)))]
+    [marked : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind-unsafe (tc-push-region base "arena") "danger" (AstTyI64))
+        (AstTyI64))]
+    [shadowed : TcTypeEnv
+      (tc-bind (tc-bind marked "shadow" (AstTyI64)) "shadow" (AstTyBool))]
+    [cached : TcTypeEnv
+      (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 6))]
+    (and
+      (tc-type-env-cache-head? cached)
+      (and
+        (match (tc-lookup cached "shadow")
+          [(OkTcType (AstTyBool)) true]
+          [_ false])
+        (and
+          (match (tc-lookup cached "global")
+            [(OkTcType (AstTyString)) true]
+            [_ false])
+          (and
+            (match (tc-lookup-unsafe cached "danger")
+              [(OkTcTypeUnsafe (AstTyI64) unsafe) unsafe]
+              [_ false])
+            (and
+              (match (tc-lookup cached "missing")
+                [(ErrTcType message)
+                  (string-eq message "typecheck: unbound name missing")]
+                [_ false])
+              (and
+                (match (tc-current-return-type cached)
+                  [(OkTcType (AstTyI64)) true]
+                  [_ false])
+                (and
+                  (match (tc-active-region cached)
+                    [(TcSomeString region) (string-eq region "arena")]
+                    [_ false])
+                  (tc-lifetime-visible? cached "shadow"))))))))))
+
+(define (tc-type-env-local-cache-default-shadow-smoke?) : bool
+  (let
+    [base : TcTypeEnv (tc-env-with-cache (tc-default-env))]
+    [shadowed : TcTypeEnv
+      (tc-bind base "string-length" (tc-fn1 (AstTyI64) (AstTyI64)))]
+    [cached : TcTypeEnv
+      (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
+    (and
+      (tc-type-env-cache-head? cached)
+      (not (tc-default-builtin-unshadowed? cached "string-length")))))
+
+(define (tc-type-env-local-cache-smoke?) : bool
+  (and
+    (tc-type-env-local-cache-behavior-smoke?)
+    (tc-type-env-local-cache-default-shadow-smoke?)))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let
@@ -6980,10 +7158,17 @@
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : bool
-  (tc-lambda-captures-reference-scan-root
-    env
-    (tc-param-bound-names params)
-    body))
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-lambda-captures-reference-scan-root
+        (box-get rest)
+        (tc-param-bound-names params)
+        body)]
+    [_
+      (tc-lambda-captures-reference-scan-root
+        env
+        (tc-param-bound-names params)
+        body)]))
 
 (define (tc-ref-capturing-lambda-init? [env : TcTypeEnv] [init : AstExpr]) : bool
   (match (ast-expr-unspan init)
@@ -9852,12 +10037,21 @@
   [bound : TcStringList]
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
-  (tc-check-lambda-region-captures-scan-root
-    env
-    env
-    bound
-    body
-    allow-immutable-reference-captures))
+  (match env
+    [(TcTypeCache _ _ _ _ rest)
+      (tc-check-lambda-region-captures-scan-root
+        env
+        (box-get rest)
+        bound
+        body
+        allow-immutable-reference-captures)]
+    [_
+      (tc-check-lambda-region-captures-scan-root
+        env
+        env
+        bound
+        body
+        allow-immutable-reference-captures)]))
 
 (define (tc-check-lambda-region-captures
   [env : TcTypeEnv]

@@ -5876,6 +5876,9 @@
     (if (tc-type-env-box-smoke?)
       unit
       (panic "typecheck: boxed type env smoke mismatch"))
+    (if (tc-type-env-local-cache-smoke?)
+      unit
+      (panic "typecheck: local type env cache smoke mismatch"))
     (if (tc-spmd-env-box-smoke?)
       unit
       (panic "typecheck: boxed spmd env smoke mismatch"))

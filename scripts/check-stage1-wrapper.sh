@@ -325,14 +325,16 @@ EOF
     run_capture_cwd check-package-discover "$PKG/src/nested/deeper" "$COMPILER" check
     assert_empty "$WORKDIR/check-package-discover.stderr"
     assert_contains "$WORKDIR/check-package-discover.stdout" "Type checking passed!"
-    cat > "$PKG/src/non_entry_bad.tl" <<'EOF'
+    BAD_PKG_SOURCE="$PKG/src/non_entry_bad.tl"
+    cat > "$BAD_PKG_SOURCE" <<'EOF'
 (define (package-non-entry) : i64 true)
 EOF
     run_expect_failure check-package-bad "$COMPILER" check --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-package-bad.stdout"
     assert_contains "$WORKDIR/check-package-bad.stderr" "check: package source failed:"
     assert_contains "$WORKDIR/check-package-bad.stderr" "non_entry_bad.tl"
-    rm "$PKG/src/non_entry_bad.tl"
+    assert_not_contains "$WORKDIR/check-package-bad.stderr" "${BAD_PKG_SOURCE}${BAD_PKG_SOURCE}"
+    rm "$BAD_PKG_SOURCE"
     run_expect_failure check-file-manifest "$COMPILER" check "$SRC" --manifest-path "$PKG/typelisp.pkg"
     assert_empty "$WORKDIR/check-file-manifest.stdout"
     assert_contains "$WORKDIR/check-file-manifest.stderr" "cannot combine input path with --manifest-path"

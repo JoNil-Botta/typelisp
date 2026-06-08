@@ -11,6 +11,13 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+HOST_OS=linux
+case "$(uname -s)" in
+    Linux*) HOST_OS=linux ;;
+    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
+    *) ;;
+esac
+
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
@@ -75,6 +82,15 @@ check_selfhost_manifest_sync() {
 fail() {
     echo "FAIL: $*" >&2
     exit 1
+}
+
+compiler_batch_path() {
+    path=$1
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$path"
+    else
+        printf '%s\n' "$path"
+    fi
 }
 
 contains_text() {
@@ -367,7 +383,9 @@ prepare_compile_batch() {
                 else
                     prep_compile_source="$ROOT/$prep_case_source"
                 fi
-                printf '%s|%s\n' "$prep_compile_source" "$prep_case_dir/$prep_case_id.s" >> "$BATCH_INPUT"
+                printf '%s|%s\n' \
+                    "$(compiler_batch_path "$prep_compile_source")" \
+                    "$(compiler_batch_path "$prep_case_dir/$prep_case_id.s")" >> "$BATCH_INPUT"
                 prep_case_id=
                 ;;
             *)

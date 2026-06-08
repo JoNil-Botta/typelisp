@@ -13,6 +13,10 @@
 
 (import "../stdlib/string.tl")
 
+(defenum ResultFormatString
+  (OkFormatString String)
+  (ErrFormatString FormatSourceError))
+
 (define (format-rules-node-symbol? [node : FormatCst] [wanted : String]) : bool
   (match node
     [(FmtCstAtom tok)
@@ -457,6 +461,12 @@
 (define (format-rules-source-doc [src : String]) : Doc
   (format-rules-cst-doc (parse-format-source src)))
 
+(define (format-rules-render-source-width-result [src : String] [width : i64]) : ResultFormatString
+  (match (parse-format-source-result src)
+    [(OkFormatCst tree)
+      (OkFormatString (render-doc-width (format-rules-cst-doc tree) width))]
+    [(ErrFormatCst err) (ErrFormatString err)]))
+
 (define (format-rules-render [node : FormatCst]) : String
   (render-doc (format-rules-cst-doc node)))
 
@@ -467,7 +477,12 @@
   (render-doc (format-rules-source-doc src)))
 
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
-  (render-doc-width (format-rules-source-doc src) width))
+  (match (format-rules-render-source-width-result src width)
+    [(OkFormatString formatted) formatted]
+    [(ErrFormatString err)
+      (begin
+        (panic (format-source-error-message err))
+        "")]))
 
 (define (format-rules-decls-source) : String
   "(import \"std.tl\") (extern print-string (:abi c) (:symbol \"tl_print_string\") : (-> String unit)) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64))")

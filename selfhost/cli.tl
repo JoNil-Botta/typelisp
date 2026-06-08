@@ -67,6 +67,7 @@ Usage:
     typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...]
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
@@ -106,6 +107,7 @@ Options for lint:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for test:
     --check                        Typecheck inline tests without running them
+    --batch <file>                 Read newline-separated inline-test input paths for --check
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --opt-level <0|1|2>          Select selfhost test harness optimization
 Options for doc:
@@ -188,9 +190,11 @@ Options:
 (define (cli-test-help-text) : String
   "Usage:
     typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...]
 
 Options:
     --check                        Typecheck inline tests without running them
+    --batch <file>                 Read newline-separated inline-test input paths for --check
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --target <target>              linux-x86_64 or windows-x86_64
     --opt-level <0|1|2>            Select selfhost test harness optimization

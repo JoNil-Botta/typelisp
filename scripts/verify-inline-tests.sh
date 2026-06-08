@@ -92,40 +92,57 @@ if [ ! -s "$DISCOVERED" ]; then
     exit 1
 fi
 
+discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
+batch_check_stdout="$WORKDIR/check.batch.stdout"
+batch_check_stderr="$WORKDIR/check.batch.stderr"
+check_counts="$WORKDIR/check.counts.txt"
+
+echo "[inline-tests] check batch ($discovered_file_count file(s))"
+if run_with_retry "$batch_check_stdout" "$batch_check_stderr" \
+    "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
+    "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
+    batch_check_status=0
+else
+    batch_check_status=$?
+fi
+if [ "$batch_check_status" -ne 0 ]; then
+    echo "inline test batch typecheck failed" >&2
+    show_streams "$batch_check_stdout" "$batch_check_stderr"
+    exit 1
+fi
+
+sed -n 's/^TypeLisp test typecheck passed: \([0-9][0-9]*\) test(s)$/\1/p' "$batch_check_stdout" \
+    | tr -d '\r' > "$check_counts"
+check_count_lines=$(wc -l < "$check_counts" | tr -d ' ')
+if [ "$check_count_lines" -ne "$discovered_file_count" ]; then
+    echo "inline test batch typecheck reported $check_count_lines count line(s), expected $discovered_file_count" >&2
+    show_streams "$batch_check_stdout" "$batch_check_stderr"
+    exit 1
+fi
+
 file_count=0
 test_count=0
+exec 3< "$check_counts"
 while IFS= read -r source; do
     [ -n "$source" ] || continue
     file_count=$((file_count + 1))
     case_name=$(safe_name "$source")
-    check_stdout="$WORKDIR/$case_name.check.stdout"
-    check_stderr="$WORKDIR/$case_name.check.stderr"
     run_stdout="$WORKDIR/$case_name.run.stdout"
     run_stderr="$WORKDIR/$case_name.run.stderr"
 
-    echo "[inline-tests] check $source"
-    if run_with_retry "$check_stdout" "$check_stderr" \
-        "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" test --check "$source" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
-        check_status=0
-    else
-        check_status=$?
-    fi
-    if [ "$check_status" -ne 0 ]; then
-        echo "inline test typecheck failed for $source" >&2
-        show_streams "$check_stdout" "$check_stderr"
+    if ! IFS= read -r case_tests <&3; then
+        echo "inline test batch typecheck did not report a count for $source" >&2
+        show_streams "$batch_check_stdout" "$batch_check_stderr"
         exit 1
     fi
-
-    case_tests=$(sed -n 's/^TypeLisp test typecheck passed: \([0-9][0-9]*\) test(s)$/\1/p' "$check_stdout" | tr -d '\r')
     if [ -z "$case_tests" ]; then
         echo "inline test typecheck for $source did not report a test count" >&2
-        show_streams "$check_stdout" "$check_stderr"
+        show_streams "$batch_check_stdout" "$batch_check_stderr"
         exit 1
     fi
     if [ "$case_tests" -eq 0 ]; then
         echo "inline test discovery found $source, but typelisp test reported zero tests" >&2
-        show_streams "$check_stdout" "$check_stderr"
+        show_streams "$batch_check_stdout" "$batch_check_stderr"
         exit 1
     fi
 
@@ -151,5 +168,6 @@ while IFS= read -r source; do
 
     test_count=$((test_count + case_tests))
 done < "$DISCOVERED"
+exec 3<&-
 
 echo "inline test verification passed for $test_count test(s) in $file_count file(s)"

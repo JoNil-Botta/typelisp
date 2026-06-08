@@ -30,11 +30,20 @@
 
 (defenum TestConfig
   (TestFileConfig String String String StringVec i64 TestMode)
+  (TestBatchConfig StringVec String String StringVec i64 TestMode)
   (TestPackageConfig String bool String String StringVec i64 TestMode))
 
 (defenum ResultTestConfig
   (OkTestConfig TestConfig)
   (ErrTestConfig String))
+
+(defenum TestMaybeString
+  (TestNoString)
+  (TestSomeString String))
+
+(defenum ResultTestBatchPaths
+  (OkTestBatchPaths StringVec)
+  (ErrTestBatchPaths String))
 
 (defenum InlineTest
   (InlineTest String String i64 i64 String))
@@ -52,6 +61,10 @@
   (OkTestPackageTotals i64 i64)
   (ErrTestPackageTotals i64))
 
+(defenum ResultTestFileCheck
+  (OkTestFileCheck i64)
+  (ErrTestFileCheck i64))
+
 (define (tltest-unknown-target [value : String]) : String
   (str-cat "test: unknown target " value ""))
 
@@ -64,6 +77,62 @@
 (define (tltest-invalid-opt-level [value : String]) : String
   (str-cat "test: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
 
+(define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
+  (let
+    [i : i64 start]
+    [keep : bool true]
+    (begin
+      (while keep
+        (if (< i n)
+          (if (or
+            (= (string-ref text i) #\newline')
+            (= (string-ref text i) #\return'))
+            (set! keep false)
+            (set! i (+ i 1)))
+          (set! keep false)))
+      i)))
+
+(define (tltest-batch-next-line-start
+  [text : String]
+  [line-end : i64]
+  [n : i64]) : i64
+  (begin
+    (unless (< line-end n) (return line-end))
+    (let
+      [c : char (string-ref text line-end)]
+      (begin
+        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
+        (if (= (string-ref text (+ line-end 1)) #\newline')
+          (+ line-end 2)
+          (+ line-end 1))))))
+
+(define (tltest-batch-paths-from-text [text : String]) : StringVec
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [paths : StringVec (string-vec-new)]
+    (begin
+      (while (< i n)
+        (let
+          [line-end : i64 (tltest-batch-line-end text i n)]
+          [line : String (substring text i (- line-end i))]
+          (begin
+            (if (> (string-length line) 0)
+              (set! paths (string-vec-push paths line))
+              unit)
+            (set! i (tltest-batch-next-line-start text line-end n)))))
+      paths)))
+
+(define (tltest-batch-paths [list-path : String]) : ResultTestBatchPaths
+  (match (try-read-file (& list-path))
+    [(OkIoString text) (OkTestBatchPaths (tltest-batch-paths-from-text text))]
+    [(ErrIoString error)
+      (ErrTestBatchPaths
+        (string-append
+          "test: failed to read --batch list file: "
+          (io-error-message error)))]))
+
 (define (tltest-config-finish
   [source : String]
   [has-source : bool]
@@ -73,21 +142,46 @@
   [mode : String]
   [roots : StringVec]
   [opt-level : i64]
-  [test-mode : TestMode]) : ResultTestConfig
-  (if has-source
-    (if has-manifest
-      (ErrTestConfig "test: cannot combine source path with --manifest-path")
-      (OkTestConfig
-        (TestFileConfig source target mode roots opt-level test-mode)))
-    (OkTestConfig
-      (TestPackageConfig
-        manifest-path
-        has-manifest
-        target
-        mode
-        roots
-        opt-level
-        test-mode))))
+  [test-mode : TestMode]
+  [batch-list : TestMaybeString]) : ResultTestConfig
+  (match batch-list
+    [(TestSomeString list-path)
+      (if has-manifest
+        (ErrTestConfig "test: cannot combine --batch with --manifest-path")
+        (if has-source
+          (ErrTestConfig "test: cannot combine input paths with --batch")
+          (match test-mode
+            [(TestModeRun) (ErrTestConfig "test: --batch requires --check")]
+            [(TestModeCheck)
+              (match (tltest-batch-paths list-path)
+                [(OkTestBatchPaths paths)
+                  (if (string-vec-is-empty? paths)
+                    (ErrTestConfig "test: --batch list is empty")
+                    (OkTestConfig
+                      (TestBatchConfig
+                        paths
+                        target
+                        mode
+                        roots
+                        opt-level
+                        test-mode)))]
+                [(ErrTestBatchPaths message) (ErrTestConfig message)])])))]
+    [(TestNoString)
+      (if has-source
+        (if has-manifest
+          (ErrTestConfig
+            "test: cannot combine source path with --manifest-path")
+          (OkTestConfig
+            (TestFileConfig source target mode roots opt-level test-mode)))
+        (OkTestConfig
+          (TestPackageConfig
+            manifest-path
+            has-manifest
+            target
+            mode
+            roots
+            opt-level
+            test-mode)))]))
 
 (define (tltest-target-valid? [value : String]) : bool
   (match (source-tool-target value)
@@ -111,7 +205,8 @@
   [roots : StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
-  [test-mode : TestMode]) : ResultTestConfig
+  [test-mode : TestMode]
+  [batch-list : TestMaybeString]) : ResultTestConfig
   (if (>= idx count)
     (tltest-config-finish
       source
@@ -122,7 +217,8 @@
       mode
       roots
       opt-level
-      test-mode)
+      test-mode
+      batch-list)
     (let
       [current : String (arg idx)]
       (core/cond
@@ -139,7 +235,8 @@
           roots
           has-opt-level
           opt-level
-          TestModeCheck)
+          TestModeCheck
+          batch-list)
         (string-eq current "--target")
         (if (>= (+ idx 1) count)
           (ErrTestConfig "test: --target requires a value")
@@ -158,7 +255,8 @@
                 roots
                 has-opt-level
                 opt-level
-                test-mode)
+                test-mode
+                batch-list)
               (ErrTestConfig (tltest-unknown-target value)))))
         (string-eq current "--backend-mode")
         (if (>= (+ idx 1) count)
@@ -179,7 +277,8 @@
                   roots
                   has-opt-level
                   opt-level
-                  test-mode)
+                  test-mode
+                  batch-list)
                 (ErrTestConfig (tltest-unsupported-mode value)))
               (ErrTestConfig (tltest-unknown-mode value)))))
         (string-eq current "--stdlib-root")
@@ -197,7 +296,8 @@
             (string-vec-push roots (arg (+ idx 1)))
             has-opt-level
             opt-level
-            test-mode))
+            test-mode
+            batch-list))
         (string-eq current "--manifest-path")
         (if (>= (+ idx 1) count)
           (ErrTestConfig "test: --manifest-path requires a value")
@@ -215,7 +315,28 @@
               roots
               has-opt-level
               opt-level
-              test-mode)))
+              test-mode
+              batch-list)))
+        (string-eq current "--batch")
+        (if (>= (+ idx 1) count)
+          (ErrTestConfig "test: --batch requires a value")
+          (match batch-list
+            [(TestSomeString _) (ErrTestConfig "test: duplicate --batch")]
+            [(TestNoString)
+              (tltest-parse-options
+                (+ idx 2)
+                count
+                source
+                has-source
+                manifest-path
+                has-manifest
+                target
+                mode
+                roots
+                has-opt-level
+                opt-level
+                test-mode
+                (TestSomeString (arg (+ idx 1))))]))
         (string-eq current "--opt-level")
         (if (>= (+ idx 1) count)
           (ErrTestConfig "test: --opt-level requires a value")
@@ -237,7 +358,8 @@
                     roots
                     true
                     parsed-level
-                    test-mode)]
+                    test-mode
+                    batch-list)]
                 [(ErrCompilerOptimizeLevel)
                   (ErrTestConfig (tltest-invalid-opt-level value))]))))
         (source-tool-flag? current)
@@ -256,7 +378,8 @@
           roots
           has-opt-level
           opt-level
-          test-mode)))))
+          test-mode
+          batch-list)))))
 
 ;; Parse the `test` config from arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). `count` is `(arg-count)`.
@@ -273,7 +396,8 @@
     (string-vec-new)
     false
     (compiler-optimize-default-level)
-    TestModeRun))
+    TestModeRun
+    (TestNoString)))
 
 (define (tltest-decls-onto
   [items : (Array AstDecl)]
@@ -1968,6 +2092,88 @@
                               (+ inline-test-count integration-test-count)))
                           0)])])]))])]))
 
+(define (tltest-check-file-loaded
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness program harness-paths count)
+      (begin
+        (print-string (tltest-package-source-line source count))
+        (let
+          [status : i64
+            (if (= count 0)
+              (tltest-no-tests-check decls paths)
+              (tltest-check-only program harness-paths count backend-target))]
+          (if (= status 0)
+            (OkTestFileCheck count)
+            (ErrTestFileCheck status))))]))
+
+(define (tltest-check-file-source
+  [source : String]
+  [roots : StringVec]
+  [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
+  (match (compiler-driver-load-file-with-runtime
+    source
+    roots
+    (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (tltest-check-file-loaded source decls paths backend-target)]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (print-error (compiler-diagnostic-render diag))
+        (ErrTestFileCheck 1))]))
+
+(define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
+  (string-append
+    "TypeLisp test batch typecheck passed: "
+    (string-append
+      (int->string test-count)
+      (string-append
+        " test(s) in "
+        (string-append (int->string file-count) " file(s)\n")))))
+
+(define (tltest-run-batch-check-paths
+  [paths : StringVec]
+  [index : i64]
+  [roots : StringVec]
+  [backend-target : CompilerBackendTarget]
+  [file-count : i64]
+  [test-count : i64]) : i64
+  (if (>= index (string-vec-len paths))
+    (begin
+      (print-string (tltest-batch-summary-line file-count test-count))
+      0)
+    (let
+      [source : String (string-vec-get paths index "")]
+      (match (tltest-check-file-source source roots backend-target)
+        [(ErrTestFileCheck status)
+          (begin
+            (print-error (string-append "test: batch source failed: " source))
+            (print-error "\n")
+            status)]
+        [(OkTestFileCheck count)
+          (tltest-run-batch-check-paths
+            paths
+            (+ index 1)
+            roots
+            backend-target
+            (+ file-count 1)
+            (+ test-count count))]))))
+
+(define (tltest-run-batch-check
+  [paths : StringVec]
+  [target : String]
+  [roots : StringVec]) : i64
+  (match (source-tool-target target)
+    [(ErrSourceToolTarget _)
+      (begin
+        (print-error (tltest-unknown-target target))
+        1)]
+    [(OkSourceToolTarget backend-target)
+      (tltest-run-batch-check-paths paths 0 roots backend-target 0 0)]))
+
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
     [(TestFileConfig source target mode roots opt-level test-mode)
@@ -2007,6 +2213,8 @@
               (begin
                 (print-error (compiler-diagnostic-render diag))
                 1)])])]
+    [(TestBatchConfig paths target _ roots _ _)
+      (tltest-run-batch-check paths target roots)]
     [(TestPackageConfig
         manifest-path
         has-manifest

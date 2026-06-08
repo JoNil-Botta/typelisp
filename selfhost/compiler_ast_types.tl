@@ -428,15 +428,40 @@
 (define (ty-node-pool-exhausted-message) : String
   "compiler: AstType node pool exhausted")
 
-(define (ty-node-pool-mark-exhausted!) : unit
-  (set! ty-node-pool-exhausted true))
+;: Grow the pool's backing array to at least double its current capacity.
+;;
+;; #2357: restored from feat-aggregate-inline. main fail-closed this pool because
+;; the global-array reassignment here had tripped opt2 miscompiles -- but that was
+;; with the raw-ptr `ty-node-get` (now `array-ref`, see below) whose in-place alias
+;; broke when the backing array was reassigned. With `array-ref` the reassignment
+;; is safe (same pattern `ast-node-pool-grow!` already uses), and growing is needed
+;; because #1867 inline-aggregate type resolution pushes more nodes (cli.tl/test.tl
+;; exceed the old fixed 4M cap). Growing keeps the compile.tl bootstrap at its ~4M
+;; footprint (no growth) while letting larger programs proceed.
+(define (ty-node-pool-grow!) : unit
+  (let
+    [old-slots : (Array AstType) ty-node-pool-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [new-slots : (Array AstType) (make-array AstType new-cap)]
+    [len : i64 ty-node-pool-count]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! ty-node-pool-slots new-slots))))
 
 ;: Append `node` to the pool and return its ty id.
 (define (ty-node-push [node : AstType]) : i64
-  (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
-    (begin
-      (ty-node-pool-mark-exhausted!)
-      0)
+  (begin
+    (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
+      (ty-node-pool-grow!)
+      unit)
     (let
       [id : i64 ty-node-pool-count]
       (begin

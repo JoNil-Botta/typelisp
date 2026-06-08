@@ -284,6 +284,7 @@ end
 
 decision|selfhost/compiler_object.tl|structured object-image data model (#2308): main-less, imported by selfhost/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
 decision|selfhost/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
+decision|selfhost/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
 decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct

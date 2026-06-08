@@ -5,6 +5,8 @@
 
 (import "compiler_object_coff.tl")
 
+(import "compiler_object_elf.tl")
+
 (import "../stdlib/string.tl")
 
 (define (compiler-backend-smoke-source) : String
@@ -5290,7 +5292,9 @@
           (compiler-backend-object-image-shape-ok?)
           (and
             (compiler-object-coff-smoke-ok?)
-            (compiler-object-coff-rejects-real-text-ok?)))
+            (and
+              (compiler-object-coff-rejects-real-text-ok?)
+              (compiler-object-elf-smoke-ok?))))
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))
       (compiler-backend-string-ok?)
       (and

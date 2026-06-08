@@ -80,11 +80,13 @@ The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
 and checks representative symbol/literal markers in the emitted assembly.
 By default those markers are checked in `stage0` mode (the published seed's
-symbol coverage). The Linux capability tier also runs the same manifest through
-the freshly bootstrapped stage1 compiler with
-`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode `_tl_foo`
-symbol markers also accept the selfhost compiler's module/path-qualified
-`_tl_<module>_<path>_foo` labels without changing the manifest list.
+symbol coverage). `_tl_foo` and `call _tl_foo` markers are logical symbol
+markers, so both expectation modes accept direct labels such as `_tl_foo` and
+emitted module/path-qualified labels such as `_tl_calc_foo` without changing the
+manifest list. The Linux capability tier also runs the same manifest through the
+freshly bootstrapped stage1 compiler with
+`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode symbol markers
+also accept compact selfhost symbol metadata.
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 

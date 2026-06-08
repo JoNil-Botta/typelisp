@@ -361,10 +361,12 @@
       (string-i64-map-fill-empty slots 0 rounded-capacity)
       (StringI64Map slots 0 0))))
 
+;: Construct a missing borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-missing [map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
   map)
   (StringI64MapBorrowedValueMissing))
 
+;: Construct a found borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-found [value : (& map i64)]) : (StringI64MapBorrowedValueLookup
   map)
   (StringI64MapBorrowedValueFound value))

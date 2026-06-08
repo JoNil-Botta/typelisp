@@ -3,6 +3,8 @@
 
 (import "compiler_backend.tl")
 
+(import "compiler_intern.tl")
+
 (import "compiler_object_coff.tl")
 
 (import "compiler_object_elf.tl")
@@ -5261,6 +5263,117 @@
           "ordinary")))
     (compiler-backend-defdispatch-thunk-ok?)))
 
+(define (compiler-backend-signature-i64-to-i64?
+  [sig : CompilerBackendMaybeSignature]) : bool
+  (match sig
+    [(CompilerBackendSomeSignature args ret-ty)
+      (match ret-ty
+        [(AstTyI64)
+          (match args
+            [(AstTypeCons arg rest)
+              (match (ty-node-get arg)
+                [(AstTyI64)
+                  (match (box-get rest)
+                    [(AstTypeNil) true]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(CompilerBackendNoSignature) false]))
+
+(define (compiler-backend-signature-unit-to-i64?
+  [sig : CompilerBackendMaybeSignature]) : bool
+  (match sig
+    [(CompilerBackendSomeSignature args ret-ty)
+      (match args
+        [(AstTypeNil)
+          (match ret-ty
+            [(AstTyI64) true]
+            [_ false])]
+        [_ false])]
+    [(CompilerBackendNoSignature) false]))
+
+(define (compiler-backend-program-index-test-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (IrFunction
+      "pkg/really-long-backend-index-function"
+      (compiler-ir-param-cons (IrParam "x" (AstTyI64) 0) IrParamNil)
+      (AstTyI64)
+      1
+      IrBlockNil)
+    (compiler-ir-function-cons
+      (IrFunction "short_fn" IrParamNil (AstTyUnit) 0 IrBlockNil)
+      IrFunctionNil)))
+
+(define (compiler-backend-program-index-test-externs) : CompilerIrExternList
+  (compiler-ir-extern-cons
+    (IrExtern
+      "provided_decl"
+      (ast-ty-func AstTypeNil (AstTyI64))
+      (AstExternAbiC)
+      "provided_link"
+      AstExternLinkInputNil
+      true)
+    (compiler-ir-extern-cons
+      (IrExtern
+        "referenced_decl"
+        (ast-ty-func (ast-type-cons (AstTyI64) AstTypeNil) (AstTyI64))
+        (AstExternAbiC)
+        "referenced_link"
+        AstExternLinkInputNil
+        false)
+      IrExternNil)))
+
+(define (compiler-backend-program-index-id-maps-ok?) : bool
+  (let
+    [fn-name : String "pkg/really-long-backend-index-function"]
+    [fn-id : i64 (intern fn-name)]
+    [provided-name : String "provided_decl"]
+    [provided-id : i64 (intern provided-name)]
+    [provided-link-id : i64 (intern "provided_link")]
+    [referenced-name : String "referenced_decl"]
+    [referenced-id : i64 (intern referenced-name)]
+    [referenced-link : String "referenced_link"]
+    [referenced-link-id : i64 (intern referenced-link)]
+    [missing-id : i64 (intern "missing_backend_index_name")]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (compiler-backend-program-index-test-functions)
+        (compiler-backend-program-index-test-externs))]
+    (and
+      (backend-and8
+        (compiler-backend-index-function-defines-id? index fn-id)
+        (compiler-backend-index-function-defines? index fn-name)
+        (not (compiler-backend-index-function-defines-id? index missing-id))
+        (compiler-backend-signature-i64-to-i64?
+          (compiler-backend-index-function-signature-id index fn-id))
+        (compiler-backend-signature-i64-to-i64?
+          (compiler-backend-index-function-signature index fn-name))
+        (string-eq
+          (compiler-backend-function-symbol-index index fn-name)
+          "_tl_f0")
+        (string-eq (compiler-backend-function-label-scope index fn-name) "f0")
+        (compiler-backend-signature-unit-to-i64?
+          (compiler-backend-index-extern-signature-id index provided-id)))
+      (backend-and8
+        (compiler-backend-index-extern-provided-id? index provided-id)
+        (compiler-backend-index-extern-provided? index provided-name)
+        (not
+          (compiler-backend-index-extern-provided-id? index provided-link-id))
+        (compiler-backend-index-extern-references-id? index referenced-id)
+        (compiler-backend-index-extern-references-id? index referenced-link-id)
+        (string-eq
+          (compiler-backend-index-extern-link-symbol-id index referenced-id)
+          referenced-link)
+        (string-eq
+          (compiler-backend-index-extern-link-symbol-id
+            index
+            referenced-link-id)
+          referenced-link)
+        (string-eq
+          (compiler-backend-index-extern-link-symbol-id index missing-id)
+          "missing_backend_index_name")))))
+
 (define (compiler-backend-profile-runtime-source) : String
   "(extern (tl_profile_alloc_total) : i64)
 (define (main) : i64 (tl_profile_alloc_total))")
@@ -5429,7 +5542,9 @@
                                     (compiler-backend-windows-runtime-guard-ok?)
                                     (and
                                       (compiler-backend-simd-vector-ok?)
-                                      (compiler-backend-dispatch-variant-mode-ok?)))))))))))))))))))
+                                      (and
+                                        (compiler-backend-dispatch-variant-mode-ok?)
+                                        (compiler-backend-program-index-id-maps-ok?))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

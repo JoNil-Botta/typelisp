@@ -26,6 +26,10 @@
   (InternEmpty)
   (InternUsed String i64 i64))
 
+(defenum InternLookup
+  (InternLookupMissing)
+  (InternLookupFound i64))
+
 (define intern-pool-slots : (Array String)
   (make-array String 262144))
 
@@ -183,6 +187,40 @@
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
                   (set! steps (+ steps 1))))]))
         out))))
+
+;: Look up an already-interned name without mutating the table. This lets later
+;: compiler phases use id-keyed indexes without interning backend-generated
+;: probe strings as a side effect.
+(define (intern-lookup [name : String]) : InternLookup
+  (if intern-map-ready
+    (let
+      [capacity : i64 (array-length intern-map-slots)]
+      [hash : i64 (intern-hash name)]
+      [cursor : i64 (intern-bucket hash capacity)]
+      [steps : i64 0]
+      [out : InternLookup InternLookupMissing]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps capacity))
+          (match (array-ref intern-map-slots cursor)
+            [(InternEmpty)
+              (begin
+                (set! out (InternLookupMissing))
+                (set! done true))]
+            [(InternUsed slot-key slot-id slot-hash)
+              (if (if (= slot-hash hash)
+                (string-eq slot-key name)
+                false)
+                (begin
+                  (set! out (InternLookupFound slot-id))
+                  (set! done true))
+                (begin
+                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! steps (+ steps 1))))]))
+        out))
+    (InternLookupMissing)))
 
 ;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String

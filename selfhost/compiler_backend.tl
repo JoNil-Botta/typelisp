@@ -19,6 +19,10 @@
 
 (import "compiler_object.tl")
 
+(import "compiler_intern.tl")
+
+(import "sym_i64_env.tl")
+
 (import "../stdlib/hashmap.tl")
 
 (import "../stdlib/string.tl")
@@ -249,11 +253,13 @@
   (needs-shift-abort bool))
 
 (defstruct CompilerBackendProgramIndex
-  (functions StringI64Map)
+  (functions I64I64Map)
+  (function-names (Array String))
   (function-signatures (Array CompilerBackendMaybeSignature))
-  (extern-signatures StringI64Map)
+  (extern-signatures I64I64Map)
+  (extern-names (Array String))
   (extern-signature-values (Array CompilerBackendMaybeSignature))
-  (extern-references StringI64Map)
+  (extern-references I64I64Map)
   (extern-link-symbols (Array String))
   (extern-provided (Array bool)))
 
@@ -2373,9 +2379,9 @@
   (if (compiler-backend-index-extern-provided? index name)
     (compiler-backend-index-extern-link-symbol index name)
     (if (compiler-backend-compact-function-symbol? name)
-      (match (string-i64-map-get (struct-get index functions) name)
-        [(StringI64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
-        [(StringI64MapMissing) (compiler-backend-user-symbol name)])
+      (match (compiler-backend-index-function-slot index name)
+        [(I64I64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
+        [(I64I64MapMissing) (compiler-backend-user-symbol name)])
       (compiler-backend-user-symbol name))))
 
 (define (compiler-backend-function-symbol-map-comment
@@ -2486,9 +2492,9 @@
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
-  (match (string-i64-map-get (struct-get index functions) name)
-    [(StringI64MapFound slot) (backend-cat3 "f" (int->string slot) "")]
-    [(StringI64MapMissing) (compiler-backend-user-symbol name)]))
+  (match (compiler-backend-index-function-slot index name)
+    [(I64I64MapFound slot) (backend-cat3 "f" (int->string slot) "")]
+    [(I64I64MapMissing) (compiler-backend-user-symbol name)]))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
@@ -5520,17 +5526,27 @@
     [(IrExternCons _ rest)
       (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
 
+(define (compiler-backend-program-index-bind-name
+  [ids : I64I64Map]
+  [name : String]
+  [index : i64]) : I64I64Map
+  (match (intern-lookup name)
+    [(InternLookupFound name-id) (i64-i64-map-put ids name-id index)]
+    [(InternLookupMissing) ids]))
+
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
-  [ids : StringI64Map]
+  [ids : I64I64Map]
+  [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
-  [index : i64]) : StringI64Map
+  [index : i64]) : I64I64Map
   (match functions
     [(IrFunctionNil) ids]
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction name params ret-ty _ _)
           (begin
+            (array-set! names index name)
             (array-set!
               signatures
               index
@@ -5539,7 +5555,8 @@
                 ret-ty))
             (compiler-backend-program-index-functions-into
               (box-get rest)
-              (string-i64-map-put ids name index)
+              (compiler-backend-program-index-bind-name ids name index)
+              names
               signatures
               (+ index 1)))])]))
 
@@ -5551,31 +5568,37 @@
 
 (define (compiler-backend-program-index-extern-signatures-into
   [externs : CompilerIrExternList]
-  [signature-ids : StringI64Map]
+  [signature-ids : I64I64Map]
+  [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
-  [index : i64]) : StringI64Map
+  [index : i64]) : I64I64Map
   (match externs
     [(IrExternNil) signature-ids]
     [(IrExternCons item rest)
       (match item
         [(IrExtern extern-name ty _ _ _ _)
           (begin
+            (array-set! names index extern-name)
             (array-set!
               signatures
               index
               (compiler-backend-program-index-extern-signature ty))
             (compiler-backend-program-index-extern-signatures-into
               (box-get rest)
-              (string-i64-map-put signature-ids extern-name index)
+              (compiler-backend-program-index-bind-name
+                signature-ids
+                extern-name
+                index)
+              names
               signatures
               (+ index 1)))])]))
 
 (define (compiler-backend-program-index-extern-references-into
   [externs : CompilerIrExternList]
-  [reference-ids : StringI64Map]
+  [reference-ids : I64I64Map]
   [link-symbols : (Array String)]
   [provideds : (Array bool)]
-  [index : i64]) : StringI64Map
+  [index : i64]) : I64I64Map
   (match externs
     [(IrExternNil) reference-ids]
     [(IrExternCons item rest)
@@ -5586,8 +5609,11 @@
             (array-set! provideds index provided)
             (compiler-backend-program-index-extern-references-into
               (box-get rest)
-              (string-i64-map-put
-                (string-i64-map-put reference-ids extern-name index)
+              (compiler-backend-program-index-bind-name
+                (compiler-backend-program-index-bind-name
+                  reference-ids
+                  extern-name
+                  index)
                 link-symbol
                 index)
               link-symbols
@@ -5600,55 +5626,156 @@
   (let
     [function-count : i64 (compiler-backend-function-list-count functions)]
     [extern-count : i64 (compiler-backend-extern-list-count externs)]
+    [function-names : (Array String) (make-array String function-count)]
     [function-signatures : (Array CompilerBackendMaybeSignature)
       (make-array CompilerBackendMaybeSignature function-count)]
+    [extern-names : (Array String) (make-array String extern-count)]
     [extern-signatures : (Array CompilerBackendMaybeSignature)
       (make-array CompilerBackendMaybeSignature extern-count)]
     [extern-link-symbols : (Array String) (make-array String extern-count)]
     [extern-provided : (Array bool) (make-array bool extern-count)]
-    [function-ids : StringI64Map
+    [function-ids : I64I64Map
       (compiler-backend-program-index-functions-into
         functions
-        (string-i64-map-with-capacity (+ (* function-count 2) 1))
+        (i64-i64-map-with-capacity (+ (* function-count 2) 1))
+        function-names
         function-signatures
         0)]
-    [extern-signature-ids : StringI64Map
+    [extern-signature-ids : I64I64Map
       (compiler-backend-program-index-extern-signatures-into
         externs
-        (string-i64-map-with-capacity (+ (* extern-count 2) 1))
+        (i64-i64-map-with-capacity (+ (* extern-count 2) 1))
+        extern-names
         extern-signatures
         0)]
-    [extern-reference-ids : StringI64Map
+    [extern-reference-ids : I64I64Map
       (compiler-backend-program-index-extern-references-into
         externs
-        (string-i64-map-with-capacity (+ (* extern-count 4) 1))
+        (i64-i64-map-with-capacity (+ (* extern-count 4) 1))
         extern-link-symbols
         extern-provided
         0)]
     (CompilerBackendProgramIndex
       function-ids
+      function-names
       function-signatures
       extern-signature-ids
+      extern-names
       extern-signatures
       extern-reference-ids
       extern-link-symbols
       extern-provided)))
 
+(define (compiler-backend-index-find-name
+  [names : (Array String)]
+  [name : String]) : I64I64MapLookup
+  (let
+    [cursor : i64 (- (array-length names) 1)]
+    [out : I64I64MapLookup (I64I64MapMissing)]
+    [done : bool false]
+    (begin
+      (while (and (>= cursor 0) (not done))
+        (if (string-eq (array-ref names cursor) name)
+          (begin
+            (set! out (I64I64MapFound cursor))
+            (set! done true))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-backend-index-function-slot
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : I64I64MapLookup
+  (match (intern-lookup name)
+    [(InternLookupFound name-id)
+      (match (i64-i64-map-get (struct-get index functions) name-id)
+        [(I64I64MapFound slot) (I64I64MapFound slot)]
+        [(I64I64MapMissing)
+          (compiler-backend-index-find-name
+            (struct-get index function-names)
+            name)])]
+    [(InternLookupMissing)
+      (compiler-backend-index-find-name (struct-get index function-names) name)]))
+
+(define (compiler-backend-index-extern-signature-slot
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : I64I64MapLookup
+  (match (intern-lookup name)
+    [(InternLookupFound name-id)
+      (match (i64-i64-map-get (struct-get index extern-signatures) name-id)
+        [(I64I64MapFound slot) (I64I64MapFound slot)]
+        [(I64I64MapMissing)
+          (compiler-backend-index-find-name
+            (struct-get index extern-names)
+            name)])]
+    [(InternLookupMissing)
+      (compiler-backend-index-find-name (struct-get index extern-names) name)]))
+
+(define (compiler-backend-index-extern-reference-slot
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : I64I64MapLookup
+  (match (intern-lookup name)
+    [(InternLookupFound name-id)
+      (match (i64-i64-map-get (struct-get index extern-references) name-id)
+        [(I64I64MapFound slot) (I64I64MapFound slot)]
+        [(I64I64MapMissing)
+          (match (compiler-backend-index-find-name
+            (struct-get index extern-names)
+            name)
+            [(I64I64MapFound slot) (I64I64MapFound slot)]
+            [(I64I64MapMissing)
+              (compiler-backend-index-find-name
+                (struct-get index extern-link-symbols)
+                name)])])]
+    [(InternLookupMissing)
+      (match (compiler-backend-index-find-name
+        (struct-get index extern-names)
+        name)
+        [(I64I64MapFound slot) (I64I64MapFound slot)]
+        [(I64I64MapMissing)
+          (compiler-backend-index-find-name
+            (struct-get index extern-link-symbols)
+            name)])]))
+
+(define (compiler-backend-index-function-signature-id
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : CompilerBackendMaybeSignature
+  (match (i64-i64-map-get (struct-get index functions) name-id)
+    [(I64I64MapFound slot)
+      (array-ref (struct-get index function-signatures) slot)]
+    [(I64I64MapMissing) (CompilerBackendNoSignature)]))
+
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
   [name : String]) : CompilerBackendMaybeSignature
-  (match (string-i64-map-get (struct-get index functions) name)
-    [(StringI64MapFound slot)
+  (match (compiler-backend-index-function-slot index name)
+    [(I64I64MapFound slot)
       (array-ref (struct-get index function-signatures) slot)]
-    [(StringI64MapMissing) (CompilerBackendNoSignature)]))
+    [(I64I64MapMissing) (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-index-extern-signature-id
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : CompilerBackendMaybeSignature
+  (match (i64-i64-map-get (struct-get index extern-signatures) name-id)
+    [(I64I64MapFound slot)
+      (array-ref (struct-get index extern-signature-values) slot)]
+    [(I64I64MapMissing) (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-index-extern-signature
   [index : CompilerBackendProgramIndex]
   [name : String]) : CompilerBackendMaybeSignature
-  (match (string-i64-map-get (struct-get index extern-signatures) name)
-    [(StringI64MapFound slot)
+  (match (compiler-backend-index-extern-signature-slot index name)
+    [(I64I64MapFound slot)
       (array-ref (struct-get index extern-signature-values) slot)]
-    [(StringI64MapMissing) (CompilerBackendNoSignature)]))
+    [(I64I64MapMissing) (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-index-signature-id
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : CompilerBackendMaybeSignature
+  (match (compiler-backend-index-function-signature-id index name-id)
+    [(CompilerBackendSomeSignature args ret-ty)
+      (CompilerBackendSomeSignature args ret-ty)]
+    [(CompilerBackendNoSignature)
+      (compiler-backend-index-extern-signature-id index name-id)]))
 
 (define (compiler-backend-index-signature
   [index : CompilerBackendProgramIndex]
@@ -5659,31 +5786,59 @@
     [(CompilerBackendNoSignature)
       (compiler-backend-index-extern-signature index name)]))
 
+(define (compiler-backend-index-function-defines-id?
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : bool
+  (i64-i64-map-contains? (struct-get index functions) name-id))
+
 (define (compiler-backend-index-function-defines?
   [index : CompilerBackendProgramIndex]
   [name : String]) : bool
-  (string-i64-map-contains? (struct-get index functions) name))
+  (match (compiler-backend-index-function-slot index name)
+    [(I64I64MapFound _) true]
+    [(I64I64MapMissing) false]))
+
+(define (compiler-backend-index-extern-references-id?
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : bool
+  (i64-i64-map-contains? (struct-get index extern-references) name-id))
 
 (define (compiler-backend-index-extern-references?
   [index : CompilerBackendProgramIndex]
   [name : String]) : bool
-  (string-i64-map-contains? (struct-get index extern-references) name))
+  (match (compiler-backend-index-extern-reference-slot index name)
+    [(I64I64MapFound _) true]
+    [(I64I64MapMissing) false]))
+
+(define (compiler-backend-index-extern-link-symbol-id
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : String
+  (match (i64-i64-map-get (struct-get index extern-references) name-id)
+    [(I64I64MapFound slot)
+      (array-ref (struct-get index extern-link-symbols) slot)]
+    [(I64I64MapMissing) (intern-str name-id)]))
 
 (define (compiler-backend-index-extern-link-symbol
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
-  (match (string-i64-map-get (struct-get index extern-references) name)
-    [(StringI64MapFound slot)
+  (match (compiler-backend-index-extern-reference-slot index name)
+    [(I64I64MapFound slot)
       (array-ref (struct-get index extern-link-symbols) slot)]
-    [(StringI64MapMissing) name]))
+    [(I64I64MapMissing) name]))
+
+(define (compiler-backend-index-extern-provided-id?
+  [index : CompilerBackendProgramIndex]
+  [name-id : i64]) : bool
+  (match (i64-i64-map-get (struct-get index extern-signatures) name-id)
+    [(I64I64MapFound slot) (array-ref (struct-get index extern-provided) slot)]
+    [(I64I64MapMissing) false]))
 
 (define (compiler-backend-index-extern-provided?
   [index : CompilerBackendProgramIndex]
   [name : String]) : bool
-  (match (string-i64-map-get (struct-get index extern-signatures) name)
-    [(StringI64MapFound slot)
-      (array-ref (struct-get index extern-provided) slot)]
-    [(StringI64MapMissing) false]))
+  (match (compiler-backend-index-extern-signature-slot index name)
+    [(I64I64MapFound slot) (array-ref (struct-get index extern-provided) slot)]
+    [(I64I64MapMissing) false]))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
   (ErrCompilerBackendSymbolValidation (compiler-diagnostic-at-start "" message)))

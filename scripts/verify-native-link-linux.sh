@@ -367,8 +367,8 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-pkg-import-again "$_pkg/src/main.tl" "$_again"
     assert_file_exact "$_again" "$_asm" compiler-driver-pkg-import-deterministic
     assert_contains "$_asm" "math_src_lib_add_one:" compiler-driver-pkg-import
-    if ! grep -F "call _tl_" "$_asm" | grep -F "math_src_lib_add_one" >/dev/null 2>&1; then
-        fail "compiler-driver-pkg-import missing qualified add-one call"
+    if ! grep -E "    (call|jmp) _tl_" "$_asm" | grep -F "math_src_lib_add_one" >/dev/null 2>&1; then
+        fail "compiler-driver-pkg-import missing qualified add-one call/jump"
     fi
     assemble_link_run_asm compiler-driver-pkg-import "$_asm" 42 - - 1
 

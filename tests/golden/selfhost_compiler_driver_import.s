@@ -116,10 +116,8 @@ _tl_stdlib_runtime_runtime_os_exit:
     syscall
     movq %rax, -24(%rbp)
     movq -8(%rbp), %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq $0, %rax
     leave
-    ret
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl _tl_stdlib_runtime_runtime_abort_write
 _tl_stdlib_runtime_runtime_abort_write:
@@ -154,8 +152,8 @@ tl_oob_abort:
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq %rax, -32(%rbp)
+    leave
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl tl_div_abort
 tl_div_abort:
@@ -169,8 +167,8 @@ tl_div_abort:
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $135, %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq %rax, -32(%rbp)
+    leave
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl tl_shift_abort
 tl_shift_abort:
@@ -184,8 +182,8 @@ tl_shift_abort:
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $129, %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq %rax, -32(%rbp)
+    leave
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl tl_abort_string
 tl_abort_string:
@@ -198,8 +196,8 @@ tl_abort_string:
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq %rax, -32(%rbp)
+    leave
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl tl_array_fill8
 tl_array_fill8:
@@ -279,8 +277,8 @@ tl_region_abort:
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq %rax, -32(%rbp)
+    leave
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl tl_oom_abort
 tl_oom_abort:
@@ -294,8 +292,8 @@ tl_oom_abort:
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
     movq $134, %rdi
-    call _tl_stdlib_runtime_runtime_os_exit
-    movq %rax, -32(%rbp)
+    leave
+    jmp _tl_stdlib_runtime_runtime_os_exit
 
 .globl _tl_helper_helper
 _tl_helper_helper:

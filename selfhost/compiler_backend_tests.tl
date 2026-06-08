@@ -142,6 +142,13 @@
     (compiler-backend-stack-args-fixture-source)
     target))
 
+(define (compiler-backend-direct-tail-call-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (finish x y))
+(define (main) : i64
+  (step 20 22))")
+
 (define (compiler-backend-raw-pointer-fixture-source) : String
   "(extern tl_alloc : (-> i64 (MutPtr u8)))
 
@@ -263,6 +270,15 @@
   (or
     (compiler-backend-string-contains? asm "    call _tl_inc")
     (compiler-backend-string-contains? asm "    call _tl_f")))
+
+(define (compiler-backend-call-or-jmp-ok? [asm : String] [symbol : String]) : bool
+  (or
+    (compiler-backend-string-contains?
+      asm
+      (backend-cat3 "    call " symbol "\n"))
+    (compiler-backend-string-contains?
+      asm
+      (backend-cat3 "    jmp " symbol "\n"))))
 
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
@@ -4682,10 +4698,10 @@
           (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n"))
         (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")
         (or
-          (compiler-backend-string-contains? asm "    call _tl_half")
+          (compiler-backend-call-or-jmp-ok? asm "_tl_half")
           (or
-            (compiler-backend-string-contains? asm "    call _tl_callhalf")
-            (compiler-backend-string-contains? asm "    call _tl_f")))
+            (compiler-backend-call-or-jmp-ok? asm "_tl_callhalf")
+            (compiler-backend-call-or-jmp-ok? asm "_tl_f")))
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
@@ -4859,6 +4875,22 @@
         (compiler-backend-stack-mixed-args-ok?)
         (compiler-backend-stack-windows-args-ok?)))))
 
+(define (compiler-backend-direct-tail-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-direct-tail-call-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    jmp _tl_finish\n")
+        (not (compiler-backend-string-contains? asm "    call _tl_finish\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-call-ok?) : bool
+  (and
+    (compiler-backend-direct-tail-call-target-ok? (BackendTargetLinux))
+    (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-export-symbol-source) : String
   "(define (exported [x : i64]) (:export-symbol \"tl_exported_value\") : i64
   (+ x 1))
@@ -4871,7 +4903,7 @@
       (backend-and8
         (compiler-backend-string-contains? asm ".globl tl_exported_value\n")
         (compiler-backend-string-contains? asm "tl_exported_value:\n")
-        (compiler-backend-string-contains? asm "    call tl_exported_value\n")
+        (compiler-backend-call-or-jmp-ok? asm "tl_exported_value")
         (not
           (compiler-backend-string-contains? asm ".extern tl_exported_value\n"))
         (not (compiler-backend-string-contains? asm ".globl _tl_exported\n"))
@@ -5297,7 +5329,9 @@
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-f64-ok?)
         (compiler-backend-bool-control-flow-ok?)
-        (compiler-backend-stack-args-ok?))
+        (and
+          (compiler-backend-stack-args-ok?)
+          (compiler-backend-direct-tail-call-ok?)))
       (and
         (backend-and8
           (compiler-backend-instr-diagnostics-ok?)

@@ -128,6 +128,13 @@
     [(StringStringMapFound v) v]
     [(StringStringMapMissing) fallback]))
 
+(define (string-string-borrowed-value-length-or
+  [l : (StringStringMapBorrowedValueLookup map)]
+  [fallback : i64]) : i64
+  (match l
+    [(StringStringMapBorrowedValueFound v) (string-length v)]
+    [(StringStringMapBorrowedValueMissing) fallback]))
+
 (define (string-string-insert-result-map [r : StringStringMapInsertResult]) : StringStringMap
   (match r
     [(StringStringMapInsertOk m) m]
@@ -873,6 +880,12 @@
             "fallback")
           "green"
           "StringString borrowed get updated alpha")
+        (assert-i64-eq
+          (string-string-borrowed-value-length-or
+            (string-string-map-get-value-borrowed (& ss5) (& alpha))
+            -1)
+          5
+          "StringString borrowed value get returns alpha by reference")
         (assert-owned-string-eq
           (string-string-lookup-value-or
             (string-string-map-get ss5 "gamma")
@@ -885,6 +898,12 @@
             "fallback")
           "fallback"
           "StringString missing borrowed get")
+        (assert-i64-eq
+          (string-string-borrowed-value-length-or
+            (string-string-map-get-value-borrowed (& ss5) (& missing))
+            -1)
+          -1
+          "StringString missing borrowed value get")
         (assert-true
           (string-string-map-contains-borrowed? ss5 (& beta))
           "StringString borrowed contains beta")

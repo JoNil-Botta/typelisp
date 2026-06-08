@@ -4677,16 +4677,47 @@
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyStr) true]
+    [(AstTyTuple elems)
+      (lower-supported-reference-type-list-with-stack? ctx elems LowerStringNil)]
     [(AstTyArray elem-ty _)
       (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
     [(AstTyDynArray elem-ty)
       (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
+    [(AstTyStruct name)
+      (lower-supported-reference-struct-args-with-stack?
+        ctx
+        name
+        AstLifetimeNil
+        LowerStringNil)]
+    [(AstTyStructArgs name lifetimes)
+      (lower-supported-reference-struct-args-with-stack?
+        ctx
+        name
+        lifetimes
+        LowerStringNil)]
+    [(AstTyEnum name)
+      (lower-supported-reference-enum-args-with-stack?
+        ctx
+        name
+        AstLifetimeNil
+        LowerStringNil)]
+    [(AstTyEnumArgs name lifetimes)
+      (lower-supported-reference-enum-args-with-stack?
+        ctx
+        name
+        lifetimes
+        LowerStringNil)]
     [_ false]))
 
 (define (lower-borrow-place-value-reference? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyTuple _) true]
     [(AstTyArray _ _) true]
     [(AstTyDynArray _) true]
+    [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [_ false]))
 
 (define (lower-supported-reference-type-list-with-stack?
@@ -4901,6 +4932,47 @@
           base
           result-ty)])))
 
+(define (lower-borrow-reference-var-address
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (sym-i64-lookup env name)
+    [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))]
+    [(NoneI64)
+      (OkLowerExpr
+        (LowerExpr
+          state
+          (IrValueGlobal (lower-resolve-name state name))
+          result-ty))]))
+
+(define (lower-borrow-var-address-by-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [place-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (let
+    [referent-ty : AstType (tc-borrow-referent-type place-ty)]
+    (match (sym-i64-lookup env name)
+      [(SomeI64 id)
+        (if (lower-borrow-place-value-reference? ctx referent-ty)
+          (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))
+          (OkLowerExpr
+            (lower-borrow-copy-to-storage
+              ctx
+              state
+              (IrValueVar id)
+              referent-ty
+              result-ty)))]
+      [(NoneI64)
+        (OkLowerExpr
+          (LowerExpr
+            state
+            (IrValueGlobalAddr (lower-resolve-name state name))
+            result-ty))])))
+
 (define (lower-borrow-var-address
   [ctx : TcContext]
   [state : LowerState]
@@ -4911,28 +4983,24 @@
   [result-ty : AstType]) : ResultLowerExpr
   (match (tc-lookup type-env name)
     [(OkTcType place-ty)
-      (if (tc-type-contains-reference? place-ty)
-        (ErrLowerExpr
-          (lower-diagnostic-at-expr origin (lower-reference-support-message)))
-        (let
-          [referent-ty : AstType (tc-borrow-referent-type place-ty)]
-          (match (sym-i64-lookup env name)
-            [(SomeI64 id)
-              (if (lower-borrow-place-value-reference? ctx referent-ty)
-                (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))
-                (OkLowerExpr
-                  (lower-borrow-copy-to-storage
-                    ctx
-                    state
-                    (IrValueVar id)
-                    referent-ty
-                    result-ty)))]
-            [(NoneI64)
-              (OkLowerExpr
-                (LowerExpr
-                  state
-                  (IrValueGlobalAddr (lower-resolve-name state name))
-                  result-ty))])))]
+      (match (tc-type-strip-region (tc-resolve-type ctx place-ty))
+        [(AstTyRef _ _)
+          (lower-borrow-reference-var-address state env name result-ty)]
+        [(AstTyMutRef _ _)
+          (lower-borrow-reference-var-address state env name result-ty)]
+        [_
+          (if (tc-type-contains-reference? place-ty)
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                origin
+                (lower-reference-support-message)))
+            (lower-borrow-var-address-by-value
+              ctx
+              state
+              env
+              name
+              place-ty
+              result-ty))])]
     [(ErrTcType message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
 
@@ -4966,7 +5034,7 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr receiver-state receiver-value receiver-ty)
-          (match (tc-resolve-type ctx receiver-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
             [(AstTyStruct struct-name)
               (lower-borrow-struct-field-address-named
                 ctx
@@ -4985,6 +5053,58 @@
                 field
                 origin
                 result-ty)]
+            [(AstTyRef _ referent-ty)
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                [(AstTyStruct struct-name)
+                  (lower-borrow-struct-field-address-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    origin
+                    result-ty)]
+                [(AstTyStructArgs struct-name _)
+                  (lower-borrow-struct-field-address-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    origin
+                    result-ty)]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      "lower: struct-get borrow requires struct place"))])]
+            [(AstTyMutRef _ referent-ty)
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                [(AstTyStruct struct-name)
+                  (lower-borrow-struct-field-address-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    origin
+                    result-ty)]
+                [(AstTyStructArgs struct-name _)
+                  (lower-borrow-struct-field-address-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    origin
+                    result-ty)]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      "lower: struct-get borrow requires struct place"))])]
             [_
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
@@ -5005,7 +5125,7 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr tuple-state tuple-value tuple-ty)
-          (match (tc-resolve-type ctx tuple-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
             [(AstTyTuple elem-tys)
               (match (lower-tuple-elem-info ctx elem-tys index 0 0)
                 [(OkLowerFieldInfo info)
@@ -5015,6 +5135,40 @@
                         [(LowerExpr ptr-state ptr _)
                           (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
                 [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+            [(AstTyRef _ referent-ty)
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                [(AstTyTuple elem-tys)
+                  (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                    [(OkLowerFieldInfo info)
+                      (match info
+                        [(LowerFieldInfo offset _)
+                          (match (lower-gep-byte tuple-state tuple-value offset)
+                            [(LowerExpr ptr-state ptr _)
+                              (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
+                    [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      "lower: tuple-ref borrow requires tuple place"))])]
+            [(AstTyMutRef _ referent-ty)
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                [(AstTyTuple elem-tys)
+                  (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                    [(OkLowerFieldInfo info)
+                      (match info
+                        [(LowerFieldInfo offset _)
+                          (match (lower-gep-byte tuple-state tuple-value offset)
+                            [(LowerExpr ptr-state ptr _)
+                              (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
+                    [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      "lower: tuple-ref borrow requires tuple place"))])]
             [_
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
@@ -7065,7 +7219,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (if (or
     (lower-param-list-contains-unsupported-reference? ctx params)
-    (tc-type-contains-reference? (tc-resolve-type ctx ret)))
+    (not (lower-supported-reference-type? ctx ret)))
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
       [param-count : i64 (+ 1 (lower-param-count params))]
@@ -10830,7 +10984,7 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr receiver-state receiver-value receiver-ty)
-          (match (tc-resolve-type ctx receiver-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
             [(AstTyStruct struct-name)
               (lower-struct-get-named
                 ctx
@@ -10847,6 +11001,54 @@
                 struct-name
                 field
                 result-ty)]
+            [(AstTyRef _ referent-ty)
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                [(AstTyStruct struct-name)
+                  (lower-struct-get-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    result-ty)]
+                [(AstTyStructArgs struct-name _)
+                  (lower-struct-get-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    result-ty)]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      receiver
+                      "lower: struct-get requires struct"))])]
+            [(AstTyMutRef _ referent-ty)
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                [(AstTyStruct struct-name)
+                  (lower-struct-get-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    result-ty)]
+                [(AstTyStructArgs struct-name _)
+                  (lower-struct-get-named
+                    ctx
+                    receiver-state
+                    receiver-value
+                    struct-name
+                    field
+                    result-ty)]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      receiver
+                      "lower: struct-get requires struct"))])]
             [_
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
@@ -23669,6 +23871,32 @@
   (let [items : (Array Maybe 2) (array (Some 9) None)]
     (+ (score (Some 7)) (slot-score items))))")
 
+(define (compiler-lower-borrowed-enum-match-ref-struct-array-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (take [v : (& bag i64)]) : i64 41)
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
+    [Empty (slot-missing bag)]))
+(define (score [bag : (& bag Bag)]) : i64
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (take v)]
+    [Empty 0]))
+(define (main) : i64
+  (let
+    [slots : (Array Slot) (make-array Slot 1)]
+    (begin
+      (array-set! slots 0 (Occupied 9))
+      (let [bag : Bag (Bag slots)]
+        (+ (score (& bag))
+          (match (lookup (& bag))
+            [(SlotFound v) (take v)]
+            [SlotMissing 0])))))))")
+
 (define (compiler-lower-borrowed-enum-match-str-source) : String
   "(defenum Item (Named String) (Empty))
 (define (score-item [item : Item]) : i64
@@ -28938,6 +29166,10 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-borrowed-enum-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok?
+        (compiler-lower-borrowed-enum-match-ref-struct-array-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-borrowed-enum-match-str-source))

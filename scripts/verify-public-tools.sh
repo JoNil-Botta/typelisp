@@ -374,6 +374,45 @@ if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     fi
 fi
 
+assert_subcommand_help() {
+    _case=$1
+    _command=$2
+    _flag=$3
+    _usage=$4
+    run_cmd "$_case" "$COMPILER" "$_command" "$_flag"
+    assert_success
+    assert_stdout_empty
+    assert_contains "$err" "Usage:"
+    assert_contains "$err" "$_usage"
+}
+
+assert_subcommand_help_pair() {
+    _command=$1
+    _usage=$2
+    assert_subcommand_help "$_command-help" "$_command" --help "$_usage"
+    assert_subcommand_help "$_command-short-help" "$_command" -h "$_usage"
+}
+
+assert_subcommand_help_pair build "typelisp build"
+assert_subcommand_help_pair run "typelisp run"
+assert_subcommand_help_pair check "typelisp check"
+assert_subcommand_help_pair fmt "typelisp fmt"
+if [ "$HAS_LINT_COMMAND" -eq 1 ]; then
+    assert_subcommand_help_pair lint "typelisp lint"
+fi
+assert_subcommand_help_pair test "typelisp test"
+assert_subcommand_help_pair doc "typelisp doc"
+assert_subcommand_help_pair compile "typelisp compile"
+assert_subcommand_help_pair repl "typelisp repl"
+assert_subcommand_help_pair new "typelisp new"
+assert_subcommand_help_pair init "typelisp init"
+if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
+    assert_subcommand_help_pair clean "typelisp clean"
+fi
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    assert_subcommand_help_pair lsp "typelisp lsp"
+fi
+
 run_cmd missing-command "$COMPILER"
 assert_failure
 assert_stdout_empty

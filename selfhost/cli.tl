@@ -112,10 +112,169 @@ Options for doc:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
 ")
 
-(define (cli-print-help [code : i64]) : i64
+(define (cli-build-help-text) : String
+  "Usage:
+    typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+
+Options:
+    -o <exe>                       Source build executable output path
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --profile dev|release          Package build profile (default release)
+    --release                      Alias for --profile release
+    --target <target>              linux-x86_64 or windows-x86_64
+    --backend-mode <mode>          scalar, avx2, or avx512
+    --opt-level <0|1|2>            Package-build optimizer level
+    --link-lib <name>              Link a named native library for source builds
+    --link-search <dir>            Add a native linker library search directory
+    --link-arg <arg>               Pass a raw native linker argument
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-clean-help-text) : String
+  "Usage:
+    typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
+
+Options:
+    --dry-run                      List artifacts without deleting them
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+")
+
+(define (cli-run-help-text) : String
+  "Usage:
+    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
+
+Options:
+    --target <target>              linux-x86_64 or windows-x86_64
+    --backend-mode <mode>          scalar, avx2, or avx512
+    --opt-level <0|1|2>            Select optimizer level
+    --stdlib-root <dir>            Search root for stdlib/... imports
+    --link-lib <name>              Link a named native library
+    --link-search <dir>            Add a native linker library search directory
+    --link-arg <arg>               Pass a raw native linker argument
+")
+
+(define (cli-check-help-text) : String
+  "Usage:
+    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+
+Options:
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-fmt-help-text) : String
+  "Usage:
+    typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+
+Options:
+    --check                        Report files that would change without writing them
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-lint-help-text) : String
+  "Usage:
+    typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+
+Options:
+    --check                        Exit non-zero when lint findings are present
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-test-help-text) : String
+  "Usage:
+    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+
+Options:
+    --check                        Typecheck inline tests without running them
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
+    --target <target>              linux-x86_64 or windows-x86_64
+    --opt-level <0|1|2>            Select selfhost test harness optimization
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-doc-help-text) : String
+  "Usage:
+    typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
+    typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp doc --html <file.tl> [<imported.tl>...] <out.html>
+    typelisp doc --load <file.tl> <out.md> [--stdlib-root <dir>...]
+
+Options:
+    -o <out.md>                    Output markdown path
+    --test                         Check TypeLisp fenced examples in docs
+    --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-compile-help-text) : String
+  "Usage:
+    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
+
+Options:
+    -o <file>                      Output assembly or IR file
+    --emit-ir                      Emit intermediate representation
+    --target <target>              linux-x86_64 or windows-x86_64
+    --backend-mode <mode>          scalar, avx2, or avx512
+    --opt-level <0|1|2>            Select optimizer level
+    --stdlib-root <dir>            Search root for stdlib/... imports
+    --cfg <name>                   Enable a compile-time cfg predicate name
+")
+
+(define (cli-repl-help-text) : String
+  "Usage:
+    typelisp repl
+
+Starts the TypeLisp REPL.
+
+REPL commands:
+    .help                          Show REPL command help
+    .type <expr>                   Print the inferred type without running code
+    .exit                          Exit the REPL
+")
+
+(define (cli-lsp-help-text) : String
+  "Usage:
+    typelisp lsp [--stdlib-root <dir>...]
+
+Starts the stdio LSP diagnostics server.
+
+Options:
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
+(define (cli-new-help-text) : String
+  "Usage:
+    typelisp new [--lib] <name>
+
+Options:
+    --lib                          Scaffold a static library package
+")
+
+(define (cli-init-help-text) : String
+  "Usage:
+    typelisp init [--lib] <name>
+
+Options:
+    --lib                          Scaffold a static library package
+")
+
+(define (cli-help-flag? [value : String]) : bool
+  (or (string-eq value "--help") (string-eq value "-h")))
+
+(define (cli-subcommand-help-request? [count : i64]) : bool
+  (and (= count 3) (cli-help-flag? (arg 2))))
+
+(define (cli-print-help-text [text : String] [code : i64]) : i64
   (begin
-    (print-error (cli-help-text))
+    (print-error text)
     code))
+
+(define (cli-print-help [code : i64]) : i64
+  (cli-print-help-text (cli-help-text) code))
 
 ;; A stage0 command listed in the help but not yet wired into the selfhost CLI.
 (define (cli-pending [command : String] [issue : String]) : i64
@@ -136,21 +295,60 @@ Options for doc:
         (string-eq command "help")
         (or (string-eq command "--help") (string-eq command "-h")))
       (cli-print-help 0)]
-    [(string-eq command "build") (build-run-from 2 count)]
-    [(string-eq command "clean") (clean-run-from 2 count)]
-    [(string-eq command "run") (run-run-from 2 count)]
-    [(string-eq command "check") (selfhost-check-run-from 2 count)]
-    [(string-eq command "fmt") (fmt-run-from 2 count)]
-    [(string-eq command "lint") (selfhost-lint-run-from 2 count)]
-    [(string-eq command "test") (tltest-run-from 2 count)]
-    [(string-eq command "doc") (doc-run-from 2 count)]
+    [(string-eq command "build")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-build-help-text) 0)
+        (build-run-from 2 count))]
+    [(string-eq command "clean")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-clean-help-text) 0)
+        (clean-run-from 2 count))]
+    [(string-eq command "run")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-run-help-text) 0)
+        (run-run-from 2 count))]
+    [(string-eq command "check")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-check-help-text) 0)
+        (selfhost-check-run-from 2 count))]
+    [(string-eq command "fmt")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-fmt-help-text) 0)
+        (fmt-run-from 2 count))]
+    [(string-eq command "lint")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-lint-help-text) 0)
+        (selfhost-lint-run-from 2 count))]
+    [(string-eq command "test")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-test-help-text) 0)
+        (tltest-run-from 2 count))]
+    [(string-eq command "doc")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-doc-help-text) 0)
+        (doc-run-from 2 count))]
     ;; The compiler command shares compile_cli_core (#1639); it reads (arg 1) as
     ;; the command, so the whole CLI is driven from this one binary.
-    [(string-eq command "compile") (compile-cli-run count)]
-    [(string-eq command "lsp") (lsp-frame-run-from 2 count)]
-    [(string-eq command "repl") (repl-run-from 2 count)]
-    [(string-eq command "new") (scaffold-new-run-from 2 count)]
-    [(string-eq command "init") (scaffold-init-run-from 2 count)]
+    [(string-eq command "compile")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-compile-help-text) 0)
+        (compile-cli-run count))]
+    [(string-eq command "lsp")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-lsp-help-text) 0)
+        (lsp-frame-run-from 2 count))]
+    [(string-eq command "repl")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-repl-help-text) 0)
+        (repl-run-from 2 count))]
+    [(string-eq command "new")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-new-help-text) 0)
+        (scaffold-new-run-from 2 count))]
+    [(string-eq command "init")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-init-help-text) 0)
+        (scaffold-init-run-from 2 count))]
     [else
       (begin
         (print-error (string-append "typelisp: unknown subcommand " command))

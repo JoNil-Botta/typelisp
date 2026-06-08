@@ -261,8 +261,10 @@
   (AstExprBoxGet i64)
   ;; Compile-time-only type value literal: `(type T)`.
   (AstExprTypeLiteral AstType)
-  ;; Explicit zero/identity initialization for values of type `T`.
-  (AstExprInit AstType)
+  ;; Zero/identity initialization. `(init : T)` carries `AstSomeType T`;
+  ;; contextual `(init)` carries `AstNoType` until type checking/lowering sees
+  ;; an expected type.
+  (AstExprInit AstMaybeType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
   (AstExprComptime i64)
@@ -728,8 +730,14 @@
 (define (ast-expr-box-get [value : i64]) : i64
   (ast-node-push (AstExprBoxGet value)))
 
+(define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
+  (ast-node-push (AstExprInit maybe-ty)))
+
 (define (ast-expr-init [ty : AstType]) : i64
-  (ast-node-push (AstExprInit ty)))
+  (ast-expr-init-maybe (AstSomeType ty)))
+
+(define (ast-expr-init-contextual) : i64
+  (ast-expr-init-maybe AstNoType))
 
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (AstExprComptime inner)))

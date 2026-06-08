@@ -3255,9 +3255,11 @@
       (ErrAstExpr
         "parse: ptr-null expects (ptr-null : T) with a pointer type T")]))
 
-;; `(init : T)` - a colon followed by the target type.
+;; `(init : T)` carries an explicit target type. Bare `(init)` is contextual
+;; and must be checked/lowered in a position with an expected type.
 (define (parse-ast-init [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
+    [(SpSNil _) (OkAstExpr (ast-expr-init-contextual))]
     [(SpSCons colon ty-tail _)
       (match (sp-node-get ty-tail)
         [(SpSCons ty end _)
@@ -3970,6 +3972,7 @@
             (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
               (parse-ast-init dispatch rest)
               (parse-ast-call dispatch head rest))]
+          [(SpSNil _) (parse-ast-init dispatch rest)]
           [_ (parse-ast-call dispatch head rest)])
         (let
           [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
@@ -6790,7 +6793,28 @@
           (match (ast-expr-unspan (ast-node-get body-box))
             [(AstExprInit ty)
               (match ty
-                [(AstTyI64) true]
+                [(AstSomeType inner)
+                  (match inner
+                    [(AstTyI64) true]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-contextual-init-ok?) : bool
+  (match (parse-ast-source
+    "(define (init) : i64 7) (define (main) : i64 (init))")
+    [(OkAstProgram (AstProgram decls-box))
+      (match (box-get decls-box)
+        [(AstDeclCons _ rest)
+          (match (box-get rest)
+            [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) AstDeclNil)
+              (match (ast-expr-unspan (ast-node-get body-box))
+                [(AstExprInit ty)
+                  (match ty
+                    [(AstNoType) true]
+                    [_ false])]
                 [_ false])]
             [_ false])]
         [_ false])]
@@ -8955,6 +8979,9 @@
     (if (compiler-parse-init-ok?)
       unit
       (panic "parse: init shape test failed"))
+    (if (compiler-parse-contextual-init-ok?)
+      unit
+      (panic "parse: contextual init shape test failed"))
     (if (compiler-parse-init-call-name-ok?)
       unit
       (panic "parse: init call name compatibility test failed"))
@@ -9049,16 +9076,18 @@
                                                     (and
                                                       (compiler-parse-init-ok?)
                                                       (and
-                                                        (compiler-parse-init-call-name-ok?)
+                                                        (compiler-parse-contextual-init-ok?)
                                                         (and
-                                                          (compiler-parse-box-ok?)
+                                                          (compiler-parse-init-call-name-ok?)
                                                           (and
-                                                            (compiler-parse-reference-ok?)
+                                                            (compiler-parse-box-ok?)
                                                             (and
-                                                              (compiler-parse-borrow-ok?)
+                                                              (compiler-parse-reference-ok?)
                                                               (and
-                                                                (compiler-parse-resource-with-shape-ok?)
-                                                                (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))))))))
+                                                                (compiler-parse-borrow-ok?)
+                                                                (and
+                                                                  (compiler-parse-resource-with-shape-ok?)
+                                                                  (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

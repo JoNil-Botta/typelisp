@@ -3623,7 +3623,8 @@
           [(OkCtfeQuoteExpr quoted _ next-fuel)
             (OkCtfeQuoteExpr (ast-expr-try quoted) (AstTyExpr) next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
-    [(AstExprInit ty) (OkCtfeQuoteExpr (ast-expr-init ty) (AstTyExpr) fuel)]
+    [(AstExprInit maybe-ty)
+      (OkCtfeQuoteExpr (ast-expr-init-maybe maybe-ty) (AstTyExpr) fuel)]
     [(AstExprPtrNullCheck ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -4519,7 +4520,7 @@
         [_ false])]
     [(AstExprInit a-ty)
       (match b
-        [(AstExprInit b-ty) (ctfe-type-eq a-ty b-ty)]
+        [(AstExprInit b-ty) (ctfe-maybe-type-eq a-ty b-ty)]
         [_ false])]
     [(AstExprComptime a-inner-box)
       (let

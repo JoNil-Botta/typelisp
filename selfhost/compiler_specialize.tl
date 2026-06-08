@@ -5284,8 +5284,9 @@
     [(AstExprTypeLiteral ty)
       (OkSpecSubExpr
         (ast-node-push (AstExprTypeLiteral (spec-substitute-type ty subs))))]
-    [(AstExprInit ty)
-      (OkSpecSubExpr (ast-expr-init (spec-substitute-type ty subs)))]
+    [(AstExprInit maybe-ty)
+      (OkSpecSubExpr
+        (ast-expr-init-maybe (spec-substitute-maybe-type maybe-ty subs)))]
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]

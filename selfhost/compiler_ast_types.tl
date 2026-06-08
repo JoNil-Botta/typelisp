@@ -10,6 +10,12 @@
 ;; but later parser work decides when they are populated.
 (import "compiler_intern.tl")
 
+;; #2357: arena access for the node-pool grow paths -- a regrown pool array must
+;; be allocated in the persistent program arena, never a transient scratch arena
+;; (which gets destroyed, leaving the global pool dangling). arena.tl has no
+;; imports, so this adds no cycle.
+(import "../stdlib/arena.tl")
+
 (defstruct AstSourceSpan
   (start-line i64)
   (start-col i64)
@@ -338,6 +344,17 @@
 (define ast-node-pool-slots : (Array AstExpr)
   (make-array AstExpr 4000000))
 
+;; #2357: the program (base) arena, captured at global-init while it is the
+;; active arena (the pool make-array above proves an allocation has happened, so
+;; this is the real base handle, not the pre-allocation 0 sentinel). The node
+;; pools live here for the whole program; a grow MUST allocate the new backing
+;; array here too, otherwise -- if the grow fires while a transient scratch arena
+;; is active (lowering/optimize) -- the regrown global array is freed when that
+;; scratch arena is destroyed, leaving the pool dangling (a non-deterministic
+;; use-after-free). This is why the pool previously failed closed.
+(define node-pool-base-arena : i64
+  (arena-current))
+
 (define ast-node-pool-count : i64
   0)
 
@@ -346,6 +363,9 @@
   ast-node-pool-count)
 
 ;: Grow the pool's backing array to at least double its current capacity.
+;; #2357: allocate the new backing array in the persistent base arena (see
+;; node-pool-base-arena) so it survives destruction of any scratch arena active
+;; when the grow fires.
 (define (ast-node-pool-grow!) : unit
   (let
     [old-slots : (Array AstExpr) ast-node-pool-slots]
@@ -354,7 +374,17 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [new-slots : (Array AstExpr) (make-array AstExpr new-cap)]
+    [prev-arena : i64 (arena-current)]
+    [new-slots : (Array AstExpr)
+      (begin
+        (unsafe
+          (arena-set! node-pool-base-arena))
+        (let
+          [arr : (Array AstExpr) (make-array AstExpr new-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
     [len : i64 ast-node-pool-count]
     [i : i64 0]
     (begin
@@ -446,7 +476,17 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [new-slots : (Array AstType) (make-array AstType new-cap)]
+    [prev-arena : i64 (arena-current)]
+    [new-slots : (Array AstType)
+      (begin
+        (unsafe
+          (arena-set! node-pool-base-arena))
+        (let
+          [arr : (Array AstType) (make-array AstType new-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
     [len : i64 ty-node-pool-count]
     [i : i64 0]
     (begin

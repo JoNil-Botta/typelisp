@@ -10886,9 +10886,109 @@
   (OptSccpConst CompilerIrValue AstType)
   (OptSccpOverdefined))
 
+;; #2357 (orig #2386 2951f920): the SCCP lattice was a persistent assoc list
+;; (OptSccpEnvCons id value rest) where opt-sccp-env-set rebuilt the WHOLE list on
+;; every bind (via opt-sccp-env-remove) -> O(V) alloc per bind, O(V^2) per analysis
+;; sweep, x fixpoint sweeps x all functions (~42s / ~12GB of the -O2 optimize
+;; phase). The lattice is a single monotonically-rising map threaded linearly
+;; through analysis (never branched), so it is now a mutable array indexed by var
+;; id: O(1) lookup/set, no rebuild. Var ids are dense within a function; the array
+;; is sized to cover every bound var (params + every instruction dst that
+;; opt-sccp-process-instr binds). Out-of-range lookups return Unknown (the same
+;; default the list gave for an unbound var), so the analysis result -- and the
+;; folded output -- is byte-identical.
 (defenum OptSccpEnv
-  (OptSccpEnvNil)
-  (OptSccpEnvCons i64 OptSccpValue (Box OptSccpEnv)))
+  (OptSccpEnv i64 (Array OptSccpValue)))
+
+(define (opt-sccp-env-fill-unknown!
+  [slots : (Array OptSccpValue)]
+  [n : i64]
+  [i : i64]) : unit
+  (if (>= i n)
+    unit
+    (begin
+      (array-set! slots i (OptSccpUnknown))
+      (opt-sccp-env-fill-unknown! slots n (+ i 1)))))
+
+(define (opt-sccp-env-make [cap : i64]) : OptSccpEnv
+  (let
+    [n : i64 (if (< cap 1) 1 cap)]
+    [slots : (Array OptSccpValue) (make-array OptSccpValue n)]
+    (begin
+      (opt-sccp-env-fill-unknown! slots n 0)
+      (OptSccpEnv n slots))))
+
+;; Destination var bound by `opt-sccp-process-instr`, or -1 for instructions that
+;; bind nothing. MUST mirror the binding arms of opt-sccp-process-instr so the
+;; environment array is sized to cover every var the analysis can bind.
+(define (opt-sccp-instr-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrMov dst _ _) dst]
+    [(IrInstrCast dst _ _ _) dst]
+    [(IrInstrBinOp dst _ _ _ _) dst]
+    [(IrInstrUnOp dst _ _ _) dst]
+    [(IrInstrPhi dst _ _) dst]
+    [(IrInstrAlloc dst _) dst]
+    [(IrInstrAddrOf dst _) dst]
+    [(IrInstrGep dst _ _ _) dst]
+    [(IrInstrLoad dst _ _) dst]
+    [(IrInstrEntryArgc dst) dst]
+    [(IrInstrEntryArgv dst) dst]
+    [(IrInstrEntryEnvp dst) dst]
+    [(IrInstrCpuId dst _ _ _) dst]
+    [(IrInstrXgetbv dst _) dst]
+    [(IrInstrSyscall dst _) dst]
+    [(IrInstrLaneId dst _ _) dst]
+    [(IrInstrSplat dst _ _ _) dst]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) dst]
+    [(IrInstrVectorReduce dst _ _ _ _) dst]
+    [(IrInstrVectorCompare dst _ _ _ _ _) dst]
+    [(IrInstrMaskBinOp dst _ _ _ _) dst]
+    [(IrInstrMaskNot dst _ _) dst]
+    [(IrInstrMaskReduce dst _ _ _) dst]
+    [(IrInstrSelect dst _ _ _ _ _) dst]
+    [(IrInstrVectorLoad dst _ _ _ _) dst]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) dst]
+    [(IrInstrTailMask dst _ _ _) dst]
+    [(IrInstrCall dst _ _ _) dst]
+    [(IrInstrCallIndirect dst _ _ _) dst]
+    [(IrInstrCallIndirectC dst _ _ _) dst]
+    [_ (- 0 1)]))
+
+(define (opt-sccp-max-var-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (let
+      [dst : i64 (opt-sccp-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      (opt-sccp-max-var-instr-seq
+        instrs
+        (+ index 1)
+        (if (> dst acc) dst acc)))))
+
+(define (opt-sccp-max-var-blocks
+  [blocks : CompilerIrBlockList]
+  [acc : i64]) : i64
+  (match blocks
+    [(IrBlockNil) acc]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-sccp-max-var-blocks
+            (box-get rest)
+            (opt-sccp-max-var-instr-seq instrs 0 acc))])]))
+
+(define (opt-sccp-max-var-params
+  [params : CompilerIrParamList]
+  [acc : i64]) : i64
+  (match params
+    [(IrParamNil) acc]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ id)
+          (opt-sccp-max-var-params (box-get rest) (if (> id acc) id acc))])]))
 
 (defenum OptSccpState
   (OptSccpState OptLabelSet OptSccpEnv bool))
@@ -10925,26 +11025,22 @@
 
 (define (opt-sccp-env-lookup [env : OptSccpEnv] [var : i64]) : OptSccpValue
   (match env
-    [(OptSccpEnvNil) (OptSccpUnknown)]
-    [(OptSccpEnvCons id value rest)
-      (let
-        [rest : OptSccpEnv (box-get rest)]
-        (if (= id var)
-          value
-          (opt-sccp-env-lookup rest var)))]))
+    [(OptSccpEnv cap slots)
+      (if (if (>= var 0) (< var cap) false)
+        (array-ref slots var)
+        (OptSccpUnknown))]))
 
-(define (opt-sccp-env-remove [env : OptSccpEnv] [var : i64]) : OptSccpEnv
-  (match env
-    [(OptSccpEnvNil) (OptSccpEnvNil)]
-    [(OptSccpEnvCons id value rest)
-      (let
-        [rest : OptSccpEnv (box-get rest)]
-        (if (= id var)
-          (opt-sccp-env-remove rest var)
-          (OptSccpEnvCons id value (box (opt-sccp-env-remove rest var)))))]))
-
+;; Mutates the shared lattice array in place and returns the same env. The
+;; environment is threaded linearly through the monotone analysis, so in-place
+;; update is observationally identical to the old persistent cons/remove.
 (define (opt-sccp-env-set [env : OptSccpEnv] [var : i64] [value : OptSccpValue]) : OptSccpEnv
-  (OptSccpEnvCons var value (box (opt-sccp-env-remove env var))))
+  (match env
+    [(OptSccpEnv cap slots)
+      (begin
+        (if (if (>= var 0) (< var cap) false)
+          (array-set! slots var value)
+          unit)
+        env)]))
 
 (define (opt-sccp-state-bind
   [state : OptSccpState]
@@ -11219,10 +11315,13 @@
 (define (opt-sccp-initial-state
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
-  (OptSccpState
-    (opt-label-add (OptLabelNil) (opt-cfg-entry-label blocks))
-    (opt-sccp-env-from-params params (OptSccpEnvNil))
-    true))
+  (let
+    [max-var : i64
+      (opt-sccp-max-var-params params (opt-sccp-max-var-blocks blocks (- 0 1)))]
+    (OptSccpState
+      (opt-label-add (OptLabelNil) (opt-cfg-entry-label blocks))
+      (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
+      true)))
 
 (define (opt-sccp-analyze-fixed
   [blocks : CompilerIrBlockList]

@@ -7386,6 +7386,9 @@
       (core/cond
         (opt-verify-single-defs? params blocks)
         func
+        ;; Existing phi nodes have edge-local inputs that must be renamed
+        ;; together with their predecessor edges. Leave them unchanged until
+        ;; that rewrite is supported, keeping pipeline use verifier-safe.
         (opt-ssa-blocks-have-phi? blocks)
         func
         (let
@@ -11727,16 +11730,31 @@
                     (<=
                       (compiler-ir-block-list-count sroa-blocks)
                       (opt-heavy-pass-block-limit))]
+                  ;; Scalar SSA construction feeds the verifier-gated
+                  ;; dominator passes below. Unsupported cases fall back to the
+                  ;; original function, so the optimization path remains safe.
+                  [ssa : CompilerIrFunction
+                    (if run-heavy?
+                      (opt-ssa-construct-function
+                        (IrFunction
+                          name
+                          params
+                          ret-ty
+                          promoted-frame
+                          sroa-blocks))
+                      (IrFunction name params ret-ty promoted-frame sroa-blocks))]
+                  [ssa-frame : i64 (opt-function-frame ssa)]
+                  [ssa-blocks : CompilerIrBlockList (opt-function-blocks ssa)]
                   [gvn : CompilerIrBlockList
                     (if run-heavy?
                       (let
                         [gvn-context : OptCfgContext
-                          (opt-cfg-context-build sroa-blocks)]
+                          (opt-cfg-context-build ssa-blocks)]
                         (opt-gvn-blocks-with-context
                           gvn-context
                           params
-                          sroa-blocks))
-                      sroa-blocks)]
+                          ssa-blocks))
+                      ssa-blocks)]
                   [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
                   [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
                   [licm : CompilerIrFunction
@@ -11746,8 +11764,8 @@
                           (opt-cfg-context-build cfg)]
                         (opt-licm-function-with-context
                           licm-context
-                          (IrFunction name params ret-ty promoted-frame cfg)))
-                      (IrFunction name params ret-ty promoted-frame cfg))]
+                          (IrFunction name params ret-ty ssa-frame cfg)))
+                      (IrFunction name params ret-ty ssa-frame cfg))]
                   [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
                   [induction : CompilerIrFunction
                     (if run-heavy?
@@ -20476,6 +20494,14 @@
       (opt-ssa-construct-address-taken-function)]
     [address-taken-out : CompilerIrFunction
       (opt-ssa-construct-function address-taken)]
+    [existing-phi : CompilerIrFunction
+      (opt-cfg-test-function (opt-cfg-phi-blocks))]
+    [existing-phi-out : CompilerIrFunction
+      (opt-ssa-construct-function existing-phi)]
+    [pipeline-loop : CompilerIrFunction
+      (optimize-function-once (opt-ssa-construct-loop-function))]
+    [pipeline-loop-blocks : CompilerIrBlockList
+      (opt-function-blocks pipeline-loop)]
     (core/cond
       (not (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
       1
@@ -20597,6 +20623,12 @@
       48
       (not (opt-function-eq address-taken address-taken-out))
       49
+      (not (opt-function-eq existing-phi existing-phi-out))
+      50
+      (not (opt-verify-ok? (opt-verify-function pipeline-loop)))
+      51
+      (not (= (opt-count-mov-dst-blocks pipeline-loop-blocks 1) 0))
+      52
       42)))
 
 (define (compiler-optimize-cfg-self-test) : i64

@@ -328,6 +328,7 @@ EOF
 linux_integration_non_applicable_cases() {
     cat <<'EOF'
 c_abi_win64_sret_return
+c_abi_win64_aggregate_args
 EOF
 }
 

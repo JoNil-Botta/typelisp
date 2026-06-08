@@ -1037,6 +1037,49 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-c-abi-byref-aggregate-arg-source) : String
+  "(defstruct WideArg
+  (:repr c)
+  (a u64)
+  (b f64))
+(extern (wide-arg-score [arg : WideArg] [tag : u64]) : i64 (:symbol \"tl_cabi_wide_arg_score\"))
+(extern wide-arg-scorer (:symbol \"tl_cabi_wide_arg_score_ptr\") : (-> WideArg u64 i64))
+(define (main) : i64
+  (let
+    [direct-arg : WideArg (WideArg (cast 10 : u64) 1.5)]
+    [ptr-arg : WideArg (WideArg (cast 20 : u64) 2.5)]
+    [direct : i64 (wide-arg-score direct-arg (cast 7 : u64))]
+    [via-ptr : i64 (wide-arg-scorer ptr-arg (cast 5 : u64))]
+    (if (= direct 32)
+      (if (= via-ptr 75) 42 2)
+      1)))")
+
+(define (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-byref-aggregate-arg-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_wide_arg_score\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_wide_arg_score_ptr\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_cabi_wide_arg_score\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (>= (compiler-backend-alloc-call-count asm) 4)
+        (compiler-backend-string-contains-alloc-size? asm 16)
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "lower: unsupported windows-x86_64 C aggregate ABI"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and
     (match (compiler-backend-emit-source-for-target
@@ -5564,7 +5607,9 @@
                               (compiler-backend-varargs-ffi-ok?)
                               (and
                                 (compiler-backend-c-abi-aggregate-ok?)
-                                (compiler-backend-c-abi-sret-aggregate-windows-ok?))))))
+                                (and
+                                  (compiler-backend-c-abi-sret-aggregate-windows-ok?)
+                                  (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?)))))))
                       (and
                         (backend-and4
                           (compiler-backend-string-ref-shape-ok?)

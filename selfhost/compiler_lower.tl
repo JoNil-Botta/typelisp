@@ -151,6 +151,7 @@
 (defenum LowerCAbiAggregate
   (LowerCAbiNoAggregate)
   (LowerCAbiIntegerAggregate AstType i64)
+  (LowerCAbiByRefAggregate i64)
   (LowerCAbiSretAggregate i64)
   (LowerCAbiUnsupportedAggregate String))
 
@@ -11743,17 +11744,25 @@
   [mode : CompilerLowerMode]
   [resolved : AstType]
   [layout : TcInlineAggregateLayout]
-  [allow-sret? : bool]) : LowerCAbiAggregate
+  [allow-sret? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
   (match layout
     [(TcInlineStructLayout size _ fields)
-      (if (and
-        (lower-c-abi-register-aggregate-size? mode size)
-        (lower-c-abi-inline-fields-integer-only? ctx fields))
+      (core/cond
+        (and
+          (lower-c-abi-register-aggregate-size? mode size)
+          (lower-c-abi-inline-fields-integer-only? ctx fields))
         (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
-        (if (and allow-sret? (and (lower-mode-windows-c-abi? mode) (> size 8)))
-          (LowerCAbiSretAggregate size)
-          (LowerCAbiUnsupportedAggregate
-            (lower-c-abi-unsupported-message mode resolved))))]
+        (and allow-sret? (and (lower-mode-windows-c-abi? mode) (> size 8)))
+        (LowerCAbiSretAggregate size)
+        (and
+          allow-byref?
+          (and
+            (lower-mode-windows-c-abi? mode)
+            (not (lower-c-abi-register-aggregate-size? mode size))))
+        (LowerCAbiByRefAggregate size)
+        (LowerCAbiUnsupportedAggregate
+          (lower-c-abi-unsupported-message mode resolved)))]
     [(TcInlineEnumLayout _ _ _)
       (LowerCAbiUnsupportedAggregate
         (lower-c-abi-unsupported-message mode resolved))]))
@@ -11763,7 +11772,8 @@
   [mode : CompilerLowerMode]
   [name : String]
   [resolved : AstType]
-  [allow-sret? : bool]) : LowerCAbiAggregate
+  [allow-sret? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
   (match (tc-inline-aggregate-layout-for ctx name)
     [(OkTcInlineAggregateLayout layout)
       (lower-c-abi-aggregate-class-from-layout
@@ -11771,15 +11781,17 @@
         mode
         resolved
         layout
-        allow-sret?)]
+        allow-sret?
+        allow-byref?)]
     [(ErrTcInlineAggregateLayout message)
       (LowerCAbiUnsupportedAggregate message)]))
 
-(define (lower-c-abi-aggregate-class-with-sret
+(define (lower-c-abi-aggregate-class-with-flags
   [ctx : TcContext]
   [mode : CompilerLowerMode]
   [ty : AstType]
-  [allow-sret? : bool]) : LowerCAbiAggregate
+  [allow-sret? : bool]
+  [allow-byref? : bool]) : LowerCAbiAggregate
   (let
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
@@ -11789,14 +11801,16 @@
           mode
           name
           resolved
-          allow-sret?)]
+          allow-sret?
+          allow-byref?)]
       [(AstTyStructArgs name _)
         (lower-c-abi-aggregate-class-for-struct
           ctx
           mode
           name
           resolved
-          allow-sret?)]
+          allow-sret?
+          allow-byref?)]
       [(AstTyEnum _)
         (LowerCAbiUnsupportedAggregate
           (lower-c-abi-unsupported-message mode resolved))]
@@ -11806,13 +11820,13 @@
   [ctx : TcContext]
   [mode : CompilerLowerMode]
   [ty : AstType]) : LowerCAbiAggregate
-  (lower-c-abi-aggregate-class-with-sret ctx mode ty false))
+  (lower-c-abi-aggregate-class-with-flags ctx mode ty false true))
 
 (define (lower-c-abi-return-aggregate-class
   [ctx : TcContext]
   [mode : CompilerLowerMode]
   [ty : AstType]) : LowerCAbiAggregate
-  (lower-c-abi-aggregate-class-with-sret ctx mode ty true))
+  (lower-c-abi-aggregate-class-with-flags ctx mode ty true false))
 
 (define (lower-c-abi-args-as
   [ctx : TcContext]
@@ -11880,6 +11894,31 @@
                                       scalar-value
                                       rest-values))]
                                 [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+                        [(LowerCAbiByRefAggregate _)
+                          (match (lower-copy-inline-aggregate-to-heap
+                            ctx
+                            arg-state
+                            value
+                            arg-ty)
+                            [(OkLowerExpr copied)
+                              (match copied
+                                [(LowerExpr copy-state copy-value _)
+                                  (match (lower-c-abi-args-as
+                                    ctx
+                                    copy-state
+                                    env
+                                    type-env
+                                    rest-args
+                                    rest-types)
+                                    [(OkLowerArgs rest-state rest-values)
+                                      (OkLowerArgs
+                                        rest-state
+                                        (compiler-ir-value-cons
+                                          copy-value
+                                          rest-values))]
+                                    [(ErrLowerArgs message)
+                                      (ErrLowerArgs message)])])]
+                            [(ErrLowerExpr message) (ErrLowerArgs message)])]
                         [(LowerCAbiUnsupportedAggregate message)
                           (ErrLowerArgs (lower-diagnostic-at-expr arg message))]
                         [(LowerCAbiSretAggregate _)
@@ -11911,6 +11950,11 @@
               (lower-store-at-offset base-state base 0 call-value scalar-ty)
               base
               result-ty))])]
+    [(LowerCAbiByRefAggregate _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
     [(LowerCAbiSretAggregate _)
       (OkLowerExpr (LowerExpr state call-value result-ty))]
     [(LowerCAbiUnsupportedAggregate message)
@@ -11966,6 +12010,13 @@
                   result-ty
                   (LowerCAbiIntegerAggregate scalar-ty size)
                   origin))])]
+        [(LowerCAbiByRefAggregate _)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (lower-c-abi-unsupported-message
+                (lower-state-mode args-state)
+                result-ty)))]
         [(LowerCAbiSretAggregate size)
           (match (lower-reserve-heap-storage args-state size result-ty)
             [(LowerExpr base-state base _)
@@ -12032,6 +12083,11 @@
               result-ty
               (LowerCAbiIntegerAggregate scalar-ty size)
               origin))])]
+    [(LowerCAbiByRefAggregate _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
     [(LowerCAbiSretAggregate size)
       (match (lower-reserve-heap-storage state size result-ty)
         [(LowerExpr base-state base _)
@@ -26556,10 +26612,22 @@
   (big-use (Big 1 2)))")
 
 (define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
-  "(defstruct Rgb (r u8) (g u8) (b u8))
-(extern (rgb-use [arg0 : Rgb]) : i64 (:symbol \"tl_cabi_rgb_use\"))
+  "(defstruct FloatBox (value f64))
+(extern (float-box-use [arg0 : FloatBox]) : i64 (:symbol \"tl_cabi_float_box_use\"))
 (define (main) : i64
-  (rgb-use (Rgb (cast 1 : u8) (cast 2 : u8) (cast 3 : u8))))")
+  (float-box-use (FloatBox 1.5)))")
+
+(define (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-unsupported-aggregate-source)
+    (CompilerLowerWindowsScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "big-use") 1)
+            (>= (lower-test-function-call-count functions "main" "tl_alloc") 2))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
@@ -29461,14 +29529,12 @@
         "lower: unsupported linux-x86_64 C aggregate ABI for Big; this slice supports integer-only structs up to 8 bytes")
         unit
         (set! ok false))
-      (if (compiler-lower-windows-error-ok?
-        (compiler-lower-c-abi-unsupported-aggregate-source)
-        "lower: unsupported windows-x86_64 C aggregate ABI for Big; this slice supports integer-only structs of size 1, 2, 4, or 8 bytes")
+      (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-windows-error-ok?
         (compiler-lower-c-abi-windows-unsupported-aggregate-source)
-        "lower: unsupported windows-x86_64 C aggregate ABI for Rgb; this slice supports integer-only structs of size 1, 2, 4, or 8 bytes")
+        "lower: unsupported windows-x86_64 C aggregate ABI for FloatBox; this slice supports integer-only structs of size 1, 2, 4, or 8 bytes")
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)

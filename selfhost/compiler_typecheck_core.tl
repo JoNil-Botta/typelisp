@@ -284,6 +284,20 @@
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (tc-canonical-diagnostic (compiler-diagnostic-at-start "" message)))
 
+(define (tc-ty-node-pool-exhausted-diagnostic) : CompilerDiagnostic
+  (tc-diag-at-start (ty-node-pool-exhausted-message)))
+
+(define (tc-typecheck-result-with-pool-check [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerTypecheck (tc-ty-node-pool-exhausted-diagnostic))
+    result))
+
+(define (tc-typecheck-checked-result-with-pool-check
+  [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerTypecheckChecked (tc-ty-node-pool-exhausted-diagnostic))
+    result))
+
 (cfg
   compile-profile
   (define compiler-tc-profile-start-ms : i64
@@ -19555,7 +19569,7 @@
                       (ErrCompilerTypecheck
                         (tc-typecheck-diag-with-path decl decl-path message))]))))]))]))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
   (match (build-compiler-symbols program)
@@ -19599,6 +19613,14 @@
           (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)
       (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
+  (tc-typecheck-checked-result-with-pool-check
+    (typecheck-compiler-specialized-program-with-paths-checked-inner
+      program
+      paths)))
 
 (define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]

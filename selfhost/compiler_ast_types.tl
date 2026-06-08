@@ -398,44 +398,40 @@
 ;; AstType's recursive children are stored as i64 ids into this pool instead of
 ;; (Box AstType), mirroring the AstExpr pool above. The pool is PERSISTENT for a
 ;; compile (types live for the whole compile, never per-form like the spanned
-;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). Pre-sized so
-;; grow! never fires on real inputs -- a grow! reassign in the inlined hot path
-;; trips an opt2 miscompile (see the typelisp-flat-asttype-plan memory).
+;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). The pool is
+;; pre-sized for real inputs and fails closed when exhausted because global array
+;; reassignment in this hot path has triggered opt2 miscompiles.
 (define ty-node-pool-slots : (Array AstType)
   (make-array AstType 2000000))
 
 (define ty-node-pool-count : i64
   0)
 
+(define ty-node-pool-exhausted : bool
+  false)
+
 ;: Current type-node count (also the next ty id ty-node-push will assign).
 (define (ty-node-pool-len) : i64
   ty-node-pool-count)
 
-;: Grow the pool's backing array to at least double its current capacity.
-(define (ty-node-pool-grow!) : unit
-  (let
-    [old-slots : (Array AstType) ty-node-pool-slots]
-    [old-cap : i64 (array-length old-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1024
-        (* old-cap 2))]
-    [new-slots : (Array AstType) (make-array AstType new-cap)]
-    [len : i64 ty-node-pool-count]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (set! ty-node-pool-slots new-slots))))
+(define (ty-node-pool-capacity) : i64
+  (array-length ty-node-pool-slots))
+
+(define (ty-node-pool-exhausted?) : bool
+  ty-node-pool-exhausted)
+
+(define (ty-node-pool-exhausted-message) : String
+  "compiler: AstType node pool exhausted")
+
+(define (ty-node-pool-mark-exhausted!) : unit
+  (set! ty-node-pool-exhausted true))
 
 ;: Append `node` to the pool and return its ty id.
 (define (ty-node-push [node : AstType]) : i64
-  (begin
-    (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
-      (ty-node-pool-grow!)
-      unit)
+  (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
+    (begin
+      (ty-node-pool-mark-exhausted!)
+      0)
     (let
       [id : i64 ty-node-pool-count]
       (begin
@@ -460,7 +456,9 @@
   (set! ty-node-pool-count mark))
 
 (define (ty-node-pool-reset!) : unit
-  (ty-node-pool-truncate! 0))
+  (begin
+    (ty-node-pool-truncate! 0)
+    (set! ty-node-pool-exhausted false)))
 
 (defenum AstExprList
   (AstExprNil)
@@ -1559,6 +1557,20 @@
                     [_ false])))]
             [_ false]))])))
 
+(define (compiler-ast-type-pool-exhaustion-smoke?) : bool
+  (let
+    [capacity : i64 (ty-node-pool-capacity)]
+    (begin
+      (ty-node-pool-reset!)
+      (ty-node-pool-truncate! capacity)
+      (let
+        [id : i64 (ty-node-push (AstTyI64))]
+        [len : i64 (ty-node-pool-len)]
+        [exhausted : bool (ty-node-pool-exhausted?)]
+        (begin
+          (ty-node-pool-reset!)
+          (and exhausted (and (= id 0) (= len capacity))))))))
+
 (define (compiler-ast-smoke) : i64
   (let
     [i64-ty : AstType (AstTyI64)]
@@ -1593,13 +1605,18 @@
       (ast-expr-binary (AstBinAdd) (ast-node-push (AstExprLiteral lit)) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
+    [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
     [param : AstParam (AstParam "x" i64-ty false)]
     [params : AstParamList (ast-param-cons param AstParamNil)]
     [decl : AstDecl (ast-decl-def-fn "main" params i64-ty expr)]
     [program : AstProgram (ast-program (ast-decl-cons decl AstDeclNil))]
     (match program
       [(AstProgram _)
-        (if (and nested-ty-ok? (and nested-expr-pattern-ok? decl-program-ok?))
+        (if (and
+          nested-ty-ok?
+          (and
+            nested-expr-pattern-ok?
+            (and decl-program-ok? pool-exhaustion-ok?)))
           (+
             (ast-type-tag fn-ty)
             (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))

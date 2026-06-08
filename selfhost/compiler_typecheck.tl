@@ -18,22 +18,23 @@
   ;; specialization pass would otherwise produce them too late and any program
   ;; that both defines a macro and uses a generated function would fail to
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
-  (match (gen-normalize-program-with-paths program paths "")
-    [(OkGenProgramWithPaths generated generated-paths)
-      (match (macro-expand-program generated)
-        [(OkMacroExpand expanded)
-          (if (compiler-specialize-needed? expanded)
-            (match (compiler-specialize-program expanded)
-              [(OkSpecProgram specialized)
-                (typecheck-compiler-specialized-program-with-paths
-                  specialized
-                  AstDeclPathNil)]
-              [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
-            (typecheck-compiler-specialized-program-with-paths
-              expanded
-              generated-paths))]
-        [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
-    [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))
+  (tc-typecheck-result-with-pool-check
+    (match (gen-normalize-program-with-paths program paths "")
+      [(OkGenProgramWithPaths generated generated-paths)
+        (match (macro-expand-program generated)
+          [(OkMacroExpand expanded)
+            (if (compiler-specialize-needed? expanded)
+              (match (compiler-specialize-program expanded)
+                [(OkSpecProgram specialized)
+                  (typecheck-compiler-specialized-program-with-paths
+                    specialized
+                    AstDeclPathNil)]
+                [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
+              (typecheck-compiler-specialized-program-with-paths
+                expanded
+                generated-paths))]
+          [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
+      [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)])))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
@@ -222,6 +223,26 @@
     [(ErrCompilerTypecheck diag)
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
+
+(define (compiler-typecheck-pool-exhaustion-diagnostic-ok?) : bool
+  (let
+    [capacity : i64 (ty-node-pool-capacity)]
+    (begin
+      (ty-node-pool-reset!)
+      (ty-node-pool-truncate! capacity)
+      (let
+        [result : ResultCompilerTypecheck
+          (typecheck-compiler-source "(define (main) : i64 0)")]
+        [ok : bool
+          (match result
+            [(ErrCompilerTypecheck diag)
+              (string-eq
+                (compiler-diagnostic-message diag)
+                (ty-node-pool-exhausted-message))]
+            [(OkCompilerTypecheck _) false])]
+        (begin
+          (ty-node-pool-reset!)
+          ok)))))
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
   (match (typecheck-compiler-source src)
@@ -7529,6 +7550,9 @@
     (if (compiler-typecheck-diagnostic-code-tests-ok?)
       unit
       (panic "typecheck: diagnostic code tests failed"))
+    (if (compiler-typecheck-pool-exhaustion-diagnostic-ok?)
+      unit
+      (panic "typecheck: pool exhaustion diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")

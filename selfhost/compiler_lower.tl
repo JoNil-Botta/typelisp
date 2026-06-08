@@ -11298,16 +11298,35 @@
             (IrValueVar var-id)
             result-ty)))]))
 
+(define (lower-indirect-call-args
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [func-ty : AstType]) : ResultLowerArgs
+  (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
+    [(AstTyFunc param-types _)
+      (lower-args-as
+        ctx
+        state
+        env
+        type-env
+        args
+        (tc-resolve-type-list ctx param-types))]
+    [_ (lower-args ctx state env type-env args)]))
+
 (define (lower-indirect-call
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [func-ty : AstType]
   [func-value : CompilerIrValue]
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-args ctx state env type-env args)
+  (match (lower-indirect-call-args ctx state env type-env args func-ty)
     [(OkLowerArgs args-state values)
       (lower-indirect-call-values args-state func-value values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
@@ -11990,6 +12009,7 @@
                       func-state
                       env
                       type-env
+                      fn-ty
                       func-value
                       args
                       result-ty
@@ -12015,6 +12035,7 @@
                     state
                     env
                     type-env
+                    fn-ty
                     (IrValueVar local-id)
                     args
                     result-ty
@@ -12152,6 +12173,7 @@
                   func-state
                   env
                   type-env
+                  func-ty
                   func-value
                   args
                   result-ty
@@ -21860,6 +21882,13 @@
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
 
+(define (compiler-lower-function-value-contextual-init-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : i64
+  (let
+    [f : (-> i64 i64) inc]
+    (f (init))))")
+
 (define (compiler-lower-noncapturing-lambda-value-source) : String
   "(define (get-fn) : (-> i64 i64)
   (lambda ([x : i64]) : i64 (+ x 1)))")
@@ -26394,6 +26423,15 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-function-value-contextual-init-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-function-value-contextual-init-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (= (lower-test-function-indirect-call-count functions "main") 1)])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-noncapturing-lambda-value-source))
@@ -28085,6 +28123,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-function-value-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-function-value-contextual-init-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-noncapturing-lambda-tests-ok?)

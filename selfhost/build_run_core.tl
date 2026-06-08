@@ -1,4 +1,6 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers (#1018).
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "compiler_driver_core.tl")
 
 (import "compiler_object_coff.tl")
@@ -80,13 +82,15 @@
     [(BackendTargetWindows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (cond
-    [(string-eq value "scalar") (OkSourceToolBackendMode (BackendModeScalar))]
-    [(string-eq value "avx2") (OkSourceToolBackendMode (BackendModeAvx2))]
-    [(string-eq value "avx512") (OkSourceToolBackendMode (BackendModeAvx512))]
-    [else
-      (ErrSourceToolBackendMode
-        (source-tool-cat3 command ": unknown backend mode " value))]))
+  (core/cond
+    (string-eq value "scalar")
+    (OkSourceToolBackendMode (BackendModeScalar))
+    (string-eq value "avx2")
+    (OkSourceToolBackendMode (BackendModeAvx2))
+    (string-eq value "avx512")
+    (OkSourceToolBackendMode (BackendModeAvx512))
+    (ErrSourceToolBackendMode
+      (source-tool-cat3 command ": unknown backend mode " value))))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or

@@ -7307,13 +7307,16 @@
   lower-spmd-reduce-current-id-cache)
 
 (define (lower-name-id [name : String]) : i64
-  (cond
-    [(string-eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
-    [(string-eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
-    [(string-eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
-    [(string-eq name (lower-spmd-reduce-current-name))
-      (lower-spmd-reduce-current-id)]
-    [else (intern name)]))
+  (core/cond
+    (string-eq name (lower-spmd-reduce-acc-name))
+    (lower-spmd-reduce-acc-id)
+    (string-eq name (lower-spmd-reduce-end-name))
+    (lower-spmd-reduce-end-id)
+    (string-eq name (lower-spmd-reduce-val-name))
+    (lower-spmd-reduce-val-id)
+    (string-eq name (lower-spmd-reduce-current-name))
+    (lower-spmd-reduce-current-id)
+    (intern name)))
 
 (define (lower-refresh-marker-ids!) : unit
   (begin

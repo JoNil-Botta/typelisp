@@ -21,6 +21,8 @@
 ;# (define nested : String
 ;#   (fs-path-join-many "target" "typelisp" "cache"))
 ;# ```
+(import "core_macros.tl" module stdlib.core-macros as core)
+
 (import "env.tl")
 
 (import "io.tl")
@@ -426,13 +428,14 @@
                     fd
                     (io-array-ptr buf)
                     fs-read-dir-buffer-size)]
-                (cond
-                  [(< read-count 0)
-                    (begin
-                      (set! ok false)
-                      (set! done true))]
-                  [(= read-count 0) (set! done true)]
-                  [else (fs-linux-read-dir-append-page! buf read-count out)])))
+                (core/cond
+                  (< read-count 0)
+                  (begin
+                    (set! ok false)
+                    (set! done true))
+                  (= read-count 0)
+                  (set! done true)
+                  (fs-linux-read-dir-append-page! buf read-count out))))
             (io-linux-syscall-close fd)
             (if ok
               (fs-read-dir-bytes-string out)
@@ -444,16 +447,24 @@
   (define (fs-windows-last-error-status) : i64
     (let
       [code : i64 (cast (fs-win-get-last-error) : i64)]
-      (cond
-        [(= code 2) io-status-not-found]
-        [(= code 3) io-status-not-directory]
-        [(= code 5) io-status-permission-denied]
-        [(= code 87) io-status-invalid]
-        [(= code 123) io-status-invalid]
-        [(= code 161) io-status-invalid]
-        [(= code 206) io-status-name-too-long]
-        [(= code 267) io-status-not-directory]
-        [else code]))))
+      (core/cond
+        (= code 2)
+        io-status-not-found
+        (= code 3)
+        io-status-not-directory
+        (= code 5)
+        io-status-permission-denied
+        (= code 87)
+        io-status-invalid
+        (= code 123)
+        io-status-invalid
+        (= code 161)
+        io-status-invalid
+        (= code 206)
+        io-status-name-too-long
+        (= code 267)
+        io-status-not-directory
+        code))))
 
 ;: Return an I/O error status when Windows reported no concrete code.
 (cfg
@@ -636,10 +647,12 @@
   (define (fs-linux-file-kind-from-mode [mode : i64]) : i64
     (let
       [kind : i64 (bit-and mode fs-linux-stat-mode-kind-mask)]
-      (cond
-        [(= kind fs-linux-stat-regular-mode) fs-file-kind-regular-code]
-        [(= kind fs-linux-stat-directory-mode) fs-file-kind-directory-code]
-        [else fs-file-kind-other-code]))))
+      (core/cond
+        (= kind fs-linux-stat-regular-mode)
+        fs-file-kind-regular-code
+        (= kind fs-linux-stat-directory-mode)
+        fs-file-kind-directory-code
+        fs-file-kind-other-code))))
 
 (cfg
   (not windows)
@@ -780,12 +793,13 @@
               (io-array-ptr buf))
             :
             i64)]
-        (cond
-          [(= written 0) io-status-io-error]
-          [(< written capacity) io-status-ok]
-          [else
-            (fs-current-dir-status-loop
-              (fs-current-dir-next-capacity capacity written))])))
+        (core/cond
+          (= written 0)
+          io-status-io-error
+          (< written capacity)
+          io-status-ok
+          (fs-current-dir-status-loop
+            (fs-current-dir-next-capacity capacity written)))))
     (if (> capacity fs-current-dir-max-capacity)
       io-status-name-too-long
       (let
@@ -817,12 +831,12 @@
               (io-array-ptr buf))
             :
             i64)]
-        (cond
-          [(= written 0) ""]
-          [(< written capacity) (io-copy-c-string (io-array-const-ptr buf))]
-          [else
-            (fs-current-dir-loop
-              (fs-current-dir-next-capacity capacity written))])))
+        (core/cond
+          (= written 0)
+          ""
+          (< written capacity)
+          (io-copy-c-string (io-array-const-ptr buf))
+          (fs-current-dir-loop (fs-current-dir-next-capacity capacity written)))))
     (if (> capacity fs-current-dir-max-capacity)
       ""
       (let
@@ -1016,17 +1030,18 @@
           rooted))
       (let
         [body : String (fs-path-segment-list-render segments)]
-        (cond
-          [(and drive-root (= (string-length body) 0))
-            (string-append (substring-borrowed path 0 2) "/")]
-          [drive-root
-            (string-append
-              (substring-borrowed path 0 2)
-              (string-append "/" body))]
-          [(and rooted (= (string-length body) 0)) "/"]
-          [rooted (string-append "/" body)]
-          [(= (string-length body) 0) "."]
-          [else body])))))
+        (core/cond
+          (and drive-root (= (string-length body) 0))
+          (string-append (substring-borrowed path 0 2) "/")
+          drive-root
+          (string-append (substring-borrowed path 0 2) (string-append "/" body))
+          (and rooted (= (string-length body) 0))
+          "/"
+          rooted
+          (string-append "/" body)
+          (= (string-length body) 0)
+          "."
+          body)))))
 
 ;: Return true when a normalized relative path still escapes via leading `..`.
 (define (fs-path-normalized-escapes? [normalized : (& normalized str)]) : bool
@@ -1062,24 +1077,24 @@
 ;:
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
-  (cond
-    [(= (string-length left) 0) (string-copy-borrowed right)]
-    [(= (string-length right) 0) (string-copy-borrowed left)]
-    [(fs-path-separator? (string-ref left (- (string-length left) 1)))
-      (if (fs-path-separator? (string-ref right 0))
-        (let
-          [trimmed-right : String
-            (substring-borrowed right 1 (- (string-length right) 1))]
-          (string-append-borrowed left (& trimmed-right)))
-        (string-append-borrowed left right))]
-    [(fs-path-separator? (string-ref right 0))
-      (string-append-borrowed left right)]
-    [else
+  (core/cond
+    (= (string-length left) 0)
+    (string-copy-borrowed right)
+    (= (string-length right) 0)
+    (string-copy-borrowed left)
+    (fs-path-separator? (string-ref left (- (string-length left) 1)))
+    (if (fs-path-separator? (string-ref right 0))
       (let
-        [separator : String (fs-path-separator)]
-        [left-with-separator : String
-          (string-append-borrowed left (& separator))]
-        (string-append-borrowed (& left-with-separator) right))]))
+        [trimmed-right : String
+          (substring-borrowed right 1 (- (string-length right) 1))]
+        (string-append-borrowed left (& trimmed-right)))
+      (string-append-borrowed left right))
+    (fs-path-separator? (string-ref right 0))
+    (string-append-borrowed left right)
+    (let
+      [separator : String (fs-path-separator)]
+      [left-with-separator : String (string-append-borrowed left (& separator))]
+      (string-append-borrowed (& left-with-separator) right))))
 
 ;: Join two owned `String` path segments by delegating to `fs-path-join`.
 ;:
@@ -1181,11 +1196,14 @@
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
-  (cond
-    [(= status fs-file-kind-regular-code) (OkFsFileKind (FsFileRegular))]
-    [(= status fs-file-kind-directory-code) (OkFsFileKind (FsFileDirectory))]
-    [(= status fs-file-kind-other-code) (OkFsFileKind (FsFileOther))]
-    [else (ErrFsFileKind (io-error-from-status path status))]))
+  (core/cond
+    (= status fs-file-kind-regular-code)
+    (OkFsFileKind (FsFileRegular))
+    (= status fs-file-kind-directory-code)
+    (OkFsFileKind (FsFileDirectory))
+    (= status fs-file-kind-other-code)
+    (OkFsFileKind (FsFileOther))
+    (ErrFsFileKind (io-error-from-status path status))))
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
@@ -1417,24 +1435,25 @@
     (let
       [name : String (fs-temp-name prefix pid attempt)]
       [path : String
-        (cond
-          [(= (string-length root) 0) name]
-          [(= (string-length name) 0) (string-copy-borrowed root)]
-          [(fs-path-separator? (string-ref root (- (string-length root) 1)))
-            (if (fs-path-separator? (string-ref name 0))
-              (let
-                [trimmed-name : String
-                  (substring-borrowed (& name) 1 (- (string-length name) 1))]
-                (string-append-borrowed root (& trimmed-name)))
-              (string-append-borrowed root (& name)))]
-          [(fs-path-separator? (string-ref name 0))
-            (string-append-borrowed root (& name))]
-          [else
+        (core/cond
+          (= (string-length root) 0)
+          name
+          (= (string-length name) 0)
+          (string-copy-borrowed root)
+          (fs-path-separator? (string-ref root (- (string-length root) 1)))
+          (if (fs-path-separator? (string-ref name 0))
             (let
-              [separator : String (fs-path-separator)]
-              [root-with-separator : String
-                (string-append-borrowed root (& separator))]
-              (string-append root-with-separator name))])]
+              [trimmed-name : String
+                (substring-borrowed (& name) 1 (- (string-length name) 1))]
+              (string-append-borrowed root (& trimmed-name)))
+            (string-append-borrowed root (& name)))
+          (fs-path-separator? (string-ref name 0))
+          (string-append-borrowed root (& name))
+          (let
+            [separator : String (fs-path-separator)]
+            [root-with-separator : String
+              (string-append-borrowed root (& separator))]
+            (string-append root-with-separator name)))]
       [status : i64 (fs-mkdir-status-owned path)]
       (if (= status io-status-ok)
         (OkIoString path)

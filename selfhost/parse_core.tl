@@ -3,6 +3,8 @@
 ;; The runnable `parse.tl` demo used to contain these definitions directly.
 ;; Keeping them here lets other drivers reuse the parser without importing a
 ;; second `main`.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "sym_i64_env.tl")
@@ -96,40 +98,61 @@
     [(NoneI64) (parse-tag-call)]))
 
 (define (parse-op-tag [tag : i64]) : BinOp
-  (cond
-    [(= tag (parse-tag-add)) (OpAdd)]
-    [(= tag (parse-tag-sub)) (OpSub)]
-    [(= tag (parse-tag-mul)) (OpMul)]
-    [(= tag (parse-tag-lt)) (OpLt)]
-    [(= tag (parse-tag-eq)) (OpEq)]
-    [(= tag (parse-tag-le)) (OpLe)]
-    [(= tag (parse-tag-gt)) (OpGt)]
-    [(= tag (parse-tag-ge)) (OpGe)]
-    [(= tag (parse-tag-ne)) (OpNe)]
-    [(= tag (parse-tag-and)) (OpAnd)]
-    [(= tag (parse-tag-or)) (OpOr)]
-    [else
-      (begin
-        (panic "parse: unknown operator")
-        (OpAdd))]))
+  (core/cond
+    (= tag (parse-tag-add))
+    (OpAdd)
+    (= tag (parse-tag-sub))
+    (OpSub)
+    (= tag (parse-tag-mul))
+    (OpMul)
+    (= tag (parse-tag-lt))
+    (OpLt)
+    (= tag (parse-tag-eq))
+    (OpEq)
+    (= tag (parse-tag-le))
+    (OpLe)
+    (= tag (parse-tag-gt))
+    (OpGt)
+    (= tag (parse-tag-ge))
+    (OpGe)
+    (= tag (parse-tag-ne))
+    (OpNe)
+    (= tag (parse-tag-and))
+    (OpAnd)
+    (= tag (parse-tag-or))
+    (OpOr)
+    (begin
+      (panic "parse: unknown operator")
+      (OpAdd))))
 
 (define (parse-op [op : String]) : BinOp
   (parse-op-tag (parse-dispatch-tag (parse-dispatch-env) op)))
 
 (define (is-binary-tag [tag : i64]) : bool
-  (cond
-    [(= tag (parse-tag-add)) true]
-    [(= tag (parse-tag-sub)) true]
-    [(= tag (parse-tag-mul)) true]
-    [(= tag (parse-tag-lt)) true]
-    [(= tag (parse-tag-eq)) true]
-    [(= tag (parse-tag-le)) true]
-    [(= tag (parse-tag-gt)) true]
-    [(= tag (parse-tag-ge)) true]
-    [(= tag (parse-tag-ne)) true]
-    [(= tag (parse-tag-and)) true]
-    [(= tag (parse-tag-or)) true]
-    [else false]))
+  (core/cond
+    (= tag (parse-tag-add))
+    true
+    (= tag (parse-tag-sub))
+    true
+    (= tag (parse-tag-mul))
+    true
+    (= tag (parse-tag-lt))
+    true
+    (= tag (parse-tag-eq))
+    true
+    (= tag (parse-tag-le))
+    true
+    (= tag (parse-tag-gt))
+    true
+    (= tag (parse-tag-ge))
+    true
+    (= tag (parse-tag-ne))
+    true
+    (= tag (parse-tag-and))
+    true
+    (= tag (parse-tag-or))
+    true
+    false))
 
 (define (is-binary-op [op : String]) : bool
   (is-binary-tag (parse-dispatch-tag (parse-dispatch-env) op)))
@@ -339,20 +362,26 @@
         [(SSym op)
           (let
             [tag : i64 (parse-dispatch-tag dispatch op)]
-            (cond
-              [(= tag (parse-tag-let)) (parse-let dispatch (box-get rest))]
-              [(= tag (parse-tag-if)) (parse-if dispatch (box-get rest))]
-              [(= tag (parse-tag-while)) (parse-while dispatch (box-get rest))]
-              [(= tag (parse-tag-print)) (parse-print dispatch (box-get rest))]
-              [(= tag (parse-tag-set)) (parse-set dispatch (box-get rest))]
-              [(= tag (parse-tag-begin)) (parse-begin dispatch (box-get rest))]
-              [(= tag (parse-tag-not)) (parse-not dispatch (box-get rest))]
-              [(is-binary-tag tag)
-                (parse-binary dispatch (parse-op-tag tag) (box-get rest) tag)]
-              [else
-                (match (parse-args dispatch (box-get rest))
-                  [(OkExprList args) (OkExpr (ECall op (box args)))]
-                  [(ErrExprList message) (ErrExpr message)])]))]
+            (core/cond
+              (= tag (parse-tag-let))
+              (parse-let dispatch (box-get rest))
+              (= tag (parse-tag-if))
+              (parse-if dispatch (box-get rest))
+              (= tag (parse-tag-while))
+              (parse-while dispatch (box-get rest))
+              (= tag (parse-tag-print))
+              (parse-print dispatch (box-get rest))
+              (= tag (parse-tag-set))
+              (parse-set dispatch (box-get rest))
+              (= tag (parse-tag-begin))
+              (parse-begin dispatch (box-get rest))
+              (= tag (parse-tag-not))
+              (parse-not dispatch (box-get rest))
+              (is-binary-tag tag)
+              (parse-binary dispatch (parse-op-tag tag) (box-get rest) tag)
+              (match (parse-args dispatch (box-get rest))
+                [(OkExprList args) (OkExpr (ECall op (box args)))]
+                [(ErrExprList message) (ErrExpr message)])))]
         [_ (ErrExpr "parse: malformed expression")])]
     [_ (ErrExpr "parse: malformed expression")]))
 

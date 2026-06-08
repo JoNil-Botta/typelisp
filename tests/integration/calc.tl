@@ -101,17 +101,22 @@
 ;; `TEnd` is compatibility-style dead code, though builtin `panic` can now
 ;; satisfy the `Token` result directly.
 (define (single-token [c : char]) : Token
-  (cond
-    [(= c #+') TPlus]
-    [(= c #-') TMinus]
-    [(= c #*') TStar]
-    [(= c #/') TSlash]
-    [(= c #(') TLParen]
-    [(= c #)') TRParen]
-    [else
-      (begin
-        (panic "lexer: unexpected character")
-        TEnd)]))
+  (core/cond
+    (= c #+')
+    TPlus
+    (= c #-')
+    TMinus
+    (= c #*')
+    TStar
+    (= c #/')
+    TSlash
+    (= c #(')
+    TLParen
+    (= c #)')
+    TRParen
+    (begin
+      (panic "lexer: unexpected character")
+      TEnd)))
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 ;; large enough to hold every token plus the TEnd sentinel) and returning the

@@ -3,6 +3,8 @@
 ;; `format_core.tl` stays syntax-neutral. This module adds a deterministic
 ;; gofmt-like first pass for common TypeLisp special forms while still building
 ;; `Doc` values for width-aware rendering.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "format_tokens.tl")
@@ -371,30 +373,32 @@
 (define (format-rules-special-list-doc
   [head : FormatCst]
   [rest : FormatCstList]) : Doc
-  (cond
-    [(format-rules-node-symbol? head "import")
-      (format-rules-inline-form-doc "import" rest)]
-    [(format-rules-node-symbol? head "include-str")
-      (format-rules-inline-form-doc "include-str" rest)]
-    [(format-rules-node-symbol? head "extern")
-      (format-rules-inline-form-doc "extern" rest)]
-    [(format-rules-node-symbol? head "define") (format-rules-define-doc rest)]
-    [(format-rules-node-symbol? head "defenum")
-      (format-rules-first-or-line-form-doc "defenum" rest)]
-    [(format-rules-node-symbol? head "defstruct")
-      (format-rules-first-or-line-form-doc "defstruct" rest)]
-    [(format-rules-node-symbol? head "let") (format-rules-let-doc rest)]
-    [(format-rules-node-symbol? head "if")
-      (format-rules-first-or-line-form-doc "if" rest)]
-    [(format-rules-node-symbol? head "while")
-      (format-rules-first-or-line-form-doc "while" rest)]
-    [(format-rules-node-symbol? head "begin")
-      (format-rules-line-form-doc "begin" rest)]
-    [(format-rules-node-symbol? head "unsafe")
-      (format-rules-line-form-doc "unsafe" rest)]
-    [(format-rules-node-symbol? head "match")
-      (format-rules-first-or-line-form-doc "match" rest)]
-    [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")]))
+  (core/cond
+    (format-rules-node-symbol? head "import")
+    (format-rules-inline-form-doc "import" rest)
+    (format-rules-node-symbol? head "include-str")
+    (format-rules-inline-form-doc "include-str" rest)
+    (format-rules-node-symbol? head "extern")
+    (format-rules-inline-form-doc "extern" rest)
+    (format-rules-node-symbol? head "define")
+    (format-rules-define-doc rest)
+    (format-rules-node-symbol? head "defenum")
+    (format-rules-first-or-line-form-doc "defenum" rest)
+    (format-rules-node-symbol? head "defstruct")
+    (format-rules-first-or-line-form-doc "defstruct" rest)
+    (format-rules-node-symbol? head "let")
+    (format-rules-let-doc rest)
+    (format-rules-node-symbol? head "if")
+    (format-rules-first-or-line-form-doc "if" rest)
+    (format-rules-node-symbol? head "while")
+    (format-rules-first-or-line-form-doc "while" rest)
+    (format-rules-node-symbol? head "begin")
+    (format-rules-line-form-doc "begin" rest)
+    (format-rules-node-symbol? head "unsafe")
+    (format-rules-line-form-doc "unsafe" rest)
+    (format-rules-node-symbol? head "match")
+    (format-rules-first-or-line-form-doc "match" rest)
+    (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")))
 
 (define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
   (match rest

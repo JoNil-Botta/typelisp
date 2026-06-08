@@ -3,6 +3,8 @@
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "doc_render.tl")
@@ -26,12 +28,16 @@
 (define (doc-html-escape-one [text : String] [idx : i64]) : String
   (let
     [c : char (string-ref text idx)]
-    (cond
-      [(= c #&') "&amp;"]
-      [(= c #<') "&lt;"]
-      [(= c #>') "&gt;"]
-      [(= c #"') "&quot;"]
-      [else (substring text idx 1)])))
+    (core/cond
+      (= c #&')
+      "&amp;"
+      (= c #<')
+      "&lt;"
+      (= c #>')
+      "&gt;"
+      (= c #"')
+      "&quot;"
+      (substring text idx 1))))
 
 (define (doc-html-escape [text : String]) : String
   (let

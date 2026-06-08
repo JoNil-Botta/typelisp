@@ -470,10 +470,10 @@
   (render-doc-width (format-rules-source-doc src) width))
 
 (define (format-rules-decls-source) : String
-  "(import \"std.tl\") (extern print-string (:abi c) (:symbol \"tl_print_string\") : (-> String unit)) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64))")
+  "(import \"std.tl\") (extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64))")
 
 (define (format-rules-decls-expected) : String
-  "(import \"std.tl\")\n\n(extern print-string (:abi c) (:symbol \"tl_print_string\") : (-> String unit))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))")
+  "(import \"std.tl\")\n\n(extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))")
 
 (define (format-rules-flow-source) : String
   "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")

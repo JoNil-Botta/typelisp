@@ -23,28 +23,27 @@
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
 (cfg
   windows
-  (extern runtime-windows-get-std-handle (:symbol "GetStdHandle") : (-> i32 i64)))
+  (extern (runtime-windows-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
 
 ;: Windows kernel32 `WriteFile` binding for the OS write primitive.
 (cfg
   windows
-  (extern runtime-windows-write-file (:symbol "WriteFile") : (->
-    i64
-    (Ptr u8)
-    i32
-    (MutPtr i32)
-    i64
-    i32)))
+  (extern (runtime-windows-write-file
+    [arg0 : i64]
+    [arg1 : (Ptr u8)]
+    [arg2 : i32]
+    [arg3 : (MutPtr i32)]
+    [arg4 : i64]) : i32 (:symbol "WriteFile")))
 
 ;: Windows kernel32 `ExitProcess` binding for the OS exit primitive.
 (cfg
   windows
-  (extern runtime-windows-exit-process (:symbol "ExitProcess") : (-> i32 never)))
+  (extern (runtime-windows-exit-process [arg0 : i32]) : never (:symbol "ExitProcess")))
 
 ;: Bootstrap fallback for stage0 compilers that predate local address-of.
 (cfg
   (all windows (not feature-ptr-addr-of))
-  (extern runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8))))
+  (extern (runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc")))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
 (define (runtime-ptr-arg [ptr : (Ptr u8)]) : i64

@@ -21622,7 +21622,7 @@
   (lower-compiler-source-with-path-mode path src (CompilerLowerScalar)))
 
 (define (compiler-lower-smoke-source) : String
-  "(extern print-i64 : (-> i64 unit))
+  "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (main [flag : bool]) : i64
@@ -21819,7 +21819,7 @@
   ((lambda ([x : i64]) : i64 (+ x 1)) 41))")
 
 (define (compiler-lower-unit-lambda-call-source) : String
-  "(extern print-i64 : (-> i64 unit))
+  "(extern (print-i64 [arg0 : i64]) : unit)
 (define (main) : unit
   ((lambda () : unit (print-i64 1))))")
 
@@ -21959,7 +21959,7 @@
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
 (define (compiler-lower-match-source) : String
-  "(extern print-i64 : (-> i64 unit))
+  "(extern (print-i64 [arg0 : i64]) : unit)
 (define (classify [n : i64]) : i64
   (match n
     [0 100]
@@ -22209,11 +22209,11 @@
     (+ (cast (tuple-ref r 0) : i64) (xgetbv 0))))")
 
 (define (compiler-lower-file-handle-status-source) : String
-  "(extern os-open (:symbol \"open\") : (-> (Ptr u8) i32 i32 i32))
-(extern os-close (:symbol \"close\") : (-> i32 i32))
-(extern os-read (:symbol \"read\") : (-> i32 (MutPtr u8) i64 i64))
-(extern os-write (:symbol \"write\") : (-> i32 (Ptr u8) i64 i64))
-(extern os-fflush (:symbol \"fflush\") : (-> (Ptr u8) i32))
+  "(extern (os-open [arg0 : (Ptr u8)] [arg1 : i32] [arg2 : i32]) : i32 (:symbol \"open\"))
+(extern (os-close [arg0 : i32]) : i32 (:symbol \"close\"))
+(extern (os-read [arg0 : i32] [arg1 : (MutPtr u8)] [arg2 : i64]) : i64 (:symbol \"read\"))
+(extern (os-write [arg0 : i32] [arg1 : (Ptr u8)] [arg2 : i64]) : i64 (:symbol \"write\"))
+(extern (os-fflush [arg0 : (Ptr u8)]) : i32 (:symbol \"fflush\"))
 (define (file-open-status [path : String] [mode : i64]) : i64
   (cast
     (os-open (unsafe (string-data path)) (cast mode : i32) (cast 384 : i32))
@@ -22285,7 +22285,7 @@
                         (fs-file-size \"target/typelisp-fs\")))))))))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
-  "(extern raw-make : (-> (MutPtr i64)))
+  "(extern (raw-make) : (MutPtr i64))
 (define (main [n : u64]) : u64
   (let
     [cell : i64 0]
@@ -22299,14 +22299,14 @@
       (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
 
 (define (compiler-lower-raw-pointer-direct-call-source) : String
-  "(extern raw-make : (-> (MutPtr i64)))
+  "(extern (raw-make) : (MutPtr i64))
 (define (main) : unit
   (unsafe
     (ptr-write! (raw-make) 41)))")
 
 (define (compiler-lower-raw-pointer-call-value-source) : String
-  "(extern raw-make : (-> (MutPtr i64)))
-(extern raw-value : (-> i64))
+  "(extern (raw-make) : (MutPtr i64))
+(extern (raw-value) : i64)
 (define (main) : unit
   (unsafe
     (ptr-write! (raw-make) (raw-value))))")
@@ -25266,18 +25266,18 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-lower-extern-link-metadata-source) : String
-  "(extern ffi-add (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))
+  "(extern (ffi-add [arg0 : i64]) : i64 (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\"))
 (define (main) : i64 (ffi-add 35))")
 
 (define (compiler-lower-c-abi-unsupported-aggregate-source) : String
   "(defstruct Big (lo i64) (hi i64))
-(extern big-use (:symbol \"tl_cabi_big_use\") : (-> Big i64))
+(extern (big-use [arg0 : Big]) : i64 (:symbol \"tl_cabi_big_use\"))
 (define (main) : i64
   (big-use (Big 1 2)))")
 
 (define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
   "(defstruct Rgb (r u8) (g u8) (b u8))
-(extern rgb-use (:symbol \"tl_cabi_rgb_use\") : (-> Rgb i64))
+(extern (rgb-use [arg0 : Rgb]) : i64 (:symbol \"tl_cabi_rgb_use\"))
 (define (main) : i64
   (rgb-use (Rgb (cast 1 : u8) (cast 2 : u8) (cast 3 : u8))))")
 
@@ -25327,7 +25327,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-global-source) : String
-  "(extern print-i64 : (-> i64 unit))
+  "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)
 (define flag : bool true)
 (define widened : i64 (cast 7 : i64))
@@ -26911,11 +26911,11 @@
 
 (define (compiler-lower-with-arena-source [src : String]) : String
   (string-append
-    "(extern tl_arena_make : (-> i64))
-(extern tl_arena_current : (-> i64))
-(extern tl_region_mark : (-> i64))
-(unsafe (extern tl_arena_set : (-> i64 unit)))
-(unsafe (extern tl_region_reset : (-> i64 unit)))
+    "(extern (tl_arena_make) : i64)
+(extern (tl_arena_current) : i64)
+(extern (tl_region_mark) : i64)
+(unsafe (extern (tl_arena_set [arg0 : i64]) : unit))
+(unsafe (extern (tl_region_reset [arg0 : i64]) : unit))
 (define (arena-make) : i64 (tl_arena_make))
 (define (arena-current) : i64 (tl_arena_current))
 (define (arena-mark) : i64 (tl_region_mark))

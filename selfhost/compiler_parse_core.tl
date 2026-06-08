@@ -6204,7 +6204,7 @@
   "(import \"stdlib/test.tl\")
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
-(extern print-string : (-> String unit))
+(extern (print-string [arg0 : String]) : unit)
 (define answer : i64 42)
 (define (main [argc : i64] [name : String]) : i64
   (let
@@ -6312,7 +6312,7 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-raw-pointer-source) : String
-  "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
+  "(extern (raw-map [arg0 : (Ptr i64)]) : (MutPtr (Ptr u8)))")
 
 (define (compiler-parse-type-ptr-u8? [ty : AstType]) : bool
   (match ty
@@ -6379,10 +6379,10 @@
     [_ false]))
 
 (define (compiler-parse-extern-metadata-source) : String
-  "(extern local-call (:abi c) (:symbol \"foreign_exact\") (:link-lib \"m\") (:link-search \"native/lib\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))")
+  "(extern (local-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\") (:link-lib \"m\") (:link-search \"native/lib\") (:link-arg \"-Wl,--as-needed\"))")
 
 (define (compiler-parse-extern-varargs-metadata-source) : String
-  "(extern snprintf (:abi c-varargs 3) (:symbol \"snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))")
+  "(extern (snprintf [arg0 : (MutPtr u8)] [arg1 : i64] [arg2 : (Ptr u8)] [arg3 : f64]) : i32 (:abi c-varargs 3) (:symbol \"snprintf\"))")
 
 (define (compiler-parse-extern-function-head-varargs-source) : String
   "(extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [arg : ...f64]) : i32 (:symbol \"snprintf\"))
@@ -7408,7 +7408,7 @@
 
 (define (compiler-parse-unsafe-decl-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
-(unsafe (extern raw-call : (-> i64 i64)))")
+(unsafe (extern (raw-call [arg0 : i64]) : i64))")
 
 (define (compiler-parse-unsafe-decl-ok?) : bool
   (match (parse-ast-source (compiler-parse-unsafe-decl-source))
@@ -7699,7 +7699,7 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-comptime-decl-bad-payload-source) : String
-  "(comptime-decl (extern x : (-> i64)))")
+  "(comptime-decl (extern (x) : i64))")
 
 (define (compiler-parse-comptime-decl-expression-source) : String
   "(define (main) : i64 (comptime-decl (defstruct Point (x i64))))")
@@ -7730,7 +7730,7 @@
   "(comptime-decls (:generated) (defstruct Point (x i64)))")
 
 (define (compiler-parse-comptime-decls-bad-payload-source) : String
-  "(comptime-decls (:generated bundle-family \"v1\") (extern x : (-> i64)))")
+  "(comptime-decls (:generated bundle-family \"v1\") (extern (x) : i64))")
 
 (define (compiler-parse-comptime-decl-invalid-payload-ok? [src : String]) : bool
   (compiler-parse-error-ok? src (parse-ast-comptime-decl-payload-message)))
@@ -7917,7 +7917,7 @@
           "(unsafe (defstruct Bad (x i64)))"
           "parse: unsafe declaration accepts only function define or extern")
         (compiler-parse-error-ok?
-          "(unsafe (extern a : (-> i64)) (extern b : (-> i64)))"
+          "(unsafe (extern (a) : i64) (extern (b) : i64))"
           "parse: unsafe declaration expects exactly one declaration")))))
 
 (define (compiler-parse-export-error-tests-ok?) : bool
@@ -8055,37 +8055,37 @@
     [ok : bool true]
     (begin
       (if (compiler-parse-error-ok?
-        "(extern f (:abi stdcall) : (-> i64))"
+        "(extern (f) : i64 (:abi stdcall))"
         "parse: unknown extern ABI stdcall")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:symbol bad) : (-> i64))"
+        "(extern (f) : i64 (:symbol bad))"
         "parse: malformed extern :symbol metadata")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:link-lib bad) : (-> i64))"
+        "(extern (f) : i64 (:link-lib bad))"
         "parse: malformed extern :link-lib metadata")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:link-arg \"\") : (-> i64))"
+        "(extern (f) : i64 (:link-arg \"\"))"
         "parse: extern :link-arg must not be empty")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:abi c) (:abi c) : (-> i64))"
+        "(extern (f) : i64 (:abi c) (:abi c))"
         "parse: duplicate extern :abi metadata")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:abi c-varargs) : (-> i64))"
+        "(extern (f) : i64 (:abi c-varargs))"
         "parse: unknown extern ABI c-varargs")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:abi c-varargs -1) : (-> i64))"
+        "(extern (f) : i64 (:abi c-varargs -1))"
         "parse: extern c-varargs fixed argument count must be nonnegative")
         unit
         (set! ok false))
@@ -8100,7 +8100,7 @@
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(extern f (:link \"x\") : (-> i64))"
+        "(extern (f) : i64 (:link \"x\"))"
         "parse: unknown extern metadata :link")
         unit
         (set! ok false))
@@ -8301,7 +8301,7 @@
     (and
       (compiler-parse-ok? "(define (add [a : i64] [b : i64]) : i64 (+ a b))")
       (and
-        (compiler-parse-ok? "(extern puts : (-> String unit))")
+        (compiler-parse-ok? "(extern (puts [arg0 : String]) : unit)")
         (and
           (compiler-parse-ok? "(defenum Maybe (Some i64) (None))")
           (and

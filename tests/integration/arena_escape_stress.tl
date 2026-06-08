@@ -15,7 +15,7 @@
 
 (import "stdlib/string.tl")
 
-(extern tl_alloc : (-> u64 u64))
+(extern (tl_alloc [arg0 : u64]) : u64)
 
 (defenum StressList
   (StressNil)

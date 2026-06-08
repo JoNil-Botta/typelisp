@@ -77,28 +77,22 @@
 ;: Windows kernel32 `QueryPerformanceCounter` binding used for seed variation.
 (cfg
   windows
-  (extern random-windows-query-performance-counter (:symbol "QueryPerformanceCounter") : (->
-    (MutPtr i64)
-    i32)))
+  (extern (random-windows-query-performance-counter [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceCounter")))
 
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding used for seed variation.
 (cfg
   windows
-  (extern random-windows-get-system-time-as-file-time (:symbol "GetSystemTimeAsFileTime") : (->
-    (MutPtr i64)
-    unit)))
+  (extern (random-windows-get-system-time-as-file-time [arg0 : (MutPtr i64)]) : unit (:symbol "GetSystemTimeAsFileTime")))
 
 ;: Windows kernel32 `GetCurrentProcessId` binding used for seed variation.
 (cfg
   windows
-  (extern random-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (->
-    u32)))
+  (extern (random-windows-get-current-process-id) : u32 (:symbol "GetCurrentProcessId")))
 
 ;: Windows kernel32 `GetCurrentThreadId` binding used for seed variation.
 (cfg
   windows
-  (extern random-windows-get-current-thread-id (:symbol "GetCurrentThreadId") : (->
-    u32)))
+  (extern (random-windows-get-current-thread-id) : u32 (:symbol "GetCurrentThreadId")))
 
 ;: Linear list of non-negative weights.
 (defenum RandomWeightList

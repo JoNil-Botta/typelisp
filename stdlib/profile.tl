@@ -11,27 +11,23 @@
 ;: Windows kernel32 high-resolution performance counter bindings.
 (cfg
   windows
-  (extern profile-win-query-performance-counter (:symbol "QueryPerformanceCounter") : (->
-    (MutPtr i64)
-    i32)))
+  (extern (profile-win-query-performance-counter [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceCounter")))
 
 (cfg
   windows
-  (extern profile-win-query-performance-frequency (:symbol "QueryPerformanceFrequency") : (->
-    (MutPtr i64)
-    i32)))
+  (extern (profile-win-query-performance-frequency [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceFrequency")))
 
 ;: Runtime hook backing `profile-alloc-total`.
-(extern tl_profile_alloc_total : (-> i64))
+(extern (tl_profile_alloc_total) : i64)
 
 ;: Runtime hook backing `profile-alloc-live`.
-(extern tl_profile_alloc_live : (-> i64))
+(extern (tl_profile_alloc_live) : i64)
 
 ;: Runtime hook backing `profile-alloc-peak`.
-(extern tl_profile_alloc_peak : (-> i64))
+(extern (tl_profile_alloc_peak) : i64)
 
 ;: Runtime hook backing `profile-alloc-reset-peak`.
-(extern tl_profile_alloc_reset_peak : (-> unit))
+(extern (tl_profile_alloc_reset_peak) : unit)
 
 ;: Return a pointer to one slot in the shared timestamp scratch buffer.
 (define (profile-scratch-ptr [slot : i64]) : (MutPtr i64)

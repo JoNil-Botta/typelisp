@@ -214,7 +214,7 @@
 (define (add-one [x : i64]) : i64 (+ x 1))
 
 ;: Extern docs for host-log.
-(extern host-log : (-> String unit))
+(extern (host-log [arg0 : String]) : unit)
 
 ;: Enum docs mention variants.
 (defenum MaybeNumber
@@ -264,7 +264,7 @@ Function docs with \\`tick\\` and \\[arg\\].
 Kind: extern
 
 ```typelisp
-(extern host-log : (-> String unit))
+(extern (host-log [arg0 : String]) : unit)
 ```
 
 Extern docs for host-log.

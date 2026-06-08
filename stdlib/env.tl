@@ -23,8 +23,7 @@
 ;: tools are short-lived.
 (cfg
   windows
-  (extern env-win-get-environment-strings (:symbol "GetEnvironmentStringsA") : (->
-    (Ptr u8))))
+  (extern (env-win-get-environment-strings) : (Ptr u8) (:symbol "GetEnvironmentStringsA")))
 
 ;: Length of the NUL-terminated C string at `ptr` (a freestanding `strlen`).
 (unsafe

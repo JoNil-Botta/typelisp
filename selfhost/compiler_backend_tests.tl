@@ -152,7 +152,7 @@
   (step 20 22))")
 
 (define (compiler-backend-raw-pointer-fixture-source) : String
-  "(extern tl_alloc : (-> i64 (MutPtr u8)))
+  "(extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
 
 (define (write-i64 [p : (MutPtr i64)] [offset : i64] [value : i64]) : unit
   (unsafe
@@ -364,7 +364,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-object-image-source) : String
-  "(extern foreign-call (:abi c) (:symbol \"foreign_exact\") : (-> i64 i64))
+  "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
 (define answer : i64 40)
 (define greeting : String \"hi\")
 (define pi : f64 3.5)
@@ -792,7 +792,7 @@
 (define (compiler-backend-windows-print-runtime-source) : String
   "(define (int->string [value : i64]) : String
   \"3\")
-(extern runtime-print-string (:symbol \"tl_print_string\") : (-> String unit))
+(extern (runtime-print-string [arg0 : String]) : unit (:symbol \"tl_print_string\"))
 (define (print-string [text : String]) : unit
   (runtime-print-string text))
 (define (print-newline) : unit
@@ -825,8 +825,8 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-print-runtime-source) : String
-  "(extern runtime-print-char (:symbol \"tl_print_char\") : (-> char unit))
-(extern runtime-print-f64 (:symbol \"tl_print_f64\") : (-> f64 unit))
+  "(extern (runtime-print-char [arg0 : char]) : unit (:symbol \"tl_print_char\"))
+(extern (runtime-print-f64 [arg0 : f64]) : unit (:symbol \"tl_print_f64\"))
 (define (main) : i64
   (begin
     (runtime-print-char #A')
@@ -865,7 +865,7 @@
 
 (define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
   (backend-cat3
-    "(extern tl_alloc : (-> i64 (MutPtr u8)))
+    "(extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
 (extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [value : ...f64]) : i32 (:symbol \""
     symbol
     "\"))
@@ -897,8 +897,8 @@
 
 (define (compiler-backend-c-abi-aggregate-source) : String
   "(defstruct Color (r u8) (g u8) (b u8) (a u8))
-(extern color-make (:symbol \"tl_cabi_color_make\") : (-> u8 u8 u8 u8 Color))
-(extern color-use (:symbol \"tl_cabi_color_use\") : (-> Color i64))
+(extern (color-make [arg0 : u8] [arg1 : u8] [arg2 : u8] [arg3 : u8]) : Color (:symbol \"tl_cabi_color_make\"))
+(extern (color-use [arg0 : Color]) : i64 (:symbol \"tl_cabi_color_use\"))
 (define (main) : i64
   (let
     [c : Color
@@ -991,7 +991,7 @@
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-program-argv-entry-capture-source) : String
-  "(extern fixture-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64))
+  "(extern (fixture-strlen [arg0 : (Ptr u8)]) : i64 (:symbol \"strlen\"))
 (define (main) : i64
   (let
     [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
@@ -1018,7 +1018,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String
-  "(extern runtime-arg (:symbol \".L_tl_arg\") : (-> i64 String))
+  "(extern (runtime-arg [arg0 : i64]) : String (:symbol \".L_tl_arg\"))
 (define (arg [index : i64]) : String
   (runtime-arg index))
 (define (main) : i64
@@ -1966,7 +1966,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-backend-target-linux-crt-entry-source) : String
-  "(extern arg-count (:symbol \"tl_arg_count\") : (-> i64))
+  "(extern (arg-count) : i64 (:symbol \"tl_arg_count\"))
 (define (seed) : i64 41)
 (define value
   (seed))
@@ -2027,7 +2027,7 @@
               (not (compiler-backend-string-contains? linux "__chkstk")))))))))
 
 (define (compiler-backend-target-windows-abi-source) : String
-  "(extern ext : (-> i64 i64 i64 i64 i64 i64))
+  "(extern (ext [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64]) : i64)
 (define (call5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
   (ext a b c d e))
 (define (main) : i64
@@ -2133,8 +2133,8 @@
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-windows-runtime-guard-source) : String
-  "(extern tl_alloc : (-> u64 u64))
-(extern tl_region_reset : (-> u64 unit))
+  "(extern (tl_alloc [arg0 : u64]) : u64)
+(extern (tl_region_reset [arg0 : u64]) : unit)
 (define (main) : u64
   (begin
     (tl_region_reset (cast 0 : u64))
@@ -3537,12 +3537,12 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-process-output-source) : String
-  "(extern tl_process_output : (-> i64 i64))
+  "(extern (tl_process_output [arg0 : i64]) : i64)
 (define (main) : i64 (tl_process_output 0))")
 
 (define (compiler-backend-process-async-source) : String
-  "(extern tl_process_start : (-> i64 i64))
-(extern tl_process_wait : (-> i64 i64))
+  "(extern (tl_process_start [arg0 : i64]) : i64)
+(extern (tl_process_wait [arg0 : i64]) : i64)
 (define (main) : i64 (+ (tl_process_start 0) (tl_process_wait 0)))")
 
 (define (compiler-backend-process-fallback-labels-absent? [asm : String]) : bool
@@ -3612,9 +3612,9 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-env-runtime-source) : String
-  "(extern env-var-exists? (:symbol \"tl_env_var_exists\") : (-> String bool))
-(extern env-var-value (:symbol \"tl_env_var_value\") : (-> String String))
-(extern env-path-separator : (-> String))
+  "(extern (env-var-exists? [arg0 : String]) : bool (:symbol \"tl_env_var_exists\"))
+(extern (env-var-value [arg0 : String]) : String (:symbol \"tl_env_var_value\"))
+(extern (env-path-separator) : String)
 (define (main) : i64
   (if (env-var-exists? \"TYPELISP_TEST_ENV\")
     (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
@@ -3656,8 +3656,8 @@
 
 (define (compiler-backend-stdlib-env-runtime-source) : String
   "(module stdlib.env.test)
-(unsafe (extern env-ffi-getenv (:symbol \"getenv\") : (-> (Ptr u8) (Ptr u8))))
-(unsafe (extern env-ffi-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64)))
+(unsafe (extern (env-ffi-getenv [arg0 : (Ptr u8)]) : (Ptr u8) (:symbol \"getenv\")))
+(unsafe (extern (env-ffi-strlen [arg0 : (Ptr u8)]) : i64 (:symbol \"strlen\")))
 (define (env-var-exists? [name : String]) : bool
   (let
     [_ : String name]
@@ -3711,10 +3711,7 @@
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern append-file-status (:symbol \"tl_append_file_status\") : (->
-  String
-  String
-  i64))
+    "(extern (append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
 (define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
     [(OkCompilerBackend asm)
       (and
@@ -3783,93 +3780,29 @@
         (compiler-backend-no-public-runtime-symbol? asm "tl_flush_stdout")))))
 
 (define (compiler-backend-private-io-fs-runtime-source) : String
-  "(extern runtime-read-file (:symbol \".L_tl_read_file\") : (->
-  (Ptr u8)
-  i64
-  String))
-(extern runtime-write-file (:symbol \".L_tl_write_file\") : (->
-  (Ptr u8)
-  i64
-  (Ptr u8)
-  i64
-  unit))
-(extern runtime-file-exists? (:symbol \".L_tl_file_exists\") : (->
-  (Ptr u8)
-  i64
-  bool))
-(extern runtime-read-file-status (:symbol \".L_tl_read_file_status\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-write-file-status (:symbol \".L_tl_write_file_status\") : (->
-  (Ptr u8)
-  i64
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-append-file-status (:symbol \".L_tl_append_file_status\") : (->
-  (Ptr u8)
-  i64
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-file-exists-status (:symbol \".L_tl_file_exists_status\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-file-open-status (:symbol \".L_tl_file_open_status\") : (->
-  (Ptr u8)
-  i64
-  i64
-  i64))
-(extern runtime-file-close-status (:symbol \".L_tl_file_close_status\") : (->
-  i64
-  i64))
-(extern runtime-file-write-status (:symbol \".L_tl_file_write_status\") : (->
-  i64
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-file-flush-status (:symbol \".L_tl_file_flush_status\") : (->
-  i64
-  i64))
-(extern runtime-file-read-chunk-status
-  (:symbol \".L_tl_file_read_chunk_status\") : (->
-    i64
-    i64
-    i64))
-(extern runtime-file-read-chunk-bytes
-  (:symbol \".L_tl_file_read_chunk_bytes\") : (-> i64 String))
-(extern runtime-file-read-chunk-eof
-  (:symbol \".L_tl_file_read_chunk_eof\") : (-> i64 bool))
-(extern runtime-fs-mkdir-status (:symbol \".L_tl_fs_mkdir_status\") : (->
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-fs-remove-file-status
-  (:symbol \".L_tl_fs_remove_file_status\") : (->
-    (Ptr u8)
-    i64
-    i64))
-(extern runtime-fs-remove-dir-status
-  (:symbol \".L_tl_fs_remove_dir_status\") : (->
-    (Ptr u8)
-    i64
-    i64))
-(extern runtime-fs-rename-status (:symbol \".L_tl_fs_rename_status\") : (->
-  (Ptr u8)
-  i64
-  (Ptr u8)
-  i64
-  i64))
-(extern runtime-fs-process-id (:symbol \".L_tl_fs_process_id\") : (-> i64))
-(extern runtime-read-stdin-line (:symbol \".L_tl_read_stdin_line\") : (->
-  String))
-(extern runtime-read-stdin-bytes (:symbol \".L_tl_read_stdin_bytes\") : (->
-  i64
-  String))
-(extern runtime-stdin-eof (:symbol \".L_tl_stdin_eof\") : (-> bool))
-(extern runtime-flush-stdout (:symbol \".L_tl_flush_stdout\") : (-> unit))
+  "(extern (runtime-read-file [arg0 : (Ptr u8)] [arg1 : i64]) : String (:symbol \".L_tl_read_file\"))
+(extern (runtime-write-file [arg0 : (Ptr u8)] [arg1 : i64] [arg2 : (Ptr u8)] [arg3 : i64]) : unit (:symbol \".L_tl_write_file\"))
+(extern (runtime-file-exists? [arg0 : (Ptr u8)] [arg1 : i64]) : bool (:symbol \".L_tl_file_exists\"))
+(extern (runtime-read-file-status [arg0 : (Ptr u8)] [arg1 : i64]) : i64 (:symbol \".L_tl_read_file_status\"))
+(extern (runtime-write-file-status [arg0 : (Ptr u8)] [arg1 : i64] [arg2 : (Ptr u8)] [arg3 : i64]) : i64 (:symbol \".L_tl_write_file_status\"))
+(extern (runtime-append-file-status [arg0 : (Ptr u8)] [arg1 : i64] [arg2 : (Ptr u8)] [arg3 : i64]) : i64 (:symbol \".L_tl_append_file_status\"))
+(extern (runtime-file-exists-status [arg0 : (Ptr u8)] [arg1 : i64]) : i64 (:symbol \".L_tl_file_exists_status\"))
+(extern (runtime-file-open-status [arg0 : (Ptr u8)] [arg1 : i64] [arg2 : i64]) : i64 (:symbol \".L_tl_file_open_status\"))
+(extern (runtime-file-close-status [arg0 : i64]) : i64 (:symbol \".L_tl_file_close_status\"))
+(extern (runtime-file-write-status [arg0 : i64] [arg1 : (Ptr u8)] [arg2 : i64]) : i64 (:symbol \".L_tl_file_write_status\"))
+(extern (runtime-file-flush-status [arg0 : i64]) : i64 (:symbol \".L_tl_file_flush_status\"))
+(extern (runtime-file-read-chunk-status [arg0 : i64] [arg1 : i64]) : i64 (:symbol \".L_tl_file_read_chunk_status\"))
+(extern (runtime-file-read-chunk-bytes [arg0 : i64]) : String (:symbol \".L_tl_file_read_chunk_bytes\"))
+(extern (runtime-file-read-chunk-eof [arg0 : i64]) : bool (:symbol \".L_tl_file_read_chunk_eof\"))
+(extern (runtime-fs-mkdir-status [arg0 : (Ptr u8)] [arg1 : i64]) : i64 (:symbol \".L_tl_fs_mkdir_status\"))
+(extern (runtime-fs-remove-file-status [arg0 : (Ptr u8)] [arg1 : i64]) : i64 (:symbol \".L_tl_fs_remove_file_status\"))
+(extern (runtime-fs-remove-dir-status [arg0 : (Ptr u8)] [arg1 : i64]) : i64 (:symbol \".L_tl_fs_remove_dir_status\"))
+(extern (runtime-fs-rename-status [arg0 : (Ptr u8)] [arg1 : i64] [arg2 : (Ptr u8)] [arg3 : i64]) : i64 (:symbol \".L_tl_fs_rename_status\"))
+(extern (runtime-fs-process-id) : i64 (:symbol \".L_tl_fs_process_id\"))
+(extern (runtime-read-stdin-line) : String (:symbol \".L_tl_read_stdin_line\"))
+(extern (runtime-read-stdin-bytes [arg0 : i64]) : String (:symbol \".L_tl_read_stdin_bytes\"))
+(extern (runtime-stdin-eof) : bool (:symbol \".L_tl_stdin_eof\"))
+(extern (runtime-flush-stdout) : unit (:symbol \".L_tl_flush_stdout\"))
 (define (main) : i64
   (let
     [path : String \"target/private-runtime.txt\"]
@@ -4036,20 +3969,11 @@
             true))))))
 
 (define (compiler-backend-fs-runtime-source) : String
-  "(extern fs-process-id (:symbol \"tl_fs_process_id\") : (-> i64))
-(extern fs-mkdir-status (:symbol \"tl_fs_mkdir_status\") : (->
-  String
-  i64))
-(extern fs-remove-file-status (:symbol \"tl_fs_remove_file_status\") : (->
-  String
-  i64))
-(extern fs-remove-dir-status (:symbol \"tl_fs_remove_dir_status\") : (->
-  String
-  i64))
-(extern fs-rename-status (:symbol \"tl_fs_rename_status\") : (->
-  String
-  String
-  i64))
+  "(extern (fs-process-id) : i64 (:symbol \"tl_fs_process_id\"))
+(extern (fs-mkdir-status [arg0 : String]) : i64 (:symbol \"tl_fs_mkdir_status\"))
+(extern (fs-remove-file-status [arg0 : String]) : i64 (:symbol \"tl_fs_remove_file_status\"))
+(extern (fs-remove-dir-status [arg0 : String]) : i64 (:symbol \"tl_fs_remove_dir_status\"))
+(extern (fs-rename-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_fs_rename_status\"))
 (define (main) : i64
   (let
     [dir : String \"target/typelisp-fs\"]
@@ -4104,8 +4028,8 @@
       (not (compiler-backend-string-contains? asm "    call _errno\n")))))
 
 (define (compiler-backend-fs-current-dir-source) : String
-  "(extern tl_fs_current_dir_status : (-> i64))
-(extern tl_fs_current_dir : (-> String))
+  "(extern (tl_fs_current_dir_status) : i64)
+(extern (tl_fs_current_dir) : String)
 (define (fs-current-dir-status) : i64
   (tl_fs_current_dir_status))
 (define (fs-current-dir) : String
@@ -4114,8 +4038,8 @@
   (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
 
 (define (compiler-backend-fs-current-dir-extern-source) : String
-  "(extern tl_fs_current_dir_status : (-> i64))
-(extern tl_fs_current_dir : (-> String))
+  "(extern (tl_fs_current_dir_status) : i64)
+(extern (tl_fs_current_dir) : String)
 (define (main) : i64
   (+ (tl_fs_current_dir_status) (string-length (tl_fs_current_dir))))")
 
@@ -4929,7 +4853,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-export-symbol-fixed-fault-source) : String
-  "(extern tl_oob_abort : (-> never))
+  "(extern (tl_oob_abort) : never)
 (define (tl-runtime-oob-abort) (:export-symbol \"tl_oob_abort\") : never
   (tl_oob_abort))
 (define (main) : i64 0)")
@@ -4972,7 +4896,7 @@
 (define (main) : i64 (bad))")
 
 (define (compiler-backend-export-symbol-extern-collision-source) : String
-  "(extern imported (:symbol \"dup_link\") : (-> i64))
+  "(extern (imported) : i64 (:symbol \"dup_link\"))
 (define (exported) (:export-symbol \"dup_link\") : i64 42)
 (define (main) : i64 (imported))")
 
@@ -5278,7 +5202,7 @@
     (compiler-backend-defdispatch-thunk-ok?)))
 
 (define (compiler-backend-profile-runtime-source) : String
-  "(extern tl_profile_alloc_total : (-> i64))
+  "(extern (tl_profile_alloc_total) : i64)
 (define (main) : i64 (tl_profile_alloc_total))")
 
 (define (compiler-backend-profile-runtime-target-ok?

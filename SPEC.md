@@ -259,8 +259,8 @@ design is intentionally separate from safe references and borrowing (#182): raw
 pointers are explicit unsafe values, not checked references.
 
 ```lisp test=ignore name=raw-pointer-type-template reason="requires the selfhost raw-pointer checker path"
-(extern read-byte : (-> (Ptr u8) u8))
-(extern write-byte : (-> (MutPtr u8) u8 unit))
+(extern (read-byte [arg0 : (Ptr u8)]) : u8)
+(extern (write-byte [arg0 : (MutPtr u8)] [arg1 : u8]) : unit)
 ```
 
 Type forms:
@@ -1463,12 +1463,14 @@ Defines a named function.
 
 ### 4.3 `extern` - external symbol
 
-Declares an external function to link against. The name is a TypeLisp
-identifier used for source lookup. The legacy form `(extern name : type)`
-defaults to target C ABI and uses `name` as the external linker symbol.
-
-The preferred function-head form writes fixed parameters directly on the extern
-head and uses the return type after `:`:
+Declares an external function to link against. The function-head form writes
+fixed parameters directly on the extern head and uses the return type after
+`:`.
+The name is a TypeLisp identifier used for source lookup; it defaults to the
+target C ABI and uses the local name as the external linker symbol unless
+metadata overrides it. The legacy bare-name type form remains accepted
+temporarily for compatibility, but in-tree direct-call extern declarations use
+the function-head form.
 
 ```lisp test=ignore name=extern-function-head-varargs reason="requires current selfhost parser"
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
@@ -1481,14 +1483,13 @@ argument must typecheck as `T`. The marker must be final, and the fixed argument
 count is derived from its position. The marker is not included in the declared
 fixed function type.
 
-Metadata may appear before `:`:
+Metadata appears outside the function head after the return type:
 
 - `(:abi c)` selects the C ABI. Unknown ABI names are rejected.
-- `(:abi c-varargs fixed-count)` selects the target C varargs ABI for the
-  legacy type-form declaration. The
-  `fixed-count` value is the number of non-variadic leading parameters in the
-  declared extern signature. It remains accepted for compatibility, but must
-  not be combined with a function-head varargs marker.
+- `(:abi c-varargs fixed-count)` is the legacy metadata form for target C
+  varargs. The `fixed-count` value is the number of non-variadic leading
+  parameters in the declared extern signature. It remains accepted for
+  compatibility, but must not be combined with a function-head varargs marker.
 - `(:symbol "exact_name")` supplies the external linker symbol independently of
   the local TypeLisp name.
 - `(:link-lib "name")` adds a native library input for source `build`/`run`.
@@ -1548,7 +1549,7 @@ An unsafe declaration is written by wrapping exactly one function `define` or
 (unsafe (define (raw-read [p : (Ptr i64)]) : i64
   (unsafe (ptr-read p))))
 
-(unsafe (extern foreign-write : (-> (MutPtr i64) i64 unit)))
+(unsafe (extern (foreign-write [arg0 : (MutPtr i64)] [arg1 : i64]) : unit))
 ```
 
 The wrapper is declaration metadata, not a runtime expression. It is preserved
@@ -1561,8 +1562,8 @@ body is still checked as ordinary safe code unless the body itself uses
 inherit the unsafe marker.
 
 ```lisp test=ignore name=extern-raw-pointer-signature reason="requires the selfhost raw-pointer checker path"
-(extern strlen : (-> (Ptr u8) u64))
-(extern fill-bytes : (-> (MutPtr u8) u64 u8 unit))
+(extern (strlen [arg0 : (Ptr u8)]) : u64)
+(extern (fill-bytes [arg0 : (MutPtr u8)] [arg1 : u64] [arg2 : u8]) : unit)
 ```
 
 ### 4.4 `(import "path.tl")` — module import
@@ -3518,7 +3519,7 @@ the TypeLisp typechecker. The form is an expression block like `begin`: it
 evaluates one or more body expressions in order and returns the last value.
 
 ```lisp test=ignore name=unsafe-pointer-read-example reason="requires an external pointer provider"
-(extern first-byte : (-> (Ptr u8)))
+(extern (first-byte) : (Ptr u8))
 
 (define (main) : i64
   (unsafe
@@ -4047,7 +4048,7 @@ allocation, or invalidate live safe handles.
 Linux runtime tests may opt into poison-on-reclaim mode with:
 
 ```lisp test=check name=arena-poison-enable-extern
-(extern tl_arena_poison_enable : (-> unit))
+(extern (tl_arena_poison_enable) : unit)
 ```
 
 After `tl_arena_poison_enable` is called, Linux `tl_region_reset` and
@@ -4645,7 +4646,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 ### Extern call
 
 ```lisp test=run name=extern-tl-alloc exit=0 stdout=""
-(extern tl_alloc : (-> i64 u64))
+(extern (tl_alloc [arg0 : i64]) : u64)
 
 (define (main) : i64
   (begin
@@ -4656,7 +4657,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 ### Raw pointer FFI sketch
 
 ```lisp test=ignore name=raw-pointer-ffi-sketch reason="requires an external pointer provider"
-(extern c-buffer : (-> (MutPtr u8)))
+(extern (c-buffer) : (MutPtr u8))
 
 (define (main) : i64
   (let

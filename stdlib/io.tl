@@ -52,60 +52,54 @@
 ;: directly, mirroring how the Linux side issues raw syscalls.
 (cfg
   windows
-  (extern io-win-get-std-handle (:symbol "GetStdHandle") : (-> i32 i64)))
+  (extern (io-win-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
 
 (cfg
   windows
-  (extern io-win-write-file (:symbol "WriteFile") : (->
-    i64
-    (Ptr u8)
-    i32
-    (MutPtr i32)
-    i64
-    i32)))
+  (extern (io-win-write-file
+    [arg0 : i64]
+    [arg1 : (Ptr u8)]
+    [arg2 : i32]
+    [arg3 : (MutPtr i32)]
+    [arg4 : i64]) : i32 (:symbol "WriteFile")))
 
 (cfg
   windows
-  (extern io-win-read-file (:symbol "ReadFile") : (->
-    i64
-    (MutPtr u8)
-    i32
-    (MutPtr i32)
-    i64
-    i32)))
+  (extern (io-win-read-file
+    [arg0 : i64]
+    [arg1 : (MutPtr u8)]
+    [arg2 : i32]
+    [arg3 : (MutPtr i32)]
+    [arg4 : i64]) : i32 (:symbol "ReadFile")))
 
 (cfg
   windows
-  (extern io-win-create-file (:symbol "CreateFileA") : (->
-    (Ptr u8)
-    i64
-    i64
-    i64
-    i64
-    i64
-    i64
-    i64)))
+  (extern (io-win-create-file
+    [arg0 : (Ptr u8)]
+    [arg1 : i64]
+    [arg2 : i64]
+    [arg3 : i64]
+    [arg4 : i64]
+    [arg5 : i64]
+    [arg6 : i64]) : i64 (:symbol "CreateFileA")))
 
 (cfg
   windows
-  (extern io-win-close-handle (:symbol "CloseHandle") : (-> i64 i32)))
+  (extern (io-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
 
 (cfg
   windows
-  (extern io-win-set-file-pointer-ex (:symbol "SetFilePointerEx") : (->
-    i64
-    i64
-    (MutPtr i64)
-    i32
-    i32)))
+  (extern (io-win-set-file-pointer-ex
+    [arg0 : i64]
+    [arg1 : i64]
+    [arg2 : (MutPtr i64)]
+    [arg3 : i32]) : i32 (:symbol "SetFilePointerEx")))
 
 (cfg
   windows
-  (extern io-win-get-file-attributes (:symbol "GetFileAttributesA") : (->
-    (Ptr u8)
-    i32)))
+  (extern (io-win-get-file-attributes [arg0 : (Ptr u8)]) : i32 (:symbol "GetFileAttributesA")))
 
-(cfg windows (extern io-win-get-last-error (:symbol "GetLastError") : (-> i32)))
+(cfg windows (extern (io-win-get-last-error) : i32 (:symbol "GetLastError")))
 
 ;: Map a stdio fd (0/1/2) to its Windows standard handle; other fd values are
 ;: already kernel32 handles and pass through. Matches the former `_write` shim.
@@ -236,7 +230,7 @@
 ;: former backend `exit` CRT-ABI shim (#2142 slice 1).
 (cfg
   windows
-  (extern io-win-exit-process (:symbol "ExitProcess") : (-> i32 never)))
+  (extern (io-win-exit-process [arg0 : i32]) : never (:symbol "ExitProcess")))
 
 (cfg
   windows
@@ -244,7 +238,7 @@
     (io-win-exit-process code)))
 
 ;: Runtime allocator binding used to allocate raw handle tables.
-(extern io-runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8)))
+(extern (io-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
 ;: Maximum number of stdlib file handles tracked by the raw handle table.
 (define io-file-handle-cap : i64

@@ -16372,12 +16372,12 @@ tl_string_concat5:
     (compiler-backend-runtime-helper-externs)))
 
 (define (compiler-backend-runtime-helper-source) : String
-  "(extern tl_alloc : (-> i64 i64))
-(extern tl_substring : (-> i64 i64 i64 i64))
-(extern tl_string_concat : (-> i64 i64 i64 i64 i64))
-(extern tl_string_eq : (-> String String bool))
-(extern tl_string_to_int : (-> String i64))
-(extern tl_int_to_string : (-> i64 String))
+  "(extern (tl_alloc [arg0 : i64]) : i64)
+(extern (tl_substring [arg0 : i64] [arg1 : i64] [arg2 : i64]) : i64)
+(extern (tl_string_concat [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64]) : i64)
+(extern (tl_string_eq [arg0 : String] [arg1 : String]) : bool)
+(extern (tl_string_to_int [arg0 : String]) : i64)
+(extern (tl_int_to_string [arg0 : i64]) : String)
 (define (main) : i64
   (begin
     (tl_alloc 8)
@@ -16525,13 +16525,8 @@ tl_string_concat5:
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern file-open-status (:symbol \"tl_file_open_status\") : (->
-  String
-  i64
-  i64))
-(extern file-close-status (:symbol \"tl_file_close_status\") : (->
-  i64
-  i64))
+    "(extern (file-open-status [arg0 : String] [arg1 : i64]) : i64 (:symbol \"tl_file_open_status\"))
+(extern (file-close-status [arg0 : i64]) : i64 (:symbol \"tl_file_close_status\"))
 (define (main) : i64
   (let
     [handle : i64 (file-open-status \"input.txt\" 0)]
@@ -16561,15 +16556,15 @@ tl_string_concat5:
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
-  "(extern arg-count (:symbol \"tl_arg_count\") : (-> i64))
-(extern arg (:symbol \"tl_arg\") : (-> i64 String))
-(extern read-file (:symbol \"tl_read_file\") : (-> String String))
-(extern write-file (:symbol \"tl_write_file\") : (-> String String unit))
-(extern file-exists? (:symbol \"tl_file_exists\") : (-> String bool))
-(extern print-error (:symbol \"tl_print_err\") : (-> String unit))
-(extern string-eq (:symbol \"tl_string_eq\") : (-> String String bool))
-(extern string->int (:symbol \"tl_string_to_int\") : (-> String i64))
-(extern int->string (:symbol \"tl_int_to_string\") : (-> i64 String))
+  "(extern (arg-count) : i64 (:symbol \"tl_arg_count\"))
+(extern (arg [arg0 : i64]) : String (:symbol \"tl_arg\"))
+(extern (read-file [arg0 : String]) : String (:symbol \"tl_read_file\"))
+(extern (write-file [arg0 : String] [arg1 : String]) : unit (:symbol \"tl_write_file\"))
+(extern (file-exists? [arg0 : String]) : bool (:symbol \"tl_file_exists\"))
+(extern (print-error [arg0 : String]) : unit (:symbol \"tl_print_err\"))
+(extern (string-eq [arg0 : String] [arg1 : String]) : bool (:symbol \"tl_string_eq\"))
+(extern (string->int [arg0 : String]) : i64 (:symbol \"tl_string_to_int\"))
+(extern (int->string [arg0 : i64]) : String (:symbol \"tl_int_to_string\"))
 (define (main) : i64
   (if (< (arg-count) 3)
     (begin
@@ -16847,7 +16842,7 @@ tl_string_concat5:
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String
-  "(extern local-call (:abi c) (:symbol \"foreign_exact\") : (-> i64 i64))
+  "(extern (local-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
 (define (normal) : i64 1)
 (define (main) : i64 (+ (local-call 7) (normal)))")
 

@@ -3082,6 +3082,60 @@
     [(SomeRef value) (let [same : (& n i64) value] 0)]
     [(NoRef) 1]))")
 
+(define (compiler-typecheck-borrowed-enum-match-scalar-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (take [v : (& m i64)]) : i64 7)
+(define (main [m : Maybe]) : i64
+  (+
+    (match (& m)
+      [(Some v) (let [same : (& m i64) v] (take same))]
+      [None 0])
+    (match m
+      [(Some _) 1]
+      [None 0])))")
+
+(define (compiler-typecheck-borrowed-enum-match-str-source) : String
+  "(defenum Item (Named String) (Empty))
+(define (borrowed-name-length [s : (& item str)]) : i64 (string-length s))
+(define (main [item : Item]) : i64
+  (match (& item)
+    [(Named s) (let [same : (& item str) s] (borrowed-name-length same))]
+    [Empty 0]))")
+
+(define (compiler-typecheck-borrowed-enum-match-array-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (take [v : (& items i64)]) : i64 7)
+(define (main [items : (Array Maybe 2)]) : i64
+  (match (& (array-ref items 0))
+    [(Some v) (let [same : (& items i64) v] (take same))]
+    [None 0]))")
+
+(define (compiler-typecheck-borrowed-enum-match-nested-source) : String
+  "(defenum Inner (A i64) (B i64))
+(defenum Outer (Wrap Inner) (Empty))
+(define (take [v : (& o i64)]) : i64 7)
+(define (main [o : Outer]) : i64
+  (match (& o)
+    [(Wrap (A 0)) 10]
+    [(Wrap (A n)) (take n)]
+    [(Wrap _) 1]
+    [Empty 0]))")
+
+(define (compiler-typecheck-borrowed-enum-match-temp-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (main) : i64
+  (match (& (Some 1))
+    [(Some _) 1]
+    [None 0]))")
+
+(define (compiler-typecheck-borrowed-enum-match-escape-source) : String
+  (compiler-typecheck-with-io-source
+    "(defenum Maybe (None) (Some i64))
+(define (main [m : Maybe]) : (& other i64)
+  (match (& m)
+    [(Some v) v]
+    [None (panic \"none\")]))"))
+
 (define (compiler-typecheck-regular-call-lifetime-subst-source) : String
   "(defstruct RefBox (:lifetimes a) (value (& a i64)))
 (define (ref-id [value : (& a i64)]) : (& a i64) value)
@@ -3378,6 +3432,26 @@
       (compiler-typecheck-ok? (compiler-typecheck-lifetime-struct-field-source))]
     [lifetime-enum-match-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-lifetime-enum-match-source))]
+    [borrowed-enum-match-scalar-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-borrowed-enum-match-scalar-source))]
+    [borrowed-enum-match-str-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-borrowed-enum-match-str-source))]
+    [borrowed-enum-match-array-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-borrowed-enum-match-array-source))]
+    [borrowed-enum-match-nested-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-borrowed-enum-match-nested-source))]
+    [borrowed-enum-match-temp-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-borrowed-enum-match-temp-source)
+        "typecheck: borrow requires a local, parameter, or aggregate place")]
+    [borrowed-enum-match-escape-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-borrowed-enum-match-escape-source)
+        "typecheck: returned reference lifetime must be tied to a parameter")]
     [regular-call-lifetime-subst-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-regular-call-lifetime-subst-source))]
@@ -3520,6 +3594,24 @@
         unit
         (set! ok false))
       (if lifetime-enum-match-ok
+        unit
+        (set! ok false))
+      (if borrowed-enum-match-scalar-ok
+        unit
+        (set! ok false))
+      (if borrowed-enum-match-str-ok
+        unit
+        (set! ok false))
+      (if borrowed-enum-match-array-ok
+        unit
+        (set! ok false))
+      (if borrowed-enum-match-nested-ok
+        unit
+        (set! ok false))
+      (if borrowed-enum-match-temp-error-ok
+        unit
+        (set! ok false))
+      (if borrowed-enum-match-escape-error-ok
         unit
         (set! ok false))
       (if regular-call-lifetime-subst-ok

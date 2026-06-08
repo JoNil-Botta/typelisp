@@ -2271,8 +2271,10 @@ move-only values and as copies for copyable values:
   the store, but v1 rejects arrays of move-only elements and stores of move-only
   elements until unique mutable access and element replacement cleanup are
   specified (#806/#1049).
-- `match` scrutinees. Matching a move-only enum consumes the whole enum value.
-  Payload bindings then own the active payload values for that arm.
+- `match` scrutinees. Matching a move-only enum by value consumes the whole enum
+  value. Payload bindings then own the active payload values for that arm.
+  Matching `(& place)` when the borrowed referent is an enum is the non-consuming
+  borrowed form described below.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -2290,6 +2292,8 @@ without moving it. In v1 these are limited to:
 
 - Immutable and mutable borrow expressions `(& place)` / `(&mut place)` and
   their explicit-lifetime forms.
+- Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
+  inspects the active enum variant without moving the enum owner.
 - Compatibility inspection calls whose current signatures are not yet
   reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
   `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
@@ -2419,6 +2423,24 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 
 The first `match` moves `m`, so the second `match` is rejected as a
 use-after-move.
+
+```lisp test=check name=borrowed-enum-match-non-consuming
+(defenum MaybeName
+  (NoName)
+  (SomeName String))
+
+(define (borrowed-name-score [s : (& m str)]) : i64
+  (length s))
+
+(define (borrowed-score [m : MaybeName]) : i64
+  (match (& m)
+    [(SomeName s) (borrowed-name-score s)]
+    [NoName 0]))
+```
+
+The borrowed `match` inspects `m` without moving it. Payload bindings are
+references tied to the borrowed scrutinee lifetime; the `String` payload above
+binds `s` as `(& m str)`.
 
 #### 4.6.3 Recursive aggregate layout and boxed recursion (specified; finite analysis implemented)
 
@@ -2645,6 +2667,11 @@ integer/`char` ↔ float conversions (float → integer truncates toward zero).
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
 
 - Enum scrutinees support variant patterns such as `Red` and `(Some value)`.
+- Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
+  the same variant, wildcard, literal payload, and nested variant pattern forms,
+  but inspect the enum without moving the owner. Payload bindings are immutable
+  references tied to the borrowed scrutinee lifetime; `String` payloads bind as
+  borrowed `str` references.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
 - Bindings in enum patterns introduce variables for payload fields.

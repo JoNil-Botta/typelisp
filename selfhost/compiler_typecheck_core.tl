@@ -4169,6 +4169,29 @@
     [(AstTyF32) true]
     [_ false]))
 
+;; Word-class for register-resident aggregates (#2386): a POD type that occupies
+;; at most one machine word and is trivially copyable by value. Integers, bool,
+;; char, and raw pointers qualify. Floats are excluded (a register-resident
+;; aggregate is packed into general-purpose words). Owning handles (Box, String,
+;; Array, DynArray), references, closures, tuples, and nested struct/enum fields
+;; are excluded too: they would need deep-clone or multi-word handling that the
+;; word-copy representation does not provide.
+(define (tc-word-class-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
+    [_ false]))
+
 (define (tc-ordered-comparison-type? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
@@ -10769,6 +10792,41 @@
         (tc-inline-field-layout-offset field)
         (tc-inline-field-layout-list-offset (box-get rest) name))]))
 
+;; #2386: true when every struct field is word-class, so the aggregate can be
+;; packed into general-purpose register words instead of a memory slot.
+(define (tc-inline-fields-all-word-class? [fields : TcInlineFieldLayoutList]) : bool
+  (match fields
+    [(TcInlineFieldLayoutNil) true]
+    [(TcInlineFieldLayoutCons field rest)
+      (if (tc-word-class-type? (tc-inline-field-layout-type field))
+        (tc-inline-fields-all-word-class? (box-get rest))
+        false)]))
+
+;; #2386: true when every payload field of a variant is word-class -- so a 16-byte
+;; enum (tag in word0, the single word-class payload in word1) can be carried
+;; register-resident.
+(define (tc-inline-payloads-all-word-class?
+  [payloads : TcInlinePayloadLayoutList]) : bool
+  (match payloads
+    [(TcInlinePayloadLayoutNil) true]
+    [(TcInlinePayloadLayoutCons payload rest)
+      (match payload
+        [(TcInlinePayloadLayout _ ty _)
+          (if (tc-word-class-type? ty)
+            (tc-inline-payloads-all-word-class? (box-get rest))
+            false)])]))
+
+(define (tc-inline-enum-payloads-all-word-class?
+  [variants : TcInlineVariantLayoutList]) : bool
+  (match variants
+    [(TcInlineVariantLayoutNil) true]
+    [(TcInlineVariantLayoutCons variant rest)
+      (match variant
+        [(TcInlineVariantLayout _ _ _ payloads)
+          (if (tc-inline-payloads-all-word-class? payloads)
+            (tc-inline-enum-payloads-all-word-class? (box-get rest))
+            false)])]))
+
 (define (tc-inline-payload-layout-index [payload : TcInlinePayloadLayout]) : i64
   (match payload
     [(TcInlinePayloadLayout index _ _) index]))
@@ -11177,8 +11235,7 @@
       (let
         [ty : AstType (ty-node-get ty)]
         [rest : AstTypeList (box-get rest)]
-        [resolved : AstType (tc-resolve-type ctx ty)]
-        (match (tc-inline-aggregate-type-layout-with-stack ctx resolved stack)
+        (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
           [(OkTcLayoutInfo info)
             (let
               [field-align : i64 (tc-layout-info-align info)]
@@ -11201,7 +11258,7 @@
                           size
                           align
                           (TcInlinePayloadLayoutCons
-                            (TcInlinePayloadLayout index resolved offset)
+                            (TcInlinePayloadLayout index ty offset)
                             (box rest-payloads))))])]
                 [(ErrTcInlinePayloadFieldsLayout message)
                   (ErrTcInlinePayloadFieldsLayout message)]))]
@@ -11428,15 +11485,181 @@
         [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]))
 
 (define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : AstType]) : ResultTcLayoutInfo
-  (match (tc-inline-aggregate-type-finite-ok ctx ty TcStringNil)
-    [(OkTcUnit) (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringNil)]
-    [(ErrTcUnit message) (ErrTcLayoutInfo message)]))
+  (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringNil))
 
 (define (tc-inline-aggregate-layout-for [ctx : TcContext] [name : String]) : ResultTcInlineAggregateLayout
-  (match (tc-inline-aggregate-layout-finite-ok ctx name)
-    [(OkTcUnit)
-      (tc-inline-aggregate-layout-for-with-stack ctx name TcStringNil)]
-    [(ErrTcUnit message) (ErrTcInlineAggregateLayout message)]))
+  (tc-inline-aggregate-layout-for-with-stack ctx name TcStringNil))
+
+;; #2386 (compile-time): memoize the inline-aggregate SIZE. tc-inline-aggregate-
+;; layout-for re-walks the whole layout on every lower-type-size query, which is
+;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
+;; (the #2441 scratch-arena hazard makes a grown map / cached field-list dangle):
+;; so it is a FIXED global i64 array, allocated once at startup (persistent, like
+;; the AST node pool) and only read/written thereafter. Keyed by the type's symbol
+;; handle (dense per-kind index; struct vs enum disambiguated by the low bit), so
+;; no key strings are stored either. A size is encoded as size+1 (0 = uncached);
+;; only fully-resolved layouts are cached (Err forward-refs stay uncached until
+;; their nested types resolve). Sizes are stable for the one program per process.
+(define tc-agg-size-cache : (Array i64)
+  (make-array i64 400000))
+
+(define tc-agg-size-cache-filled : bool
+  false)
+
+(define (tc-agg-size-cache-ensure!) : unit
+  (if tc-agg-size-cache-filled
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i 400000)
+          (begin
+            (array-set! tc-agg-size-cache i 0)
+            (set! i (+ i 1))))
+        (set! tc-agg-size-cache-filled true)))))
+
+(define (tc-agg-size-cache-key [handle : i64]) : i64
+  (let
+    [index : i64 (compiler-symbol-handle-index handle)]
+    (if (>= index 199999)
+      (- 0 1)
+      (+ (* index 2)
+        (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
+          1
+          0)))))
+
+(define (tc-inline-aggregate-size-cached
+  [ctx : TcContext]
+  [name : String]
+  [fallback : i64]) : i64
+  (begin
+    (tc-agg-size-cache-ensure!)
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
+      [(SomeI64 handle)
+        (let
+          [key : i64 (tc-agg-size-cache-key handle)]
+          (if (< key 0)
+            (match (tc-inline-aggregate-layout-for ctx name)
+              [(OkTcInlineAggregateLayout layout)
+                (tc-inline-aggregate-layout-size layout)]
+              [(ErrTcInlineAggregateLayout _) fallback])
+            (let
+              [cached : i64 (array-ref tc-agg-size-cache key)]
+              (if (> cached 0)
+                (- cached 1)
+                (match (tc-inline-aggregate-layout-for ctx name)
+                  [(OkTcInlineAggregateLayout layout)
+                    (let
+                      [size : i64 (tc-inline-aggregate-layout-size layout)]
+                      (begin
+                        (array-set! tc-agg-size-cache key (+ size 1))
+                        size))]
+                  [(ErrTcInlineAggregateLayout _) fallback])))))]
+      [(NoneI64) fallback])))
+
+;; #2386 (compile-time): memoize a bare aggregate's register-resident word count
+;; (0 = not register-resident, else 1 or 2). Same arena-safe handle-indexed fixed
+;; array as the size cache; this is the hot query for every aggregate construct /
+;; struct-get / copy (lower-name-register-words). Encoded as words+1 (0 =
+;; uncached). Only fully-resolved layouts are cached.
+(define tc-agg-regwords-cache : (Array i64)
+  (make-array i64 400000))
+
+(define tc-agg-regwords-cache-filled : bool
+  false)
+
+(define (tc-agg-regwords-cache-ensure!) : unit
+  (if tc-agg-regwords-cache-filled
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i 400000)
+          (begin
+            (array-set! tc-agg-regwords-cache i 0)
+            (set! i (+ i 1))))
+        (set! tc-agg-regwords-cache-filled true)))))
+
+(define (tc-inline-aggregate-regwords-compute
+  [ctx : TcContext]
+  [name : String]) : i64
+  (match (tc-inline-aggregate-layout-for ctx name)
+    [(OkTcInlineAggregateLayout layout)
+      (if (tc-inline-aggregate-layout-register-resident? layout)
+        (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
+        0)]
+    [(ErrTcInlineAggregateLayout _) 0]))
+
+(define (tc-inline-aggregate-regwords-cached
+  [ctx : TcContext]
+  [name : String]) : i64
+  (begin
+    (tc-agg-regwords-cache-ensure!)
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
+      [(SomeI64 handle)
+        (let
+          [key : i64 (tc-agg-size-cache-key handle)]
+          (if (< key 0)
+            (tc-inline-aggregate-regwords-compute ctx name)
+            (let
+              [cached : i64 (array-ref tc-agg-regwords-cache key)]
+              (if (> cached 0)
+                (- cached 1)
+                (match (tc-inline-aggregate-layout-for ctx name)
+                  [(OkTcInlineAggregateLayout layout)
+                    (let
+                      [words : i64
+                        (if (tc-inline-aggregate-layout-register-resident? layout)
+                          (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
+                          0)]
+                      (begin
+                        (array-set! tc-agg-regwords-cache key (+ words 1))
+                        words))]
+                  [(ErrTcInlineAggregateLayout _) 0])))))]
+      [(NoneI64) 0])))
+
+;; #2386: a struct/enum layout is "register-resident (1-word)" when it fits in a
+;; single 8-byte machine word and is built only of word-class data. Such a value
+;; can live in a register end-to-end (packed/extracted by shift+mask) instead of
+;; round-tripping through a memory slot.
+;;
+;; Scope (slice 2): single-word STRUCTs (all fields word-class) AND nullary
+;; size-8 ENUMs. A size-8 enum is necessarily nullary -- the tag occupies the
+;; whole first word at offset 0, so any variant payload would force size >= 16 --
+;; hence its single register-resident word is just the discriminant tag.
+;;
+;; This makes `=` on a nullary enum a tag (structural) compare rather than the
+;; old stack-slot handle compare: two separately-constructed values of the same
+;; variant now compare equal, which is the intended value-semantics for a POD
+;; tag (and matches what `match` already observes). Bootstrap fixpoint +
+;; integration corpus are the canary that the compiler's own codegen does not
+;; depend on the prior handle-identity behavior.
+(define (tc-inline-aggregate-layout-register-resident?
+  [layout : TcInlineAggregateLayout]) : bool
+  (match layout
+    [(TcInlineStructLayout size _ fields)
+      ;; #2386: an integer-class struct of 1 word (8 B) or 2 words (16 B) whose
+      ;; fields are all word-class is register-resident -- carried in one or two
+      ;; GP registers end-to-end (construction/extract/ABI/regalloc-pair/stack
+      ;; slot + array/box/closure/global/(:repr c) embedding), never round-tripping
+      ;; through memory. Larger or float-containing structs keep the memory path.
+      (if (or (= size 8) (= size 16))
+        (tc-inline-fields-all-word-class? fields)
+        false)]
+    ;; #2386: an enum is register-resident at 1 word (size 8 -- necessarily
+    ;; nullary, the tag word) or 2 words (size 16 -- tag in word0, a single
+    ;; word-class payload in word1). Larger or float/aggregate-payload enums keep
+    ;; the memory path.
+    [(TcInlineEnumLayout size _ variants)
+      (if (or (= size 8) (= size 16))
+        (tc-inline-enum-payloads-all-word-class? variants)
+        false)]))
+
+(define (tc-name-register-resident? [ctx : TcContext] [name : String]) : bool
+  (match (tc-inline-aggregate-layout-for ctx name)
+    [(OkTcInlineAggregateLayout layout)
+      (tc-inline-aggregate-layout-register-resident? layout)]
+    [(ErrTcInlineAggregateLayout _) false]))
 
 (define (tc-repr-c-unsupported-field-message
   [owner : String]
@@ -11486,18 +11709,16 @@
                           (tc-repr-c-layout-size layout)
                           (tc-repr-c-layout-align layout)))]
                     [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
-                  (ErrTcLayoutInfo
-                    (tc-cat3
-                      "typecheck: repr c struct "
-                      owner
-                      (tc-cat3
-                        " field "
-                        field
-                        (string-append
-                          " references default-layout struct "
-                          nested-str)))))])]
+                  ;; #2296: embed a default-layout struct by value using its
+                  ;; default inline C-rule layout (default layout now follows C
+                  ;; layout per #1867). `seen` carries the repr-c owners so a
+                  ;; cycle back through this struct is still detected.
+                  (tc-inline-aggregate-type-layout-with-stack
+                    ctx
+                    (AstTyStruct nested-str)
+                    seen))])]
           [(ErrTcStructDecl message) (ErrTcLayoutInfo message)]))]
-    [(AstTyStructArgs nested _)
+    [(AstTyStructArgs nested lifetimes)
       (let
         [nested-str : String (intern-str nested)]
         (match (tc-struct-decl ctx nested-str)
@@ -11512,17 +11733,26 @@
                           (tc-repr-c-layout-size layout)
                           (tc-repr-c-layout-align layout)))]
                     [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
-                  (ErrTcLayoutInfo
-                    (tc-cat3
-                      "typecheck: repr c struct "
-                      owner
-                      (tc-cat3
-                        " field "
-                        field
-                        (string-append
-                          " references default-layout struct "
-                          nested-str)))))])]
+                  ;; #2296: embed a default-layout struct (with type args) by value
+                  ;; using its default inline C-rule layout.
+                  (tc-inline-aggregate-type-layout-with-stack
+                    ctx
+                    (AstTyStructArgs nested-str lifetimes)
+                    seen))])]
           [(ErrTcStructDecl message) (ErrTcLayoutInfo message)]))]
+    ;; #2296: embed an enum by value using its default inline layout (tag +
+    ;; payload). Enums have no separate repr-c layout; the inline engine threads
+    ;; `seen` for cycle detection.
+    [(AstTyEnum name)
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (AstTyEnum (intern-str name))
+        seen)]
+    [(AstTyEnumArgs name lifetimes)
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (AstTyEnumArgs (intern-str name) lifetimes)
+        seen)]
     [_ (ErrTcLayoutInfo (tc-repr-c-unsupported-field-message owner field ty))]))
 
 (define (tc-repr-c-fields-layout
@@ -12507,19 +12737,14 @@
                     [(OkAstTypeList fields)
                       (match enum-lifetimes
                         [(AstLifetimeNil)
-                          (let
-                            [resolved-fields : AstTypeList
-                              (tc-resolve-type-list ctx fields)]
-                            (tc-bind-sub-pattern-list
-                              ctx
-                              env
-                              args
-                              (match payload-region
-                                [(TcSomeString region)
-                                  (tc-tag-type-list-region
-                                    region
-                                    resolved-fields)]
-                                [(TcNoString) resolved-fields])))]
+                          (tc-bind-sub-pattern-list
+                            ctx
+                            env
+                            args
+                            (match payload-region
+                              [(TcSomeString region)
+                                (tc-tag-type-list-region region fields)]
+                              [(TcNoString) fields]))]
                         [_
                           (match (tc-lifetime-subst-from-nominal-args
                             ctx
@@ -12527,10 +12752,8 @@
                             enum-lifetimes)
                             [(OkTcLifetimeSubst subst)
                               (let
-                                [resolved-fields : AstTypeList
-                                  (tc-resolve-type-list
-                                    ctx
-                                    (tc-lifetime-subst-type-list subst fields))]
+                                [subst-fields : AstTypeList
+                                  (tc-lifetime-subst-type-list subst fields)]
                                 (tc-bind-sub-pattern-list
                                   ctx
                                   env
@@ -12539,8 +12762,8 @@
                                     [(TcSomeString region)
                                       (tc-tag-type-list-region
                                         region
-                                        resolved-fields)]
-                                    [(TcNoString) resolved-fields])))]
+                                        subst-fields)]
+                                    [(TcNoString) subst-fields])))]
                             [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
                     [(ErrAstTypeList message) (ErrTcEnv message)])
                   (ErrTcEnv
@@ -13041,10 +13264,7 @@
           (tc-context-symbols ctx)
           handle)
           [(OkAstTypeList fields)
-            (tc-pattern-list-irrefutable?
-              ctx
-              args
-              (tc-resolve-type-list ctx fields))]
+            (tc-pattern-list-irrefutable? ctx args fields)]
           [(ErrAstTypeList _) false])]
       [(NoneI64) false])))
 

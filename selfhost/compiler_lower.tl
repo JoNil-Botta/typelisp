@@ -4142,6 +4142,29 @@
     n
     (* (/ (+ n (- align 1)) align) align)))
 
+(define (lower-inline-layout-size-or
+  [ctx : TcContext]
+  [ty : AstType]
+  [fallback : i64]) : i64
+  ;; #2386 (compile-time): a bare struct/enum size is memoized by symbol handle
+  ;; (its size is stable; this is the hot type-size query in lowering). Generic
+  ;; ...Args / tuples / arrays depend on type arguments, so keep the uncached path.
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name) (tc-inline-aggregate-size-cached ctx name fallback)]
+    [(AstTyEnum name) (tc-inline-aggregate-size-cached ctx name fallback)]
+    [_
+      (match (tc-inline-aggregate-type-layout ctx ty)
+        [(OkTcLayoutInfo info) (tc-layout-info-size info)]
+        [(ErrTcLayoutInfo _) fallback])]))
+
+(define (lower-inline-layout-align-or
+  [ctx : TcContext]
+  [ty : AstType]
+  [fallback : i64]) : i64
+  (match (tc-inline-aggregate-type-layout ctx ty)
+    [(OkTcLayoutInfo info) (tc-layout-info-align info)]
+    [(ErrTcLayoutInfo _) fallback]))
+
 (define (lower-type-size [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
     [(AstTyI64) 8]
@@ -4170,10 +4193,12 @@
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-size ctx (ty-node-get inner))]
-    [(AstTyEnum _) 8]
-    [(AstTyEnumArgs _ _) 8]
-    [(AstTyStruct _) 8]
-    [(AstTyStructArgs _ _) 8]
+    [(AstTyEnum name) (lower-inline-layout-size-or ctx (AstTyEnum name) 8)]
+    [(AstTyEnumArgs name lifetimes)
+      (lower-inline-layout-size-or ctx (AstTyEnumArgs name lifetimes) 8)]
+    [(AstTyStruct name) (lower-inline-layout-size-or ctx (AstTyStruct name) 8)]
+    [(AstTyStructArgs name lifetimes)
+      (lower-inline-layout-size-or ctx (AstTyStructArgs name lifetimes) 8)]
     [(AstTyString) 8]
     [(AstTyStr) 8]
     [(AstTyVar _) 8]
@@ -4207,10 +4232,12 @@
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-align ctx (ty-node-get inner))]
-    [(AstTyEnum _) 8]
-    [(AstTyEnumArgs _ _) 8]
-    [(AstTyStruct _) 8]
-    [(AstTyStructArgs _ _) 8]
+    [(AstTyEnum name) (lower-inline-layout-align-or ctx (AstTyEnum name) 8)]
+    [(AstTyEnumArgs name lifetimes)
+      (lower-inline-layout-align-or ctx (AstTyEnumArgs name lifetimes) 8)]
+    [(AstTyStruct name) (lower-inline-layout-align-or ctx (AstTyStruct name) 8)]
+    [(AstTyStructArgs name lifetimes)
+      (lower-inline-layout-align-or ctx (AstTyStructArgs name lifetimes) 8)]
     [(AstTyString) 8]
     [(AstTyStr) 8]
     [(AstTyVar _) 8]
@@ -4451,6 +4478,65 @@
     (AstTyU16)
     (AstTyU8)))
 
+;; #2386: the byte address `base + offset` as an IR value (the base itself when
+;; offset is 0, avoiding a no-op gep).
+(define (lower-offset-addr
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]) : LowerExpr
+  (if (= offset 0)
+    (LowerExpr state base (AstTyU64))
+    (lower-gep-byte state base offset)))
+
+;; #2386 / lever #1: inline the hottest by-value aggregate copies. The flip to
+;; inline-by-value aggregates (#1867) made 24/40/48 B copies (AstTypeList=24,
+;; AstType=40, ResultTcType/OkTcType=48) the dynamically dominant copy sizes, but
+;; the 16 B ceiling pushed every one of them onto a `tl_memcpy` CALL (~88 dynamic
+;; instructions each). Inline they cost only `size/8` load+store pairs. Raising
+;; the ceiling to 64 B turns that whole 17-64 B band into straight movs (a few
+;; instructions) while still routing genuinely large copies through tl_memcpy so
+;; the emitted code does not blow up. Must stay a multiple of 8 so the inline
+;; chunk loop (lower-copy-chunk-size: 8/4/2/1) terminates cleanly for any size.
+(define lower-inline-copy-threshold : i64
+  64)
+
+;; #2386: copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
+;; of `size/8` separate gep+load+gep+store chunks. The flip from heap-handle
+;; structs to inline-by-value aggregates (#1867) turned every large by-value
+;; aggregate copy (set!, pass/return, clone of a >16 B struct) into a long run of
+;; word copies -- the dominant `movq` source at -O1 (the `movq ...,%r10 ; movq
+;; off(%r10),%rax ; movq %rax,SLOT` runs). One call collapses each run to a few
+;; instructions. tl_memcpy takes (dst, src, len) and is emitted unconditionally in
+;; the runtime. Only used for copies large enough that the call beats the inline
+;; chunks (see lower-copy-bytes threshold).
+(define (lower-emit-memcpy
+  [state : LowerState]
+  [dst : CompilerIrValue]
+  [dst-offset : i64]
+  [src : CompilerIrValue]
+  [src-offset : i64]
+  [size : i64]) : LowerState
+  (match (lower-offset-addr state dst dst-offset)
+    [(LowerExpr dst-state dst-addr _)
+      (match (lower-offset-addr dst-state src src-offset)
+        [(LowerExpr src-state src-addr _)
+          (match (lower-state-alloc-var src-state)
+            [(LowerAlloc call-state call-var)
+              (lower-state-emit
+                call-state
+                (IrInstrCall
+                  call-var
+                  "tl_memcpy"
+                  (compiler-ir-call-args-from-list
+                    (compiler-ir-value-cons
+                      dst-addr
+                      (compiler-ir-value-cons
+                        src-addr
+                        (compiler-ir-value-cons
+                          (IrValueI64 size)
+                          (IrValueNil)))))
+                  (AstTyUnit)))])])]))
+
 (define (lower-copy-bytes
   [state : LowerState]
   [dst : CompilerIrValue]
@@ -4460,18 +4546,525 @@
   [size : i64]) : LowerState
   (if (<= size 0)
     state
-    (let
-      [chunk : i64 (lower-copy-chunk-size size)]
-      [chunk-ty : AstType (lower-copy-chunk-type chunk)]
-      (match (lower-load-at-offset state src src-offset chunk-ty)
-        [(LowerExpr loaded value _)
-          (lower-copy-bytes
-            (lower-store-at-offset loaded dst dst-offset value chunk-ty)
-            dst
-            (+ dst-offset chunk)
-            src
-            (+ src-offset chunk)
-            (- size chunk))]))))
+    (if (> size lower-inline-copy-threshold)
+      ;; Large copy: one tl_memcpy call instead of size/8 inline chunks.
+      (lower-emit-memcpy state dst dst-offset src src-offset size)
+      (let
+        [chunk : i64 (lower-copy-chunk-size size)]
+        [chunk-ty : AstType (lower-copy-chunk-type chunk)]
+        (match (lower-load-at-offset state src src-offset chunk-ty)
+          [(LowerExpr loaded value _)
+            (lower-copy-bytes
+              (lower-store-at-offset loaded dst dst-offset value chunk-ty)
+              dst
+              (+ dst-offset chunk)
+              src
+              (+ src-offset chunk)
+              (- size chunk))])))))
+
+;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) only
+;; when it is a struct or enum (incl. their generic …Args forms). Tuples,
+;; arrays, boxes, dyn-arrays, strings, closures, and scalars all occupy a
+;; register-width slot (a pointer/handle or a scalar) under the #1867 flip:
+;; lower-type-size returns 8 for them, so they must use the scalar load/store.
+;; This is the precise gate for choosing inline byte-copy / pointer-return vs.
+;; scalar load/store, distinct from the broad lower-type-contains-inline-
+;; aggregate? (which is true for a tuple/array that merely contains an aggregate
+;; and is used for the conservative tail-call risk check).
+(define (lower-type-inline-struct-or-enum? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ false]))
+
+;; #2386: a register-resident aggregate is an inline struct/enum that fits in a
+;; single 8-byte word and is built only of word-class fields. Such a value is
+;; carried through the IR as the packed word itself (an i64-shaped SSA value)
+;; rather than a pointer to a stack slot: construction packs the fields with
+;; shift/or, `struct-get`/`match` extract them with shift/mask, and the value is
+;; passed/returned/cloned exactly like a scalar — never touching memory. Generic
+;; (…Args) aggregates stay on the memory path (their field layout depends on the
+;; instantiation), so only the bare struct/enum forms qualify here.
+(define (lower-type-register-resident? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name) (tc-name-register-resident? ctx name)]
+    [(AstTyEnum name) (tc-name-register-resident? ctx name)]
+    [_ false]))
+
+;; #2386: number of machine words a register-resident aggregate occupies
+;; (ceil(size/8)). 1 word => carried as a single scalar value (slice 1/2); 2
+;; words => carried as a register-group value built with IrInstrPack and read
+;; with IrInstrWord. Only meaningful when `lower-type-register-resident?` holds.
+(define (lower-type-register-word-count [ctx : TcContext] [ty : AstType]) : i64
+  (/ (+ (lower-type-size ctx ty) 7) 8))
+
+;; #2386: true for a register-resident aggregate that needs the multi-word
+;; register-group representation (2+ words) rather than the single-word scalar
+;; representation. Drives the IrInstrPack/IrInstrWord lowering paths.
+(define (lower-type-register-group? [ctx : TcContext] [ty : AstType]) : bool
+  (and
+    (lower-type-register-resident? ctx ty)
+    (> (lower-type-register-word-count ctx ty) 1)))
+
+;; #2386: register-residency in ONE inline-layout build, vs the THREE transient
+;; layout rebuilds of calling register-resident? + register-group? (which itself
+;; rebuilds for resident? and for the size) separately. Returns the machine-word
+;; count (1 or 2) of a register-resident aggregate, else 0. Used on the hot match
+;; path so the per-function scratch arena keeps the same transient-allocation
+;; profile as before this slice (excess rebuilds there overflowed it into a second
+;; chunk whose rewind leaked into later lowering).
+(define (lower-name-register-words [ctx : TcContext] [name : String]) : i64
+  (tc-inline-aggregate-regwords-cached ctx name))
+
+(define (lower-type-register-words [ctx : TcContext] [ty : AstType]) : i64
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name) (lower-name-register-words ctx name)]
+    [(AstTyEnum name) (lower-name-register-words ctx name)]
+    [_ 0]))
+
+(define (lower-type-signed? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [_ false]))
+
+;; Low `size` bytes set to 1 (e.g. size 4 -> 0xffffffff). Used to mask a field
+;; to its width before OR-ing it into a packed word. size >= 8 is handled by the
+;; callers (no mask needed for a full word).
+(define (lower-low-bits-mask [size : i64]) : i64
+  (cond
+    [(>= size 8) -1]
+    [(= size 1) 255]
+    [(= size 2) 65535]
+    [(= size 3) 16777215]
+    [(= size 4) 4294967295]
+    [(= size 5) 1099511627775]
+    [(= size 6) 281474976710655]
+    [(= size 7) 72057594037927935]
+    [else -1]))
+
+;; Extract a word-class field from the packed word of a register-resident
+;; aggregate. The field occupies bytes [byte-offset, byte-offset+size) of the
+;; word; a left shift drops the bytes above it, then a 64-bit arithmetic (signed)
+;; or logical (unsigned) right shift moves it to the low bits with the same
+;; sign/zero extension a typed memory load would produce.
+(define (lower-extract-word-field
+  [ctx : TcContext]
+  [state : LowerState]
+  [word : CompilerIrValue]
+  [byte-offset : i64]
+  [field-ty : AstType]) : LowerExpr
+  (let
+    [size : i64 (lower-type-size ctx field-ty)]
+    (if (>= size 8)
+      (LowerExpr state word field-ty)
+      (let
+        [left : i64 (- 64 (* (+ byte-offset size) 8))]
+        [right : i64 (- 64 (* size 8))]
+        [shifted : LowerExpr
+          (if (> left 0)
+            (lower-emit-binop state IrBinShl word (IrValueI64 left) (AstTyI64))
+            (LowerExpr state word (AstTyI64)))]
+        (match shifted
+          [(LowerExpr shl-state shl-value _)
+            (match (lower-emit-binop
+              shl-state
+              IrBinShr
+              shl-value
+              (IrValueI64 right)
+              (if (lower-type-signed? field-ty)
+                (AstTyI64)
+                (AstTyU64)))
+              [(LowerExpr shr-state shr-value _)
+                (LowerExpr shr-state shr-value field-ty)])])))))
+
+;; OR one field value into the packed-word accumulator: mask it to its byte
+;; width (so a sign-extended source cannot bleed into neighbouring fields), shift
+;; it to its byte offset, and OR it into `acc`.
+(define (lower-pack-word-field
+  [ctx : TcContext]
+  [state : LowerState]
+  [acc : CompilerIrValue]
+  [value : CompilerIrValue]
+  [byte-offset : i64]
+  [field-ty : AstType]) : LowerExpr
+  (let
+    [size : i64 (lower-type-size ctx field-ty)]
+    [masked : LowerExpr
+      (if (>= size 8)
+        (LowerExpr state value (AstTyU64))
+        (lower-emit-binop
+          state
+          IrBinBitAnd
+          value
+          (IrValueI64 (lower-low-bits-mask size))
+          (AstTyU64)))]
+    (match masked
+      [(LowerExpr mask-state mask-value _)
+        (let
+          [shifted : LowerExpr
+            (if (> byte-offset 0)
+              (lower-emit-binop
+                mask-state
+                IrBinShl
+                mask-value
+                (IrValueI64 (* byte-offset 8))
+                (AstTyI64))
+              (LowerExpr mask-state mask-value (AstTyU64)))]
+          (match shifted
+            [(LowerExpr shift-state shift-value _)
+              (lower-emit-binop
+                shift-state
+                IrBinBitOr
+                acc
+                shift-value
+                (AstTyU64))]))])))
+
+;; Build the packed word for a register-resident struct by folding each field
+;; (masked + shifted) into a zero accumulator, in declaration order.
+(define (lower-pack-inline-struct-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [acc : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [fields : AstFieldDefList]
+  [layout : TcInlineAggregateLayout]) : ResultLowerExpr
+  (match values
+    [(IrValueNil)
+      (match fields
+        [(AstFieldDefNil) (OkLowerExpr (LowerExpr state acc (AstTyI64)))]
+        [_
+          (ErrLowerExpr (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(IrValueCons value rest-values)
+      (match fields
+        [(AstFieldDefCons field rest-fields)
+          (let
+            [rest-fields : AstFieldDefList (box-get rest-fields)]
+            (match field
+              [(AstFieldDef name ty _)
+                (let
+                  [name-str : String (intern-str name)]
+                  [resolved : AstType (tc-resolve-type ctx ty)]
+                  [offset : i64
+                    (tc-inline-aggregate-layout-field-offset layout name-str)]
+                  (if (< offset 0)
+                    (ErrLowerExpr
+                      (lower-diagnostic
+                        (string-append
+                          "lower: inline struct layout missing field "
+                          name-str)))
+                    (match (lower-pack-word-field
+                      ctx
+                      state
+                      acc
+                      value
+                      offset
+                      resolved)
+                      [(LowerExpr packed-state packed-acc _)
+                        (lower-pack-inline-struct-values
+                          ctx
+                          packed-state
+                          packed-acc
+                          (box-get rest-values)
+                          rest-fields
+                          layout)])))]))]
+        [(AstFieldDefNil)
+          (ErrLowerExpr (lower-diagnostic "lower: constructor arity mismatch"))])]))
+
+;; #2386: emit an IrInstrPack forming a register-group value from its word values.
+(define (lower-emit-pack
+  [state : LowerState]
+  [words : CompilerIrValueList]
+  [ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (LowerExpr
+        (lower-state-emit allocated (IrInstrPack var-id words ty))
+        (IrValueVar var-id)
+        ty)]))
+
+;; #2386: emit an IrInstrWord extracting word `index` of a register-group value.
+(define (lower-emit-word
+  [state : LowerState]
+  [group : CompilerIrValue]
+  [index : i64]
+  [word-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (LowerExpr
+        (lower-state-emit allocated (IrInstrWord var-id group index word-ty))
+        (IrValueVar var-id)
+        word-ty)]))
+
+;; #2386: read a payload field of a register-group enum scrutinee. `base` is the
+;; enum group var; the field at enum byte `offset` lives in word `offset/8` (the
+;; payload word for a 16-byte enum), extracted with IrInstrWord then shift/mask at
+;; its relative offset.
+(define (lower-read-register-group-payload
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [field-ty : AstType]) : LowerExpr
+  (match (lower-emit-word state base (/ offset 8) (AstTyI64))
+    [(LowerExpr w-state w-value _)
+      (lower-extract-word-field
+        ctx
+        w-state
+        w-value
+        (- offset (* (/ offset 8) 8))
+        field-ty)]))
+
+;; #2386: store a 2-word register-group `value` to memory at pointer `ptr`
+;; (word0 at [ptr], word1 at [ptr+8]) -- used when a group is embedded in a
+;; pointer-addressed container (array element, dynarray, box, ...).
+(define (lower-store-group-at-ptr
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [value : CompilerIrValue]) : LowerState
+  (match (lower-emit-word state value 0 (AstTyI64))
+    [(LowerExpr s0 w0 _)
+      (match (lower-emit-word s0 value 1 (AstTyI64))
+        [(LowerExpr s1 w1 _)
+          (match (lower-gep-byte
+            (lower-state-emit s1 (IrInstrStorePtr ptr w0 (AstTyI64)))
+            ptr
+            8)
+            [(LowerExpr s2 ptr8 _)
+              (lower-state-emit s2 (IrInstrStorePtr ptr8 w1 (AstTyI64)))])])]))
+
+;; #2386: load a 2-word register-group from memory at pointer `ptr` and reassemble
+;; it with IrInstrPack (word0 from [ptr], word1 from [ptr+8]).
+(define (lower-load-group-from-ptr
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [ty : AstType]) : LowerExpr
+  (match (lower-load-at-offset state ptr 0 (AstTyI64))
+    [(LowerExpr s0 w0 _)
+      (match (lower-load-at-offset s0 ptr 8 (AstTyI64))
+        [(LowerExpr s1 w1 _)
+          (lower-emit-pack
+            s1
+            (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
+            ty)])]))
+
+;; #2386: build the packed value for ONE machine word (`word-index`) of a
+;; register-group struct: fold in only the fields that live in that word, each at
+;; its offset RELATIVE to the word base, leaving an all-zero accumulator for words
+;; with no field. Fields straddling a word boundary cannot occur for word-class
+;; fields in a C-layout aggregate (each is naturally aligned within a word).
+(define (lower-pack-inline-struct-word
+  [ctx : TcContext]
+  [state : LowerState]
+  [acc : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [fields : AstFieldDefList]
+  [layout : TcInlineAggregateLayout]
+  [word-index : i64]) : ResultLowerExpr
+  (match values
+    [(IrValueNil)
+      (match fields
+        [(AstFieldDefNil) (OkLowerExpr (LowerExpr state acc (AstTyI64)))]
+        [_
+          (ErrLowerExpr (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(IrValueCons value rest-values)
+      (match fields
+        [(AstFieldDefCons field rest-fields)
+          (let
+            [rest-fields : AstFieldDefList (box-get rest-fields)]
+            (match field
+              [(AstFieldDef name ty _)
+                (let
+                  [name-str : String (intern-str name)]
+                  [resolved : AstType (tc-resolve-type ctx ty)]
+                  [offset : i64
+                    (tc-inline-aggregate-layout-field-offset layout name-str)]
+                  (if (< offset 0)
+                    (ErrLowerExpr
+                      (lower-diagnostic
+                        (string-append
+                          "lower: inline struct layout missing field "
+                          name-str)))
+                    (if (= (/ offset 8) word-index)
+                      (match (lower-pack-word-field
+                        ctx
+                        state
+                        acc
+                        value
+                        (- offset (* word-index 8))
+                        resolved)
+                        [(LowerExpr packed-state packed-acc _)
+                          (lower-pack-inline-struct-word
+                            ctx
+                            packed-state
+                            packed-acc
+                            (box-get rest-values)
+                            rest-fields
+                            layout
+                            word-index)])
+                      (lower-pack-inline-struct-word
+                        ctx
+                        state
+                        acc
+                        (box-get rest-values)
+                        rest-fields
+                        layout
+                        word-index))))]))]
+        [(AstFieldDefNil)
+          (ErrLowerExpr (lower-diagnostic "lower: constructor arity mismatch"))])]))
+
+;; #2386: construct a register-group struct value: pack each machine word and
+;; combine them with IrInstrPack. Two-word integer-class structs only (slice 3).
+(define (lower-construct-struct-register-group
+  [ctx : TcContext]
+  [state : LowerState]
+  [values : CompilerIrValueList]
+  [fields : AstFieldDefList]
+  [layout : TcInlineAggregateLayout]
+  [struct-ty : AstType]) : ResultLowerExpr
+  (match (lower-pack-inline-struct-word
+    ctx
+    state
+    (IrValueI64 0)
+    values
+    fields
+    layout
+    0)
+    [(OkLowerExpr (LowerExpr s0 word0 _))
+      (match (lower-pack-inline-struct-word
+        ctx
+        s0
+        (IrValueI64 0)
+        values
+        fields
+        layout
+        1)
+        [(OkLowerExpr (LowerExpr s1 word1 _))
+          (match (lower-emit-pack
+            s1
+            (IrValueCons word0 (box (IrValueCons word1 (box IrValueNil))))
+            struct-ty)
+            [(LowerExpr ps pv _) (OkLowerExpr (LowerExpr ps pv struct-ty))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; #2386: fold a register-group enum variant's payload values into word1 (the
+;; payload word), each field masked + shifted to its offset RELATIVE to the
+;; payload word (payload starts at enum byte 8, i.e. relative offset 0).
+(define (lower-pack-enum-payload-word
+  [ctx : TcContext]
+  [state : LowerState]
+  [acc : CompilerIrValue]
+  [cursor : i64]
+  [values : CompilerIrValueList]
+  [fields : AstTypeList]) : ResultLowerExpr
+  (match values
+    [(IrValueNil) (OkLowerExpr (LowerExpr state acc (AstTyI64)))]
+    [(IrValueCons value rest-values)
+      (match fields
+        [(AstTypeCons ty rest-fields)
+          (let
+            [resolved : AstType (tc-resolve-type ctx (ty-node-get ty))]
+            [offset : i64
+              (lower-align-up cursor (lower-type-align ctx resolved))]
+            (match (lower-pack-word-field ctx state acc value offset resolved)
+              [(LowerExpr packed-state packed-acc _)
+                (lower-pack-enum-payload-word
+                  ctx
+                  packed-state
+                  packed-acc
+                  (+ offset (lower-type-size ctx resolved))
+                  (box-get rest-values)
+                  (box-get rest-fields))]))]
+        [(AstTypeNil)
+          (ErrLowerExpr (lower-diagnostic "lower: enum payload arity mismatch"))])]))
+
+;; #2386: construct a register-group enum value: word0 = discriminant tag, word1 =
+;; the variant's packed (word-class) payload (0 for a nullary variant).
+(define (lower-construct-enum-register-group
+  [ctx : TcContext]
+  [state : LowerState]
+  [handle : i64]
+  [values : CompilerIrValueList]
+  [fields : AstTypeList]
+  [enum-ty : AstType]) : ResultLowerExpr
+  (match (lower-pack-enum-payload-word ctx state (IrValueI64 0) 0 values fields)
+    [(OkLowerExpr (LowerExpr s1 word1 _))
+      (match (lower-emit-pack
+        s1
+        (IrValueCons
+          (IrValueI64 (compiler-registry-handle-child-index handle))
+          (box (IrValueCons word1 (box IrValueNil))))
+        enum-ty)
+        [(LowerExpr ps pv _) (OkLowerExpr (LowerExpr ps pv enum-ty))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-store-inline-value-at-offset
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [size : i64])
+  :
+  LowerState
+  ;; #2386: a register-resident aggregate is carried as a word, so embedding it
+  ;; in a memory aggregate is a scalar store of that word, not a byte-copy from a
+  ;; pointer. A 2-word register-group stores BOTH words (word0 at offset, word1 at
+  ;; offset+8). Only a genuine memory aggregate (inline struct/enum that is not
+  ;; register-resident) needs the byte-copy.
+  (if (and
+    (lower-type-inline-struct-or-enum? ctx ty)
+    (not (lower-type-register-resident? ctx ty)))
+    (lower-copy-bytes state base offset value 0 size)
+    (if (lower-type-register-group? ctx ty)
+      (match (lower-emit-word state value 0 (AstTyI64))
+        [(LowerExpr s0 w0 _)
+          (match (lower-emit-word s0 value 1 (AstTyI64))
+            [(LowerExpr s1 w1 _)
+              (lower-store-at-offset
+                (lower-store-at-offset s1 base offset w0 (AstTyI64))
+                base
+                (+ offset 8)
+                w1
+                (AstTyI64))])])
+      (lower-store-at-offset state base offset value ty))))
+
+(define (lower-load-inline-value-at-offset
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [ty : AstType]
+  [mode : CompilerLowerMode])
+  :
+  LowerExpr
+  ;; #2386: a register-resident aggregate field is loaded as a word (a scalar
+  ;; load), not returned as a pointer into the containing slot. A 2-word
+  ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
+  ;; genuine memory aggregate keeps the pointer-return shape.
+  (if (and
+    (lower-mode-inline-aggregates? mode)
+    (and
+      (lower-type-inline-struct-or-enum? ctx ty)
+      (not (lower-type-register-resident? ctx ty))))
+    (match (lower-gep-byte state base offset)
+      [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
+    (if (lower-type-register-group? ctx ty)
+      (match (lower-load-at-offset state base offset (AstTyI64))
+        [(LowerExpr s0 w0 _)
+          (match (lower-load-at-offset s0 base (+ offset 8) (AstTyI64))
+            [(LowerExpr s1 w1 _)
+              (lower-emit-pack
+                s1
+                (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
+                ty)])])
+      (lower-load-at-offset state base offset ty))))
 
 (define (lower-copy-bytes-compact
   [state : LowerState]
@@ -4504,7 +5097,11 @@
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
-              (lower-copy-bytes-compact copy-state copy-value 0 value 0 size)
+              ;; #2386: a register-resident source is a word, so materialize it
+              ;; with a scalar store rather than a pointer-to-pointer byte copy.
+              (if (lower-type-register-resident? ctx ty)
+                (lower-store-at-offset copy-state copy-value 0 value ty)
+                (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
               ty))])]
     [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
@@ -4520,7 +5117,9 @@
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
-              (lower-copy-bytes-compact copy-state copy-value 0 value 0 size)
+              (if (lower-type-register-resident? ctx ty)
+                (lower-store-at-offset copy-state copy-value 0 value ty)
+                (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
               ty))])]
     [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
@@ -4531,7 +5130,11 @@
   [ty : AstType]) : bool
   (and
     (lower-mode-inline-aggregates? (lower-state-mode state))
-    (lower-type-contains-inline-aggregate? ctx ty)))
+    (and
+      ;; #2386: a register-resident aggregate is returned/passed in a register,
+      ;; so it needs neither a heap escape-copy nor a caller-provided sret slot.
+      (lower-type-inline-struct-or-enum? ctx ty)
+      (not (lower-type-register-resident? ctx ty)))))
 
 (define (lower-return-abi-value
   [ctx : TcContext]
@@ -5007,7 +5610,14 @@
       [(LowerExpr base-state base _)
         (LowerExpr
           (if (> size 0)
-            (lower-store-at-offset base-state base 0 value resolved)
+            (lower-store-inline-value-at-offset
+              ctx
+              base-state
+              base
+              0
+              value
+              resolved
+              size)
             base-state)
           base
           result-ty)])))
@@ -5096,9 +5706,22 @@
     [(OkLowerFieldInfo info)
       (match info
         [(LowerFieldInfo offset _)
-          (match (lower-gep-byte state receiver-value offset)
-            [(LowerExpr ptr-state ptr _)
-              (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
+          ;; #2386: a register-resident receiver has no address; materialize the
+          ;; packed word to a fresh slot, then take the field's address there.
+          (if (tc-name-register-resident? ctx struct-name)
+            (match (lower-borrow-copy-to-storage
+              ctx
+              state
+              receiver-value
+              (AstTyStruct struct-name)
+              result-ty)
+              [(LowerExpr mat-state mat-ptr _)
+                (match (lower-gep-byte mat-state mat-ptr offset)
+                  [(LowerExpr ptr-state ptr _)
+                    (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])
+            (match (lower-gep-byte state receiver-value offset)
+              [(LowerExpr ptr-state ptr _)
+                (OkLowerExpr (LowerExpr ptr-state ptr result-ty))]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-borrow-struct-field-address
@@ -5290,6 +5913,7 @@
                           (match idx-lowered
                             [(LowerExpr idx-state idx-value _)
                               (match (lower-array-element-addr
+                                ctx
                                 idx-state
                                 arr-value
                                 idx-value
@@ -5322,6 +5946,7 @@
                             (match idx-lowered
                               [(LowerExpr idx-state idx-value _)
                                 (match (lower-fixed-array-element-addr
+                                  ctx
                                   idx-state
                                   arr-value
                                   idx-value
@@ -5552,12 +6177,14 @@
                           [stored-state : LowerState
                             (if (<= (tc-layout-info-size info) 0)
                               state
-                              (lower-store-at-offset
+                              (lower-store-inline-value-at-offset
+                                ctx
                                 state
                                 base
                                 offset
                                 value
-                                resolved))]
+                                resolved
+                                (tc-layout-info-size info)))]
                           (lower-store-inline-struct-values
                             ctx
                             stored-state
@@ -5609,7 +6236,14 @@
                     ctx
                     (if (<= (tc-layout-info-size info) 0)
                       state
-                      (lower-store-at-offset state base offset value resolved))
+                      (lower-store-inline-value-at-offset
+                        ctx
+                        state
+                        base
+                        offset
+                        value
+                        resolved
+                        (tc-layout-info-size info)))
                     base
                     (box-get rest-values)
                     rest-types
@@ -5746,7 +6380,13 @@
   [variant-name : String]
   [index : i64]
   [cursor : i64]
-  [fail-label : String]) : ResultLowerEnv
+  [fail-label : String]
+  ;; #2386: whether the scrutinee enum is a 2-word register-group value, computed
+  ;; ONCE by the caller and threaded here. Recomputing it per payload field (a full
+  ;; transient layout rebuild) at every binding site across the whole compiler was
+  ;; heavy enough to overflow the per-function scratch arena into a second chunk
+  ;; and trip its rewind, corrupting later lowering.
+  [scrut-reg-group? : bool]) : ResultLowerEnv
   (match patterns
     [(AstPatternNil)
       (match types
@@ -5799,9 +6439,23 @@
                       variant-name
                       next-index
                       next-cursor
-                      fail-label)]
+                      fail-label
+                      scrut-reg-group?)]
                   [(AstPatBinding name)
-                    (match (lower-load-at-offset state base offset resolved)
+                    (match (if scrut-reg-group?
+                      (lower-read-register-group-payload
+                        ctx
+                        state
+                        base
+                        offset
+                        resolved)
+                      (lower-load-inline-value-at-offset
+                        ctx
+                        state
+                        base
+                        offset
+                        resolved
+                        mode))
                       [(LowerExpr load-state value _)
                         (match value
                           [(IrValueVar field-var)
@@ -5818,14 +6472,22 @@
                               variant-name
                               next-index
                               next-cursor
-                              fail-label)]
+                              fail-label
+                              scrut-reg-group?)]
                           [_
                             (ErrLowerEnv
                               (lower-diagnostic
                                 "lower: internal enum payload load failed"))])])]
                   [(AstPatLiteral lit)
                     (if (lower-literal-payload-supported? lit)
-                      (match (lower-load-at-offset state base offset resolved)
+                      (match (if scrut-reg-group?
+                        (lower-read-register-group-payload
+                          ctx
+                          state
+                          base
+                          offset
+                          resolved)
+                        (lower-load-at-offset state base offset resolved))
                         [(LowerExpr load-state field-value _)
                           (match (lower-literal-payload-eq
                             ctx
@@ -5860,7 +6522,8 @@
                                         variant-name
                                         next-index
                                         next-cursor
-                                        fail-label)])])]
+                                        fail-label
+                                        scrut-reg-group?)])])]
                             [(ErrLowerExpr message) (ErrLowerEnv message)])])
                       (ErrLowerEnv
                         (lower-diagnostic
@@ -5893,17 +6556,33 @@
                                 [(ErrAstTypeList message)
                                   (ErrLowerEnv (lower-diagnostic message))]
                                 [(OkAstTypeList nested-fields)
-                                  (match (lower-load-at-offset
+                                  (match (lower-load-inline-value-at-offset
+                                    ctx
                                     state
                                     base
                                     offset
-                                    resolved)
+                                    resolved
+                                    mode)
                                     [(LowerExpr field-state field-value _)
-                                      (match (lower-load-at-offset
-                                        field-state
-                                        field-value
-                                        0
-                                        (AstTyI64))
+                                      ;; #2386: for a register-resident enum field
+                                      ;; the loaded value IS the tag word; for a
+                                      ;; memory enum it is a pointer to the field,
+                                      ;; so the tag is loaded from offset 0.
+                                      ;; Dereferencing a register-resident tag word
+                                      ;; would fault (it is a small integer, not an
+                                      ;; address).
+                                      (match (if (lower-type-register-resident?
+                                        ctx
+                                        resolved)
+                                        (LowerExpr
+                                          field-state
+                                          field-value
+                                          (AstTyI64))
+                                        (lower-load-at-offset
+                                          field-state
+                                          field-value
+                                          0
+                                          (AstTyI64)))
                                         [(LowerExpr tag-state tag-value _)
                                           (match (lower-state-alloc-var
                                             tag-state)
@@ -5942,7 +6621,13 @@
                                                     nested-name-str
                                                     0
                                                     8
-                                                    fail-label)
+                                                    fail-label
+                                                    ;; nested enum: rare path, so
+                                                    ;; computing its group-ness once
+                                                    ;; here is cheap.
+                                                    (lower-type-register-group?
+                                                      ctx
+                                                      resolved))
                                                     [(OkLowerEnv
                                                         nested-state
                                                         nested-env
@@ -5960,7 +6645,8 @@
                                                         variant-name
                                                         next-index
                                                         next-cursor
-                                                        fail-label)]
+                                                        fail-label
+                                                        scrut-reg-group?)]
                                                     [(ErrLowerEnv message)
                                                       (ErrLowerEnv message)])])])])])])])]))]
                   [_
@@ -6254,7 +6940,8 @@
   [variant-name : String]
   [index : i64]
   [cursor : i64]
-  [fail-label : String]) : ResultLowerEnv
+  [fail-label : String]
+  [scrut-reg-group? : bool]) : ResultLowerEnv
   (match borrow-lifetime
     [(TcNoString)
       (lower-bind-variant-payloads
@@ -6270,8 +6957,12 @@
         variant-name
         index
         cursor
-        fail-label)]
+        fail-label
+        scrut-reg-group?)]
     [(TcSomeString lifetime)
+      ;; A borrowed scrutinee is always memory-backed (matched behind a pointer),
+      ;; never a 2-word register-group value, so the register-group path does not
+      ;; apply here.
       (lower-bind-borrowed-variant-payloads
         ctx
         state
@@ -6373,9 +7064,7 @@
   [mode : CompilerLowerMode]
   [struct-name : String]
   [field-name : String]) : ResultLowerFieldInfo
-  (if (and
-    (lower-mode-inline-aggregates? mode)
-    (not (lower-struct-repr-c? ctx struct-name)))
+  (if (lower-mode-inline-aggregates? mode)
     (match (lower-struct-field-info ctx struct-name field-name)
       [(OkLowerFieldInfo info)
         (match info
@@ -6601,7 +7290,9 @@
     [(AstTyTuple _) true]
     [(AstTyArray _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
     [_ false]))
@@ -6619,7 +7310,9 @@
     [(AstTyTuple _) (AstTyU64)]
     [(AstTyArray _ _) (AstTyU64)]
     [(AstTyEnum _) (AstTyU64)]
+    [(AstTyEnumArgs _ _) (AstTyU64)]
     [(AstTyStruct _) (AstTyU64)]
+    [(AstTyStructArgs _ _) (AstTyU64)]
     [(AstTyString) (AstTyU64)]
     [(AstTyDynArray _) (AstTyU64)]
     [_ ty]))
@@ -6672,7 +7365,20 @@
         (tc-type-without-regions (ty-node-get elem-ty))
         count
         ty)]
+    ;; #2386: a register-resident aggregate is word-class POD held in a register;
+    ;; its capture snapshot is the value itself (nothing on the heap to copy).
     [(AstTyStruct name)
+      (if (lower-type-register-resident? ctx ty)
+        (OkLowerExpr (LowerExpr state value ty))
+        (lower-capture-snapshot-struct-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (intern-str name)
+          ty))]
+    [(AstTyStructArgs name _)
       (lower-capture-snapshot-struct-value
         ctx
         state
@@ -6682,6 +7388,17 @@
         (intern-str name)
         ty)]
     [(AstTyEnum name)
+      (if (lower-type-register-resident? ctx ty)
+        (OkLowerExpr (LowerExpr state value ty))
+        (lower-capture-snapshot-enum-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (intern-str name)
+          ty))]
+    [(AstTyEnumArgs name _)
       (lower-capture-snapshot-enum-value
         ctx
         state
@@ -6700,6 +7417,7 @@
       (lower-substring-call-runtime fields-state ptr (IrValueI64 0) len)]))
 
 (define (lower-capture-snapshot-dynarray-copy
+  [ctx : TcContext]
   [state : LowerState]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -6708,9 +7426,10 @@
   [elem-size : i64]) : LowerState
   (if (= elem-size 0)
     state
-    (lower-array-push-copy-loop state old-buf new-buf len elem-ty)))
+    (lower-array-push-copy-loop ctx state old-buf new-buf len elem-ty)))
 
 (define (lower-capture-snapshot-dynarray-finish
+  [ctx : TcContext]
   [state : LowerState]
   [old-buf : CompilerIrValue]
   [len : CompilerIrValue]
@@ -6723,6 +7442,7 @@
       (let
         [copied-state : LowerState
           (lower-capture-snapshot-dynarray-copy
+            ctx
             arr-state
             old-buf
             (IrValueVar buf-var)
@@ -6769,6 +7489,7 @@
                 (match (lower-state-alloc-var byte-state)
                   [(LowerAlloc buf-alloc buf-var)
                     (lower-capture-snapshot-dynarray-finish
+                      ctx
                       (lower-state-emit
                         buf-alloc
                         (IrInstrCall
@@ -6802,7 +7523,13 @@
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
         [size : i64 (lower-type-size ctx resolved)]
         (if (> size 0)
-          (match (lower-load-at-offset state src offset resolved)
+          (match (lower-load-inline-value-at-offset
+            ctx
+            state
+            src
+            offset
+            resolved
+            (lower-state-mode state))
             [(LowerExpr load-state field-value _)
               (match (lower-capture-snapshot-value
                 ctx
@@ -6816,12 +7543,14 @@
                     [(LowerExpr snap-state snap-value _)
                       (lower-capture-snapshot-type-list
                         ctx
-                        (lower-store-at-offset
+                        (lower-store-inline-value-at-offset
+                          ctx
                           snap-state
                           dst
                           offset
                           snap-value
-                          resolved)
+                          resolved
+                          size)
                         env
                         type-env
                         src
@@ -6881,7 +7610,13 @@
     (let
       [offset : i64 (* index elem-size)]
       (if (> elem-size 0)
-        (match (lower-load-at-offset state src offset elem-ty)
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          src
+          offset
+          elem-ty
+          (lower-state-mode state))
           [(LowerExpr load-state elem-value _)
             (match (lower-capture-snapshot-value
               ctx
@@ -6895,12 +7630,14 @@
                   [(LowerExpr snap-state snap-value _)
                     (lower-capture-snapshot-fixed-array-elems
                       ctx
-                      (lower-store-at-offset
+                      (lower-store-inline-value-at-offset
+                        ctx
                         snap-state
                         dst
                         offset
                         snap-value
-                        elem-ty)
+                        elem-ty
+                        elem-size)
                       env
                       type-env
                       src
@@ -7140,13 +7877,19 @@
                     [slot-ty : AstType (lower-capture-slot-type capture-ty)]
                     [offset : i64
                       (lower-align-up cursor (lower-type-align ctx slot-ty))]
+                    ;; #2386: a register-group capture occupies 16 bytes inline (two
+                    ;; words), not an 8-byte handle slot.
+                    [slot-size : i64
+                      (if (lower-type-register-group? ctx capture-ty)
+                        16
+                        (lower-type-size ctx slot-ty))]
                     (lower-capture-plan-scan
                       ctx
                       (box-get rest)
                       type-env
                       body
                       bound
-                      (+ offset (lower-type-size ctx slot-ty))
+                      (+ offset slot-size)
                       (LowerCaptureCons
                         (LowerCapture name var-id capture-ty offset)
                         (box captures))
@@ -7197,12 +7940,17 @@
                 [(LowerExpr snap-state snap-value _)
                   (lower-store-captures
                     ctx
-                    (lower-store-at-offset
-                      snap-state
-                      env-value
-                      offset
-                      snap-value
-                      (lower-capture-slot-type capture-ty))
+                    (if (lower-type-register-group? ctx capture-ty)
+                      ;; #2386: a captured 2-word group stores both words.
+                      (match (lower-gep-byte snap-state env-value offset)
+                        [(LowerExpr gep-state ptr _)
+                          (lower-store-group-at-ptr gep-state ptr snap-value)])
+                      (lower-store-at-offset
+                        snap-state
+                        env-value
+                        offset
+                        snap-value
+                        (lower-capture-slot-type capture-ty)))
                     env
                     type-env
                     env-value
@@ -7260,6 +8008,7 @@
         [(ErrLowerState message) (ErrLowerExpr message)])]))
 
 (define (lower-load-captures
+  [ctx : TcContext]
   [state : LowerState]
   [env-value : CompilerIrValue]
   [captures : LowerCaptureList]
@@ -7270,15 +8019,21 @@
     [(LowerCaptureCons capture rest)
       (match capture
         [(LowerCapture name _ capture-ty offset)
-          (match (lower-load-at-offset
-            state
-            env-value
-            offset
-            (lower-capture-slot-type capture-ty))
+          (match (if (lower-type-register-group? ctx capture-ty)
+            ;; #2386: a captured 2-word group loads both words and repacks.
+            (match (lower-gep-byte state env-value offset)
+              [(LowerExpr gep-state ptr _)
+                (lower-load-group-from-ptr gep-state ptr capture-ty)])
+            (lower-load-at-offset
+              state
+              env-value
+              offset
+              (lower-capture-slot-type capture-ty)))
             [(LowerExpr loaded-state loaded-value _)
               (match loaded-value
                 [(IrValueVar loaded-var)
                   (lower-load-captures
+                    ctx
                     loaded-state
                     env-value
                     (box-get rest)
@@ -7312,11 +8067,26 @@
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
       [param-count : i64 (+ 1 (lower-param-count params))]
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+      ;; #1867 sret ABI for closures: hidden result-slot pointer at var
+      ;; `param-count` (just past env + real params).
+      [sret-needed : bool
+        (and
+          (lower-mode-inline-aggregates? mode)
+          (and
+            (lower-type-inline-struct-or-enum? ctx ret-ty)
+            (not (lower-type-register-resident? ctx ret-ty))))]
+      [sret-var : i64
+        (if sret-needed
+          param-count
+          (- 0 1))]
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
       [state : LowerState
         (LowerState
-          param-count
+          (if sret-needed
+            (+ param-count 1)
+            param-count)
           0
           0
           "entry"
@@ -7328,8 +8098,8 @@
           names
           type-cache
           mode)]
-      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       (match (lower-load-captures
+        ctx
         state
         (IrValueVar 0)
         captures
@@ -7352,13 +8122,18 @@
                   abi-env
                   abi-type-env
                   body
-                  ret-ty)
+                  ret-ty
+                  sret-var)
                   [(OkLowerState final-state)
                     (OkLowerFunction
                       (compiler-ir-function-cons
                         (IrFunction
                           logical-name
-                          (lower-captured-param-list ctx params)
+                          (if (>= sret-var 0)
+                            (lower-param-list-append-sret
+                              (lower-captured-param-list ctx params)
+                              sret-var)
+                            (lower-captured-param-list ctx params))
                           ret-ty
                           (lower-state-next-var final-state)
                           (lower-state-build-function-blocks final-state))
@@ -7943,7 +8718,16 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyUnit) (LowerExpr state IrValueUnit resolved)]
-      [_ (lower-load-at-offset state base 8 resolved)])))
+      ;; #1867: a Result/Option payload (offset 8 past the i64 tag) can be an
+      ;; inline struct/enum; materialize it via the inline-aware load.
+      [_
+        (lower-load-inline-value-at-offset
+          ctx
+          state
+          base
+          8
+          resolved
+          (lower-state-mode state))])))
 
 (define (lower-return-result-err
   [ctx : TcContext]
@@ -7975,8 +8759,17 @@
                   [payload-state : LowerState
                     (match err-ty
                       [(AstTyUnit) tag-state]
+                      ;; #1867: an inline struct/enum err payload must be
+                      ;; byte-copied into the err slot, not scalar-stored.
                       [_
-                        (lower-store-at-offset tag-state base 8 payload err-ty)])]
+                        (lower-store-inline-value-at-offset
+                          ctx
+                          tag-state
+                          base
+                          8
+                          payload
+                          err-ty
+                          (lower-type-size ctx err-ty))])]
                   (OkLowerState
                     (lower-state-emit
                       payload-state
@@ -8242,25 +9035,40 @@
 ;; dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl) so
 ;; recursive enum/struct values recurse at runtime instead of lower time; and
 ;; scalar values are returned as-is.
+;; #1867 sret ABI: the synthesized `clone$<Name>` helper returns an aggregate,
+;; so it carries the hidden sret param; append the result-slot pointer here to
+;; match (the same gate as the helper's definition, so a non-aggregate clone$
+;; target -- e.g. a type variable -- passes only the value).
 (define (lower-clone-named
+  [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [name : String]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc allocated var-id)
-      (OkLowerExpr
-        (LowerExpr
-          (lower-state-emit
-            allocated
-            (IrInstrCall
-              var-id
-              (lower-resolve-call-name allocated env (clone-helper-name name))
-              (IrCallArgsOne value)
-              ty))
-          (IrValueVar var-id)
-          ty))]))
+  (match (lower-call-append-sret-arg
+    ctx
+    state
+    (compiler-ir-value-cons value IrValueNil)
+    ty)
+    [(OkLowerArgs sret-state sret-values)
+      (match (lower-state-alloc-var sret-state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit
+                allocated
+                (IrInstrCall
+                  var-id
+                  (lower-resolve-call-name
+                    allocated
+                    env
+                    (clone-helper-name name))
+                  (compiler-ir-call-args-from-list sret-values)
+                  ty))
+              (IrValueVar var-id)
+              ty))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-clone-scalar-type? [ty : AstType]) : bool
   (match ty
@@ -8299,7 +9107,13 @@
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
         [size : i64 (lower-type-size ctx resolved)]
         (if (> size 0)
-          (match (lower-load-at-offset state src offset resolved)
+          (match (lower-load-inline-value-at-offset
+            ctx
+            state
+            src
+            offset
+            resolved
+            (lower-state-mode state))
             [(LowerExpr load-state field-value _)
               (match (lower-clone-dispatch
                 ctx
@@ -8313,12 +9127,14 @@
                     [(LowerExpr clone-state clone-value _)
                       (lower-clone-type-list
                         ctx
-                        (lower-store-at-offset
+                        (lower-store-inline-value-at-offset
+                          ctx
                           clone-state
                           dst
                           offset
                           clone-value
-                          resolved)
+                          resolved
+                          size)
                         env
                         type-env
                         src
@@ -8378,7 +9194,13 @@
     (let
       [offset : i64 (* index elem-size)]
       (if (> elem-size 0)
-        (match (lower-load-at-offset state src offset elem-ty)
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          src
+          offset
+          elem-ty
+          (lower-state-mode state))
           [(LowerExpr load-state elem-value _)
             (match (lower-clone-dispatch
               ctx
@@ -8392,12 +9214,14 @@
                   [(LowerExpr clone-state clone-value _)
                     (lower-clone-fixed-array-elems
                       ctx
-                      (lower-store-at-offset
+                      (lower-store-inline-value-at-offset
+                        ctx
                         clone-state
                         dst
                         offset
                         clone-value
-                        elem-ty)
+                        elem-ty
+                        elem-size)
                       env
                       type-env
                       src
@@ -8474,6 +9298,7 @@
           exit-label))]))
 
 (define (lower-clone-dynarray-store-and-advance
+  [ctx : TcContext]
   [state : LowerState]
   [new-buf : CompilerIrValue]
   [index-var : i64]
@@ -8481,12 +9306,20 @@
   [exit-label : String]
   [clone-value : CompilerIrValue]
   [elem-ty : AstType]) : ResultLowerState
-  (match (lower-emit-gep state new-buf (IrValueVar index-var) elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    state
+    new-buf
+    (IrValueVar index-var)
+    elem-ty)
     [(LowerExpr dst-gep-state dst-ptr _)
       (lower-clone-dynarray-advance
-        (lower-state-emit
+        (lower-array-elem-store-state
+          ctx
           dst-gep-state
-          (IrInstrStorePtr dst-ptr clone-value elem-ty))
+          dst-ptr
+          clone-value
+          elem-ty)
         index-var
         header-label
         exit-label)]))
@@ -8502,9 +9335,20 @@
   [header-label : String]
   [exit-label : String]
   [elem-ty : AstType]) : ResultLowerState
-  (match (lower-emit-gep state old-buf (IrValueVar index-var) elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    state
+    old-buf
+    (IrValueVar index-var)
+    elem-ty)
     [(LowerExpr src-gep-state src-ptr _)
-      (match (lower-emit-load src-gep-state src-ptr elem-ty)
+      (match (lower-load-inline-value-at-offset
+        ctx
+        src-gep-state
+        src-ptr
+        0
+        elem-ty
+        (lower-state-mode src-gep-state))
         [(LowerExpr load-state elem-value _)
           (match (lower-clone-dispatch
             ctx
@@ -8517,6 +9361,7 @@
               (match cloned
                 [(LowerExpr clone-state clone-value _)
                   (lower-clone-dynarray-store-and-advance
+                    ctx
                     clone-state
                     new-buf
                     index-var
@@ -8696,8 +9541,19 @@
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [inner-ty : AstType]
-  [result-ty : AstType]) : ResultLowerExpr
-  (match (lower-load-at-offset state value 0 inner-ty)
+  [result-ty : AstType])
+  :
+  ResultLowerExpr
+  ;; #1867: a (Box T) with inline struct/enum T addresses the T storage at the
+  ;; box pointer; load it as a value (pointer) rather than scalar-loading the
+  ;; leading word, mirroring lower-box-get.
+  (match (lower-load-inline-value-at-offset
+    ctx
+    state
+    value
+    0
+    inner-ty
+    (lower-state-mode state))
     [(LowerExpr load-state inner-value _)
       (match (lower-clone-dispatch
         ctx
@@ -8716,12 +9572,14 @@
                 [(LowerExpr box-state box-value _)
                   (OkLowerExpr
                     (LowerExpr
-                      (lower-store-at-offset
+                      (lower-store-inline-value-at-offset
+                        ctx
                         box-state
                         box-value
                         0
                         clone-value
-                        inner-ty)
+                        inner-ty
+                        (lower-type-size ctx inner-ty))
                       box-value
                       result-ty))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]))
@@ -8767,12 +9625,19 @@
           value
           (tc-type-without-regions (ty-node-get elem-ty))
           clone-ty)]
+      ;; #2386: a register-resident aggregate is word-class POD held in a
+      ;; register, so cloning it is a value copy -- no deep-clone helper, no
+      ;; memory traversal.
       [(AstTyEnum name)
-        (lower-clone-named state env (intern-str name) value clone-ty)]
+        (if (lower-type-register-resident? ctx clone-ty)
+          (OkLowerExpr (LowerExpr state value clone-ty))
+          (lower-clone-named ctx state env (intern-str name) value clone-ty))]
       [(AstTyStruct name)
-        (lower-clone-named state env (intern-str name) value clone-ty)]
+        (if (lower-type-register-resident? ctx clone-ty)
+          (OkLowerExpr (LowerExpr state value clone-ty))
+          (lower-clone-named ctx state env (intern-str name) value clone-ty))]
       [(AstTyVar name)
-        (lower-clone-named state env (intern-str name) value clone-ty)]
+        (lower-clone-named ctx state env (intern-str name) value clone-ty)]
       [_
         (if (lower-clone-scalar-type? clone-ty)
           (OkLowerExpr (LowerExpr state value clone-ty))
@@ -8857,18 +9722,43 @@
     [(OkTcInlineAggregateLayout layout)
       (match layout
         [(TcInlineStructLayout size _ _)
-          (match (lower-reserve-inline-storage state size struct-ty)
-            [(LowerExpr base-state base _)
-              (match (lower-store-inline-struct-values
+          ;; #2386: a register-resident struct is built directly in registers by
+          ;; packing its fields with shift/or; no stack slot, no stores. A 2-word
+          ;; struct packs each word and combines them with IrInstrPack.
+          (if (tc-inline-aggregate-layout-register-resident? layout)
+            (if (lower-type-register-group? ctx struct-ty)
+              (lower-construct-struct-register-group
                 ctx
-                base-state
-                base
+                state
+                values
+                fields
+                layout
+                struct-ty)
+              (match (lower-pack-inline-struct-values
+                ctx
+                state
+                (IrValueI64 0)
                 values
                 fields
                 layout)
-                [(OkLowerState done-state)
-                  (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                [(ErrLowerState message) (ErrLowerExpr message)])])]
+                [(OkLowerExpr packed)
+                  (match packed
+                    [(LowerExpr packed-state packed-value _)
+                      (OkLowerExpr
+                        (LowerExpr packed-state packed-value struct-ty))])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)]))
+            (match (lower-reserve-inline-storage state size struct-ty)
+              [(LowerExpr base-state base _)
+                (match (lower-store-inline-struct-values
+                  ctx
+                  base-state
+                  base
+                  values
+                  fields
+                  layout)
+                  [(OkLowerState done-state)
+                    (OkLowerExpr (LowerExpr done-state base struct-ty))]
+                  [(ErrLowerState message) (ErrLowerExpr message)])]))]
         [(TcInlineEnumLayout _ _ _)
           (ErrLowerExpr
             (lower-diagnostic
@@ -8891,30 +9781,56 @@
     [(OkTcInlineAggregateLayout layout)
       (match layout
         [(TcInlineEnumLayout size _ _)
-          (let
-            [layout-variant-name : String (tc-qualified-name-base variant-name)]
-            (match (lower-reserve-inline-storage state size enum-ty)
-              [(LowerExpr base-state base _)
-                (let
-                  [tag-state : LowerState
-                    (lower-store-at-offset
-                      base-state
+          ;; #2386: a 1-word register-resident enum is nullary, so its single word
+          ;; is the discriminant tag. A 2-word register-group enum packs the tag
+          ;; into word0 and the variant payload into word1.
+          (if (tc-inline-aggregate-layout-register-resident? layout)
+            ;; #2386: a register-resident enum is 8 (nullary tag) or 16 bytes (tag
+            ;; word0 + payload word1); derive the 2-word group case from the size we
+            ;; already have rather than rebuilding the layout (lower-type-register-
+            ;; group?), whose transient per-call allocation -- summed over every
+            ;; construct/match/bind site during the per-function scratch arena
+            ;; window -- was heavy enough to overflow the scratch arena into a
+            ;; second chunk and trip its rewind, corrupting later lowering.
+            (if (= size 16)
+              (lower-construct-enum-register-group
+                ctx
+                state
+                handle
+                values
+                fields
+                enum-ty)
+              (OkLowerExpr
+                (LowerExpr
+                  state
+                  (IrValueI64 (compiler-registry-handle-child-index handle))
+                  enum-ty)))
+            (let
+              [layout-variant-name : String
+                (tc-qualified-name-base variant-name)]
+              (match (lower-reserve-inline-storage state size enum-ty)
+                [(LowerExpr base-state base _)
+                  (let
+                    [tag-state : LowerState
+                      (lower-store-at-offset
+                        base-state
+                        base
+                        0
+                        (IrValueI64
+                          (compiler-registry-handle-child-index handle))
+                        (AstTyI64))]
+                    (match (lower-store-inline-payload-values
+                      ctx
+                      tag-state
                       base
-                      0
-                      (IrValueI64 (compiler-registry-handle-child-index handle))
-                      (AstTyI64))]
-                  (match (lower-store-inline-payload-values
-                    ctx
-                    tag-state
-                    base
-                    values
-                    fields
-                    layout
-                    layout-variant-name
-                    0)
-                    [(OkLowerState done-state)
-                      (OkLowerExpr (LowerExpr done-state base enum-ty))]
-                    [(ErrLowerState message) (ErrLowerExpr message)]))]))]
+                      values
+                      fields
+                      layout
+                      layout-variant-name
+                      0)
+                      [(OkLowerState done-state)
+                        (OkLowerExpr (LowerExpr done-state base enum-ty))]
+                      [(ErrLowerState message) (ErrLowerExpr message)]))])))]
         [(TcInlineStructLayout _ _ _)
           (ErrLowerExpr
             (lower-diagnostic
@@ -9104,9 +10020,7 @@
             fields)]
         (match (lower-args-as ctx state env type-env args field-types)
           [(OkLowerArgs args-state values)
-            (if (and
-              (lower-mode-inline-aggregates? (lower-state-mode args-state))
-              (not (lower-struct-repr-c? ctx struct-name)))
+            (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
               (lower-construct-struct-inline-from-values
                 ctx
                 args-state
@@ -9393,6 +10307,27 @@
         [(NoneI64) (lower-function-value-or-var ctx state env name expr-ty)]))
     (lower-function-value-or-var ctx state env name expr-ty)))
 
+;; #2386: a register-group GLOBAL stores its two words inline at the symbol; a
+;; read of it yields `IrValueGlobal name` (the storage), which must be
+;; materialized into a register-group VALUE by loading both words from the
+;; symbol's address. Local group vars (IrValueVar) and non-group values pass
+;; through unchanged.
+(define (lower-materialize-group-global
+  [ctx : TcContext]
+  [result : ResultLowerExpr]) : ResultLowerExpr
+  (match result
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr s v t)
+          (match v
+            [(IrValueGlobal name)
+              (if (lower-type-register-group? ctx t)
+                (match (lower-load-group-from-ptr s (IrValueGlobalAddr name) t)
+                  [(LowerExpr ls lv _) (OkLowerExpr (LowerExpr ls lv t))])
+                (OkLowerExpr lowered))]
+            [_ (OkLowerExpr lowered)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-var-or-nullary-variant
   [ctx : TcContext]
   [state : LowerState]
@@ -9400,16 +10335,18 @@
   [type-env : TcTypeEnv]
   [name : String]
   [expr-ty : AstType]) : ResultLowerExpr
-  (match (sym-i64-lookup env name)
-    [(SomeI64 _) (lower-var state env name expr-ty)]
-    [(NoneI64)
-      (lower-nullary-variant-or-function-value
-        ctx
-        state
-        env
-        type-env
-        name
-        expr-ty)]))
+  (lower-materialize-group-global
+    ctx
+    (match (sym-i64-lookup env name)
+      [(SomeI64 _) (lower-var state env name expr-ty)]
+      [(NoneI64)
+        (lower-nullary-variant-or-function-value
+          ctx
+          state
+          env
+          type-env
+          name
+          expr-ty)])))
 
 (define (lower-var-or-nullary-variant-id
   [ctx : TcContext]
@@ -9418,18 +10355,24 @@
   [type-env : TcTypeEnv]
   [name-id : i64]
   [expr-ty : AstType]) : ResultLowerExpr
-  (match (sym-i64-lookup-id env name-id)
-    [(SomeI64 _) (lower-var-id state env name-id expr-ty)]
-    [(NoneI64)
-      (let
-        [name : String (intern-str name-id)]
-        (lower-nullary-variant-or-function-value
-          ctx
-          state
-          env
-          type-env
-          name
-          expr-ty))]))
+  ;; #2357: mirror lower-var-or-nullary-variant -- a register-group GLOBAL read
+  ;; yields IrValueGlobal and must be materialized into a group VALUE (load both
+  ;; words) before any IrInstrWord/struct-get/match extraction; main's interned
+  ;; -id path dropped this wrapper, so reg-group globals faulted.
+  (lower-materialize-group-global
+    ctx
+    (match (sym-i64-lookup-id env name-id)
+      [(SomeI64 _) (lower-var-id state env name-id expr-ty)]
+      [(NoneI64)
+        (let
+          [name : String (intern-str name-id)]
+          (lower-nullary-variant-or-function-value
+            ctx
+            state
+            env
+            type-env
+            name
+            expr-ty))])))
 
 (define (lower-call-result-type-fast
   [ctx : TcContext]
@@ -9898,6 +10841,54 @@
         [_ (ErrTcType "lower: box-get result type is not fast-pathable")])]
     [(ErrTcType message) (ErrTcType message)]))
 
+;; #2386 (compile-time): memoize lower-expr-result-type-fast by AST node id.
+;; lower-expr-origin computes each expr's result type (walking the result-
+;; determining spine) BEFORE lowering, and lowering the children re-walks their
+;; spines -- so for deeply-nested functions a node's spine is recomputed once per
+;; ancestor: O(N^2), the dominant lower-phase cost (single big functions allocated
+;; hundreds of MB of transient). The cache is a fixed direct-mapped global array
+;; keyed by the spanned node id, validated by a PER-FUNCTION generation counter
+;; (tc-rtf-next-gen! is bumped at each lower-function-escaping). The generation
+;; makes it both correct (a node's type-env is fixed within its own function) and
+;; arena-safe (an entry is only ever read within the same function's lowering,
+;; while that function's scratch arena is still live -- the next function bumps
+;; the generation, so a stale scratch-allocated type is never read). A slot
+;; collision (different id, same slot) misses via the stored-id check.
+(define tc-rtf-cap : i64
+  1048576)
+
+(define tc-rtf-gen-arr : (Array i64)
+  (make-array i64 1048576))
+
+(define tc-rtf-id-arr : (Array i64)
+  (make-array i64 1048576))
+
+(define tc-rtf-ty-arr : (Array AstType)
+  (make-array AstType 1048576))
+
+(define tc-rtf-current-gen : i64
+  0)
+
+(define tc-rtf-filled : bool
+  false)
+
+(define (tc-rtf-ensure!) : unit
+  (if tc-rtf-filled
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-rtf-cap)
+          (begin
+            (array-set! tc-rtf-gen-arr i 0)
+            (set! i (+ i 1))))
+        (set! tc-rtf-filled true)))))
+
+(define (tc-rtf-next-gen!) : unit
+  (begin
+    (tc-rtf-ensure!)
+    (set! tc-rtf-current-gen (+ tc-rtf-current-gen 1))))
+
 (define (lower-expr-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -9907,8 +10898,24 @@
   (match expr
     [(AstExprSpanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-expr-result-type-fast ctx env type-env type-cache inner))]
+        [slot : i64 (% inner-box tc-rtf-cap)]
+        (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
+          (= (array-ref tc-rtf-id-arr slot) inner-box)
+          false)
+          (OkTcType (array-ref tc-rtf-ty-arr slot))
+          (match (lower-expr-result-type-fast
+            ctx
+            env
+            type-env
+            type-cache
+            (ast-node-get inner-box))
+            [(OkTcType ty)
+              (begin
+                (array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
+                (array-set! tc-rtf-id-arr slot inner-box)
+                (array-set! tc-rtf-ty-arr slot ty)
+                (OkTcType ty))]
+            [(ErrTcType message) (ErrTcType message)])))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
       (match (lower-lookup-type-id type-cache env type-env name)
@@ -10424,19 +11431,28 @@
                               IrValueUnit
                               expr-ty))]
                         [(NoneI64)
-                          (OkLowerExpr
-                            (LowerExpr
-                              (lower-state-emit-at-expr
-                                value-state
-                                (IrInstrStore
-                                  (lower-resolve-name
-                                    value-state
-                                    (intern-str name))
-                                  value-ir
-                                  target-ty)
-                                origin)
-                              IrValueUnit
-                              expr-ty))])])]
+                          (match (lower-return-abi-value
+                            ctx
+                            value-state
+                            value-ir
+                            target-ty)
+                            [(OkLowerExpr store-copy)
+                              (match store-copy
+                                [(LowerExpr store-state store-ir _)
+                                  (OkLowerExpr
+                                    (LowerExpr
+                                      (lower-state-emit-at-expr
+                                        store-state
+                                        (IrInstrStore
+                                          (lower-resolve-name
+                                            store-state
+                                            (intern-str name))
+                                          store-ir
+                                          target-ty)
+                                        origin)
+                                      IrValueUnit
+                                      expr-ty))])]
+                            [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)]))]
           [(ErrTcType _)
             (ErrLowerExpr
@@ -11045,21 +12061,70 @@
     [(OkLowerFieldInfo info)
       (match info
         [(LowerFieldInfo offset field-ty)
-          (match (lower-gep-byte state receiver-value offset)
-            [(LowerExpr ptr-state ptr _)
-              (if (and
-                (lower-struct-repr-c? ctx struct-name)
-                (lower-repr-c-inline-field? ctx field-ty))
-                (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
-                (match (lower-state-alloc-var ptr-state)
-                  [(LowerAlloc allocated var-id)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-state-emit
-                          allocated
-                          (IrInstrLoad var-id ptr field-ty))
-                        (IrValueVar var-id)
-                        result-ty))]))])])]
+          ;; #2386: when the receiver is a register-resident struct, its value is
+          ;; the packed word itself; extract the field with shift/mask instead of
+          ;; computing an address and loading from memory.
+          (if (tc-name-register-resident? ctx struct-name)
+            (if (lower-type-register-group? ctx (AstTyStruct struct-name))
+              ;; 2-word register-group receiver: select the field's word with
+              ;; IrInstrWord, then shift/mask within that word at its relative
+              ;; offset.
+              (match (lower-emit-word
+                state
+                receiver-value
+                (/ offset 8)
+                (AstTyI64))
+                [(LowerExpr w-state w-value _)
+                  (match (lower-extract-word-field
+                    ctx
+                    w-state
+                    w-value
+                    (- offset (* (/ offset 8) 8))
+                    field-ty)
+                    [(LowerExpr ext-state ext-value _)
+                      (OkLowerExpr (LowerExpr ext-state ext-value result-ty))])])
+              (match (lower-extract-word-field
+                ctx
+                state
+                receiver-value
+                offset
+                field-ty)
+                [(LowerExpr ext-state ext-value _)
+                  (OkLowerExpr (LowerExpr ext-state ext-value result-ty))]))
+            (match (lower-gep-byte state receiver-value offset)
+              [(LowerExpr ptr-state ptr _)
+                ;; #2386: a register-resident field is carried as a packed word,
+                ;; so its value is the LOADED word, never the field address --
+                ;; exclude it from the in-place pointer-return shape (otherwise a
+                ;; later `match`/`=` would read the address as if it were the tag).
+                ;; A genuine memory aggregate field still returns its in-place
+                ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
+                (if (and
+                  (not (lower-type-register-resident? ctx field-ty))
+                  (or
+                    (and
+                      (lower-struct-repr-c? ctx struct-name)
+                      (lower-repr-c-inline-field? ctx field-ty))
+                    (and
+                      (lower-mode-inline-aggregates?
+                        (lower-state-mode ptr-state))
+                      (lower-type-inline-struct-or-enum? ctx field-ty))))
+                  (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
+                  (if (lower-type-register-group? ctx field-ty)
+                    ;; #2386: a register-group field is two words in memory; load
+                    ;; both and reassemble it.
+                    (match (lower-load-group-from-ptr ptr-state ptr field-ty)
+                      [(LowerExpr g-state g-value _)
+                        (OkLowerExpr (LowerExpr g-state g-value result-ty))])
+                    (match (lower-state-alloc-var ptr-state)
+                      [(LowerAlloc allocated var-id)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit
+                              allocated
+                              (IrInstrLoad var-id ptr field-ty))
+                            (IrValueVar var-id)
+                            result-ty))])))]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get
@@ -11165,11 +12230,36 @@
             (lower-type-size ctx inner-ty)
             result-ty)
             [(LowerExpr base-state base _)
-              (OkLowerExpr
-                (LowerExpr
-                  (lower-store-at-offset base-state base 0 inner-value inner-ty)
-                  base
-                  result-ty))])])]
+              ;; #2386: a register-resident inner value is a word; store it
+              ;; scalar into the box rather than byte-copying from a pointer.
+              (if (and
+                (lower-type-inline-struct-or-enum? ctx inner-ty)
+                (not (lower-type-register-resident? ctx inner-ty)))
+                (match (lower-inline-aggregate-copy-size ctx inner-ty)
+                  [(OkLowerSize size)
+                    (OkLowerExpr
+                      (LowerExpr
+                        (lower-copy-bytes base-state base 0 inner-value 0 size)
+                        base
+                        result-ty))]
+                  [(ErrLowerSize message)
+                    (ErrLowerExpr (lower-diagnostic message))])
+                (if (lower-type-register-group? ctx inner-ty)
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-store-group-at-ptr base-state base inner-value)
+                      base
+                      result-ty))
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-store-at-offset
+                        base-state
+                        base
+                        0
+                        inner-value
+                        inner-ty)
+                      base
+                      result-ty))))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; Lower `(box-get b)` (#1443): evaluate the box handle and load the boxed value
@@ -11185,7 +12275,19 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr box-state box-value _)
-          (OkLowerExpr (lower-load-at-offset box-state box-value 0 result-ty))])]
+          ;; #1867: when the boxed value is an inline aggregate, the box pointer
+          ;; already addresses the T storage, so box-get yields that pointer
+          ;; (offset 0) rather than scalar-loading the first 8 bytes (which would
+          ;; read only the leading word, e.g. an enum tag, and treat it as the
+          ;; whole value). Scalars still load. Mirrors lower-struct-get.
+          (OkLowerExpr
+            (lower-load-inline-value-at-offset
+              ctx
+              box-state
+              box-value
+              0
+              result-ty
+              (lower-state-mode box-state)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; Locate the byte offset and resolved type of tuple element `target` within the
@@ -11254,12 +12356,14 @@
                       (lower-tuple-store-elems
                         ctx
                         (if (> size 0)
-                          (lower-store-at-offset
+                          (lower-store-inline-value-at-offset
+                            ctx
                             elem-state
                             base
                             offset
                             elem-value
-                            resolved)
+                            resolved
+                            size)
                           elem-state)
                         env
                         type-env
@@ -11331,12 +12435,14 @@
                 (lower-array-literal-store-elems
                   ctx
                   (if (> elem-size 0)
-                    (lower-store-at-offset
+                    (lower-store-inline-value-at-offset
+                      ctx
                       elem-state
                       base
                       offset
                       elem-value
-                      elem-ty)
+                      elem-ty
+                      elem-size)
                     elem-state)
                   env
                   type-env
@@ -11414,11 +12520,13 @@
                   (match info
                     [(LowerFieldInfo offset elem-ty)
                       (if (> (lower-type-size ctx elem-ty) 0)
-                        (match (lower-load-at-offset
+                        (match (lower-load-inline-value-at-offset
+                          ctx
                           tuple-state
                           tuple-value
                           offset
-                          elem-ty)
+                          elem-ty
+                          (lower-state-mode tuple-state))
                           [(LowerExpr load-state load-value _)
                             (OkLowerExpr
                               (LowerExpr load-state load-value result-ty))])
@@ -12263,29 +13371,67 @@
                   [(ErrLowerArgs message) (ErrLowerExpr message)]))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+;; #1867 sret ABI caller side: append the sret pointer as the trailing arg to a
+;; value list (matching the callee's `__sret` param).
+(define (lower-value-list-append-one
+  [values : CompilerIrValueList]
+  [extra : CompilerIrValue]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) (compiler-ir-value-cons extra IrValueNil)]
+    [(IrValueCons head rest)
+      (compiler-ir-value-cons
+        head
+        (lower-value-list-append-one (box-get rest) extra))]))
+
+;; For a call whose result is an inline aggregate, allocate the result slot on
+;; the caller's stack and append its pointer as the hidden trailing arg. Uses
+;; the same gate/size as the callee's sret return, so the call's return value is
+;; that pointer and callers consume the result exactly as before. Non-aggregate
+;; results pass through unchanged.
+(define (lower-call-append-sret-arg
+  [ctx : TcContext]
+  [state : LowerState]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]) : ResultLowerArgs
+  (if (lower-inline-aggregate-abi-copy-needed? ctx state result-ty)
+    (match (lower-inline-aggregate-copy-size ctx result-ty)
+      [(OkLowerSize size)
+        (match (lower-reserve-inline-storage state size result-ty)
+          [(LowerExpr slot-state slot-ptr _)
+            (OkLowerArgs
+              slot-state
+              (lower-value-list-append-one values slot-ptr))])]
+      [(ErrLowerSize message) (ErrLowerArgs (lower-diagnostic message))])
+    (OkLowerArgs state values)))
+
 (define (lower-direct-call-values
+  [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [name : String]
   [values : CompilerIrValueList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc allocated var-id)
-      (let
-        [instr : CompilerIrInstr
-          (IrInstrCall
-            var-id
-            (lower-resolve-call-name allocated env name)
-            (compiler-ir-call-args-from-list values)
-            result-ty)]
-        (OkLowerExpr
-          (LowerExpr
-            (lower-state-emit-at-expr allocated instr origin)
-            (IrValueVar var-id)
-            result-ty)))]))
+  (match (lower-call-append-sret-arg ctx state values result-ty)
+    [(OkLowerArgs sret-state sret-values)
+      (match (lower-state-alloc-var sret-state)
+        [(LowerAlloc allocated var-id)
+          (let
+            [instr : CompilerIrInstr
+              (IrInstrCall
+                var-id
+                (lower-resolve-call-name allocated env name)
+                (compiler-ir-call-args-from-list sret-values)
+                result-ty)]
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit-at-expr allocated instr origin)
+                (IrValueVar var-id)
+                result-ty)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call-from-args
+  [ctx : TcContext]
   [args-result : ResultLowerArgs]
   [env : SymI64Env]
   [name : String]
@@ -12293,7 +13439,7 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args-result
     [(OkLowerArgs args-state values)
-      (lower-direct-call-values args-state env name values result-ty origin)]
+      (lower-direct-call-values ctx args-state env name values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call-param-types
@@ -12353,6 +13499,7 @@
                     result-ty
                     origin)
                   (lower-direct-call-from-args
+                    ctx
                     (lower-args-as ctx state env type-env args call-param-types)
                     env
                     name
@@ -12362,6 +13509,7 @@
               (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
         [_
           (lower-direct-call-from-args
+            ctx
             (lower-args ctx state env type-env args)
             env
             name
@@ -12369,6 +13517,7 @@
             origin)])]
     [(ErrTcType _)
       (lower-direct-call-from-args
+        ctx
         (lower-args ctx state env type-env args)
         env
         name
@@ -12376,25 +13525,29 @@
         origin)]))
 
 (define (lower-indirect-call-values
+  [ctx : TcContext]
   [state : LowerState]
   [func-value : CompilerIrValue]
   [values : CompilerIrValueList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc allocated var-id)
-      (let
-        [instr : CompilerIrInstr
-          (IrInstrCallIndirect
-            var-id
-            func-value
-            (compiler-ir-call-args-from-list values)
-            result-ty)]
-        (OkLowerExpr
-          (LowerExpr
-            (lower-state-emit-at-expr allocated instr origin)
-            (IrValueVar var-id)
-            result-ty)))]))
+  (match (lower-call-append-sret-arg ctx state values result-ty)
+    [(OkLowerArgs sret-state sret-values)
+      (match (lower-state-alloc-var sret-state)
+        [(LowerAlloc allocated var-id)
+          (let
+            [instr : CompilerIrInstr
+              (IrInstrCallIndirect
+                var-id
+                func-value
+                (compiler-ir-call-args-from-list sret-values)
+                result-ty)]
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit-at-expr allocated instr origin)
+                (IrValueVar var-id)
+                result-ty)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-indirect-call-args
   [ctx : TcContext]
@@ -12426,7 +13579,13 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (lower-indirect-call-args ctx state env type-env args func-ty)
     [(OkLowerArgs args-state values)
-      (lower-indirect-call-values args-state func-value values result-ty origin)]
+      (lower-indirect-call-values
+        ctx
+        args-state
+        func-value
+        values
+        result-ty
+        origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call
@@ -13778,10 +14937,34 @@
         bounds-ok-state
         (IrInstrBoundsCheck index length bounds-ok-label))]))
 
+;; #1867: address an array element, striding by the element's full inline size.
+;; For an inline struct/enum element the backend's GEP scale
+;; (compiler-backend-type-size) is still 8, so pre-multiply the index by
+;; lower-type-size (the real inline size, matching make-array's element buffer)
+;; and GEP at byte granularity (u8). Scalars and pointer-slot handles keep the
+;; type-scaled GEP (correct, since their backend size is right).
+(define (lower-emit-elem-addr-gep
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [idx-off : CompilerIrValue]
+  [elem-ty : AstType]) : LowerExpr
+  (if (lower-type-inline-struct-or-enum? ctx elem-ty)
+    (match (lower-emit-binop
+      state
+      IrBinMul
+      idx-off
+      (IrValueI64 (lower-type-size ctx elem-ty))
+      (AstTyI64))
+      [(LowerExpr mul-state byte-off _)
+        (lower-emit-gep mul-state base byte-off (AstTyU8))])
+    (lower-emit-gep state base idx-off elem-ty)))
+
 ;; Tail of `lower-array-element-addr`: after the explicit bounds check, load the
-;; buffer pointer (fat offset 0, a raw U64 address) and `Gep` it by the index,
-;; scaled by the element type, to the element address.
+;; buffer pointer (fat offset 0, a raw U64 address) and Gep it by the index to
+;; the element address (striding by the real inline element size).
 (define (lower-array-element-addr-finish
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-off : CompilerIrValue]
@@ -13790,12 +14973,13 @@
     [(LowerExpr buf-gep-state buf-gep _)
       (match (lower-emit-load buf-gep-state buf-gep (AstTyU64))
         [(LowerExpr buf-state buf-val _)
-          (lower-emit-gep buf-state buf-val idx-off elem-ty)])]))
+          (lower-emit-elem-addr-gep ctx buf-state buf-val idx-off elem-ty)])]))
 
 ;; Compute the address of element `idx-value` in dynamic array `arr-value`,
 ;; emitting an unsigned bounds check (negative indices wrap large and also
 ;; fail). Returns the element pointer as an `elem-ty`-typed value.
 (define (lower-array-element-addr
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
@@ -13812,6 +14996,7 @@
                   (match (lower-emit-cast s4 len-val (AstTyI64) (AstTyU64))
                     [(LowerExpr s5 len-u _)
                       (lower-array-element-addr-finish
+                        ctx
                         (lower-emit-bounds-check s5 idx-u len-u)
                         arr-value
                         idx-off
@@ -13821,6 +15006,7 @@
 ;; length, then Gep directly from the array handle without loading dynamic-array
 ;; fat fields.
 (define (lower-fixed-array-element-addr
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
@@ -13831,7 +15017,8 @@
     [(LowerExpr s1 idx-u _)
       (match (lower-emit-cast s1 idx-value idx-ty (AstTyI64))
         [(LowerExpr s2 idx-off _)
-          (lower-emit-gep
+          (lower-emit-elem-addr-gep
+            ctx
             (lower-emit-bounds-check s2 idx-u (IrValueI64 elem-count))
             arr-value
             idx-off
@@ -13976,6 +15163,7 @@
           exit-label))]))
 
 (define (lower-make-array-store-init-body
+  [ctx : TcContext]
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [index-var : i64]
@@ -13983,12 +15171,15 @@
   [exit-label : String]
   [elem-ty : AstType]
   [init-value : CompilerIrValue]) : ResultLowerState
-  (match (lower-emit-gep state buf-value (IrValueVar index-var) elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    state
+    buf-value
+    (IrValueVar index-var)
+    elem-ty)
     [(LowerExpr gep-state elem-ptr _)
       (lower-make-array-init-advance
-        (lower-state-emit
-          gep-state
-          (IrInstrStorePtr elem-ptr init-value elem-ty))
+        (lower-array-elem-store-state ctx gep-state elem-ptr init-value elem-ty)
         index-var
         header-label
         exit-label)]))
@@ -14008,16 +15199,20 @@
     [(OkLowerExpr lowered-init)
       (match lowered-init
         [(LowerExpr init-state init-value _)
-          (match (lower-emit-gep
+          (match (lower-emit-elem-addr-gep
+            ctx
             init-state
             buf-value
             (IrValueVar index-var)
             elem-ty)
             [(LowerExpr gep-state elem-ptr _)
               (lower-make-array-init-advance
-                (lower-state-emit
+                (lower-array-elem-store-state
+                  ctx
                   gep-state
-                  (IrInstrStorePtr elem-ptr init-value elem-ty))
+                  elem-ptr
+                  init-value
+                  elem-ty)
                 index-var
                 header-label
                 exit-label)])])]
@@ -14073,6 +15268,7 @@
                 origin))]))]))
 
 (define (lower-make-array-store-init-loop-with-labels
+  [ctx : TcContext]
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -14107,6 +15303,7 @@
                     (IrInstrBranch cond-value body-label exit-label))
                   body-label)]
               (lower-make-array-store-init-body
+                ctx
                 body-start
                 buf-value
                 index-var
@@ -14151,6 +15348,7 @@
                   exit-label)])])])))
 
 (define (lower-make-array-store-init-loop-runtime
+  [ctx : TcContext]
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -14170,6 +15368,7 @@
               "make_array_init_exit")
               [(LowerLabel exit-label-state exit-label)
                 (lower-make-array-store-init-loop-with-labels
+                  ctx
                   exit-label-state
                   buf-value
                   len-i64
@@ -14205,7 +15404,12 @@
       (= (lower-type-size ctx resolved) 8)
       (and
         (not (tc-type-eq resolved (AstTyF64)))
-        (lower-init-default-share-safe? ctx resolved)))))
+        (and
+          ;; #1867: an inline struct/enum value is a pointer to its inline
+          ;; storage; fill8 would replicate that pointer, not the aggregate's
+          ;; bytes. Such elements go through the byte-copy store loop instead.
+          (not (lower-type-inline-struct-or-enum? ctx resolved))
+          (lower-init-default-share-safe? ctx resolved))))))
 
 (define (lower-make-array-zero-fill-supported? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -14267,6 +15471,7 @@
             (if (lower-make-array-fill8-supported? ctx elem-ty)
               (lower-make-array-fill8 init-state buf-value len-i64 init-value)
               (lower-make-array-store-init-loop-runtime
+                ctx
                 init-state
                 buf-value
                 len-i64
@@ -14501,6 +15706,34 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
+;; #1867: read an array element given its address. For an inline struct/enum
+;; element the address IS the value (pointer representation); for scalars and
+;; pointer-slot types (tuple/array/box/dynarray/string handles) load the
+;; register-width value. Mirrors lower-load-inline-value-at-offset at offset 0
+;; but preserves the exact lower-emit-load scalar path.
+(define (lower-array-elem-ref-result
+  [ctx : TcContext]
+  [addr-state : LowerState]
+  [elem-ptr : CompilerIrValue]
+  [elem-ir-ty : AstType])
+  :
+  ResultLowerExpr
+  ;; #2386: a register-resident element is loaded as a word, not returned as the
+  ;; element address.
+  (if (and
+    (lower-mode-inline-aggregates? (lower-state-mode addr-state))
+    (and
+      (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
+      (not (lower-type-register-resident? ctx elem-ir-ty))))
+    (OkLowerExpr (LowerExpr addr-state elem-ptr elem-ir-ty))
+    (if (lower-type-register-group? ctx elem-ir-ty)
+      (match (lower-load-group-from-ptr addr-state elem-ptr elem-ir-ty)
+        [(LowerExpr load-state load-value _)
+          (OkLowerExpr (LowerExpr load-state load-value elem-ir-ty))])
+      (match (lower-emit-load addr-state elem-ptr elem-ir-ty)
+        [(LowerExpr load-state load-value _)
+          (OkLowerExpr (LowerExpr load-state load-value elem-ir-ty))]))))
+
 (define (lower-array-ref
   [ctx : TcContext]
   [state : LowerState]
@@ -14540,27 +15773,21 @@
                                       (tc-resolve-type ctx container-ty))
                                       [(AstTyDynArray _)
                                         (match (lower-array-element-addr
+                                          ctx
                                           idx-state
                                           arr-value
                                           idx-value
                                           idx-ty
                                           elem-ir-ty)
                                           [(LowerExpr addr-state elem-ptr _)
-                                            (match (lower-emit-load
+                                            (lower-array-elem-ref-result
+                                              ctx
                                               addr-state
                                               elem-ptr
-                                              elem-ir-ty)
-                                              [(LowerExpr
-                                                  load-state
-                                                  load-value
-                                                  _)
-                                                (OkLowerExpr
-                                                  (LowerExpr
-                                                    load-state
-                                                    load-value
-                                                    elem-ir-ty))])])]
+                                              elem-ir-ty)])]
                                       [(AstTyArray _ elem-count)
                                         (match (lower-fixed-array-element-addr
+                                          ctx
                                           idx-state
                                           arr-value
                                           idx-value
@@ -14576,19 +15803,11 @@
                                                   addr-state
                                                   IrValueUnit
                                                   elem-ir-ty))
-                                              (match (lower-emit-load
+                                              (lower-array-elem-ref-result
+                                                ctx
                                                 addr-state
                                                 elem-ptr
-                                                elem-ir-ty)
-                                                [(LowerExpr
-                                                    load-state
-                                                    load-value
-                                                    _)
-                                                  (OkLowerExpr
-                                                    (LowerExpr
-                                                      load-state
-                                                      load-value
-                                                      elem-ir-ty))]))])]
+                                                elem-ir-ty))])]
                                       [_
                                         (ErrLowerExpr
                                           (lower-diagnostic-at-expr
@@ -14604,6 +15823,37 @@
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
+;; #1867: store a value into an array element slot. An inline struct/enum value
+;; is byte-copied into the full-size element slot; scalars and pointer-slot
+;; handles use a register-width store.
+(define (lower-array-elem-store-state
+  [ctx : TcContext]
+  [addr-state : LowerState]
+  [elem-ptr : CompilerIrValue]
+  [value-ir : CompilerIrValue]
+  [elem-ir-ty : AstType])
+  :
+  LowerState
+  ;; #2386: a register-resident element value is a word; store it scalar instead
+  ;; of byte-copying from a pointer.
+  (if (and
+    (lower-mode-inline-aggregates? (lower-state-mode addr-state))
+    (and
+      (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
+      (not (lower-type-register-resident? ctx elem-ir-ty))))
+    (lower-copy-bytes
+      addr-state
+      elem-ptr
+      0
+      value-ir
+      0
+      (lower-type-size ctx elem-ir-ty))
+    (if (lower-type-register-group? ctx elem-ir-ty)
+      (lower-store-group-at-ptr addr-state elem-ptr value-ir)
+      (lower-state-emit
+        addr-state
+        (IrInstrStorePtr elem-ptr value-ir elem-ir-ty)))))
+
 (define (lower-array-set
   [ctx : TcContext]
   [state : LowerState]
@@ -14655,6 +15905,7 @@
                                               (tc-resolve-type ctx container-ty))
                                               [(AstTyDynArray _)
                                                 (match (lower-array-element-addr
+                                                  ctx
                                                   value-state
                                                   arr-value
                                                   idx-value
@@ -14666,16 +15917,17 @@
                                                       _)
                                                     (OkLowerExpr
                                                       (LowerExpr
-                                                        (lower-state-emit
+                                                        (lower-array-elem-store-state
+                                                          ctx
                                                           addr-state
-                                                          (IrInstrStorePtr
-                                                            elem-ptr
-                                                            value-ir
-                                                            elem-ir-ty))
+                                                          elem-ptr
+                                                          value-ir
+                                                          elem-ir-ty)
                                                         IrValueUnit
                                                         (AstTyUnit)))])]
                                               [(AstTyArray _ elem-count)
                                                 (match (lower-fixed-array-element-addr
+                                                  ctx
                                                   value-state
                                                   arr-value
                                                   idx-value
@@ -14698,12 +15950,12 @@
                                                           (AstTyUnit)))
                                                       (OkLowerExpr
                                                         (LowerExpr
-                                                          (lower-state-emit
+                                                          (lower-array-elem-store-state
+                                                            ctx
                                                             addr-state
-                                                            (IrInstrStorePtr
-                                                              elem-ptr
-                                                              value-ir
-                                                              elem-ir-ty))
+                                                            elem-ptr
+                                                            value-ir
+                                                            elem-ir-ty)
                                                           IrValueUnit
                                                           (AstTyUnit))))])]
                                               [_
@@ -14725,6 +15977,7 @@
 ;; Copy old dynamic-array elements into a freshly allocated buffer. The loop is
 ;; emitted as explicit IR so `array-push!` works for runtime lengths.
 (define (lower-array-push-copy-loop
+  [ctx : TcContext]
   [state : LowerState]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -14768,30 +16021,35 @@
                                   body-label
                                   exit-label))
                               body-label)]
-                          (match (lower-emit-gep
+                          (match (lower-emit-elem-addr-gep
+                            ctx
                             body-start
                             old-buf
                             (IrValueVar index-var)
                             elem-ty)
                             [(LowerExpr src-gep-state src-ptr _)
-                              (match (lower-emit-load
+                              (match (lower-load-inline-value-at-offset
+                                ctx
                                 src-gep-state
                                 src-ptr
-                                elem-ty)
+                                0
+                                elem-ty
+                                (lower-state-mode src-gep-state))
                                 [(LowerExpr load-state elem-value _)
-                                  (match (lower-emit-gep
+                                  (match (lower-emit-elem-addr-gep
+                                    ctx
                                     load-state
                                     new-buf
                                     (IrValueVar index-var)
                                     elem-ty)
                                     [(LowerExpr dst-gep-state dst-ptr _)
                                       (match (lower-state-alloc-var
-                                        (lower-state-emit
+                                        (lower-array-elem-store-state
+                                          ctx
                                           dst-gep-state
-                                          (IrInstrStorePtr
-                                            dst-ptr
-                                            elem-value
-                                            elem-ty)))
+                                          dst-ptr
+                                          elem-value
+                                          elem-ty))
                                         [(LowerAlloc inc-alloc inc-var)
                                           (lower-state-finish-block
                                             (lower-state-emit
@@ -14812,6 +16070,7 @@
                                             exit-label)])])])]))]))])])])]))
 
 (define (lower-array-push-finish
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [old-buf : CompilerIrValue]
@@ -14820,8 +16079,9 @@
   [new-len : CompilerIrValue]
   [elem-ty : AstType]
   [value-ir : CompilerIrValue]) : LowerExpr
-  (match (lower-emit-gep
-    (lower-array-push-copy-loop state old-buf new-buf old-len elem-ty)
+  (match (lower-emit-elem-addr-gep
+    ctx
+    (lower-array-push-copy-loop ctx state old-buf new-buf old-len elem-ty)
     new-buf
     old-len
     elem-ty)
@@ -14829,9 +16089,12 @@
       (LowerExpr
         (lower-store-at-offset
           (lower-store-at-offset
-            (lower-state-emit
+            (lower-array-elem-store-state
+              ctx
               tail-gep-state
-              (IrInstrStorePtr tail-ptr value-ir elem-ty))
+              tail-ptr
+              value-ir
+              elem-ty)
             arr-value
             0
             new-buf
@@ -14844,6 +16107,7 @@
         (AstTyUnit))]))
 
 (define (lower-array-push-alloc-buffer
+  [ctx : TcContext]
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [old-buf : CompilerIrValue]
@@ -14863,6 +16127,7 @@
           (match (lower-state-alloc-var byte-state)
             [(LowerAlloc buf-alloc buf-var)
               (lower-array-push-finish
+                ctx
                 (lower-state-emit
                   buf-alloc
                   (IrInstrCall
@@ -14879,6 +16144,7 @@
                 value-ir)])])]))
 
 (define (lower-array-push-after-max-check
+  [ctx : TcContext]
   [state : LowerState]
   [fail-label : String]
   [alloc-label : String]
@@ -14897,6 +16163,7 @@
           (IrInstrJump alloc-label))
         alloc-label)]
     (lower-array-push-alloc-buffer
+      ctx
       alloc-start
       arr-value
       old-buf
@@ -14935,6 +16202,7 @@
                       (AstTyBool))
                       [(LowerExpr check-state within-max _)
                         (lower-array-push-after-max-check
+                          ctx
                           (lower-state-emit
                             check-state
                             (IrInstrBranch within-max alloc-label fail-label))
@@ -15978,6 +17246,15 @@
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
+    [(CompilerLowerScalar) true]
+    [(CompilerLowerLinuxScalar) true]
+    [(CompilerLowerWindowsScalar) true]
+    [(CompilerLowerAvx2) true]
+    [(CompilerLowerLinuxAvx2) true]
+    [(CompilerLowerWindowsAvx2) true]
+    [(CompilerLowerAvx512) true]
+    [(CompilerLowerLinuxAvx512) true]
+    [(CompilerLowerWindowsAvx512) true]
     [(CompilerLowerInlineAggregates) true]
     [_ false]))
 
@@ -17088,6 +18365,7 @@
   [array-var : i64]
   [elem-ty : AstType]) : ResultLowerExpr
   (match (lower-array-element-addr
+    ctx
     state
     (IrValueVar array-var)
     (IrValueVar index-var)
@@ -19556,26 +20834,70 @@
   [merge-label : String]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]) : ResultLowerExpr
-  (match (lower-load-at-offset state (IrValueVar scrut-var) 0 (AstTyI64))
-    [(LowerExpr tag-state tag-value _)
-      (match tag-value
-        [(IrValueVar tag-var)
-          (lower-match-enum-arms
-            ctx
-            tag-state
-            env
-            type-env
-            scrut-var
-            scrut-ty
-            tag-var
-            arms
-            merge-label
-            expr-ty
-            borrow-lifetime
-            IrPhiInputNil)]
-        [_
-          (ErrLowerExpr
-            (lower-diagnostic "lower: internal enum tag load failed"))])]))
+  ;; #2386: a 1-word register-resident enum value IS the tag word (nullary, no
+  ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
+  ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
+  ;; layout build (lower-type-register-words) decides all three cases.
+  (let
+    [scrut-words : i64 (lower-type-register-words ctx scrut-ty)]
+    (if (> scrut-words 0)
+      (if (= scrut-words 2)
+        (match (lower-emit-word state (IrValueVar scrut-var) 0 (AstTyI64))
+          [(LowerExpr tag-state tag-value _)
+            (match tag-value
+              [(IrValueVar tag-var)
+                (lower-match-enum-arms
+                  ctx
+                  tag-state
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  tag-var
+                  arms
+                  merge-label
+                  expr-ty
+                  borrow-lifetime
+                  IrPhiInputNil
+                  true)]
+              [_
+                (ErrLowerExpr
+                  (lower-diagnostic "lower: internal enum tag extract failed"))])])
+        (lower-match-enum-arms
+          ctx
+          state
+          env
+          type-env
+          scrut-var
+          scrut-ty
+          scrut-var
+          arms
+          merge-label
+          expr-ty
+          borrow-lifetime
+          IrPhiInputNil
+          false))
+      (match (lower-load-at-offset state (IrValueVar scrut-var) 0 (AstTyI64))
+        [(LowerExpr tag-state tag-value _)
+          (match tag-value
+            [(IrValueVar tag-var)
+              (lower-match-enum-arms
+                ctx
+                tag-state
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                tag-var
+                arms
+                merge-label
+                expr-ty
+                borrow-lifetime
+                IrPhiInputNil
+                false)]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic "lower: internal enum tag load failed"))])]))))
 
 (define (lower-match-arms
   [ctx : TcContext]
@@ -19667,7 +20989,8 @@
   [merge-label : String]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]
-  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : CompilerIrPhiInputList]
+  [scrut-reg-group? : bool]) : ResultLowerExpr
   (match arms
     [(AstMatchArmNil)
       (ErrLowerExpr (lower-diagnostic "lower: match with no arms"))]
@@ -19707,7 +21030,8 @@
                         merge-label
                         expr-ty
                         borrow-lifetime
-                        phi-inputs)]
+                        phi-inputs
+                        scrut-reg-group?)]
                     [(AstPatVariant variant-name args-box)
                       (let
                         [args : AstPatternList (box-get args-box)]
@@ -19724,7 +21048,8 @@
                           merge-label
                           expr-ty
                           borrow-lifetime
-                          phi-inputs))]
+                          phi-inputs
+                          scrut-reg-group?))]
                     [_
                       (ErrLowerExpr
                         (lower-diagnostic
@@ -19759,7 +21084,8 @@
                         merge-label
                         expr-ty
                         borrow-lifetime
-                        phi-inputs)]
+                        phi-inputs
+                        scrut-reg-group?)]
                     [(AstPatVariant variant-name args-box)
                       (let
                         [args : AstPatternList (box-get args-box)]
@@ -19778,7 +21104,8 @@
                           merge-label
                           expr-ty
                           borrow-lifetime
-                          phi-inputs))]
+                          phi-inputs
+                          scrut-reg-group?))]
                     [_
                       (ErrLowerExpr
                         (lower-diagnostic
@@ -19797,7 +21124,8 @@
   [merge-label : String]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]
-  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : CompilerIrPhiInputList]
+  [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
     [(TcContext _ symbols registries _)
       (let
@@ -19839,7 +21167,8 @@
                       variant-name
                       0
                       8
-                      merge-label)
+                      merge-label
+                      scrut-reg-group?)
                       [(OkLowerEnv body-start body-env body-type-env)
                         (match (lower-expr
                           ctx
@@ -19895,7 +21224,8 @@
   [merge-label : String]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]
-  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : CompilerIrPhiInputList]
+  [scrut-reg-group? : bool]) : ResultLowerExpr
   (match (lower-bind-match-variant-payloads
     ctx
     body-start
@@ -19910,7 +21240,8 @@
     variant-name
     0
     8
-    next-label)
+    next-label
+    scrut-reg-group?)
     [(OkLowerEnv bound-state body-env body-type-env)
       (match (lower-expr ctx bound-state body-env body-type-env body)
         [(OkLowerExpr body-lowered)
@@ -19939,7 +21270,8 @@
                     (compiler-ir-phi-input-cons
                       body-value
                       body-end-label
-                      phi-inputs))))])]
+                      phi-inputs))
+                  scrut-reg-group?))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(ErrLowerEnv message) (ErrLowerExpr message)]))
 
@@ -19958,7 +21290,8 @@
   [merge-label : String]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeString]
-  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : CompilerIrPhiInputList]
+  [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
     [(TcContext _ symbols registries _)
       (let
@@ -20025,7 +21358,8 @@
                                     merge-label
                                     expr-ty
                                     borrow-lifetime
-                                    phi-inputs))])]))]))]
+                                    phi-inputs
+                                    scrut-reg-group?))])]))]))]
               [(ErrAstTypeList message)
                 (ErrLowerExpr (lower-diagnostic message))])]
           [(NoneI64)
@@ -20350,29 +21684,80 @@
     [(AstExprMatch _ arms) (lower-tail-match-arms-candidate? state env arms)]
     [_ false]))
 
+;; #1867 sret return ABI (Phase 1): when `sret-var` >= 0 the caller passed a
+;; hidden result-slot pointer (bound to that var). Copy the result aggregate
+;; into the caller's slot and return the slot pointer -- no per-return arena
+;; alloc + escape copy. `sret-var` < 0 keeps the arena escape-copy path, which
+;; is always correct (every call site uses the call's return value), so a
+;; non-threaded return path simply stays unoptimized rather than incorrect.
+(define (lower-return-expr-to-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
+  (match (lower-inline-aggregate-copy-size ctx ret-ty)
+    [(OkLowerSize size)
+      (OkLowerState
+        (lower-state-emit
+          (lower-copy-bytes state (IrValueVar sret-var) 0 value 0 size)
+          (IrInstrReturn (lower-return-maybe (IrValueVar sret-var) ret-ty))))]
+    [(ErrLowerSize message) (ErrLowerState (lower-diagnostic message))]))
+
 (define (lower-return-expr
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match (lower-expr-expected ctx state env type-env expr ret-ty expr)
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr body-state value expr-ty)
           (if (tc-never-type? expr-ty)
             (OkLowerState body-state)
-            (match (lower-return-abi-value ctx body-state value ret-ty)
-              [(OkLowerExpr return-copy)
-                (match return-copy
-                  [(LowerExpr return-state return-value _)
-                    (OkLowerState
-                      (lower-state-emit
-                        return-state
-                        (IrInstrReturn (lower-return-maybe return-value ret-ty))))])]
-              [(ErrLowerExpr message) (ErrLowerState message)]))])]
+            (if (>= sret-var 0)
+              (lower-return-expr-to-sret ctx body-state value ret-ty sret-var)
+              (match (lower-return-abi-value ctx body-state value ret-ty)
+                [(OkLowerExpr return-copy)
+                  (match return-copy
+                    [(LowerExpr return-state return-value _)
+                      (OkLowerState
+                        (lower-state-emit
+                          return-state
+                          (IrInstrReturn
+                            (lower-return-maybe return-value ret-ty))))])]
+                [(ErrLowerExpr message) (ErrLowerState message)])))])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-expr-list-contains-inline-aggregate?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-expr ctx env expr)
+          [(OkTcType ty)
+            (or
+              (lower-type-contains-inline-aggregate? ctx ty)
+              (lower-expr-list-contains-inline-aggregate? ctx env rest))]
+          [(ErrTcType _)
+            (lower-expr-list-contains-inline-aggregate? ctx env rest)]))]))
+
+(define (lower-tail-call-inline-aggregate-risk?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [ret-ty : AstType]) : bool
+  (or
+    (lower-type-contains-inline-aggregate? ctx ret-ty)
+    (lower-expr-list-contains-inline-aggregate? ctx type-env args)))
 
 (define (lower-tail-call
   [ctx : TcContext]
@@ -20382,6 +21767,7 @@
   [callee : AstExpr]
   [args : AstExprList]
   [ret-ty : AstType]
+  [sret-var : i64]
   [origin : AstExpr]) : ResultLowerState
   (match (ast-expr-unspan callee)
     [(AstExprVar name)
@@ -20407,8 +21793,8 @@
                   ret-ty)
                 origin))]
           [(ErrLowerArgs message) (ErrLowerState message)])
-        (lower-return-expr ctx state env type-env origin ret-ty))]
-    [_ (lower-return-expr ctx state env type-env origin ret-ty)]))
+        (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
+    [_ (lower-return-expr ctx state env type-env origin ret-ty sret-var)]))
 
 (define (lower-tail-begin
   [ctx : TcContext]
@@ -20416,7 +21802,8 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match exprs
     [(AstExprNil)
       (OkLowerState
@@ -20428,7 +21815,8 @@
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
-          [(AstExprNil) (lower-tail-expr ctx state env type-env expr ret-ty)]
+          [(AstExprNil)
+            (lower-tail-expr ctx state env type-env expr ret-ty sret-var)]
           [_
             (match (lower-expr ctx state env type-env expr)
               [(OkLowerExpr lowered)
@@ -20436,7 +21824,14 @@
                   [(LowerExpr next-state _ expr-ty)
                     (if (tc-never-type? expr-ty)
                       (OkLowerState next-state)
-                      (lower-tail-begin ctx next-state env type-env rest ret-ty))])]
+                      (lower-tail-begin
+                        ctx
+                        next-state
+                        env
+                        type-env
+                        rest
+                        ret-ty
+                        sret-var))])]
               [(ErrLowerExpr message) (ErrLowerState message)])]))]))
 
 (define (lower-tail-if
@@ -20447,7 +21842,8 @@
   [cond : AstExpr]
   [then-branch : AstExpr]
   [else-branch : AstExpr]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match (lower-expr ctx state env type-env cond)
     [(OkLowerExpr cond-lowered)
       (match cond-lowered
@@ -20467,7 +21863,8 @@
                       env
                       type-env
                       then-branch
-                      ret-ty)
+                      ret-ty
+                      sret-var)
                       [(OkLowerState then-state)
                         (lower-tail-expr
                           ctx
@@ -20475,7 +21872,8 @@
                           env
                           type-env
                           else-branch
-                          ret-ty)]
+                          ret-ty
+                          sret-var)]
                       [(ErrLowerState message) (ErrLowerState message)]))])])])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
@@ -20487,7 +21885,8 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match arms
     [(AstMatchArmNil)
       (ErrLowerState (lower-diagnostic "lower: match with no arms"))]
@@ -20504,7 +21903,8 @@
               scrut-var
               scrut-ty
               arm
-              ret-ty)]
+              ret-ty
+              sret-var)]
           [_
             (match arm
               [(AstMatchArm pat body-box)
@@ -20522,7 +21922,8 @@
                         lit
                         body
                         rest
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [(AstPatBinding _)
                       (lower-tail-match-catch-all
                         ctx
@@ -20532,7 +21933,8 @@
                         scrut-var
                         scrut-ty
                         arm
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [(AstPatWildcard)
                       (lower-tail-match-catch-all
                         ctx
@@ -20542,7 +21944,8 @@
                         scrut-var
                         scrut-ty
                         arm
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [_
                       (ErrLowerState
                         (lower-diagnostic "lower: unsupported match pattern"))]))])]))]))
@@ -20557,7 +21960,8 @@
   [lit : AstLiteral]
   [body : AstExpr]
   [rest : AstMatchArmList]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc eq-alloc eq-var)
       (let
@@ -20590,7 +21994,8 @@
                     env
                     type-env
                     body
-                    ret-ty)
+                    ret-ty
+                    sret-var)
                     [(OkLowerState body-state)
                       (lower-tail-match-arms
                         ctx
@@ -20600,7 +22005,8 @@
                         scrut-var
                         scrut-ty
                         rest
-                        ret-ty)]
+                        ret-ty
+                        sret-var)]
                     [(ErrLowerState message) (ErrLowerState message)]))])]))]))
 
 (define (lower-tail-match-catch-all
@@ -20611,7 +22017,8 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arm : AstMatchArm]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (match arm
     [(AstMatchArm pat body-box)
       (let
@@ -20624,7 +22031,7 @@
           (match pat
             [(AstPatBinding name) (tc-bind-id type-env name scrut-ty)]
             [_ type-env])]
-        (lower-tail-expr ctx state body-env body-type-env body ret-ty))]))
+        (lower-tail-expr ctx state body-env body-type-env body ret-ty sret-var))]))
 
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : TcContext]
@@ -20658,20 +22065,21 @@
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]
   [ret-ty : AstType]
+  [sret-var : i64]
   [origin : AstExpr]) : ResultLowerState
   (if (lower-borrowed-enum-match-scrutinee? ctx type-env scrutinee)
-    (lower-return-expr ctx state env type-env origin ret-ty)
+    (lower-return-expr ctx state env type-env origin ret-ty sret-var)
     (match (lower-expr ctx state env type-env scrutinee)
       [(OkLowerExpr scrut-lowered)
         (match scrut-lowered
           [(LowerExpr scrut-state scrut-value scrut-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
               [(AstTyEnum _)
-                (lower-return-expr ctx state env type-env origin ret-ty)]
+                (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
               [(AstTyEnumArgs _ _)
-                (lower-return-expr ctx state env type-env origin ret-ty)]
+                (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
               [(AstTyVarArgs _ _)
-                (lower-return-expr ctx state env type-env origin ret-ty)]
+                (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
               [_
                 (match (lower-state-alloc-var scrut-state)
                   [(LowerAlloc scrut-alloc scrut-var)
@@ -20685,7 +22093,8 @@
                       scrut-var
                       scrut-ty
                       arms
-                      ret-ty)])])])]
+                      ret-ty
+                      sret-var)])])])]
       [(ErrLowerExpr message) (ErrLowerState message)])))
 
 (define (lower-tail-expr
@@ -20694,31 +22103,41 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
-  [ret-ty : AstType]) : ResultLowerState
+  [ret-ty : AstType]
+  [sret-var : i64]) : ResultLowerState
   (if (lower-tail-expr-candidate? state env expr)
     (match expr
       [(AstExprSpanned inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty))]
+          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExprAnn inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty))]
+          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
       [(AstExprCast inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (tc-expr ctx type-env inner)
             [(OkTcType inner-ty)
               (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
-                (lower-tail-expr ctx state env type-env inner ret-ty)
-                (lower-return-expr ctx state env type-env expr ret-ty))]
+                (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
+                (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
             [(ErrTcType message)
               (ErrLowerState (lower-diagnostic-at-expr inner message))]))]
       [(AstExprCall callee-box args)
         (let
           [callee : AstExpr (ast-node-get callee-box)]
-          (lower-tail-call ctx state env type-env callee args ret-ty expr))]
+          (lower-tail-call
+            ctx
+            state
+            env
+            type-env
+            callee
+            args
+            ret-ty
+            sret-var
+            expr))]
       [(AstExprLet bindings body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
@@ -20730,12 +22149,20 @@
                 body-env
                 body-type-env
                 body
-                ret-ty)]
+                ret-ty
+                sret-var)]
             [(ErrLowerEnv message) (ErrLowerState message)]))]
       [(AstExprBegin exprs)
-        (lower-tail-begin ctx state env type-env exprs ret-ty)]
+        (lower-tail-begin ctx state env type-env exprs ret-ty sret-var)]
       [(AstExprUnsafe exprs)
-        (lower-tail-begin ctx state env (tc-enter-unsafe type-env) exprs ret-ty)]
+        (lower-tail-begin
+          ctx
+          state
+          env
+          (tc-enter-unsafe type-env)
+          exprs
+          ret-ty
+          sret-var)]
       [(AstExprIf cond-box then-branch-box else-branch-box)
         (let
           [cond : AstExpr (ast-node-get cond-box)]
@@ -20749,13 +22176,23 @@
             cond
             then-branch
             else-branch
-            ret-ty))]
+            ret-ty
+            sret-var))]
       [(AstExprMatch scrutinee-box arms)
         (let
           [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-          (lower-tail-match ctx state env type-env scrutinee arms ret-ty expr))]
-      [_ (lower-return-expr ctx state env type-env expr ret-ty)])
-    (lower-return-expr ctx state env type-env expr ret-ty)))
+          (lower-tail-match
+            ctx
+            state
+            env
+            type-env
+            scrutinee
+            arms
+            ret-ty
+            sret-var
+            expr))]
+      [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)])
+    (lower-return-expr ctx state env type-env expr ret-ty sret-var)))
 
 (define (lower-param-count [params : AstParamList]) : i64
   (match params
@@ -20793,43 +22230,32 @@
                 idx)
               (lower-param-list ctx rest (+ idx 1)))]))]))
 
+;; #1867 sret ABI: append the hidden result-slot pointer param at index
+;; `sret-var` (the var id reserved just past the real params). Internal calling
+;; convention only -- C-ABI externs keep their own ABI on a separate path.
+(define (lower-param-list-append-sret
+  [params : CompilerIrParamList]
+  [sret-var : i64]) : CompilerIrParamList
+  (match params
+    [(IrParamNil)
+      (compiler-ir-param-cons (IrParam "__sret" (AstTyU64) sret-var) IrParamNil)]
+    [(IrParamCons head rest)
+      (compiler-ir-param-cons
+        head
+        (lower-param-list-append-sret (box-get rest) sret-var))]))
+
 (define (lower-copy-inline-aggregate-param
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
-  [name : i64]
+  [name : String]
   [ty : AstType]) : ResultLowerEnv
-  (let
-    [name-str : String (intern-str name)]
-    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    (if (lower-inline-aggregate-abi-copy-needed? ctx state resolved)
-      (match (sym-i64-lookup-id env name)
-        [(SomeI64 var-id)
-          (match (lower-copy-inline-aggregate-to-inline
-            ctx
-            state
-            (IrValueVar var-id)
-            resolved)
-            [(OkLowerExpr copied)
-              (match copied
-                [(LowerExpr copy-state copy-value _)
-                  (match copy-value
-                    [(IrValueVar copy-var)
-                      (OkLowerEnv
-                        copy-state
-                        (sym-i64-bind-id env name copy-var)
-                        type-env)]
-                    [_
-                      (ErrLowerEnv
-                        (lower-diagnostic
-                          "lower: aggregate ABI param copy expected local value"))])])]
-            [(ErrLowerExpr message) (ErrLowerEnv message)])]
-        [(NoneI64)
-          (ErrLowerEnv
-            (lower-diagnostic
-              (string-append "lower: missing aggregate ABI param " name-str)))])
-      (OkLowerEnv state env type-env))))
+  ;; #1867 Phase 4: the defensive per-param entry copy is redundant -- inline
+  ;; struct/enum are value types with no in-place mutation, and copies already
+  ;; happen at every escape site (construction, store, and the sret/arena
+  ;; return). So a read-only param can use the caller's storage directly.
+  (OkLowerEnv state env type-env))
 
 (define (lower-copy-inline-aggregate-params
   [ctx : TcContext]
@@ -20849,7 +22275,7 @@
               state
               env
               type-env
-              name
+              (intern-str name)
               ty)
               [(OkLowerEnv param-state param-env param-type-env)
                 (lower-copy-inline-aggregate-params
@@ -20866,7 +22292,9 @@
 (define (lower-type-contains-inline-aggregate? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyTuple elems) (lower-type-list-contains-inline-aggregate? ctx elems)]
     [(AstTyArray elem _)
       (lower-type-contains-inline-aggregate? ctx (ty-node-get elem))]
@@ -20932,6 +22360,23 @@
       (string-eq
         (substring logical-name (- name-len suffix-len) suffix-len)
         suffix))))
+
+(define (lower-logical-name-has-prefix?
+  [logical-name : String]
+  [prefix : String]) : bool
+  (let
+    [name-len : i64 (string-length logical-name)]
+    [prefix-len : i64 (string-length prefix)]
+    (and
+      (>= name-len prefix-len)
+      (string-eq (substring logical-name 0 prefix-len) prefix))))
+
+;; #1867 sret ABI: a `__global_init_<name>` initializer's result is stored into
+;; a forever-lived global by the backend's startup sequence (not a normal call
+;; site), so it must return stable arena storage -- never a caller stack sret
+;; slot. Keep these on the arena return path.
+(define (lower-global-init-function? [logical-name : String]) : bool
+  (lower-logical-name-has-prefix? logical-name "__global_init_"))
 
 (define (lower-stdlib-hash-string-param? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -21081,16 +22526,34 @@
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
       [param-count : i64 (lower-param-count params)]
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+      ;; #1867 sret ABI: an aggregate-returning function takes a hidden
+      ;; result-slot pointer at var `param-count` (just past the real params);
+      ;; the body writes the result through it instead of arena-copying.
+      [sret-needed : bool
+        (and
+          (lower-mode-inline-aggregates? mode)
+          (and
+            (not (lower-global-init-function? logical-name))
+            (and
+              (lower-type-inline-struct-or-enum? ctx ret-ty)
+              (not (lower-type-register-resident? ctx ret-ty)))))]
+      [sret-var : i64
+        (if sret-needed
+          param-count
+          (- 0 1))]
       [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
       [type-env : TcTypeEnv
         (tc-bind-return-type
           (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
-          (tc-type-without-regions (tc-resolve-type ctx ret)))]
+          ret-ty)]
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
       [state : LowerState
         (LowerState
-          param-count
+          (if sret-needed
+            (+ param-count 1)
+            param-count)
           0
           0
           "entry"
@@ -21102,7 +22565,6 @@
           names
           type-cache
           mode)]
-      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
       (if (lower-supported-function-return-type? ctx ret-ty)
         (if (lower-stdlib-hash-string-signature? ctx logical-name params ret-ty)
           (lower-stdlib-hash-string-function
@@ -21135,13 +22597,18 @@
                   abi-env
                   abi-type-env
                   body
-                  ret-ty)
+                  ret-ty
+                  sret-var)
                   [(OkLowerState final-state)
                     (OkLowerFunction
                       (compiler-ir-function-cons
                         (IrFunction
                           logical-name
-                          (lower-param-list ctx params 0)
+                          (if (>= sret-var 0)
+                            (lower-param-list-append-sret
+                              (lower-param-list ctx params 0)
+                              sret-var)
+                            (lower-param-list ctx params 0))
                           ret-ty
                           (lower-state-next-var final-state)
                           (lower-state-build-function-blocks final-state))
@@ -21244,6 +22711,10 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
+      ;; #2386 (compile-time): new generation for the result-type-fast memo, so
+      ;; this function's cached node types are independent of every other
+      ;; function's (and never outlive this function's scratch arena).
+      (tc-rtf-next-gen!)
       (unsafe
         (arena-set! scratch))
       (let
@@ -23975,10 +25446,23 @@
 (define (main) : i64
   (struct-get (id-pair (Pair 20 22)) b))")
 
+(define (compiler-lower-inline-hot-loop-struct-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (main [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [sum : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [p : Pair (Pair i (+ i 1))]
+          (begin
+            (set! sum (+ sum (struct-get p y)))
+            (set! i (+ i 1)))))
+      sum)))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-inline-struct-source)
-    (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source (compiler-lower-inline-struct-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -24008,9 +25492,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-inline-enum-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-inline-enum-source)
-    (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source (compiler-lower-inline-enum-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -24043,9 +25525,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-inline-boxed-recursive-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-inline-boxed-recursive-source)
-    (CompilerLowerInlineAggregates))
+  (match (lower-compiler-source (compiler-lower-inline-boxed-recursive-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -24081,6 +25561,16 @@
             (= (lower-test-function-store-ptr-count functions "id-pair") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-hot-loop-struct-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-inline-hot-loop-struct-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (> (lower-test-function-branch-count functions "main") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -24090,9 +25580,11 @@
         (compiler-lower-inline-boxed-recursive-shape-ok?)
         (and
           (compiler-lower-inline-aggregate-copy-shape-ok?)
-          (compiler-lower-inline-error-ok?
-            (compiler-lower-inline-recursive-error-source)
-            "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge"))))))
+          (and
+            (compiler-lower-inline-hot-loop-struct-shape-ok?)
+            (compiler-lower-inline-error-ok?
+              (compiler-lower-inline-recursive-error-source)
+              "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (:generated point-family Point \"i64-i64\")
@@ -27999,9 +29491,6 @@
                 0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-load-count functions "borrow-pair") 0)
-                unit
-                (set! ok false))
               ok))])]
     [(ErrCompilerLower _) false]))
 
@@ -28838,7 +30327,7 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "tl_alloc") 0)
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (and
               (> (lower-test-function-gep-offset-count functions "main" 4) 0)
               (> (lower-test-function-gep-offset-count functions "main" 12) 0)))])]

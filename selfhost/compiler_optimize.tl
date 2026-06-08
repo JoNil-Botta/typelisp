@@ -1122,6 +1122,11 @@
         [(IrSomeValue value) (opt-collect-value-uses set value)]
         [(IrNoValue) set])]
     [(IrInstrPhi _ inputs _) (opt-collect-phi-uses set inputs)]
+    ;; #2386: register-group ops use their operands -- Pack uses each word value,
+    ;; Word uses the source group. Omitting these would let DCE drop a definition
+    ;; that feeds a Pack/Word.
+    [(IrInstrPack _ words _) (opt-collect-value-list-uses set words)]
+    [(IrInstrWord _ src _ _) (opt-collect-value-uses set src)]
     ;; `IrInstrAlloc` has no operand uses; `IrInstrJump` has none either.
     [_ set]))
 
@@ -1432,6 +1437,9 @@
         [(IrSomeValue value) (opt-collect-value-uses-array items value)]
         [(IrNoValue) unit])]
     [(IrInstrPhi _ inputs _) (opt-collect-phi-uses-array items inputs)]
+    ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
+    [(IrInstrPack _ words _) (opt-collect-value-list-uses-array items words)]
+    [(IrInstrWord _ src _ _) (opt-collect-value-uses-array items src)]
     [_ unit]))
 
 (define (opt-collect-instr-seq-uses-array
@@ -3371,6 +3379,22 @@
           (and
             (= ad bd)
             (and (opt-phi-input-list-eq ainputs binputs) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrPack ad awords aty)
+      (match b
+        [(IrInstrPack bd bwords bty)
+          (and
+            (= ad bd)
+            (and (opt-value-list-eq awords bwords) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrWord ad asrc ai aty)
+      (match b
+        [(IrInstrWord bd bsrc bi bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq asrc bsrc)
+              (and (= ai bi) (opt-type-eq aty bty))))]
         [_ false])]))
 
 (define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
@@ -3665,7 +3689,13 @@
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
-    [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]))
+    [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]
+    ;; #2386: register-group ops are plain defining instructions -- invalidate
+    ;; their dst, keep the instruction (no CSE key for them yet).
+    [(IrInstrPack dst _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrWord dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]))
 
 (define (opt-cse-instrs [table : OptExprTable] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
@@ -3873,7 +3903,13 @@
     [(IrInstrAlloc _ _) instr]
     [(IrInstrLaneId _ _ _) instr]
     [(IrInstrJump _) instr]
-    [(IrInstrPhi _ _ _) instr]))
+    [(IrInstrPhi _ _ _) instr]
+    ;; #2386: register-group ops carry value operands -- substitute copies into
+    ;; the packed words / the extracted source group.
+    [(IrInstrPack dst words ty)
+      (IrInstrPack dst (opt-copy-subst-value-list env words) ty)]
+    [(IrInstrWord dst src index ty)
+      (IrInstrWord dst (opt-copy-resolve env src) index ty)]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -3916,6 +3952,10 @@
     [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCallIndirectC dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
+    ;; #2386: register-group ops define their dst -- drop any stale copy fact for
+    ;; it (a reused var id must not trigger a later stale rewrite).
+    [(IrInstrPack dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrWord dst _ _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
 
 (defenum OptCopyResult
@@ -4054,7 +4094,10 @@
     [(IrInstrBranch _ _ _) (OptBoundsNil)]
     [(IrInstrReturn _) (OptBoundsNil)]
     [(IrInstrPhi _ _ _) (OptBoundsNil)]
-    [(IrInstrBoundsCheck _ _ _) facts]))
+    [(IrInstrBoundsCheck _ _ _) facts]
+    ;; #2386: register-group ops define their dst -- invalidate any bounds fact.
+    [(IrInstrPack dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrWord dst _ _ _) (opt-bounds-invalidate-var facts dst)]))
 
 (define (opt-bounds-instrs
   [facts : OptBoundsFacts]
@@ -6083,7 +6126,12 @@
     [(IrInstrPhi _ inputs _) (opt-verify-phi-input-uses defs doms inputs)]
     [(IrInstrAlloc _ _) (OkCompilerOptimizeVerify)]
     [(IrInstrLaneId _ _ _) (OkCompilerOptimizeVerify)]
-    [(IrInstrJump _) (OkCompilerOptimizeVerify)]))
+    [(IrInstrJump _) (OkCompilerOptimizeVerify)]
+    ;; #2386: verify register-group operands dominate their use.
+    [(IrInstrPack _ words _)
+      (opt-verify-value-list-uses defs doms words block-label pos)]
+    [(IrInstrWord _ src _ _)
+      (opt-verify-value-use defs doms src block-label pos)]))
 
 (define (opt-verify-instr-list-uses
   [defs : OptVarDefList]
@@ -7156,7 +7204,23 @@
     [(IrInstrEntryArgv _) (OptSsaInstrResult instr env next-var)]
     [(IrInstrEntryEnvp _) (OptSsaInstrResult instr env next-var)]
     [(IrInstrJump _) (OptSsaInstrResult instr env next-var)]
-    [(IrInstrPhi _ _ _) (OptSsaInstrResult instr env next-var)]))
+    [(IrInstrPhi _ _ _) (OptSsaInstrResult instr env next-var)]
+    ;; #2386: SSA-rename register-group ops -- rewrite operands with the current
+    ;; env, then rename the dst.
+    [(IrInstrPack dst words ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrPack out-dst (opt-ssa-rewrite-value-list env words) ty)
+            next-env
+            out-next)])]
+    [(IrInstrWord dst src index ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrWord out-dst (opt-ssa-rewrite-value env src) index ty)
+            next-env
+            out-next)])]))
 
 (define (opt-ssa-rename-instr-seq-from
   [facts : OptSsaFacts]
@@ -8116,7 +8180,11 @@
     [(IrInstrAlloc _ _) instr]
     [(IrInstrLaneId _ _ _) instr]
     [(IrInstrJump _) instr]
-    [(IrInstrPhi _ _ _) instr]))
+    [(IrInstrPhi _ _ _) instr]
+    ;; #2386: leave register-group ops un-substituted here; not propagating a
+    ;; global copy into their operands is always sound (original vars stay valid).
+    [(IrInstrPack _ _ _) instr]
+    [(IrInstrWord _ _ _ _) instr]))
 
 (define (opt-global-copy-instrs
   [facts : OptGlobalCopyFactTable]
@@ -11435,7 +11503,10 @@
     [(IrInstrAlloc _ _) instr]
     [(IrInstrAddrOf _ _) instr]
     [(IrInstrLaneId _ _ _) instr]
-    [(IrInstrJump _) instr]))
+    [(IrInstrJump _) instr]
+    ;; #2386: register-group ops carry no SCCP-constant operands to fold.
+    [(IrInstrPack _ _ _) instr]
+    [(IrInstrWord _ _ _ _) instr]))
 
 (define (opt-sccp-rewrite-instrs
   [env : OptSccpEnv]
@@ -11626,7 +11697,10 @@
     [(IrInstrStore _ _ _) (- 0 1)]
     [(IrInstrJump _) (- 0 1)]
     [(IrInstrBranch _ _ _) (- 0 1)]
-    [(IrInstrReturn _) (- 0 1)]))
+    [(IrInstrReturn _) (- 0 1)]
+    ;; #2386: register-group ops define their dst.
+    [(IrInstrPack dst _ _) dst]
+    [(IrInstrWord dst _ _ _) dst]))
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
@@ -12998,6 +13072,18 @@
         (opt-inline-census-value index census value)
         (box-get rest))]))
 
+(define (opt-inline-census-value-list
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [values : CompilerIrValueList]) : OptInlineCensus
+  (match values
+    [(IrValueNil) census]
+    [(IrValueCons value rest)
+      (opt-inline-census-value-list
+        index
+        (opt-inline-census-value index census value)
+        (box-get rest))]))
+
 (define (opt-inline-census-instr
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -13134,7 +13220,10 @@
     [(IrInstrJump _) census]
     [(IrInstrBranch cond _ _) (opt-inline-census-value index census cond)]
     [(IrInstrReturn maybe) (opt-inline-census-maybe-value index census maybe)]
-    [(IrInstrPhi _ inputs _) (opt-inline-census-phi-inputs index census inputs)]))
+    [(IrInstrPhi _ inputs _) (opt-inline-census-phi-inputs index census inputs)]
+    ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
+    [(IrInstrPack _ words _) (opt-inline-census-value-list index census words)]
+    [(IrInstrWord _ src _ _) (opt-inline-census-value index census src)]))
 
 (define (opt-inline-census-instr-seq-from
   [index : OptFunctionIndex]
@@ -14969,7 +15058,12 @@
     [(IrInstrJump _) state]
     [(IrInstrBranch cond _ _) (opt-reach-value index state cond)]
     [(IrInstrReturn maybe) (opt-reach-maybe-value index state maybe)]
-    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]))
+    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]
+    ;; #2386: register-group ops carry word-class scalar operands (vars/consts);
+    ;; lowering materializes any global/function reference into a var before
+    ;; packing, so the group operands themselves reach nothing new.
+    [(IrInstrPack _ _ _) state]
+    [(IrInstrWord _ src _ _) (opt-reach-value index state src)]))
 
 (define (opt-reach-instrs
   [index : OptFunctionIndex]

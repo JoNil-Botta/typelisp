@@ -1339,21 +1339,20 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains-alloc-size? asm 16)
+          ;; #1867 sret ABI: aggregate returns write the caller's sret slot
+          ;; instead of arena-allocating a 16-byte object.
+          (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler-backend-string-contains?
             asm
             ".globl _tl___enum_obj_Shape_Nothing\n")
-          (compiler-backend-string-contains?
-            asm
-            "    leaq _tl___enum_obj_Shape_Nothing(%rip), %rax\n")
           (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
           (compiler-backend-string-contains? asm "    movq $2, (%r10)\n")
-          (compiler-backend-string-contains? asm "    movq %rax, 8(%r10)\n")
           (not (compiler-backend-string-contains? asm "    call _tl_Point\n"))
-          (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n")))
-        (and
+          (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n"))
           (not (compiler-backend-string-contains? asm "    call _tl_Circle\n"))
-          (not (compiler-backend-string-contains? asm "    call _tl_Pair\n"))))]
+          (not (compiler-backend-string-contains? asm "    call _tl_Pair\n")))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
@@ -1374,16 +1373,18 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (> (compiler-backend-alloc-call-count asm) 0)
-          (compiler-backend-string-contains? asm "tl_alloc:")
-          (compiler-backend-string-contains-alloc-size? asm 16)
+          ;; #1867 sret ABI: struct/enum returns write the result through the
+          ;; caller-provided sret slot -- no per-return arena allocation.
+          (= (compiler-backend-alloc-call-count asm) 0)
+          (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler-backend-string-contains? asm "movq $7,")
           (compiler-backend-string-contains? asm "movq $1,")
           (compiler-backend-string-contains? asm "movq $2,")
           (compiler-backend-string-contains?
             asm
             ".L_tl_str_data_l2_13861_13991:")
-          (compiler-backend-string-contains? asm "    .quad 2\n"))
+          (compiler-backend-string-contains? asm "    .quad 2\n")
+          true)
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -1416,9 +1417,15 @@
     [init-symbol : String (string-append "_tl___global_init_" name)]
     (and
       (backend-and4
-        (compiler-backend-string-contains?
-          asm
-          (backend-cat3 "    .comm " symbol ", 8, 8\n"))
+        ;; #2386: a register-group global (e.g. `pair`) reserves 16 inline bytes;
+        ;; an 8-byte handle/scalar global reserves 8. Accept either.
+        (or
+          (compiler-backend-string-contains?
+            asm
+            (backend-cat3 "    .comm " symbol ", 8, 8\n"))
+          (compiler-backend-string-contains?
+            asm
+            (backend-cat3 "    .comm " symbol ", 16, 8\n")))
         (compiler-backend-string-contains?
           asm
           (backend-cat3 "    call " init-symbol "\n"))
@@ -1432,9 +1439,14 @@
         (compiler-backend-string-contains?
           asm
           (backend-cat3 "    movq " symbol "(%rip), %rax\n"))
-        (compiler-backend-string-contains?
-          asm
-          (backend-cat3 "    movq " symbol "(%rip), %r10\n"))))))
+        (or
+          (compiler-backend-string-contains?
+            asm
+            (backend-cat3 "    movq " symbol "(%rip), %r10\n"))
+          ;; #2386: a register-group global is read via its address.
+          (compiler-backend-string-contains?
+            asm
+            (backend-cat3 "    leaq " symbol "(%rip), %r10\n")))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
   (match (compiler-backend-emit-source
@@ -1593,7 +1605,9 @@
           (and
             (backend-and4
               (compiler-backend-string-contains? asm "tl_alloc:\n")
-              (>= (compiler-backend-alloc-call-count asm) 4)
+              ;; #1867 sret ABI: only the heap-backed (Array) closure return
+              ;; still allocates; Box/Pair/String returns use sret/static data.
+              (>= (compiler-backend-alloc-call-count asm) 1)
               (>= (compiler-backend-string-count asm "    call *%rax\n") 4)
               (not
                 (compiler-backend-string-contains?
@@ -1609,20 +1623,24 @@
       (compiler-backend-closure-inferred-shape-ok?)
       (compiler-backend-closure-aggregate-return-shape-ok?))))
 
-(define (compiler-backend-enum-match-ok?) : bool
+(define (compiler-backend-enum-match-ok?)
+  :
+  bool
+  ;; #2386: `Maybe (None) (Some i64)` is a 16-byte register-resident enum, so the
+  ;; tag is matched on a register-held word (no `cmpq $0, (%r10)` heap deref) and
+  ;; the payload is read from word1 rather than `8(%r10)`. Those memory-shape
+  ;; assertions are obsolete; what remains representation-agnostic is that the
+  ;; match lowers to comparison arms and neither variant is built via a runtime
+  ;; constructor call (None is an immediate tag, Some is an IrInstrPack).
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
     [(OkCompilerBackend asm)
-      (backend-and8
+      (backend-and4
         (or
           (compiler-backend-string-contains? asm "_tl_score")
           (compiler-backend-string-contains? asm "_tl_f"))
-        (compiler-backend-string-contains? asm ".Lf0_match_arm.")
-        (compiler-backend-string-contains? asm "    cmpq $0, (%r10)\n")
-        (compiler-backend-string-contains? asm "    jne .Lf0_match_next.2\n")
-        (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
+        (compiler-backend-string-contains? asm "_match_arm.")
         (not (compiler-backend-string-contains? asm "    call _tl_None\n"))
-        (not (compiler-backend-string-contains? asm "    call _tl_Some\n"))
-        true)]
+        (not (compiler-backend-string-contains? asm "    call _tl_Some\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; Scalar backend emission intentionally uses the stack-only plan by default for
@@ -1729,7 +1747,8 @@
                 2
                 (IrValueVar 0)
                 (AstTyI64)
-                (compiler-backend-program-index-build IrFunctionNil IrExternNil))
+                (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+                8)
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false])
               (match (compiler-backend-emit-cast
@@ -1758,7 +1777,8 @@
         0
         (IrValueI64 0)
         (AstTyI64)
-        index)
+        index
+        8)
         [(OkCompilerBackend asm) (string-eq asm "    xorq %r12, %r12\n")]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-mov
@@ -1766,7 +1786,8 @@
         1
         (IrValueI64 7)
         (AstTyI64)
-        index)
+        index
+        8)
         [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
         [(ErrCompilerBackend _) false]))))
 
@@ -2080,13 +2101,17 @@
     (compiler-backend-phi-same-home-assignments)
     (compiler-backend-phi-same-home-blocks)
     "join"
-    "entry")
+    "entry"
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+    0)
     [(OkCompilerBackend same-home)
       (match (compiler-backend-emit-phi-edge-copies
         CompilerRegAssignmentNil
         (compiler-backend-phi-cycle-blocks)
         "join"
-        "back")
+        "back"
+        (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+        0)
         [(OkCompilerBackend cycle)
           (and
             (string-eq same-home "")
@@ -2482,20 +2507,6 @@
     [(ErrCompilerBackend message)
       (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
-
-(define (compiler-backend-emit-source-inline-aggregates [src : String]) : ResultCompilerBackend
-  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-with-spans program spans)]
-    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
-
-(define (compiler-backend-emit-source-inline-aggregates-for-target
-  [src : String]
-  [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
-    [(OkCompilerLower program spans)
-      (compiler-backend-emit-program-with-spans-for-target program spans target)]
-    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
   (match (compiler-backend-emit-source src)
@@ -5438,8 +5449,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-inline-struct-ok?) : bool
-  (match (compiler-backend-emit-source-inline-aggregates
-    (compiler-lower-inline-struct-source))
+  (match (compiler-backend-emit-source (compiler-lower-inline-struct-source))
     [(OkCompilerBackend asm)
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
@@ -5450,8 +5460,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-inline-enum-ok?) : bool
-  (match (compiler-backend-emit-source-inline-aggregates
-    (compiler-lower-inline-enum-source))
+  (match (compiler-backend-emit-source (compiler-lower-inline-enum-source))
     [(OkCompilerBackend asm)
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
@@ -5462,13 +5471,32 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-inline-boxed-recursive-ok?) : bool
-  (match (compiler-backend-emit-source-inline-aggregates
+  (match (compiler-backend-emit-source
     (compiler-lower-inline-boxed-recursive-source))
     [(OkCompilerBackend asm)
       (backend-and4
         (= (compiler-backend-alloc-call-count asm) 1)
-        (compiler-backend-string-contains-alloc-size? asm 8)
+        ;; (box Nil) heap-allocates a full inline ListI64 value: tag (8) plus
+        ;; the largest variant payload Cons(i64, (Box ListI64)) = 16, so 24
+        ;; bytes. With default-inline aggregates (#1867) the box holds the
+        ;; inline value, not an 8-byte handle.
+        (compiler-backend-string-contains-alloc-size? asm 24)
         (compiler-backend-string-contains? asm "    leaq -")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-hot-loop-struct-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-lower-inline-hot-loop-struct-source))
+    [(OkCompilerBackend asm)
+      ;; #2386: the loop's 16-byte `Pair` is now a register-resident group (built
+      ;; and read in registers), so the loop body neither heap-allocates nor needs
+      ;; a stack-slot address for it.
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "main:\n")
+        true
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -5500,14 +5528,16 @@
 
 (define (compiler-backend-inline-aggregate-call-target-ok?
   [target : CompilerBackendTarget]) : bool
-  (match (compiler-backend-emit-source-inline-aggregates-for-target
+  (match (compiler-backend-emit-source-for-target
     (compiler-backend-inline-aggregate-call-source)
     target)
     [(OkCompilerBackend asm)
       (backend-and4
         (compiler-backend-string-contains? asm "main:\n")
         (>= (compiler-backend-string-count asm "    call ") 6)
-        (> (compiler-backend-alloc-call-count asm) 0)
+        ;; #1867 sret ABI: aggregate args/returns pass by caller slot pointer
+        ;; and inline construction is stack storage -- no arena allocation.
+        (= (compiler-backend-alloc-call-count asm) 0)
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -5545,7 +5575,9 @@
         (compiler-backend-inline-boxed-recursive-ok?)
         (and
           (compiler-backend-inline-aggregate-call-ok?)
-          (compiler-backend-inline-aggregate-copy-ok?))))))
+          (and
+            (compiler-backend-inline-aggregate-copy-ok?)
+            (compiler-backend-inline-hot-loop-struct-ok?)))))))
 
 (define (compiler-backend-test-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode

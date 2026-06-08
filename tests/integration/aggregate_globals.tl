@@ -27,17 +27,33 @@
 (define nested : Nested
   (Nested "ok" (Some 3)))
 
+(define (make-pair [x : i64] [y : i64]) : Pair
+  (Pair x y))
+
+(define (reset-pair!) : unit
+  (set! pair (make-pair 10 11)))
+
+(define (clobber-pair-stack [n : i64]) : i64
+  (let
+    [p : Pair (make-pair n (+ n 1))]
+    (if (<= n 0)
+      (+ (struct-get p x) (struct-get p y))
+      (+ (struct-get p x) (clobber-pair-stack (- n 1))))))
+
 (define (main) : i64
-  (+
+  (begin
+    (reset-pair!)
+    (clobber-pair-stack 24)
     (+
-      (+ (string-length greeting) (length cells))
-      (+ (struct-get pair x) (struct-get pair y)))
-    (+
-      (match choice
-        [(Some n) n]
-        [None 0])
       (+
-        (string-length (struct-get nested label))
-        (match (struct-get nested choice)
+        (+ (string-length greeting) (length cells))
+        (+ (struct-get pair x) (struct-get pair y)))
+      (+
+        (match choice
           [(Some n) n]
-          [None 0])))))
+          [None 0])
+        (+
+          (string-length (struct-get nested label))
+          (match (struct-get nested choice)
+            [(Some n) n]
+            [None 0]))))))

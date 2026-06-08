@@ -18,6 +18,11 @@
 
 (defenum CompilerRegLocation
   (CompilerRegRegister String)
+  ;; #2386: a 2-word register-group value lives in two GP registers (word0,
+  ;; word1). A group that cannot get two registers spills to a 16-byte slot,
+  ;; represented as the ordinary CompilerRegSpill (the backend reads the second
+  ;; word at offset-8 using the program word-count map).
+  (CompilerRegRegisterPair String String)
   (CompilerRegSpill i64))
 
 (defenum CompilerRegMaybeLocation
@@ -498,6 +503,8 @@
     [(IrInstrSyscall dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrPack dst _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrWord dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))
 
 (define (compiler-reg-var-type-array-set!
@@ -546,6 +553,10 @@
     [(IrInstrCall dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(IrInstrPhi dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrPack dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrWord dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [_ unit]))
 
@@ -1863,6 +1874,32 @@
             (CompilerRegSomeActive other)
             (CompilerRegSomeActive item))])]))
 
+;; #2386: furthest-ending active var that is NOT a 2-word register-group var.
+;; Spilling is only ever applied to scalar (single-register) vars; a group var
+;; occupies a register PAIR and cannot be evicted to a single 8-byte spill slot
+;; without corrupting word1, so it must never be chosen as a spill victim. Group
+;; vars that cannot get a pair are left unassigned (homed in their 16-byte stack
+;; region) before reaching here.
+(define (compiler-reg-active-max-non-group
+  [active : CompilerRegActiveList]
+  [group-vars : CompilerLiveI64Set]) : CompilerRegMaybeActive
+  (match active
+    [(CompilerRegActiveNil) CompilerRegNoActive]
+    [(CompilerRegActiveCons item rest)
+      (let
+        [rest-max : CompilerRegMaybeActive
+          (compiler-reg-active-max-non-group (box-get rest) group-vars)]
+        (match item
+          [(CompilerRegActive id _ _)
+            (if (compiler-live-set-contains? group-vars id)
+              rest-max
+              (match rest-max
+                [(CompilerRegNoActive) (CompilerRegSomeActive item)]
+                [(CompilerRegSomeActive other)
+                  (if (compiler-reg-active-before? item other)
+                    (CompilerRegSomeActive other)
+                    (CompilerRegSomeActive item))]))]))]))
+
 (define (compiler-reg-active-remove-var
   [active : CompilerRegActiveList]
   [var : i64]) : CompilerRegActiveList
@@ -1922,6 +1959,11 @@
     [(CompilerRegRegister left-reg)
       (match right
         [(CompilerRegRegister right-reg) (string-eq left-reg right-reg)]
+        [_ false])]
+    [(CompilerRegRegisterPair left-a left-b)
+      (match right
+        [(CompilerRegRegisterPair right-a right-b)
+          (and (string-eq left-a right-a) (string-eq left-b right-b))]
         [_ false])]
     [(CompilerRegSpill left-offset)
       (match right
@@ -2105,10 +2147,11 @@
 (define (compiler-reg-spill-at-interval
   [interval : CompilerRegInterval]
   [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignState
+  [assignments : CompilerRegAssignmentList]
+  [group-vars : CompilerLiveI64Set]) : CompilerRegAssignState
   (match interval
     [(CompilerRegInterval var _ end)
-      (match (compiler-reg-active-max active)
+      (match (compiler-reg-active-max-non-group active group-vars)
         [(CompilerRegNoActive)
           (CompilerRegAssignState
             active
@@ -2146,7 +2189,8 @@
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerRegMoveList]
   [intervals : CompilerRegIntervalList]
-  [types : CompilerRegVarTypes]) : CompilerRegAssignState
+  [types : CompilerRegVarTypes]
+  [group-vars : CompilerLiveI64Set]) : CompilerRegAssignState
   (match candidates
     [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
     [(CompilerRegIntervalCons interval rest)
@@ -2155,12 +2199,23 @@
           (let
             [expired : CompilerRegActiveList
               (compiler-reg-expire-active active start)]
-            (match (compiler-reg-coalesce-location
-              moves
-              assignments
-              intervals
-              types
-              var)
+            (match (if (compiler-live-set-contains? group-vars var)
+              ;; #2386 (C5): a register-group (2-word) var must NEVER be coalesced
+              ;; onto a single GP register. Coalescing runs before the group check
+              ;; below, and the only thing that stopped a group var from coalescing
+              ;; was an indirect scalar-type guard that holds only on -O2-normalized
+              ;; IR; on lighter -O1 IR an un-normalized Pack dst could coalesce onto
+              ;; one register and crash emit-pack. Forcing the NoLocation path makes
+              ;; group membership authoritative (-> register PAIR or 16-byte spill)
+              ;; independent of opt level. No-op at -O2 (the guard already excluded
+              ;; aggregate-typed vars from coalescing there).
+              (CompilerRegNoLocation)
+              (compiler-reg-coalesce-location
+                moves
+                assignments
+                intervals
+                types
+                var))
               [(CompilerRegSomeLocation location)
                 (match location
                   [(CompilerRegRegister reg)
@@ -2173,7 +2228,24 @@
                       (compiler-reg-assignment-insert assignments var location)
                       moves
                       intervals
-                      types)]
+                      types
+                      group-vars)]
+                  [(CompilerRegRegisterPair reg-a reg-b)
+                    ;; #2386: a coalesced register-pair occupies both registers for
+                    ;; the var's lifetime -- two active entries that expire together.
+                    (compiler-reg-assign-candidates
+                      (box-get rest)
+                      regs
+                      (compiler-reg-active-insert
+                        (compiler-reg-active-insert
+                          expired
+                          (CompilerRegActive var end reg-a))
+                        (CompilerRegActive var end reg-b))
+                      (compiler-reg-assignment-insert assignments var location)
+                      moves
+                      intervals
+                      types
+                      group-vars)]
                   [(CompilerRegSpill _)
                     (compiler-reg-assign-candidates
                       (box-get rest)
@@ -2182,40 +2254,92 @@
                       (compiler-reg-assignment-insert assignments var location)
                       moves
                       intervals
-                      types)])]
+                      types
+                      group-vars)])]
               [(CompilerRegNoLocation)
-                (if (=
-                  (compiler-reg-active-count expired)
-                  (compiler-reg-string-list-count regs))
-                  (match (compiler-reg-spill-at-interval
-                    interval
-                    expired
-                    assignments)
-                    [(CompilerRegAssignState next-active next-assignments)
+                (if (compiler-live-set-contains? group-vars var)
+                  ;; #2386: a 2-word register-group var needs TWO free GP registers
+                  ;; (a register pair). If two are not free it stays UNASSIGNED and
+                  ;; the backend homes both words in the var's dedicated 16-byte
+                  ;; stack region (group-word0-slot / group-word1-slot).
+                  (if (>=
+                    (-
+                      (compiler-reg-string-list-count regs)
+                      (compiler-reg-active-count expired))
+                    2)
+                    (let
+                      [reg-a : String
+                        (compiler-reg-first-free-register regs expired)]
+                      [active-a : CompilerRegActiveList
+                        (compiler-reg-active-insert
+                          expired
+                          (CompilerRegActive var end reg-a))]
+                      [reg-b : String
+                        (compiler-reg-first-free-register regs active-a)]
                       (compiler-reg-assign-candidates
                         (box-get rest)
                         regs
-                        next-active
-                        next-assignments
+                        (compiler-reg-active-insert
+                          active-a
+                          (CompilerRegActive var end reg-b))
+                        (compiler-reg-assignment-insert
+                          assignments
+                          var
+                          (CompilerRegRegisterPair reg-a reg-b))
                         moves
                         intervals
-                        types)])
-                  (let
-                    [reg : String
-                      (compiler-reg-first-free-register regs expired)]
+                        types
+                        group-vars))
+                    ;; Fewer than two GP registers free: a group var cannot live in
+                    ;; one register or an 8-byte spill slot, so leave it UNASSIGNED
+                    ;; (NoLocation). The backend then homes both words in the var's
+                    ;; reserved 16-byte stack region -- the same path stack-only mode
+                    ;; uses. (compiler-reg-spill-at-interval would hand it a single
+                    ;; register / 8-byte slot and crash emit-pack.)
                     (compiler-reg-assign-candidates
                       (box-get rest)
                       regs
-                      (compiler-reg-active-insert
-                        expired
-                        (CompilerRegActive var end reg))
-                      (compiler-reg-assignment-insert
-                        assignments
-                        var
-                        (CompilerRegRegister reg))
+                      expired
+                      assignments
                       moves
                       intervals
-                      types)))]))])]))
+                      types
+                      group-vars))
+                  (if (=
+                    (compiler-reg-active-count expired)
+                    (compiler-reg-string-list-count regs))
+                    (match (compiler-reg-spill-at-interval
+                      interval
+                      expired
+                      assignments
+                      group-vars)
+                      [(CompilerRegAssignState next-active next-assignments)
+                        (compiler-reg-assign-candidates
+                          (box-get rest)
+                          regs
+                          next-active
+                          next-assignments
+                          moves
+                          intervals
+                          types
+                          group-vars)])
+                    (let
+                      [reg : String
+                        (compiler-reg-first-free-register regs expired)]
+                      (compiler-reg-assign-candidates
+                        (box-get rest)
+                        regs
+                        (compiler-reg-active-insert
+                          expired
+                          (CompilerRegActive var end reg))
+                        (compiler-reg-assignment-insert
+                          assignments
+                          var
+                          (CompilerRegRegister reg))
+                        moves
+                        intervals
+                        types
+                        group-vars))))]))])]))
 
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalList]
@@ -2380,6 +2504,216 @@
               (compiler-live-set-insert ineligible var)
               ineligible))])]))
 
+;; #2386: the set of 2-word register-group vars in a function -- those defined by
+;; IrInstrPack and those read by IrInstrWord (the group value being extracted),
+;; closed over Mov/Phi copies. These vars need TWO general-purpose registers.
+(define (compiler-reg-group-vars-instr
+  [set : CompilerLiveI64Set]
+  [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (match instr
+    [(IrInstrPack dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrWord _ src _ _)
+      (match src
+        [(IrValueVar v) (compiler-live-set-insert set v)]
+        [_ set])]
+    [_ set]))
+
+(define (compiler-reg-group-vars-instrs
+  [set : CompilerLiveI64Set]
+  [instrs : CompilerIrInstrList]) : CompilerLiveI64Set
+  (match instrs
+    [(IrInstrNil) set]
+    [(IrInstrCons instr rest)
+      (compiler-reg-group-vars-instrs
+        (compiler-reg-group-vars-instr set instr)
+        (box-get rest))]))
+
+(define (compiler-reg-group-vars-blocks
+  [set : CompilerLiveI64Set]
+  [blocks : CompilerIrBlockList]) : CompilerLiveI64Set
+  (match blocks
+    [(IrBlockNil) set]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-group-vars-blocks
+            (compiler-reg-group-vars-instrs
+              set
+              (compiler-ir-instr-seq-to-list instrs))
+            (box-get rest))])]))
+
+;; #2386: a Phi merging group values, or a Mov copying one, must mark its dst (and
+;; the other endpoints) as a group var too -- otherwise the merged value gets a
+;; single register and word1 is dropped. Group-ness flows both ways across these
+;; copies, so we close the seed set over them to a fixpoint below.
+(define (compiler-reg-phi-inputs-any-in-set?
+  [set : CompilerLiveI64Set]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons value _ rest)
+      (match value
+        [(IrValueVar v)
+          (if (compiler-live-set-contains? set v)
+            true
+            (compiler-reg-phi-inputs-any-in-set? set (box-get rest)))]
+        [_ (compiler-reg-phi-inputs-any-in-set? set (box-get rest))])]))
+
+(define (compiler-reg-phi-inputs-insert-all
+  [set : CompilerLiveI64Set]
+  [inputs : CompilerIrPhiInputList]) : CompilerLiveI64Set
+  (match inputs
+    [(IrPhiInputNil) set]
+    [(IrPhiInputCons value _ rest)
+      (let
+        [next : CompilerLiveI64Set
+          (match value
+            [(IrValueVar v) (compiler-live-set-insert set v)]
+            [_ set])]
+        (compiler-reg-phi-inputs-insert-all next (box-get rest)))]))
+
+(define (compiler-reg-group-vars-propagate-instr
+  [set : CompilerLiveI64Set]
+  [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (match instr
+    [(IrInstrMov dst src _)
+      (match src
+        [(IrValueVar v)
+          (if (or
+            (compiler-live-set-contains? set dst)
+            (compiler-live-set-contains? set v))
+            (compiler-live-set-insert (compiler-live-set-insert set dst) v)
+            set)]
+        [_ set])]
+    [(IrInstrPhi dst inputs _)
+      (if (or
+        (compiler-live-set-contains? set dst)
+        (compiler-reg-phi-inputs-any-in-set? set inputs))
+        (compiler-reg-phi-inputs-insert-all
+          (compiler-live-set-insert set dst)
+          inputs)
+        set)]
+    [_ set]))
+
+;; #2386: iterate the instruction SEQ in place by index. The fixpoint re-runs the
+;; propagation pass once per round; materializing each block's instr-seq to a list
+;; every round (compiler-ir-instr-seq-to-list) allocated O(rounds * instrs) of
+;; transient list nodes per function, which on the largest functions overflowed
+;; the per-function scratch arena into a second chunk -- enough to expose the
+;; arena rewind's latent reuse hazard and corrupt later emission. Reading the seq
+;; by index allocates nothing.
+(define (compiler-reg-group-vars-propagate-seq
+  [set : CompilerLiveI64Set]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerLiveI64Set
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    set
+    (compiler-reg-group-vars-propagate-seq
+      (compiler-reg-group-vars-propagate-instr
+        set
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (compiler-reg-group-vars-propagate-blocks
+  [set : CompilerLiveI64Set]
+  [blocks : CompilerIrBlockList]) : CompilerLiveI64Set
+  (match blocks
+    [(IrBlockNil) set]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-group-vars-propagate-blocks
+            (compiler-reg-group-vars-propagate-seq set instrs 0)
+            (box-get rest))])]))
+
+(define (compiler-reg-group-vars-fixpoint
+  [set : CompilerLiveI64Set]
+  [blocks : CompilerIrBlockList]) : CompilerLiveI64Set
+  (let
+    [next : CompilerLiveI64Set
+      (compiler-reg-group-vars-propagate-blocks set blocks)]
+    (if (= (compiler-live-set-count next) (compiler-live-set-count set))
+      next
+      (compiler-reg-group-vars-fixpoint next blocks))))
+
+;; #2386: program-wide aggregate-type-name -> machine-word count map, mirroring
+;; CompilerBackendProgramIndex.group-word-counts. The backend sets this once
+;; before per-function planning (compiler-reg-set-group-counts!). It lets the
+;; register allocator recognise a 2-word register-group value by its TYPE even
+;; when this function contains no IrInstrPack that produced it -- e.g. the result
+;; of a call returning a group, a group-typed parameter, or a Mov of a group.
+;; Without it such a var is mis-classified as an 8-byte handle (see
+;; compiler-reg-handle-type?), gets a single GP register, and emit-group-store
+;; writes both words into that one register -- silently dropping word1. (At -O2
+;; these tiny callees are inlined so the standalone pattern rarely survives; at
+;; -O1 it is pervasive.) Self-tests never set it, so the map stays empty and the
+;; structural Pack/Word seeding below is unaffected.
+(define compiler-reg-group-counts : StringI64Map
+  (string-i64-map-with-capacity 8))
+
+(define (compiler-reg-set-group-counts! [counts : StringI64Map]) : unit
+  (set! compiler-reg-group-counts counts))
+
+;; The aggregate type name a value carries (mirror of
+;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
+(define (compiler-reg-aggregate-type-name [ty : AstType]) : String
+  (match ty
+    [(AstTyStruct name) name]
+    [(AstTyStructArgs name _) name]
+    [(AstTyEnum name) name]
+    [(AstTyEnumArgs name _) name]
+    [(AstTyRegion _ inner)
+      (compiler-reg-aggregate-type-name (ty-node-get inner))]
+    [_ ""]))
+
+;; True when a var's type is a >=2-word register-group per the program map.
+(define (compiler-reg-type-register-group? [ty : AstType]) : bool
+  (let
+    [name : String (compiler-reg-aggregate-type-name ty)]
+    (if (string-eq name "")
+      false
+      (match (string-i64-map-get compiler-reg-group-counts name)
+        [(StringI64MapFound count) (> count 1)]
+        [(StringI64MapMissing) false]))))
+
+;; Seed every var whose TYPE is a 2-word register-group (the type-based group
+;; vars the structural Pack/Word scan misses).
+(define (compiler-reg-group-vars-from-types
+  [types : CompilerRegVarTypeList]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match types
+    [(CompilerRegVarTypeNil) set]
+    [(CompilerRegVarTypeCons item rest)
+      (match item
+        [(CompilerRegVarType var ty)
+          (compiler-reg-group-vars-from-types
+            (box-get rest)
+            (if (compiler-reg-type-register-group? ty)
+              (compiler-live-set-insert set var)
+              set))])]))
+
+(define (compiler-reg-function-group-vars
+  [func : CompilerIrFunction]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-reg-group-vars-fixpoint
+        (compiler-reg-group-vars-from-types
+          types
+          (compiler-reg-group-vars-blocks (compiler-live-set-empty) blocks))
+        blocks)]))
+
+;; #2386: whether a function has ANY register-group var (structural OR type-based,
+;; e.g. a group-typed call result/param). The backend uses this to reserve the
+;; word1 stack region for stack-homed groups; a type-based group var the structural
+;; scan misses would otherwise write word1 below the allocated frame (clobbered by
+;; an intervening call's pushed return address / callee frame).
+(define (compiler-reg-function-has-group-vars?
+  [func : CompilerIrFunction]
+  [types : CompilerRegVarTypeList]) : bool
+  (> (compiler-live-set-count (compiler-reg-function-group-vars func types)) 0))
+
 ;; Shared linear-scan body: assign the integer pool, then XMM, then vector, then
 ;; mask registers over the given intervals/ineligible set.
 (define (compiler-reg-plan-from
@@ -2390,6 +2724,8 @@
   [ineligible : CompilerLiveI64Set]) : CompilerRegPlan
   (let
     [moves : CompilerRegMoveList (compiler-reg-function-moves func)]
+    [group-vars : CompilerLiveI64Set
+      (compiler-reg-function-group-vars func types)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     (match (compiler-reg-assign-candidates
@@ -2399,7 +2735,8 @@
       CompilerRegAssignmentNil
       moves
       intervals
-      type-info)
+      type-info
+      group-vars)
       [(CompilerRegAssignState _ integer-assignments)
         (match (compiler-reg-assign-candidates
           (compiler-reg-candidates intervals type-info ineligible true)
@@ -2408,7 +2745,8 @@
           integer-assignments
           moves
           intervals
-          type-info)
+          type-info
+          (compiler-live-set-empty))
           [(CompilerRegAssignState _ scalar-assignments)
             (match vector-mask-defs
               [(CompilerLiveUseDef vector-vars mask-vars)
@@ -2502,6 +2840,7 @@
     [(CompilerRegSomeLocation location)
       (match location
         [(CompilerRegRegister found) (string-eq found reg)]
+        [(CompilerRegRegisterPair a b) (or (string-eq a reg) (string-eq b reg))]
         [_ false])]
     [_ false]))
 
@@ -2537,6 +2876,7 @@
     [(CompilerRegSomeLocation location)
       (match location
         [(CompilerRegRegister _) true]
+        [(CompilerRegRegisterPair _ _) true]
         [_ false])]
     [_ false]))
 

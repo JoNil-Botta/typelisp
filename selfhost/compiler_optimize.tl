@@ -8493,6 +8493,14 @@
 (define (opt-loop-body-contains-id? [body : OptLoopBody] [id : i64]) : bool
   (opt-loop-body-member-array-contains-id? (struct-get body members) id))
 
+(define (opt-loop-body-label-member?
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [label : String]) : bool
+  (match (opt-cfg-index-id index label)
+    [(OptSomeI64 id) (opt-loop-body-contains-id? body id)]
+    [(OptNoI64) false]))
+
 (define (opt-loop-body-current-blocks-from
   [body : OptLoopBody]
   [index : OptCfgIndex]
@@ -9336,39 +9344,30 @@
   (opt-induction-find-update-instr-seq-from instrs 0 phi-var next-var ty))
 
 (define (opt-induction-find-update-blocks
-  [body : OptLabelSet]
-  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
   [phi-var : i64]
   [next-var : i64]
   [ty : AstType]) : OptMaybeI64
-  (match blocks
+  (match body-blocks
     [(IrBlockNil) (OptNoI64)]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock label instrs)
-          (if (opt-label-contains body label)
-            (match (opt-induction-find-update-instr-seq
-              instrs
-              phi-var
-              next-var
-              ty)
-              [(OptSomeI64 step) (OptSomeI64 step)]
-              [(OptNoI64)
-                (opt-induction-find-update-blocks
-                  body
-                  (box-get rest)
-                  phi-var
-                  next-var
-                  ty)])
-            (opt-induction-find-update-blocks
-              body
-              (box-get rest)
-              phi-var
-              next-var
-              ty))])]))
+        [(IrBlock _ instrs)
+          (match (opt-induction-find-update-instr-seq
+            instrs
+            phi-var
+            next-var
+            ty)
+            [(OptSomeI64 step) (OptSomeI64 step)]
+            [(OptNoI64)
+              (opt-induction-find-update-blocks
+                (box-get rest)
+                phi-var
+                next-var
+                ty)])])]))
 
 (define (opt-induction-fact-from-phi
-  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : String]
   [instr : CompilerIrInstr]) : OptMaybeInductionFact
@@ -9381,8 +9380,7 @@
           (opt-natural-loop-latch loop))
           [(OptSomeInductionPhiInputs start next-var)
             (match (opt-induction-find-update-blocks
-              (opt-natural-loop-body loop)
-              blocks
+              body-blocks
               phi-var
               next-var
               ty)
@@ -9395,20 +9393,24 @@
     [_ (OptNoInductionFact)]))
 
 (define (opt-induction-find-fact-instrs
-  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : String]
   [instrs : CompilerIrInstrList]) : OptMaybeInductionFact
   (match instrs
     [(IrInstrNil) (OptNoInductionFact)]
     [(IrInstrCons instr rest)
-      (match (opt-induction-fact-from-phi blocks loop preheader instr)
+      (match (opt-induction-fact-from-phi body-blocks loop preheader instr)
         [(OptSomeInductionFact fact) (OptSomeInductionFact fact)]
         [(OptNoInductionFact)
-          (opt-induction-find-fact-instrs blocks loop preheader (box-get rest))])]))
+          (opt-induction-find-fact-instrs
+            body-blocks
+            loop
+            preheader
+            (box-get rest))])]))
 
 (define (opt-induction-find-fact-instr-seq-from
-  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : String]
   [instrs : CompilerIrInstrSeq]
@@ -9416,35 +9418,35 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptNoInductionFact)
     (match (opt-induction-fact-from-phi
-      blocks
+      body-blocks
       loop
       preheader
       (compiler-ir-instr-seq-ref instrs index))
       [(OptSomeInductionFact fact) (OptSomeInductionFact fact)]
       [(OptNoInductionFact)
         (opt-induction-find-fact-instr-seq-from
-          blocks
+          body-blocks
           loop
           preheader
           instrs
           (+ index 1))])))
 
 (define (opt-induction-find-fact-instr-seq
-  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : String]
   [instrs : CompilerIrInstrSeq]) : OptMaybeInductionFact
-  (opt-induction-find-fact-instr-seq-from blocks loop preheader instrs 0))
+  (opt-induction-find-fact-instr-seq-from body-blocks loop preheader instrs 0))
 
 (define (opt-induction-find-fact
-  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : String]) : OptMaybeInductionFact
-  (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
+  (match (opt-cfg-find-block body-blocks (opt-natural-loop-header loop))
     [(OptSomeBlock block)
       (match block
         [(IrBlock _ instrs)
-          (opt-induction-find-fact-instr-seq blocks loop preheader instrs)])]
+          (opt-induction-find-fact-instr-seq body-blocks loop preheader instrs)])]
     [(OptNoBlock) (OptNoInductionFact)]))
 
 (define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
@@ -9482,19 +9484,15 @@
 (define (opt-induction-blocker-instr-seq? [instrs : CompilerIrInstrSeq]) : bool
   (opt-induction-blocker-instr-seq-from? instrs 0))
 
-(define (opt-induction-loop-blocked?
-  [body : OptLabelSet]
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
+(define (opt-induction-loop-blocked? [body-blocks : CompilerIrBlockList]) : bool
+  (match body-blocks
     [(IrBlockNil) false]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock label instrs)
-          (if (and
-            (opt-label-contains body label)
-            (opt-induction-blocker-instr-seq? instrs))
+        [(IrBlock _ instrs)
+          (if (opt-induction-blocker-instr-seq? instrs)
             true
-            (opt-induction-loop-blocked? body (box-get rest)))])]))
+            (opt-induction-loop-blocked? (box-get rest)))])]))
 
 (define (opt-induction-small-const? [value : i64]) : bool
   (and (>= value (- 0 1000000)) (<= value 1000000)))
@@ -9530,6 +9528,17 @@
         [_ (OptNoI64)])]
     [_ (OptNoI64)]))
 
+;; Induction runs without a hoisted set, so GEP-base loop-invariance is
+;; `opt-licm-value-invariant?` with an empty `hoisted` map: a var is invariant
+;; iff it is not defined inside the loop body. Evaluating it directly avoids
+;; allocating an empty sentinel map per GEP candidate (#2337).
+(define (opt-induction-value-base-invariant?
+  [loop-defs : I64I64Map]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueVar var) (not (opt-used-contains loop-defs var))]
+    [_ true]))
+
 (define (opt-induction-find-derived-instr
   [fact : OptInductionFact]
   [loop-defs : I64I64Map]
@@ -9554,10 +9563,7 @@
             [(IrValueVar offset-var)
               (if (and
                 (= offset-var phi-var)
-                (opt-licm-value-invariant?
-                  loop-defs
-                  (i64-i64-map-with-capacity 64)
-                  base))
+                (opt-induction-value-base-invariant? loop-defs base))
                 (OptSomeInductionLoopCandidate
                   fact
                   (OptInductionDerivedGep base ty))
@@ -9606,29 +9612,18 @@
 
 (define (opt-induction-find-derived-blocks
   [fact : OptInductionFact]
-  [body : OptLabelSet]
   [loop-defs : I64I64Map]
-  [blocks : CompilerIrBlockList]) : OptInductionLoopCandidate
-  (match blocks
+  [body-blocks : CompilerIrBlockList]) : OptInductionLoopCandidate
+  (match body-blocks
     [(IrBlockNil) (OptNoInductionLoopCandidate)]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock label instrs)
-          (if (opt-label-contains body label)
-            (match (opt-induction-find-derived-instr-seq fact loop-defs instrs)
-              [(OptSomeInductionLoopCandidate found-fact kind)
-                (OptSomeInductionLoopCandidate found-fact kind)]
-              [(OptNoInductionLoopCandidate)
-                (opt-induction-find-derived-blocks
-                  fact
-                  body
-                  loop-defs
-                  (box-get rest))])
-            (opt-induction-find-derived-blocks
-              fact
-              body
-              loop-defs
-              (box-get rest)))])]))
+        [(IrBlock _ instrs)
+          (match (opt-induction-find-derived-instr-seq fact loop-defs instrs)
+            [(OptSomeInductionLoopCandidate found-fact kind)
+              (OptSomeInductionLoopCandidate found-fact kind)]
+            [(OptNoInductionLoopCandidate)
+              (opt-induction-find-derived-blocks fact loop-defs (box-get rest))])])]))
 
 (define (opt-induction-derived-type [derived : OptInductionDerived]) : AstType
   (match derived
@@ -9722,7 +9717,8 @@
   (opt-induction-rewrite-instr-seq-from fact derived derived-phi instrs 0))
 
 (define (opt-induction-rewrite-blocks
-  [body : OptLabelSet]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
   [fact : OptInductionFact]
   [derived : OptInductionDerived]
   [derived-phi : i64]
@@ -9733,7 +9729,7 @@
       (match block
         [(IrBlock label instrs)
           (compiler-ir-block-cons
-            (if (opt-label-contains body label)
+            (if (opt-loop-body-label-member? body index label)
               (compiler-ir-block
                 label
                 (opt-induction-rewrite-instr-seq
@@ -9744,6 +9740,7 @@
               block)
             (opt-induction-rewrite-blocks
               body
+              index
               fact
               derived
               derived-phi
@@ -9843,27 +9840,30 @@
                 (box-get rest))))])]))
 
 (define (opt-induction-apply-loop
+  [index : OptCfgIndex]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [loop : OptNaturalLoop]) : OptInductionApplyResult
   (match (opt-natural-loop-preheader loop)
     [(OptSomeLoopPreheader preheader)
       (let
-        [body : OptLabelSet (opt-natural-loop-body loop)]
-        (if (opt-induction-loop-blocked? body blocks)
+        [body : OptLoopBody (opt-natural-loop-body-info loop)]
+        [body-blocks : CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks index loop blocks)]
+        (if (opt-induction-loop-blocked? body-blocks)
           (OptInductionApplyResult blocks frame false)
-          (match (opt-induction-find-fact blocks loop preheader)
+          (match (opt-induction-find-fact body-blocks loop preheader)
             [(OptSomeInductionFact fact)
               (let
                 [loop-defs : I64I64Map
                   (opt-licm-collect-defs-blocks
-                    (opt-natural-loop-body-blocks loop)
-                    (i64-i64-map-with-capacity 64))]
+                    body-blocks
+                    (i64-i64-map-with-capacity
+                      (opt-licm-body-map-capacity body-blocks)))]
                 (match (opt-induction-find-derived-blocks
                   fact
-                  body
                   loop-defs
-                  blocks)
+                  body-blocks)
                   [(OptSomeInductionLoopCandidate _ derived)
                     (let
                       [seed-var : i64 frame]
@@ -9872,6 +9872,7 @@
                       [rewritten : CompilerIrBlockList
                         (opt-induction-rewrite-blocks
                           body
+                          index
                           fact
                           derived
                           derived-phi
@@ -9909,6 +9910,7 @@
     [(OptNoLoopPreheader) (OptInductionApplyResult blocks frame false)]))
 
 (define (opt-induction-apply-loops
+  [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]
   [frame : i64]
@@ -9916,9 +9918,10 @@
   (match loops
     [(OptNaturalLoopNil) (OptInductionApplyResult blocks frame changed)]
     [(OptNaturalLoopCons loop rest)
-      (match (opt-induction-apply-loop blocks frame loop)
+      (match (opt-induction-apply-loop index blocks frame loop)
         [(OptInductionApplyResult next-blocks next-frame loop-changed)
           (opt-induction-apply-loops
+            index
             (box-get rest)
             next-blocks
             next-frame
@@ -9932,6 +9935,7 @@
       (match func
         [(IrFunction name params ret-ty frame blocks)
           (match (opt-induction-apply-loops
+            (struct-get context index)
             (opt-cfg-natural-loops-with-context blocks context)
             blocks
             frame

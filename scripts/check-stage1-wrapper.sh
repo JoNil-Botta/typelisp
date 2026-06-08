@@ -839,6 +839,7 @@ printf '(define (' > "$WORKDIR/fmt-parse-error.tl"
 run_expect_failure fmt-parse-error "$COMPILER" fmt "$WORKDIR/fmt-parse-error.tl"
 assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
+assert_contains "$WORKDIR/fmt-parse-error.stderr" "fmt-parse-error.tl:1:10: format cst: unclosed delimiter"
 
 FMTLINT_PKG="$WORKDIR/fmtlint-pkg"
 mkdir -p "$FMTLINT_PKG/src/nested/deeper"

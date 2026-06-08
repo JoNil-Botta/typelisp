@@ -25,9 +25,33 @@
   (FmtComment String)
   (FmtEnd))
 
+(defstruct FormatSourceSpan
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64))
+
+(defstruct FormatSourceError
+  (message String)
+  (span FormatSourceSpan))
+
 (defstruct FormatTokenStream
+  (source String)
   (tokens (Array FormatToken))
+  (starts (Array i64))
   (count i64))
+
+(defstruct FormatPosition
+  (line i64)
+  (col i64))
+
+(defenum ResultFormatTokenStream
+  (OkFormatTokenStream FormatTokenStream)
+  (ErrFormatTokenStream FormatSourceError))
+
+(defenum ResultFmtI64
+  (OkFmtI64 i64)
+  (ErrFmtI64 FormatSourceError))
 
 (define (fmt-tag-lparen) : i64
   1)
@@ -118,8 +142,85 @@
 (define (format-token-at [stream : FormatTokenStream] [idx : i64]) : FormatToken
   (array-ref (struct-get stream tokens) idx))
 
+(define (format-token-start [stream : FormatTokenStream] [idx : i64]) : i64
+  (array-ref (struct-get stream starts) idx))
+
 (define (format-token-count [stream : FormatTokenStream]) : i64
   (struct-get stream count))
+
+(define (fmt-position-line [pos : FormatPosition]) : i64
+  (struct-get pos line))
+
+(define (fmt-position-col [pos : FormatPosition]) : i64
+  (struct-get pos col))
+
+(define (format-source-error-message [err : FormatSourceError]) : String
+  (struct-get err message))
+
+(define (format-source-error-span [err : FormatSourceError]) : FormatSourceSpan
+  (struct-get err span))
+
+(define (format-source-span-start-line [span : FormatSourceSpan]) : i64
+  (struct-get span start-line))
+
+(define (format-source-span-start-col [span : FormatSourceSpan]) : i64
+  (struct-get span start-col))
+
+(define (format-source-span-eq?
+  [span : FormatSourceSpan]
+  [start-line : i64]
+  [start-col : i64]
+  [end-line : i64]
+  [end-col : i64]) : bool
+  (and
+    (= (struct-get span start-line) start-line)
+    (and
+      (= (struct-get span start-col) start-col)
+      (and
+        (= (struct-get span end-line) end-line)
+        (= (struct-get span end-col) end-col)))))
+
+(define (fmt-source-position-at [src : String] [target : i64]) : FormatPosition
+  (let
+    [n : i64 (string-length src)]
+    [i : i64 0]
+    [line : i64 1]
+    [col : i64 1]
+    (begin
+      (while (and (< i target) (< i n))
+        (let
+          [c : char (string-ref src i)]
+          (begin
+            (if (= c #\newline')
+              (begin
+                (set! line (+ line 1))
+                (set! col 1))
+              (set! col (+ col 1)))
+            (set! i (+ i 1)))))
+      (FormatPosition line col))))
+
+(define (fmt-source-error-at [src : String] [idx : i64] [message : String]) : FormatSourceError
+  (let
+    [pos : FormatPosition (fmt-source-position-at src idx)]
+    (FormatSourceError
+      message
+      (FormatSourceSpan
+        (fmt-position-line pos)
+        (fmt-position-col pos)
+        (fmt-position-line pos)
+        (fmt-position-col pos)))))
+
+(define (format-token-span [stream : FormatTokenStream] [idx : i64]) : FormatSourceSpan
+  (let
+    [pos : FormatPosition
+      (fmt-source-position-at
+        (struct-get stream source)
+        (format-token-start stream idx))]
+    (FormatSourceSpan
+      (fmt-position-line pos)
+      (fmt-position-col pos)
+      (fmt-position-line pos)
+      (fmt-position-col pos))))
 
 (define (format-token-tag-count [stream : FormatTokenStream] [wanted : i64]) : i64
   (let
@@ -241,7 +342,10 @@
           (set! keep false)))
       j)))
 
-(define (fmt-scan-prefixed-number-end [src : String] [start : i64] [n : i64]) : i64
+(define (fmt-scan-prefixed-number-end-result
+  [src : String]
+  [start : i64]
+  [n : i64]) : ResultFmtI64
   (let
     [digits-start : i64 (fmt-number-digits-start src start)]
     [base : i64 (fmt-number-prefix-base src start)]
@@ -249,16 +353,28 @@
     [end : i64 (fmt-scan-based-int-end src value-start n base)]
     (cond
       [(= end value-start)
-        (begin
-          (panic "format lexer: malformed integer literal")
-          end)]
+        (ErrFmtI64
+          (fmt-source-error-at
+            src
+            start
+            "format lexer: malformed integer literal"))]
       [(if (< end n)
           (fmt-is-symbol-char (string-ref src end))
           false)
-        (begin
-          (panic "format lexer: malformed integer literal")
-          end)]
-      [else end])))
+        (ErrFmtI64
+          (fmt-source-error-at
+            src
+            start
+            "format lexer: malformed integer literal"))]
+      [else (OkFmtI64 end)])))
+
+(define (fmt-scan-prefixed-number-end [src : String] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-prefixed-number-end-result src start n)
+    [(OkFmtI64 end) end]
+    [(ErrFmtI64 err)
+      (begin
+        (panic (format-source-error-message err))
+        start)]))
 
 (define (fmt-scan-decimal-number-end [src : String] [start : i64] [n : i64]) : i64
   (let
@@ -283,10 +399,18 @@
           (set! keep false)))
       j)))
 
-(define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
+(define (fmt-scan-number-end-result [src : String] [start : i64] [n : i64]) : ResultFmtI64
   (if (fmt-number-prefixed? src start n)
-    (fmt-scan-prefixed-number-end src start n)
-    (fmt-scan-decimal-number-end src start n)))
+    (fmt-scan-prefixed-number-end-result src start n)
+    (OkFmtI64 (fmt-scan-decimal-number-end src start n))))
+
+(define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-number-end-result src start n)
+    [(OkFmtI64 end) end]
+    [(ErrFmtI64 err)
+      (begin
+        (panic (format-source-error-message err))
+        start)]))
 
 (define (fmt-scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
   (let
@@ -314,7 +438,7 @@
           (set! keep false)))
       j)))
 
-(define (fmt-scan-string-end [src : String] [start : i64] [n : i64]) : i64
+(define (fmt-scan-string-end-result [src : String] [start : i64] [n : i64]) : ResultFmtI64
   (let
     [j : i64 start]
     [escaped : bool false]
@@ -339,20 +463,35 @@
                   (set! keep false))]
               [else (set! j (+ j 1))]))
           (begin
-            (panic "format lexer: unterminated string literal")
-            (set! keep false))))
-      j)))
+            (return
+              (ErrFmtI64
+                (fmt-source-error-at
+                  src
+                  (- start 1)
+                  "format lexer: unterminated string literal"))))))
+      (OkFmtI64 j))))
 
-(define (fmt-scan-char-end [src : String] [start : i64] [n : i64]) : i64
+(define (fmt-scan-string-end [src : String] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-string-end-result src start n)
+    [(OkFmtI64 end) end]
+    [(ErrFmtI64 err)
+      (begin
+        (panic (format-source-error-message err))
+        start)]))
+
+(define (fmt-scan-char-end-result [src : String] [start : i64] [n : i64]) : ResultFmtI64
   (let
     [j : i64 start]
     [keep : bool true]
     (begin
       (if (< j n)
         (set! j (+ j 1))
-        (begin
-          (panic "format lexer: unterminated character literal")
-          (set! keep false)))
+        (return
+          (ErrFmtI64
+            (fmt-source-error-at
+              src
+              (- start 1)
+              "format lexer: unterminated character literal"))))
       (while keep
         (if (< j n)
           (if (= (string-ref src j) #'')
@@ -360,22 +499,46 @@
               (set! j (+ j 1))
               (set! keep false))
             (set! j (+ j 1)))
-          (begin
-            (panic "format lexer: unterminated character literal")
-            (set! keep false))))
-      j)))
+          (return
+            (ErrFmtI64
+              (fmt-source-error-at
+                src
+                (- start 1)
+                "format lexer: unterminated character literal")))))
+      (OkFmtI64 j))))
+
+(define (fmt-scan-char-end [src : String] [start : i64] [n : i64]) : i64
+  (match (fmt-scan-char-end-result src start n)
+    [(OkFmtI64 end) end]
+    [(ErrFmtI64 err)
+      (begin
+        (panic (format-source-error-message err))
+        start)]))
 
 (define (fmt-store-token
   [tokens : (Array FormatToken)]
+  [starts : (Array i64)]
   [count : i64]
+  [start : i64]
   [tok : FormatToken]) : unit
-  (array-set! tokens count tok))
+  (begin
+    (array-set! tokens count tok)
+    (array-set! starts count start)))
 
-(define (format-lex [src : String]) : FormatTokenStream
+(define (format-empty-token-stream) : FormatTokenStream
+  (let
+    [tokens : (Array FormatToken) (make-array FormatToken 1)]
+    [starts : (Array i64) (make-array i64 1)]
+    (begin
+      (fmt-store-token tokens starts 0 0 (FmtEnd))
+      (FormatTokenStream "" tokens starts 1))))
+
+(define (format-lex-result [src : String]) : ResultFormatTokenStream
   (let
     [n : i64 (string-length src)]
     [tokens : (Array FormatToken)
       (make-array FormatToken (+ (string-length src) 1))]
+    [starts : (Array i64) (make-array i64 (+ (string-length src) 1))]
     [i : i64 0]
     [count : i64 0]
     (begin
@@ -390,113 +553,137 @@
                 (begin
                   (fmt-store-token
                     tokens
+                    starts
                     count
+                    i
                     (FmtComment (substring src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [(= c #(')
               (begin
-                (fmt-store-token tokens count (FmtLParen))
+                (fmt-store-token tokens starts count i (FmtLParen))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #)')
               (begin
-                (fmt-store-token tokens count (FmtRParen))
+                (fmt-store-token tokens starts count i (FmtRParen))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #[')
               (begin
-                (fmt-store-token tokens count (FmtLBracket))
+                (fmt-store-token tokens starts count i (FmtLBracket))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #]')
               (begin
-                (fmt-store-token tokens count (FmtRBracket))
+                (fmt-store-token tokens starts count i (FmtRBracket))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #:')
               (begin
-                (fmt-store-token tokens count (FmtColon))
+                (fmt-store-token tokens starts count i (FmtColon))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #'')
               (begin
-                (fmt-store-token tokens count (FmtQuote))
+                (fmt-store-token tokens starts count i (FmtQuote))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #`')
               (begin
-                (fmt-store-token tokens count (FmtBacktick))
+                (fmt-store-token tokens starts count i (FmtBacktick))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(fmt-starts-ellipsis src i n)
               (begin
-                (fmt-store-token tokens count (FmtSymbol "..."))
+                (fmt-store-token tokens starts count i (FmtSymbol "..."))
                 (set! count (+ count 1))
                 (set! i (+ i 3)))]
             [(= c #.')
               (begin
-                (fmt-store-token tokens count (FmtDot))
+                (fmt-store-token tokens starts count i (FmtDot))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #,')
               (if (< (+ i 1) n)
                 (if (= (string-ref src (+ i 1)) #@')
                   (begin
-                    (fmt-store-token tokens count (FmtCommaAt))
+                    (fmt-store-token tokens starts count i (FmtCommaAt))
                     (set! count (+ count 1))
                     (set! i (+ i 2)))
                   (begin
-                    (fmt-store-token tokens count (FmtComma))
+                    (fmt-store-token tokens starts count i (FmtComma))
                     (set! count (+ count 1))
                     (set! i (+ i 1))))
                 (begin
-                  (fmt-store-token tokens count (FmtComma))
+                  (fmt-store-token tokens starts count i (FmtComma))
                   (set! count (+ count 1))
                   (set! i (+ i 1))))]
             [(= c #"')
-              (let
-                [end : i64 (fmt-scan-string-end src (+ i 1) n)]
-                (begin
-                  (fmt-store-token
-                    tokens
-                    count
-                    (FmtString (substring src i (- end i))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
+              (match (fmt-scan-string-end-result src (+ i 1) n)
+                [(OkFmtI64 end)
+                  (begin
+                    (fmt-store-token
+                      tokens
+                      starts
+                      count
+                      i
+                      (FmtString (substring src i (- end i))))
+                    (set! count (+ count 1))
+                    (set! i end))]
+                [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
             [(= c ##')
-              (let
-                [end : i64 (fmt-scan-char-end src (+ i 1) n)]
-                (begin
-                  (fmt-store-token
-                    tokens
-                    count
-                    (FmtChar (substring src i (- end i))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
+              (match (fmt-scan-char-end-result src (+ i 1) n)
+                [(OkFmtI64 end)
+                  (begin
+                    (fmt-store-token
+                      tokens
+                      starts
+                      count
+                      i
+                      (FmtChar (substring src i (- end i))))
+                    (set! count (+ count 1))
+                    (set! i end))]
+                [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
             [(fmt-starts-number src i n)
-              (let
-                [end : i64 (fmt-scan-number-end src i n)]
-                (begin
-                  (fmt-store-token
-                    tokens
-                    count
-                    (FmtInt (substring src i (- end i))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
+              (match (fmt-scan-number-end-result src i n)
+                [(OkFmtI64 end)
+                  (begin
+                    (fmt-store-token
+                      tokens
+                      starts
+                      count
+                      i
+                      (FmtInt (substring src i (- end i))))
+                    (set! count (+ count 1))
+                    (set! i end))]
+                [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
             [(fmt-is-symbol-char c)
               (let
                 [end : i64 (fmt-scan-symbol-end src i n)]
                 (begin
                   (fmt-store-token
                     tokens
+                    starts
                     count
+                    i
                     (FmtSymbol (substring src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
-              (begin
-                (panic "format lexer: unexpected character")
-                (set! i (+ i 1)))])))
-      (fmt-store-token tokens count (FmtEnd))
-      (FormatTokenStream tokens (+ count 1)))))
+              (return
+                (ErrFormatTokenStream
+                  (fmt-source-error-at
+                    src
+                    i
+                    "format lexer: unexpected character")))])))
+      (fmt-store-token tokens starts count n (FmtEnd))
+      (OkFormatTokenStream (FormatTokenStream src tokens starts (+ count 1))))))
+
+(define (format-lex [src : String]) : FormatTokenStream
+  (match (format-lex-result src)
+    [(OkFormatTokenStream stream) stream]
+    [(ErrFormatTokenStream err)
+      (begin
+        (panic (format-source-error-message err))
+        (format-empty-token-stream))]))

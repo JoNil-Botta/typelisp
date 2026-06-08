@@ -45,6 +45,21 @@
         (print-error (string-append message "\n"))
         1)]))
 
+(define (fmt-source-error-message [path : String] [err : FormatSourceError]) : String
+  (let
+    [span : FormatSourceSpan (format-source-error-span err)]
+    (string-append
+      path
+      (string-append
+        ":"
+        (string-append
+          (int->string (format-source-span-start-line span))
+          (string-append
+            ":"
+            (string-append
+              (int->string (format-source-span-start-col span))
+              (string-append ": " (format-source-error-message err)))))))))
+
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
   (match (fmt-try-write-formatted-file "" "(define x 1)\n")
@@ -53,6 +68,19 @@
       (if (string-eq message "fmt: failed to write : io: invalid path: ")
         unit
         (panic message))]))
+
+(test
+  fmt-parse-diagnostic-includes-path-line-and-column
+  (match (format-rules-render-source-width-result "(define x\n  ]" 80)
+    [(OkFormatString _) (panic "fmt parse unexpectedly succeeded")]
+    [(ErrFormatString err)
+      (let
+        [message : String (fmt-source-error-message "bad.tl" err)]
+        (if (string-eq
+          message
+          "bad.tl:2:3: format cst: unexpected closing delimiter")
+          unit
+          (panic message)))]))
 
 (define (fmt-flag? [value : String]) : bool
   (core/and (> (string-length value) 0) (= (string-ref value 0) #-')))
@@ -125,17 +153,22 @@
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
     [source : String (read-file path)]
-    [formatted : String (format-rules-render-source-width source 80)]
-    (if check
-      (if (string-eq source formatted)
-        0
+    (match (format-rules-render-source-width-result source 80)
+      [(OkFormatString formatted)
+        (if check
+          (if (string-eq source formatted)
+            0
+            (begin
+              (print-error
+                (string-append "fmt: would reformat " (string-append path "\n")))
+              1))
+          (if (string-eq source formatted)
+            0
+            (fmt-write-formatted-file path formatted)))]
+      [(ErrFormatString err)
         (begin
-          (print-error
-            (string-append "fmt: would reformat " (string-append path "\n")))
-          1))
-      (if (string-eq source formatted)
-        0
-        (fmt-write-formatted-file path formatted)))))
+          (print-error (string-append (fmt-source-error-message path err) "\n"))
+          1)])))
 
 (define (fmt-files [check : bool] [paths : StringList] [status : i64]) : i64
   (match paths

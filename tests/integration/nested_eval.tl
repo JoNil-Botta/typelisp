@@ -20,6 +20,8 @@
 ;; self-contained. `main` evaluates `(+ 1 (* 2 3))` and returns 7: the inner
 ;; `(* 2 3)` is the nested argument, so it is evaluated first (to 6), then the
 ;; outer `(+ 1 6)` to 7 - the result depends on the whole nested shape.
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 (defenum SexprAtom
@@ -72,15 +74,18 @@
         [arg2 : SexprAtom (sexpr-head (sexpr-tail args))]
         [a : i64 (eval-atom arg1)]
         [b : i64 (eval-atom arg2)]
-        (cond
-          [(string-eq name "+") (+ a b)]
-          [(string-eq name "-") (- a b)]
-          [(string-eq name "*") (* a b)]
-          [(string-eq name "/") (/ a b)]
-          [else
-            (begin
-              (panic "eval: unknown operator")
-              0)]))]
+        (core/cond
+          (string-eq name "+")
+          (+ a b)
+          (string-eq name "-")
+          (- a b)
+          (string-eq name "*")
+          (* a b)
+          (string-eq name "/")
+          (/ a b)
+          (begin
+            (panic "eval: unknown operator")
+            0)))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested SSym above did not match, so we land
     ;; here.

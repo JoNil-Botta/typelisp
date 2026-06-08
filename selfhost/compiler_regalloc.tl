@@ -6,6 +6,8 @@
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "compiler_liveness.tl")
@@ -1602,12 +1604,16 @@
     [(CompilerRegInterval left-var left-start left-end)
       (match right
         [(CompilerRegInterval right-var right-start right-end)
-          (cond
-            [(< left-start right-start) true]
-            [(> left-start right-start) false]
-            [(< left-end right-end) true]
-            [(> left-end right-end) false]
-            [else (< left-var right-var)])])]))
+          (core/cond
+            (< left-start right-start)
+            true
+            (> left-start right-start)
+            false
+            (< left-end right-end)
+            true
+            (> left-end right-end)
+            false
+            (< left-var right-var))])]))
 
 (define (compiler-reg-candidate-insert
   [candidates : CompilerRegIntervalList]

@@ -12,6 +12,8 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "compiler_check_core.tl")
@@ -310,30 +312,29 @@
               (set! message "trailing escape in doctest output metadata")
               (let
                 [esc : char (string-ref text (+ i 1))]
-                (cond
-                  [(= esc #n')
-                    (begin
-                      (set! out (string-append out "\n"))
-                      (set! i (+ i 2)))]
-                  [(= esc #t')
-                    (begin
-                      (set! out (string-append out "\t"))
-                      (set! i (+ i 2)))]
-                  [(= esc #r')
-                    (begin
-                      (set! out (string-append out "\r"))
-                      (set! i (+ i 2)))]
-                  [(= esc #\\')
-                    (begin
-                      (set! out (string-append out "\\"))
-                      (set! i (+ i 2)))]
-                  [else
-                    (set!
-                      message
-                      (doc-test-cat3
-                        "unsupported doctest output escape `\\"
-                        (substring text (+ i 1) 1)
-                        "`"))])))
+                (core/cond
+                  (= esc #n')
+                  (begin
+                    (set! out (string-append out "\n"))
+                    (set! i (+ i 2)))
+                  (= esc #t')
+                  (begin
+                    (set! out (string-append out "\t"))
+                    (set! i (+ i 2)))
+                  (= esc #r')
+                  (begin
+                    (set! out (string-append out "\r"))
+                    (set! i (+ i 2)))
+                  (= esc #\\')
+                  (begin
+                    (set! out (string-append out "\\"))
+                    (set! i (+ i 2)))
+                  (set!
+                    message
+                    (doc-test-cat3
+                      "unsupported doctest output escape `\\"
+                      (substring text (+ i 1) 1)
+                      "`")))))
             (begin
               (set! out (string-append out (substring text i 1)))
               (set! i (+ i 1))))))

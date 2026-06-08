@@ -2652,94 +2652,92 @@
 (define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
   (let
     [slot : i64 (tc-nominal-owner-cache-slot handle)]
-    (cond
-      [(= slot 0)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle
-          tc-nominal-owner-cache-name)]
-      [(= slot 1)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle1
-          tc-nominal-owner-cache-name1)]
-      [(= slot 2)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle2
-          tc-nominal-owner-cache-name2)]
-      [(= slot 3)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle3
-          tc-nominal-owner-cache-name3)]
-      [(= slot 4)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle4
-          tc-nominal-owner-cache-name4)]
-      [(= slot 5)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle5
-          tc-nominal-owner-cache-name5)]
-      [(= slot 6)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle6
-          tc-nominal-owner-cache-name6)]
-      [else
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle7
-          tc-nominal-owner-cache-name7)])))
+    (core/cond
+      (= slot 0)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle
+        tc-nominal-owner-cache-name)
+      (= slot 1)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle1
+        tc-nominal-owner-cache-name1)
+      (= slot 2)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle2
+        tc-nominal-owner-cache-name2)
+      (= slot 3)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle3
+        tc-nominal-owner-cache-name3)
+      (= slot 4)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle4
+        tc-nominal-owner-cache-name4)
+      (= slot 5)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle5
+        tc-nominal-owner-cache-name5)
+      (= slot 6)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle6
+        tc-nominal-owner-cache-name6)
+      (tc-nominal-owner-cache-entry-lookup
+        ctx
+        handle
+        tc-nominal-owner-cache-handle7
+        tc-nominal-owner-cache-name7))))
 
 (define (tc-nominal-owner-cache-store-if-safe! [handle : i64] [name : String]) : unit
   (if (tc-name-qualified? name)
     unit
     (let
       [slot : i64 (tc-nominal-owner-cache-slot handle)]
-      (cond
-        [(= slot 0)
-          (begin
-            (set! tc-nominal-owner-cache-handle handle)
-            (set! tc-nominal-owner-cache-name name))]
-        [(= slot 1)
-          (begin
-            (set! tc-nominal-owner-cache-handle1 handle)
-            (set! tc-nominal-owner-cache-name1 name))]
-        [(= slot 2)
-          (begin
-            (set! tc-nominal-owner-cache-handle2 handle)
-            (set! tc-nominal-owner-cache-name2 name))]
-        [(= slot 3)
-          (begin
-            (set! tc-nominal-owner-cache-handle3 handle)
-            (set! tc-nominal-owner-cache-name3 name))]
-        [(= slot 4)
-          (begin
-            (set! tc-nominal-owner-cache-handle4 handle)
-            (set! tc-nominal-owner-cache-name4 name))]
-        [(= slot 5)
-          (begin
-            (set! tc-nominal-owner-cache-handle5 handle)
-            (set! tc-nominal-owner-cache-name5 name))]
-        [(= slot 6)
-          (begin
-            (set! tc-nominal-owner-cache-handle6 handle)
-            (set! tc-nominal-owner-cache-name6 name))]
-        [else
-          (begin
-            (set! tc-nominal-owner-cache-handle7 handle)
-            (set! tc-nominal-owner-cache-name7 name))]))))
+      (core/cond
+        (= slot 0)
+        (begin
+          (set! tc-nominal-owner-cache-handle handle)
+          (set! tc-nominal-owner-cache-name name))
+        (= slot 1)
+        (begin
+          (set! tc-nominal-owner-cache-handle1 handle)
+          (set! tc-nominal-owner-cache-name1 name))
+        (= slot 2)
+        (begin
+          (set! tc-nominal-owner-cache-handle2 handle)
+          (set! tc-nominal-owner-cache-name2 name))
+        (= slot 3)
+        (begin
+          (set! tc-nominal-owner-cache-handle3 handle)
+          (set! tc-nominal-owner-cache-name3 name))
+        (= slot 4)
+        (begin
+          (set! tc-nominal-owner-cache-handle4 handle)
+          (set! tc-nominal-owner-cache-name4 name))
+        (= slot 5)
+        (begin
+          (set! tc-nominal-owner-cache-handle5 handle)
+          (set! tc-nominal-owner-cache-name5 name))
+        (= slot 6)
+        (begin
+          (set! tc-nominal-owner-cache-handle6 handle)
+          (set! tc-nominal-owner-cache-name6 name))
+        (begin
+          (set! tc-nominal-owner-cache-handle7 handle)
+          (set! tc-nominal-owner-cache-name7 name))))))
 
 (define (tc-nominal-owner-name-list
   [decls : AstDeclList]
@@ -3882,27 +3880,28 @@
       (tc-f32-to-f64-compatible? expected actual))))
 
 (define (tc-merge-branch-type [a : AstType] [b : AstType]) : ResultTcType
-  (cond
-    [(tc-never-type? a) (OkTcType b)]
-    [(tc-never-type? b) (OkTcType a)]
-    [(tc-type-eq a b)
-      (let
-        [a-regions : TcStringList (tc-type-collect-regions a)]
-        [b-regions : TcStringList (tc-type-collect-regions b)]
-        (if (tc-string-list-eq a-regions b-regions)
-          (OkTcType a)
-          (match a-regions
-            [(TcStringNil) (OkTcType b)]
-            [_
-              (match b-regions
-                [(TcStringNil) (OkTcType a)]
-                [_ (ErrTcType "typecheck: if branches must match")])])))]
-    [else
-      (if (tc-type-compatible? a b)
+  (core/cond
+    (tc-never-type? a)
+    (OkTcType b)
+    (tc-never-type? b)
+    (OkTcType a)
+    (tc-type-eq a b)
+    (let
+      [a-regions : TcStringList (tc-type-collect-regions a)]
+      [b-regions : TcStringList (tc-type-collect-regions b)]
+      (if (tc-string-list-eq a-regions b-regions)
         (OkTcType a)
-        (if (tc-type-compatible? b a)
-          (OkTcType b)
-          (ErrTcType "typecheck: if branches must match")))]))
+        (match a-regions
+          [(TcStringNil) (OkTcType b)]
+          [_
+            (match b-regions
+              [(TcStringNil) (OkTcType a)]
+              [_ (ErrTcType "typecheck: if branches must match")])])))
+    (if (tc-type-compatible? a b)
+      (OkTcType a)
+      (if (tc-type-compatible? b a)
+        (OkTcType b)
+        (ErrTcType "typecheck: if branches must match")))))
 
 (define (tc-integer-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -4597,30 +4596,29 @@
         [(SomeI64 handle)
           (let
             [kind : i64 (compiler-symbol-handle-kind handle)]
-            (cond
-              [(= kind (compiler-symbol-kind-defdispatch))
-                (ErrTcType
-                  "typecheck: defdispatch variant cannot be another dispatch")]
-              [(or
-                  (= kind (compiler-symbol-kind-function-define))
-                  (= kind (compiler-symbol-kind-extern)))
-                (match (compiler-program-decl-at-index
-                  (tc-context-program ctx)
-                  (compiler-symbol-handle-index handle))
-                  [(OkAstDecl decl)
-                    (match (tc-top-decl-type ctx decl)
-                      [(OkTcType ty)
-                        (match ty
-                          [(AstTyFunc _ _) (OkTcType ty)]
-                          [_
-                            (ErrTcType
-                              (tc-dispatch-variant-non-function-message
-                                variant-name))])]
-                      [(ErrTcType message) (ErrTcType message)])]
-                  [(ErrAstDecl message) (ErrTcType message)])]
-              [else
-                (ErrTcType
-                  (tc-dispatch-variant-non-function-message variant-name))]))]
+            (core/cond
+              (= kind (compiler-symbol-kind-defdispatch))
+              (ErrTcType
+                "typecheck: defdispatch variant cannot be another dispatch")
+              (or
+                (= kind (compiler-symbol-kind-function-define))
+                (= kind (compiler-symbol-kind-extern)))
+              (match (compiler-program-decl-at-index
+                (tc-context-program ctx)
+                (compiler-symbol-handle-index handle))
+                [(OkAstDecl decl)
+                  (match (tc-top-decl-type ctx decl)
+                    [(OkTcType ty)
+                      (match ty
+                        [(AstTyFunc _ _) (OkTcType ty)]
+                        [_
+                          (ErrTcType
+                            (tc-dispatch-variant-non-function-message
+                              variant-name))])]
+                    [(ErrTcType message) (ErrTcType message)])]
+                [(ErrAstDecl message) (ErrTcType message)])
+              (ErrTcType
+                (tc-dispatch-variant-non-function-message variant-name))))]
         [(NoneI64)
           (ErrTcType
             (string-append
@@ -5726,13 +5724,18 @@
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
-  (cond
-    [(string-eq name "string-length") true]
-    [(string-eq name "length") true]
-    [(string-eq name "string-eq") true]
-    [(string-eq name "string=?") true]
-    [(string-eq name "string->int") true]
-    [else false]))
+  (core/cond
+    (string-eq name "string-length")
+    true
+    (string-eq name "length")
+    true
+    (string-eq name "string-eq")
+    true
+    (string-eq name "string=?")
+    true
+    (string-eq name "string->int")
+    true
+    false))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -6807,23 +6810,26 @@
     [_ (ErrTcType "typecheck: arity mismatch")]))
 
 (define (tc-borrowed-string-builtin-name? [name : String]) : bool
-  (cond
-    [(string-eq name "string-eq") true]
-    [(string-eq name "string=?") true]
-    [(string-eq name "string->int") true]
-    [else false]))
+  (core/cond
+    (string-eq name "string-eq")
+    true
+    (string-eq name "string=?")
+    true
+    (string-eq name "string->int")
+    true
+    false))
 
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
   [args : AstExprList]) : ResultTcType
-  (cond
-    [(or (string-eq name "string-eq") (string-eq name "string=?"))
-      (tc-two-string-handle-builtin-call ctx env args (AstTyBool))]
-    [(string-eq name "string->int")
-      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
-    [else (ErrTcType "typecheck: unknown borrowed string builtin")]))
+  (core/cond
+    (or (string-eq name "string-eq") (string-eq name "string=?"))
+    (tc-two-string-handle-builtin-call ctx env args (AstTyBool))
+    (string-eq name "string->int")
+    (tc-one-string-handle-builtin-call ctx env args (AstTyI64))
+    (ErrTcType "typecheck: unknown borrowed string builtin")))
 
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
 ;; String plus any integer index, yielding `char`. The parser emits this as an
@@ -7097,28 +7103,28 @@
           (if (tc-hygiene-global-name? (intern-str raw-name))
             (tc-hygiene-global-base (intern-str raw-name))
             (intern-str raw-name))]
-        (cond
-          [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
-            (tc-layout-query-runtime-call name args)]
-          [(or
-              (string-eq name "array-length")
-              (or (string-eq name "length") (string-eq name "string-length")))
-            (tc-array-length-call ctx env name func args)]
-          [(and
-              (or (string-eq name "string-ref") (string-eq name "char-at"))
-              (not (tc-name-bound? env name)))
-            (tc-string-ref-call ctx env args)]
-          [(and
-              (tc-borrowed-string-builtin-name? name)
-              (tc-default-builtin-unshadowed? env name))
-            (tc-borrowed-string-builtin-call ctx env name args)]
-          [(and
-              (ctfe-reflection-query-name? name)
-              (not (tc-name-bound? env name)))
-            (tc-reflection-query-runtime-call name)]
-          [(and (string-eq name "clone") (not (tc-name-bound? env name)))
-            (tc-clone-call ctx env args)]
-          [else (tc-call-expr ctx env func args)]))]
+        (core/cond
+          (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+          (tc-layout-query-runtime-call name args)
+          (or
+            (string-eq name "array-length")
+            (or (string-eq name "length") (string-eq name "string-length")))
+          (tc-array-length-call ctx env name func args)
+          (and
+            (or (string-eq name "string-ref") (string-eq name "char-at"))
+            (not (tc-name-bound? env name)))
+          (tc-string-ref-call ctx env args)
+          (and
+            (tc-borrowed-string-builtin-name? name)
+            (tc-default-builtin-unshadowed? env name))
+          (tc-borrowed-string-builtin-call ctx env name args)
+          (and
+            (ctfe-reflection-query-name? name)
+            (not (tc-name-bound? env name)))
+          (tc-reflection-query-runtime-call name)
+          (and (string-eq name "clone") (not (tc-name-bound? env name)))
+          (tc-clone-call ctx env args)
+          (tc-call-expr ctx env func args)))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings
@@ -10040,53 +10046,52 @@
     [(TcTypeBind key ty rest)
       (let
         [name : String (intern-str key)]
-        (cond
-          [(or
-              (= key (tc-name-id (tc-region-marker-name)))
-              (or
-                (= key (tc-name-id (tc-default-boundary-name)))
-                (tc-cleanup-owner-marker-entry? key ty)))
+        (core/cond
+          (or
+            (= key (tc-name-id (tc-region-marker-name)))
+            (or
+              (= key (tc-name-id (tc-default-boundary-name)))
+              (tc-cleanup-owner-marker-entry? key ty)))
+          (tc-check-lambda-region-captures-scan-root
+            root
+            (box-get rest)
+            bound
+            body
+            allow-immutable-reference-captures)
+          (not (tc-expr-uses-free-name? body name bound))
+          (tc-check-lambda-region-captures-scan-root
+            root
+            (box-get rest)
+            bound
+            body
+            allow-immutable-reference-captures)
+          (tc-expr-sets-free-name? body name bound)
+          (ErrTcUnit "typecheck: lambda cannot assign captured binding")
+          (tc-cleanup-owner-active? root name)
+          (ErrTcUnit
+            "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
+          (tc-type-contains-mut-reference? ty)
+          (ErrTcUnit
+            "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")
+          (tc-type-contains-reference? ty)
+          (if allow-immutable-reference-captures
             (tc-check-lambda-region-captures-scan-root
               root
               (box-get rest)
               bound
               body
-              allow-immutable-reference-captures)]
-          [(not (tc-expr-uses-free-name? body name bound))
-            (tc-check-lambda-region-captures-scan-root
-              root
-              (box-get rest)
-              bound
-              body
-              allow-immutable-reference-captures)]
-          [(tc-expr-sets-free-name? body name bound)
-            (ErrTcUnit "typecheck: lambda cannot assign captured binding")]
-          [(tc-cleanup-owner-active? root name)
+              allow-immutable-reference-captures)
             (ErrTcUnit
-              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
-          [(tc-type-contains-mut-reference? ty)
-            (ErrTcUnit
-              "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")]
-          [(tc-type-contains-reference? ty)
-            (if allow-immutable-reference-captures
-              (tc-check-lambda-region-captures-scan-root
-                root
-                (box-get rest)
-                bound
-                body
-                allow-immutable-reference-captures)
-              (ErrTcUnit
-                "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
-          [(tc-type-contains-any-region ty)
-            (ErrTcUnit
-              "typecheck: lambda cannot capture region-tagged value; region value would escape")]
-          [else
-            (tc-check-lambda-region-captures-scan-root
-              root
-              (box-get rest)
-              bound
-              body
-              allow-immutable-reference-captures)]))]))
+              "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))
+          (tc-type-contains-any-region ty)
+          (ErrTcUnit
+            "typecheck: lambda cannot capture region-tagged value; region value would escape")
+          (tc-check-lambda-region-captures-scan-root
+            root
+            (box-get rest)
+            bound
+            body
+            allow-immutable-reference-captures)))]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
@@ -11413,48 +11418,43 @@
   [first-fields : AstTypeList]
   [second-name : String]
   [second-fields : AstTypeList]) : ResultTcResultInfo
-  (cond
-    [(and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
-      (tc-result-info-build
-        ctx
-        TcTryResult
-        enum-name
-        first-name
-        first-fields
-        second-name
-        second-fields)]
-    [(and (tc-err-variant-name? first-name) (tc-ok-variant-name? second-name))
-      (tc-result-info-build
-        ctx
-        TcTryResult
-        enum-name
-        second-name
-        second-fields
-        first-name
-        first-fields)]
-    [(and
-        (tc-some-variant-name? first-name)
-        (tc-none-variant-name? second-name))
-      (tc-option-info-build
-        ctx
-        enum-name
-        first-name
-        first-fields
-        second-name
-        second-fields)]
-    [(and
-        (tc-none-variant-name? first-name)
-        (tc-some-variant-name? second-name))
-      (tc-option-info-build
-        ctx
-        enum-name
-        second-name
-        second-fields
-        first-name
-        first-fields)]
-    [else
-      (ErrTcResultInfo
-        "typecheck: try requires Result-like Ok*/Err* or Option-like Some*/None* variants")]))
+  (core/cond
+    (and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
+    (tc-result-info-build
+      ctx
+      TcTryResult
+      enum-name
+      first-name
+      first-fields
+      second-name
+      second-fields)
+    (and (tc-err-variant-name? first-name) (tc-ok-variant-name? second-name))
+    (tc-result-info-build
+      ctx
+      TcTryResult
+      enum-name
+      second-name
+      second-fields
+      first-name
+      first-fields)
+    (and (tc-some-variant-name? first-name) (tc-none-variant-name? second-name))
+    (tc-option-info-build
+      ctx
+      enum-name
+      first-name
+      first-fields
+      second-name
+      second-fields)
+    (and (tc-none-variant-name? first-name) (tc-some-variant-name? second-name))
+    (tc-option-info-build
+      ctx
+      enum-name
+      second-name
+      second-fields
+      first-name
+      first-fields)
+    (ErrTcResultInfo
+      "typecheck: try requires Result-like Ok*/Err* or Option-like Some*/None* variants")))
 
 (define (tc-result-info-from-variants
   [ctx : TcContext]
@@ -13448,20 +13448,17 @@
         [elem : AstType (tc-resolve-type ctx elem-ty)]
         (match (tc-expr ctx env len)
           [(OkTcType len-ty)
-            (cond
-              [(not (tc-integer-type? len-ty))
-                (ErrTcType "typecheck: make-array length must be integer")]
-              [(not (tc-dyn-array-elem-supported? env elem))
-                (ErrTcType
-                  "typecheck: make-array element type is not supported")]
-              [(not (tc-make-array-requires-element-init? elem len))
-                (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))]
-              [else
-                (match (tc-init-type-supported ctx env elem)
-                  [(OkTcUnit)
-                    (OkTcType
-                      (tc-tag-active-region env (ast-ty-dyn-array elem)))]
-                  [(ErrTcUnit message) (ErrTcType message)])])]
+            (core/cond
+              (not (tc-integer-type? len-ty))
+              (ErrTcType "typecheck: make-array length must be integer")
+              (not (tc-dyn-array-elem-supported? env elem))
+              (ErrTcType "typecheck: make-array element type is not supported")
+              (not (tc-make-array-requires-element-init? elem len))
+              (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))
+              (match (tc-init-type-supported ctx env elem)
+                [(OkTcUnit)
+                  (OkTcType (tc-tag-active-region env (ast-ty-dyn-array elem)))]
+                [(ErrTcUnit message) (ErrTcType message)]))]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprArrayRef array-box index-box)
       (let
@@ -14894,86 +14891,74 @@
       (let
         [rest-env : TcTypeEnv (box-get rest)]
         [name : String (intern-str key)]
-        (cond
-          [(or
-              (= key (tc-name-id (tc-region-marker-name)))
-              (or
-                (= key (tc-name-id (tc-default-boundary-name)))
-                (tc-cleanup-owner-marker-entry? key ty)))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              seen
-              body)]
-          [(tc-string-list-contains seen name)
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              seen
-              body)]
-          [(not (tc-moved-contains? locals name))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              (tc-string-list-add seen name)
-              body)]
-          [(not (tc-expr-uses-free-name? body name bound))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              (tc-string-list-add seen name)
-              body)]
-          [else
-            (match (tc-lookup-id root key)
-              [(OkTcType visible-ty)
-                (if (tc-type-consuming-by-value-now? ctx visible-ty)
-                  (if (or
-                    (tc-moved-contains? moved name)
-                    (tc-moved-partial? moved name))
-                    (ErrTcMove (tc-move-use-message name))
-                    (if (tc-moved-contains? loop-carried name)
-                      (ErrTcMove (tc-move-loop-carried-message name))
-                      (tc-move-check-lambda-owner-captures-scan
-                        ctx
-                        root
-                        rest-env
-                        locals
-                        loop-carried
-                        (tc-moved-add moved name)
-                        bound
-                        (tc-string-list-add seen name)
-                        body)))
-                  (tc-move-check-lambda-owner-captures-scan
-                    ctx
-                    root
-                    rest-env
-                    locals
-                    loop-carried
-                    moved
-                    bound
-                    (tc-string-list-add seen name)
-                    body))]
-              [(ErrTcType _)
+        (core/cond
+          (or
+            (= key (tc-name-id (tc-region-marker-name)))
+            (or
+              (= key (tc-name-id (tc-default-boundary-name)))
+              (tc-cleanup-owner-marker-entry? key ty)))
+          (tc-move-check-lambda-owner-captures-scan
+            ctx
+            root
+            rest-env
+            locals
+            loop-carried
+            moved
+            bound
+            seen
+            body)
+          (tc-string-list-contains seen name)
+          (tc-move-check-lambda-owner-captures-scan
+            ctx
+            root
+            rest-env
+            locals
+            loop-carried
+            moved
+            bound
+            seen
+            body)
+          (not (tc-moved-contains? locals name))
+          (tc-move-check-lambda-owner-captures-scan
+            ctx
+            root
+            rest-env
+            locals
+            loop-carried
+            moved
+            bound
+            (tc-string-list-add seen name)
+            body)
+          (not (tc-expr-uses-free-name? body name bound))
+          (tc-move-check-lambda-owner-captures-scan
+            ctx
+            root
+            rest-env
+            locals
+            loop-carried
+            moved
+            bound
+            (tc-string-list-add seen name)
+            body)
+          (match (tc-lookup-id root key)
+            [(OkTcType visible-ty)
+              (if (tc-type-consuming-by-value-now? ctx visible-ty)
+                (if (or
+                  (tc-moved-contains? moved name)
+                  (tc-moved-partial? moved name))
+                  (ErrTcMove (tc-move-use-message name))
+                  (if (tc-moved-contains? loop-carried name)
+                    (ErrTcMove (tc-move-loop-carried-message name))
+                    (tc-move-check-lambda-owner-captures-scan
+                      ctx
+                      root
+                      rest-env
+                      locals
+                      loop-carried
+                      (tc-moved-add moved name)
+                      bound
+                      (tc-string-list-add seen name)
+                      body)))
                 (tc-move-check-lambda-owner-captures-scan
                   ctx
                   root
@@ -14983,7 +14968,18 @@
                   moved
                   bound
                   (tc-string-list-add seen name)
-                  body)])]))]))
+                  body))]
+            [(ErrTcType _)
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                (tc-string-list-add seen name)
+                body)])))]))
 
 (define (tc-move-check-lambda-owner-captures
   [ctx : TcContext]
@@ -18074,28 +18070,28 @@
   [call-expr : AstExpr]) : ResultMacroCompatCall
   (match (macro-compat-call-name func)
     [(TcSomeString name)
-      (cond
-        [(string-eq name "when")
-          (macro-expand-compat-guard-call
-            ctx
-            env
-            decls
-            depth
-            name
-            args
-            false
-            call-expr)]
-        [(string-eq name "unless")
-          (macro-expand-compat-guard-call
-            ctx
-            env
-            decls
-            depth
-            name
-            args
-            true
-            call-expr)]
-        [else (NoMacroCompatCall)])]
+      (core/cond
+        (string-eq name "when")
+        (macro-expand-compat-guard-call
+          ctx
+          env
+          decls
+          depth
+          name
+          args
+          false
+          call-expr)
+        (string-eq name "unless")
+        (macro-expand-compat-guard-call
+          ctx
+          env
+          decls
+          depth
+          name
+          args
+          true
+          call-expr)
+        (NoMacroCompatCall))]
     [(TcNoString) (NoMacroCompatCall)]))
 
 (define (macro-expand-expr

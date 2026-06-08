@@ -3,6 +3,8 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/io.tl")
 
 (import "stdlib/json.tl")
@@ -202,19 +204,21 @@
                         (set! err message)
                         (set! done true))])))))
           (set! done true)))
-      (cond
-        [clean-eof LspFrameEof]
-        [(not (string-eq err "")) (LspFrameErr err)]
-        [(< content-length 0) (LspFrameErr "lsp: missing Content-Length")]
-        [else
-          (let
-            [payload-read : StdinRead (stdin-read-bytes content-length)]
-            [payload : String (stdin-read-text payload-read)]
-            (if (and
-              (stdin-read-eof? payload-read)
-              (< (string-length payload) content-length))
-              (LspFrameErr "lsp: truncated payload")
-              (LspFrameOk payload)))]))))
+      (core/cond
+        clean-eof
+        LspFrameEof
+        (not (string-eq err ""))
+        (LspFrameErr err)
+        (< content-length 0)
+        (LspFrameErr "lsp: missing Content-Length")
+        (let
+          [payload-read : StdinRead (stdin-read-bytes content-length)]
+          [payload : String (stdin-read-text payload-read)]
+          (if (and
+            (stdin-read-eof? payload-read)
+            (< (string-length payload) content-length))
+            (LspFrameErr "lsp: truncated payload")
+            (LspFrameOk payload)))))))
 
 (define (lsp-frame-stdout-write [text : String]) : unit
   (stdout-write (& text)))
@@ -480,11 +484,14 @@
 (define (lsp-hex-value [c : char]) : i64
   (let
     [code : i64 (cast c : i64)]
-    (cond
-      [(and (>= code 48) (<= code 57)) (- code 48)]
-      [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
-      [(and (>= code 97) (<= code 102)) (+ 10 (- code 97))]
-      [else -1])))
+    (core/cond
+      (and (>= code 48) (<= code 57))
+      (- code 48)
+      (and (>= code 65) (<= code 70))
+      (+ 10 (- code 65))
+      (and (>= code 97) (<= code 102))
+      (+ 10 (- code 97))
+      -1)))
 
 (define (lsp-percent-decode [text : String]) : LspStringResult
   (let
@@ -862,47 +869,48 @@
   [stdlib-roots : StringVec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(OkLspJsonText method)
-      (cond
-        [(string-eq method "initialize")
-          (begin
-            (let
-              [key : String "id"]
-              (match (json-object-get message (& key))
-                [(JsonFound id) (lsp-write-response id (lsp-initialize-result))]
-                [(JsonMissing) unit]))
-            (LspContinue docs))]
-        [(string-eq method "initialized") (LspContinue docs)]
-        [(string-eq method "shutdown")
-          (begin
-            (let
-              [key : String "id"]
-              (match (json-object-get message (& key))
-                [(JsonFound id) (lsp-write-response id JsonNull)]
-                [(JsonMissing) unit]))
-            (LspContinue docs))]
-        [(string-eq method "exit") (LspExit docs)]
-        [(string-eq method "textDocument/didOpen")
+      (core/cond
+        (string-eq method "initialize")
+        (begin
           (let
-            [key : String "params"]
+            [key : String "id"]
             (match (json-object-get message (& key))
-              [(JsonFound params) (lsp-did-open params docs stdlib-roots)]
-              [(JsonMissing) (LspContinue docs)]))]
-        [(string-eq method "textDocument/didChange")
+              [(JsonFound id) (lsp-write-response id (lsp-initialize-result))]
+              [(JsonMissing) unit]))
+          (LspContinue docs))
+        (string-eq method "initialized")
+        (LspContinue docs)
+        (string-eq method "shutdown")
+        (begin
           (let
-            [key : String "params"]
+            [key : String "id"]
             (match (json-object-get message (& key))
-              [(JsonFound params) (lsp-did-change params docs stdlib-roots)]
-              [(JsonMissing) (LspContinue docs)]))]
-        [(string-eq method "textDocument/didClose")
-          (let
-            [key : String "params"]
-            (match (json-object-get message (& key))
-              [(JsonFound params) (lsp-did-close params docs)]
-              [(JsonMissing) (LspContinue docs)]))]
-        [else
-          (begin
-            (lsp-maybe-write-method-not-found message)
-            (LspContinue docs))])]
+              [(JsonFound id) (lsp-write-response id JsonNull)]
+              [(JsonMissing) unit]))
+          (LspContinue docs))
+        (string-eq method "exit")
+        (LspExit docs)
+        (string-eq method "textDocument/didOpen")
+        (let
+          [key : String "params"]
+          (match (json-object-get message (& key))
+            [(JsonFound params) (lsp-did-open params docs stdlib-roots)]
+            [(JsonMissing) (LspContinue docs)]))
+        (string-eq method "textDocument/didChange")
+        (let
+          [key : String "params"]
+          (match (json-object-get message (& key))
+            [(JsonFound params) (lsp-did-change params docs stdlib-roots)]
+            [(JsonMissing) (LspContinue docs)]))
+        (string-eq method "textDocument/didClose")
+        (let
+          [key : String "params"]
+          (match (json-object-get message (& key))
+            [(JsonFound params) (lsp-did-close params docs)]
+            [(JsonMissing) (LspContinue docs)]))
+        (begin
+          (lsp-maybe-write-method-not-found message)
+          (LspContinue docs)))]
     [(MissingLspJsonText) (LspContinue docs)]))
 
 (define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : StringVec

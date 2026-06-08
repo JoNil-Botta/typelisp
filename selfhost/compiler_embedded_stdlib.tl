@@ -123,153 +123,148 @@
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
   (cond
-    [(string-eq suffix "arena.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)]
-    [(string-eq suffix "cpu.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)]
-    [(string-eq suffix "core_macros.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)]
-    [(string-eq suffix "env.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)]
-    [(string-eq suffix "ffi.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)]
-    [(string-eq suffix "fs.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-fs)]
-    [(string-eq suffix "hash.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hash)]
-    [(string-eq suffix "hashmap.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hashmap)]
-    [(string-eq suffix "io.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io)]
-    [(string-eq suffix "json.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)]
-    [(string-eq suffix "list.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)]
-    [(string-eq suffix "msvc.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)]
-    [(string-eq suffix "process.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process)]
-    [(string-eq suffix "process_borrowed.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-process-borrowed)]
-    [(string-eq suffix "profile.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-profile)]
-    [(string-eq suffix "queue.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)]
-    [(string-eq suffix "random.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
-    [(string-eq suffix "runtime.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
-    [(string-eq suffix "string.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)]
-    [(string-eq suffix "test.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)]
-    [(string-eq suffix "tests/arena_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-api)]
-    [(string-eq suffix "tests/arena_patterns.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-patterns)]
-    [(string-eq suffix "tests/arena_policy.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-policy)]
-    [(string-eq suffix "tests/arena_policy_escape_string.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-policy-escape-string)]
-    [(string-eq suffix "tests/arena_policy_escape_text_buf.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-policy-escape-text-buf)]
-    [(string-eq suffix "tests/arena_policy_escape_text_buf_borrowed.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed)]
-    [(string-eq suffix "tests/borrowed_str_gate.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-borrowed-str-gate)]
-    [(string-eq suffix "tests/cpu_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-cpu-api)]
-    [(string-eq suffix "tests/core_macros_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-core-macros-api)]
-    [(string-eq suffix "tests/env_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-env-api)]
-    [(string-eq suffix "tests/ffi_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-ffi-api)]
-    [(string-eq suffix "tests/fs_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-fs-api)]
-    [(string-eq suffix "tests/fs_path_join_many_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-fs-path-join-many-api)]
-    [(string-eq suffix "tests/hash_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-hash-api)]
-    [(string-eq suffix "tests/hashmap_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-hashmap-api)]
-    [(string-eq suffix "tests/io_edges.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-io-edges)]
-    [(string-eq suffix "tests/io_file_handle.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-io-file-handle)]
-    [(string-eq suffix "tests/io_stdio_bytes.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-io-stdio-bytes)]
-    [(string-eq suffix "tests/io_stdio_lines.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-io-stdio-lines)]
-    [(string-eq suffix "tests/io_stdio_pipe_short_read.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-io-stdio-pipe-short-read)]
-    [(string-eq suffix "tests/json_helpers.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-json-helpers)]
-    [(string-eq suffix "tests/json_parse_stringify.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-json-parse-stringify)]
-    [(string-eq suffix "tests/list_api.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-list-api)]
-    [(string-eq suffix "tests/process_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-process-api)]
-    [(string-eq suffix "tests/process_borrowed_check.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-process-borrowed-check)]
-    [(string-eq suffix "tests/process_borrowed_escape.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-process-borrowed-escape)]
-    [(string-eq suffix "tests/process_runtime.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-process-runtime)]
-    [(string-eq suffix "tests/profile_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-profile-api)]
-    [(string-eq suffix "tests/queue_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-queue-api)]
-    [(string-eq suffix "tests/random_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-random-api)]
-    [(string-eq suffix "tests/string_edges.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-string-edges)]
-    [(string-eq suffix "tests/test_assert_failure.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-test-assert-failure)]
-    [(string-eq suffix "tests/test_assert_success.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-test-assert-success)]
-    [(string-eq suffix "tests/text_buf_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-text-buf-api)]
-    [(string-eq suffix "tests/text_buf_borrowed_check.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-text-buf-borrowed-check)]
-    [(string-eq suffix "tests/vector_api.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-tests-vector-api)]
-    [(string-eq suffix "text_buf.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)]
-    [(string-eq suffix "text_buf_borrowed.tl")
-      (CompilerEmbeddedStdlibSomeSource
-        compiler-embedded-stdlib-text-buf-borrowed)]
-    [(string-eq suffix "vector.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
-    [else (CompilerEmbeddedStdlibNoSource)]))
+    (string-eq suffix "arena.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)
+    (string-eq suffix "cpu.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)
+    (string-eq suffix "core_macros.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)
+    (string-eq suffix "env.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)
+    (string-eq suffix "ffi.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)
+    (string-eq suffix "fs.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-fs)
+    (string-eq suffix "hash.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hash)
+    (string-eq suffix "hashmap.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hashmap)
+    (string-eq suffix "io.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io)
+    (string-eq suffix "json.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)
+    (string-eq suffix "list.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)
+    (string-eq suffix "msvc.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)
+    (string-eq suffix "process.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process)
+    (string-eq suffix "process_borrowed.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process-borrowed)
+    (string-eq suffix "profile.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-profile)
+    (string-eq suffix "queue.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)
+    (string-eq suffix "random.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)
+    (string-eq suffix "runtime.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)
+    (string-eq suffix "string.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)
+    (string-eq suffix "test.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)
+    (string-eq suffix "tests/arena_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-arena-api)
+    (string-eq suffix "tests/arena_patterns.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-arena-patterns)
+    (string-eq suffix "tests/arena_policy.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-arena-policy)
+    (string-eq suffix "tests/arena_policy_escape_string.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-arena-policy-escape-string)
+    (string-eq suffix "tests/arena_policy_escape_text_buf.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-arena-policy-escape-text-buf)
+    (string-eq suffix "tests/arena_policy_escape_text_buf_borrowed.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed)
+    (string-eq suffix "tests/borrowed_str_gate.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-borrowed-str-gate)
+    (string-eq suffix "tests/cpu_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-cpu-api)
+    (string-eq suffix "tests/core_macros_api.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-core-macros-api)
+    (string-eq suffix "tests/env_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-env-api)
+    (string-eq suffix "tests/ffi_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-ffi-api)
+    (string-eq suffix "tests/fs_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-fs-api)
+    (string-eq suffix "tests/fs_path_join_many_api.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-fs-path-join-many-api)
+    (string-eq suffix "tests/hash_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-hash-api)
+    (string-eq suffix "tests/hashmap_api.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-hashmap-api)
+    (string-eq suffix "tests/io_edges.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-io-edges)
+    (string-eq suffix "tests/io_file_handle.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-io-file-handle)
+    (string-eq suffix "tests/io_stdio_bytes.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-io-stdio-bytes)
+    (string-eq suffix "tests/io_stdio_lines.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-io-stdio-lines)
+    (string-eq suffix "tests/io_stdio_pipe_short_read.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-io-stdio-pipe-short-read)
+    (string-eq suffix "tests/json_helpers.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-json-helpers)
+    (string-eq suffix "tests/json_parse_stringify.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-json-parse-stringify)
+    (string-eq suffix "tests/list_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-list-api)
+    (string-eq suffix "tests/process_api.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-process-api)
+    (string-eq suffix "tests/process_borrowed_check.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-process-borrowed-check)
+    (string-eq suffix "tests/process_borrowed_escape.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-process-borrowed-escape)
+    (string-eq suffix "tests/process_runtime.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-process-runtime)
+    (string-eq suffix "tests/profile_api.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-profile-api)
+    (string-eq suffix "tests/queue_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-queue-api)
+    (string-eq suffix "tests/random_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-random-api)
+    (string-eq suffix "tests/string_edges.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-string-edges)
+    (string-eq suffix "tests/test_assert_failure.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-test-assert-failure)
+    (string-eq suffix "tests/test_assert_success.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-test-assert-success)
+    (string-eq suffix "tests/text_buf_api.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-text-buf-api)
+    (string-eq suffix "tests/text_buf_borrowed_check.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-text-buf-borrowed-check)
+    (string-eq suffix "tests/vector_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-vector-api)
+    (string-eq suffix "text_buf.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)
+    (string-eq suffix "text_buf_borrowed.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-text-buf-borrowed)
+    (string-eq suffix "vector.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)
+    (CompilerEmbeddedStdlibNoSource)))

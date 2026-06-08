@@ -3,6 +3,8 @@
 ;; Removes deterministic TypeLisp build artifacts without walking arbitrary
 ;; directories. Source-file cleanup targets default source-adjacent outputs;
 ;; package cleanup targets the manifest's package output directory.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/fs.tl")
 
 (import "../stdlib/io.tl")
@@ -413,42 +415,42 @@
         (OkCleanConfig (CleanPackageConfig manifest has-manifest dry-run))))
     (let
       [current : String (arg idx)]
-      (cond
-        [(string-eq current "--dry-run")
-          (clean-parse-options
-            (+ idx 1)
-            count
-            source
-            has-source
-            manifest
-            has-manifest
-            true)]
-        [(string-eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ErrCleanConfig "clean: --manifest-path requires a value")
-            (if has-manifest
-              (ErrCleanConfig
-                "clean: --manifest-path was provided more than once")
-              (clean-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                (arg (+ idx 1))
-                true
-                dry-run)))]
-        [(clean-flag? current)
-          (ErrCleanConfig (string-append "clean: unknown flag " current))]
-        [has-source (ErrCleanConfig "clean: accepts only one source file")]
-        [else
-          (clean-parse-options
-            (+ idx 1)
-            count
-            current
-            true
-            manifest
-            has-manifest
-            dry-run)]))))
+      (core/cond
+        (string-eq current "--dry-run")
+        (clean-parse-options
+          (+ idx 1)
+          count
+          source
+          has-source
+          manifest
+          has-manifest
+          true)
+        (string-eq current "--manifest-path")
+        (if (>= (+ idx 1) count)
+          (ErrCleanConfig "clean: --manifest-path requires a value")
+          (if has-manifest
+            (ErrCleanConfig
+              "clean: --manifest-path was provided more than once")
+            (clean-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              (arg (+ idx 1))
+              true
+              dry-run)))
+        (clean-flag? current)
+        (ErrCleanConfig (string-append "clean: unknown flag " current))
+        has-source
+        (ErrCleanConfig "clean: accepts only one source file")
+        (clean-parse-options
+          (+ idx 1)
+          count
+          current
+          true
+          manifest
+          has-manifest
+          dry-run)))))
 
 (define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
   (clean-parse-options idx count "" false "" false false))

@@ -382,45 +382,36 @@
     [t : i64 (peek-tag toks cur)]
     (cond
       [(= t (tag-int))
-        ;; An integer atom: project the literal out of the TInt and consume it.
         (let
           [v : i64 (token-int (peek-tok toks cur))]
           (begin
             (advance cur)
             (OkSexpr (SInt v))))]
       [(= t (tag-float))
-        ;; A float atom: carry the lexeme text through the reader.
         (let
           [s : String (token-float (peek-tok toks cur))]
           (begin
             (advance cur)
             (OkSexpr (SFloat s))))]
       [(= t (tag-sym))
-        ;; A symbol atom: project the lexeme out of the TSym and consume it.
         (let
           [s : String (token-sym (peek-tok toks cur))]
           (begin
             (advance cur)
             (OkSexpr (SSym s))))]
       [(= t (tag-str))
-        ;; A string-literal atom: project the inner text out of the TStr
-        ;; (via the imported `token-str` accessor, #128) and consume it.
-        ;; `SStr` keeps it distinct from a same-character `SSym`.
         (let
           [s : String (token-str (peek-tok toks cur))]
           (begin
             (advance cur)
             (OkSexpr (SStr s))))]
       [(= t (tag-char))
-        ;; A character-literal atom: project the char out of the
-        ;; TChar token (via imported `token-char`) and consume it.
         (let
           [c : char (token-char (peek-tok toks cur))]
           (begin
             (advance cur)
             (OkSexpr (SChar c))))]
       [(= t (tag-lparen))
-        ;; A list: consume '(' and read forms until the matching ')'.
         (begin
           (advance cur)
           (read-list-result toks cur))]
@@ -438,7 +429,6 @@
               [(ErrSexpr message) (ErrSexpr message)])))]
       [(= t (tag-rparen)) (ErrSexpr "reader: unexpected ')'")]
       [(= t (tag-rbracket)) (ErrSexpr "reader: unexpected ']'")]
-      ;; tag-end (or anything else): premature end of stream.
       [else (ErrSexpr "reader: unexpected end of input")])))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms

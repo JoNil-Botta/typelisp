@@ -1,5 +1,7 @@
 ;: SPEC safe-code contract: in-bounds collection access, checked aggregate
 ;: construction, race-free SPMD, and valid comptime values have defined results.
+(import "stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "stdlib/string.tl")
 
 (defstruct Point
@@ -20,15 +22,19 @@
     [m : MaybeI64 (SomeI64 7)]
     (begin
       (fill items 3)
-      (cond
-        [(!= (array-ref items 2) 3) 1]
-        [(!= (string-length (substring "abcdef" 1 3)) 3) 2]
-        [(!= (+ (struct-get p x) (struct-get p y)) 42) 3]
-        [(!=
-            (match m
-              [(SomeI64 v) v]
-              [Nope 0])
-            7)
-          4]
-        [(!= (comptime (+ 40 2)) 42) 5]
-        [else 42]))))
+      (core/cond
+        (!= (array-ref items 2) 3)
+        1
+        (!= (string-length (substring "abcdef" 1 3)) 3)
+        2
+        (!= (+ (struct-get p x) (struct-get p y)) 42)
+        3
+        (!=
+          (match m
+            [(SomeI64 v) v]
+            [Nope 0])
+          7)
+        4
+        (!= (comptime (+ 40 2)) 42)
+        5
+        42))))

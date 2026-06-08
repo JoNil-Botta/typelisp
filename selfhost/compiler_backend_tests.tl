@@ -489,6 +489,15 @@
                   (> (compiler-object-relocation-list-count relocs) 5)))))))]
     [(ErrCompilerBackendObject _) false]))
 
+(define (compiler-object-coff-rejects-real-text-ok?) : bool
+  (match (compiler-backend-emit-source-object-image
+    (compiler-backend-object-image-source))
+    [(OkCompilerBackendObject image)
+      (match (compiler-object-coff-render image)
+        [(OkCompilerObjectCoff _) false]
+        [(ErrCompilerObjectCoff _) true])]
+    [(ErrCompilerBackendObject _) false]))
+
 (define (compiler-backend-implicit-main-source) : String
   "(define token-value : i64 7)")
 
@@ -5279,7 +5288,9 @@
       (and
         (and
           (compiler-backend-object-image-shape-ok?)
-          (compiler-object-coff-smoke-ok?))
+          (and
+            (compiler-object-coff-smoke-ok?)
+            (compiler-object-coff-rejects-real-text-ok?)))
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))
       (compiler-backend-string-ok?)
       (and

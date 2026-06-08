@@ -1341,8 +1341,16 @@
           true
           opt-level)
           [(OkCompilerDriver asm)
-            (match (source-tool-write-file
+            (match (source-tool-lowered-object-or-assembly-and-link
+              source
+              ir
+              spans
+              target
+              opt-level
+              (source-tool-link-inputs-empty)
               asm-path
+              obj-path
+              bin-path
               (source-tool-augment-assembly-for-target asm target)
               "test: failed to write assembly artifact")
               [(SourceToolCommandErr message)
@@ -1356,66 +1364,47 @@
                     true)
                   1)]
               [(SourceToolCommandOk)
-                (match (source-tool-assemble-and-link
-                  target
-                  asm-path
-                  obj-path
+                (match (source-tool-run-executable
                   bin-path
-                  (source-tool-link-inputs-empty))
-                  [(SourceToolCommandErr message)
+                  target
+                  (process-args-empty))
+                  [(OkProcessOutput output)
+                    (let
+                      [status : i64 (process-output-status output)]
+                      (begin
+                        (source-tool-forward-output output)
+                        (if (= status 0)
+                          unit
+                          (tltest-report-child-status output))
+                        (source-tool-clean-temp
+                          temp-dir
+                          asm-path
+                          obj-path
+                          bin-path
+                          true)
+                        ;; A failed test executable (including one that
+                        ;; panics/aborts, which exits 134) is a test
+                        ;; FAILURE, not a host crash: report the raw status
+                        ;; above, but exit cleanly with 1 so CI does not retry
+                        ;; it as a transient #1204 segfault.
+                        (if (= status 0)
+                          0
+                          1)))]
+                  [(ErrProcessOutput error)
                     (begin
-                      (print-error message)
+                      (print-error
+                        (string-append
+                          (string-append
+                            "Error: failed to run test executable '"
+                            bin-path)
+                          (string-append "': " (process-error-message error))))
                       (source-tool-clean-temp
                         temp-dir
                         asm-path
                         obj-path
                         bin-path
                         true)
-                      1)]
-                  [(SourceToolCommandOk)
-                    (match (source-tool-run-executable
-                      bin-path
-                      target
-                      (process-args-empty))
-                      [(OkProcessOutput output)
-                        (let
-                          [status : i64 (process-output-status output)]
-                          (begin
-                            (source-tool-forward-output output)
-                            (if (= status 0)
-                              unit
-                              (tltest-report-child-status output))
-                            (source-tool-clean-temp
-                              temp-dir
-                              asm-path
-                              obj-path
-                              bin-path
-                              true)
-                            ;; A failed test executable (including one that
-                            ;; panics/aborts, which exits 134) is a test
-                            ;; FAILURE, not a host crash: report the raw
-                            ;; status above, but exit cleanly with 1 so CI
-                            ;; does not retry it as a transient #1204 segfault.
-                            (if (= status 0)
-                              0
-                              1)))]
-                      [(ErrProcessOutput error)
-                        (begin
-                          (print-error
-                            (string-append
-                              (string-append
-                                "Error: failed to run test executable '"
-                                bin-path)
-                              (string-append
-                                "': "
-                                (process-error-message error))))
-                          (source-tool-clean-temp
-                            temp-dir
-                            asm-path
-                            obj-path
-                            bin-path
-                            true)
-                          1)])])])]
+                      1)])])]
           [(ErrCompilerDriver diag)
             (begin
               (print-error (compiler-diagnostic-render diag))

@@ -25,6 +25,10 @@
   (OkCompilerDriverBuffer TextBuf)
   (ErrCompilerDriverBuffer CompilerDiagnostic))
 
+(defenum ResultCompilerDriverObject
+  (OkCompilerDriverObject CompilerObjectImage)
+  (ErrCompilerDriverObject CompilerDiagnostic))
+
 (defenum ResultCompilerDriverLowered
   (OkCompilerDriverLowered CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerDriverLowered CompilerDiagnostic))
@@ -380,6 +384,62 @@
                       (ErrCompilerDriverBuffer
                         (compiler-diagnostic-with-path diag input-path)))]))))]))))
 
+(define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverObject
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerDriverObject
+      (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+    (begin
+      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase "optimize"))
+            (if (ty-node-pool-exhausted?)
+              (ErrCompilerDriverObject
+                (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+              (begin
+                (compiler-backend-set-scalar-registers! (>= opt-level 2))
+                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (match (if has-target
+                  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+                    optimized
+                    target
+                    mode
+                    optimized-spans
+                    emit-entry
+                    crt-entry)
+                  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+                    optimized
+                    (BackendTargetLinux)
+                    mode
+                    optimized-spans
+                    emit-entry
+                    crt-entry))
+                  [(OkCompilerBackendObject image)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (OkCompilerDriverObject image))]
+                  [(ErrCompilerBackendObject diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (ErrCompilerDriverObject
+                        (compiler-diagnostic-with-path diag input-path)))]))))]))))
+
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
 ;;   - stdlib/runtime.tl  - fault/abort handlers + OS primitives (#2142 / #2150),
@@ -664,6 +724,36 @@
           opt-level
           true)]
       [(ErrCompilerDriverLowered diag) (ErrCompilerDriverBuffer diag)])))
+
+(define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
+  [crt-entry : bool]) : ResultCompilerDriverObject
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-total))
+    (match (compiler-driver-load-and-lower-escaping
+      input-path
+      target
+      stdlib-roots
+      mode
+      (compiler-driver-target-cfgs target cfgs))
+      [(OkCompilerDriverLowered program spans)
+        (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          true
+          crt-entry)]
+      [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)])))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]

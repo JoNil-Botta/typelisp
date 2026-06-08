@@ -2435,4 +2435,10 @@ typecheck: return type mismatch"))]
         (begin
           (panic "source-tool: windows stack reserve smoke regressed")
           0)))
+    (unless
+      (source-tool-windows-direct-object-linkability-smoke-ok?)
+      (return
+        (begin
+          (panic "source-tool: windows direct object smoke regressed")
+          0)))
     (doc-test-run-smoke)))

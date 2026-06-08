@@ -4288,6 +4288,19 @@
 (define (compiler-typecheck-match-bad-scalar-arm-source) : String
   "(define (main [n : i64]) : i64 (match n [0 1] [_ true]))")
 
+(define (compiler-typecheck-match-bad-lifetime-result-source) : String
+  "(defenum Choice (Left) (Right))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (slot-found-other [value : (& other i64)]) : (SlotLookup other) (SlotFound value))
+(define (main [bag : i64] [other : i64] [choice : Choice]) : i64
+  (let
+    [probe
+      (match choice
+        [(Left) (slot-found (& bag))]
+        [(Right) (slot-found-other (& other))])]
+    0))")
+
 (define (compiler-typecheck-match-bad-unreachable-source) : String
   "(define (main [n : i64]) : i64 (match n [_ 0] [1 2]))")
 
@@ -4533,6 +4546,13 @@
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-scalar-arm-source)
             "typecheck: match arm result type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-lifetime-result-source)
+            "typecheck: match arms must agree: previous arm type (SlotLookup bag), current arm type (SlotLookup other)")))
       (set!
         ok
         (and

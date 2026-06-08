@@ -5750,6 +5750,14 @@
   (choose x true false))
 (define (main) : i64 (int-value 10))")
 
+(define (compiler-typecheck-macro-expr-shadow-source) : String
+  "(defmacro (choose [condition : bool] [then-expr : Expr] [else-expr : Expr]) : Expr
+  `(if ,condition ,then-expr ,else-expr))
+(defenum Expr
+  (EUserExpr i64))
+(define (main) : i64
+  (choose true 42 0))")
+
 (define (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source) : String
   "(defmacro (choose [condition : bool] [then-expr : Expr] [else-expr : Expr]) : Expr
   `(if ,condition ,then-expr ,else-expr))
@@ -5976,15 +5984,18 @@
               (compiler-typecheck-ok?
                 (compiler-typecheck-macro-expr-wildcard-operand-source))
               (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
-                  "typecheck: if branches must match")
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-macro-expr-shadow-source))
                 (and
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-macro-expr-list-nth-source))
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-macro-expand-depth-source)
-                    "macro expansion exceeded depth limit"))))))))
+                    (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
+                    "typecheck: if branches must match")
+                  (and
+                    (compiler-typecheck-ok?
+                      (compiler-typecheck-macro-expr-list-nth-source))
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-macro-expand-depth-source)
+                      "macro expansion exceeded depth limit")))))))))
     (and
       (compiler-typecheck-macro-export-tests-ok?)
       (and

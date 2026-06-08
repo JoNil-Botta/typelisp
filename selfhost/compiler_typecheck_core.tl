@@ -4556,7 +4556,7 @@
                   (CtfeExprList AstExprNil)
                   (CtfeExpr
                     (ast-node-push (AstExprVar name))
-                    (tc-resolve-type ctx ty))))
+                    (tc-resolve-type ctx (tc-macro-signature-type ty)))))
               rest)]))]))
 
 (define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
@@ -14493,6 +14493,16 @@
             (tc-summary-add-decl summary inner))]
         [_ summary])]))
 
+(define (tc-macro-signature-type [ty : AstType]) : AstType
+  (match ty
+    [(AstTyVar name)
+      (if (string-eq name "Expr")
+        (AstTyExpr)
+        (if (string-eq name "ExprList")
+          (AstTyExprList)
+          ty))]
+    [_ ty]))
+
 (define (tc-check-defmacro-produced-type
   [ctx : TcContext]
   [ret : AstType]
@@ -14502,7 +14512,7 @@
       (if (or
         (tc-type-eq produced (AstTyExpr))
         (tc-type-compatible?
-          (tc-resolve-type ctx ret)
+          (tc-resolve-type ctx (tc-macro-signature-type ret))
           (tc-resolve-type ctx produced)))
         OkTcUnit
         (ErrTcUnit
@@ -18165,7 +18175,8 @@
   [expected : AstType]
   [arg : AstExpr]) : ResultMacroCheck
   (let
-    [resolved-expected : AstType (tc-resolve-type ctx expected)]
+    [resolved-expected : AstType
+      (tc-resolve-type ctx (tc-macro-signature-type expected))]
     (if (tc-type-eq resolved-expected (AstTyExpr))
       OkMacroCheck
       (match (tc-expr ctx env arg)
@@ -18253,7 +18264,11 @@
                           rest-args
                           (CtfeEnvCons
                             (intern-str pname)
-                            (CtfeExpr arg (tc-resolve-type ctx pty))
+                            (CtfeExpr
+                              arg
+                              (tc-resolve-type
+                                ctx
+                                (tc-macro-signature-type pty)))
                             (box env))
                           call-expr)]
                       [(ErrMacroCheck diag) (ErrMacroEnv diag)]))]))]))]))
@@ -18296,7 +18311,7 @@
                   (if (or
                     (tc-type-eq produced (AstTyExpr))
                     (tc-type-compatible?
-                      (tc-resolve-type ctx ret)
+                      (tc-resolve-type ctx (tc-macro-signature-type ret))
                       (tc-resolve-type ctx produced)))
                     (macro-expand-expr
                       ctx

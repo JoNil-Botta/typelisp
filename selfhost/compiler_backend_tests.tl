@@ -2405,6 +2405,14 @@
       (array-set! out i 0)
       (array-set! out i (+ (array-ref xs i) 1)))))")
 
+(define (compiler-backend-avx512-masked-if-offset-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (< (array-ref xs (+ i 1)) 0)
+      (array-set! out (+ i 1) 0)
+      (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))")
+
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
   [move : String]
@@ -2437,10 +2445,8 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-backend-avx512-masked-if-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-backend-avx512-masked-if-source)
-    (CompilerLowerAvx512))
+(define (compiler-backend-avx512-masked-if-source-ok? [src : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program spans)
       (match (compiler-backend-emit-program-target-with-mode
         program
@@ -2465,6 +2471,13 @@
                 "vector/mask IR emission is not implemented")))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx512-masked-if-ok?) : bool
+  (and
+    (compiler-backend-avx512-masked-if-source-ok?
+      (compiler-backend-avx512-masked-if-source))
+    (compiler-backend-avx512-masked-if-source-ok?
+      (compiler-backend-avx512-masked-if-offset-source))))
 
 (define (compiler-backend-avx512-vector-map-ok?) : bool
   (and

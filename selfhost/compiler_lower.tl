@@ -105,7 +105,7 @@
 
 (defenum LowerArrayVarList
   (LowerArrayVarNil)
-  (LowerArrayVarCons i64 (Box LowerArrayVarList)))
+  (LowerArrayVarCons i64 i64 (Box LowerArrayVarList)))
 
 (defenum LowerCapture
   (LowerCapture String i64 AstType i64))
@@ -14740,28 +14740,99 @@
           LowerNoArrayVar))]
     [_ LowerNoArrayVar]))
 
-(define (lower-array-var-list-contains? [vars : LowerArrayVarList] [var : i64]) : bool
+(define (lower-array-var-list-add
+  [vars : LowerArrayVarList]
+  [var : i64]
+  [offset : i64]) : LowerArrayVarList
   (match vars
-    [(LowerArrayVarNil) false]
-    [(LowerArrayVarCons found rest)
+    [(LowerArrayVarNil) (LowerArrayVarCons var offset (box LowerArrayVarNil))]
+    [(LowerArrayVarCons found found-offset rest)
       (if (= found var)
-        true
-        (lower-array-var-list-contains? (box-get rest) var))]))
-
-(define (lower-array-var-list-add [vars : LowerArrayVarList] [var : i64]) : LowerArrayVarList
-  (if (lower-array-var-list-contains? vars var)
-    vars
-    (LowerArrayVarCons var (box vars))))
+        (LowerArrayVarCons
+          found
+          (if (> offset found-offset)
+            offset
+            found-offset)
+          rest)
+        (LowerArrayVarCons
+          found
+          found-offset
+          (box (lower-array-var-list-add (box-get rest) var offset))))]))
 
 (define (lower-array-var-list-merge
   [left : LowerArrayVarList]
   [right : LowerArrayVarList]) : LowerArrayVarList
   (match right
     [(LowerArrayVarNil) left]
-    [(LowerArrayVarCons var rest)
+    [(LowerArrayVarCons var offset rest)
       (lower-array-var-list-merge
-        (lower-array-var-list-add left var)
+        (lower-array-var-list-add left var offset)
         (box-get rest))]))
+
+(define (lower-array-var-list-max-offset [vars : LowerArrayVarList]) : i64
+  (match vars
+    [(LowerArrayVarNil) 0]
+    [(LowerArrayVarCons _ offset rest)
+      (let
+        [rest-offset : i64 (lower-array-var-list-max-offset (box-get rest))]
+        (if (> offset rest-offset)
+          offset
+          rest-offset))]))
+
+(define (lower-masked-vector-index-literal-offset [expr : AstExpr]) : i64
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-index-literal-offset inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-index-literal-offset inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-index-literal-offset inner))]
+    [(AstExprLiteral (AstLitInt n))
+      (if (>= n 0)
+        n
+        -1)]
+    [_ -1]))
+
+(define (lower-masked-vector-index-offset [index : String] [expr : AstExpr]) : i64
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-index-offset index inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-index-offset index inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-masked-vector-index-offset index inner))]
+    [(AstExprVar name)
+      (if (string-eq (intern-str name) index)
+        0
+        -1)]
+    [(AstExprBinary op left-box right-box)
+      (match op
+        [(AstBinAdd)
+          (let
+            [left : AstExpr (ast-node-get left-box)]
+            [right : AstExpr (ast-node-get right-box)]
+            [left-offset : i64 (lower-masked-vector-index-offset index left)]
+            [right-offset : i64 (lower-masked-vector-index-offset index right)]
+            (cond
+              [(= left-offset 0)
+                (lower-masked-vector-index-literal-offset right)]
+              [(= right-offset 0)
+                (lower-masked-vector-index-literal-offset left)]
+              [else -1]))]
+        [_ -1])]
+    [_ -1]))
 
 (define (lower-masked-vector-lanes-merge [left : i64] [right : i64]) : i64
   (cond
@@ -14893,7 +14964,7 @@
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
-        (if (lower-expr-is-var? idx index)
+        (if (>= (lower-masked-vector-index-offset index idx) 0)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar _ elem-ty)
               (lower-simd-lanes-for-elem mode elem-ty)]
@@ -14904,7 +14975,7 @@
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         [value : AstExpr (ast-node-get value-box)]
-        (if (lower-expr-is-var? idx index)
+        (if (>= (lower-masked-vector-index-offset index idx) 0)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar _ elem-ty)
               (lower-masked-vector-lanes-merge
@@ -15153,10 +15224,11 @@
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
-        (if (lower-expr-is-var? idx index)
+        [idx-offset : i64 (lower-masked-vector-index-offset index idx)]
+        (if (>= idx-offset 0)
           (match (lower-dynamic-array-var env type-env arr)
             [(LowerSomeArrayVar var _)
-              (lower-array-var-list-add LowerArrayVarNil var)]
+              (lower-array-var-list-add LowerArrayVarNil var idx-offset)]
             [LowerNoArrayVar LowerArrayVarNil])
           LowerArrayVarNil))]
     [(AstExprArraySet arr-box idx-box value-box)
@@ -15164,11 +15236,12 @@
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         [value : AstExpr (ast-node-get value-box)]
+        [idx-offset : i64 (lower-masked-vector-index-offset index idx)]
         (lower-array-var-list-merge
-          (if (lower-expr-is-var? idx index)
+          (if (>= idx-offset 0)
             (match (lower-dynamic-array-var env type-env arr)
               [(LowerSomeArrayVar var _)
-                (lower-array-var-list-add LowerArrayVarNil var)]
+                (lower-array-var-list-add LowerArrayVarNil var idx-offset)]
               [LowerNoArrayVar LowerArrayVarNil])
             LowerArrayVarNil)
           (lower-masked-vector-array-vars env type-env index value)))]
@@ -16120,6 +16193,14 @@
             (set! within value))])
       (lower-emit-binop s (IrBinAnd) ok within (AstTyBool)))))
 
+(define (lower-avx512-index-plus-offset
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]) : LowerExpr
+  (if (> offset 0)
+    (lower-emit-binop state (IrBinAdd) base (IrValueI64 offset) (AstTyI64))
+    (LowerExpr state base (AstTyI64))))
+
 (define (lower-avx512-array-list-next-ok
   [state : LowerState]
   [ok : CompilerIrValue]
@@ -16127,28 +16208,30 @@
   [arrays : LowerArrayVarList]) : LowerExpr
   (match arrays
     [(LowerArrayVarNil) (LowerExpr state ok (AstTyBool))]
-    [(LowerArrayVarCons array-var rest)
-      (match (lower-array-len-value state (IrValueVar array-var))
-        [(LowerExpr len-state array-len _)
-          (match (lower-emit-binop
-            len-state
-            (IrBinLe)
-            next-index
-            array-len
-            (AstTyBool))
-            [(LowerExpr cmp-state within _)
+    [(LowerArrayVarCons array-var offset rest)
+      (match (lower-avx512-index-plus-offset state next-index offset)
+        [(LowerExpr index-state limit-index _)
+          (match (lower-array-len-value index-state (IrValueVar array-var))
+            [(LowerExpr len-state array-len _)
               (match (lower-emit-binop
-                cmp-state
-                (IrBinAnd)
-                ok
-                within
+                len-state
+                (IrBinLe)
+                limit-index
+                array-len
                 (AstTyBool))
-                [(LowerExpr next-state next-ok _)
-                  (lower-avx512-array-list-next-ok
-                    next-state
-                    next-ok
-                    next-index
-                    (box-get rest))])])])]))
+                [(LowerExpr cmp-state within _)
+                  (match (lower-emit-binop
+                    cmp-state
+                    (IrBinAnd)
+                    ok
+                    within
+                    (AstTyBool))
+                    [(LowerExpr next-state next-ok _)
+                      (lower-avx512-array-list-next-ok
+                        next-state
+                        next-ok
+                        next-index
+                        (box-get rest))])])])])]))
 
 (define (lower-avx512-array-list-end-ok
   [state : LowerState]
@@ -16157,28 +16240,40 @@
   [arrays : LowerArrayVarList]) : LowerExpr
   (match arrays
     [(LowerArrayVarNil) (LowerExpr state ok (AstTyBool))]
-    [(LowerArrayVarCons array-var rest)
-      (match (lower-array-len-value state (IrValueVar array-var))
-        [(LowerExpr len-state array-len _)
-          (match (lower-emit-binop
-            len-state
-            (IrBinLe)
-            end-value
-            array-len
-            (AstTyBool))
-            [(LowerExpr cmp-state within _)
+    [(LowerArrayVarCons array-var offset rest)
+      (match (lower-avx512-index-plus-offset state end-value offset)
+        [(LowerExpr index-state limit-index _)
+          (match (lower-array-len-value index-state (IrValueVar array-var))
+            [(LowerExpr len-state array-len _)
               (match (lower-emit-binop
-                cmp-state
-                (IrBinAnd)
-                ok
-                within
+                len-state
+                (IrBinLe)
+                limit-index
+                array-len
                 (AstTyBool))
-                [(LowerExpr next-state next-ok _)
-                  (lower-avx512-array-list-end-ok
-                    next-state
-                    next-ok
-                    end-value
-                    (box-get rest))])])])]))
+                [(LowerExpr cmp-state within _)
+                  (match (lower-emit-binop
+                    cmp-state
+                    (IrBinAnd)
+                    ok
+                    within
+                    (AstTyBool))
+                    [(LowerExpr next-state next-ok _)
+                      (lower-avx512-array-list-end-ok
+                        next-state
+                        next-ok
+                        end-value
+                        (box-get rest))])])])])]))
+
+(define (lower-avx512-masked-index-limit [lanes : i64] [offset : i64]) : i64
+  (let
+    [base : i64 (- 9223372036854775807 lanes)]
+    (if (> offset base)
+      -1
+      (- base offset))))
+
+(define (lower-avx512-masked-tail-limit [offset : i64]) : i64
+  (- 9223372036854775807 offset))
 
 (define (lower-avx512-masked-vector-ok
   [state : LowerState]
@@ -16189,6 +16284,7 @@
   [lanes : i64]) : LowerExpr
   (let
     [s : LowerState state]
+    [max-offset : i64 (lower-array-var-list-max-offset arrays)]
     [ok : CompilerIrValue IrValueUnit]
     [within : CompilerIrValue IrValueUnit]
     (begin
@@ -16206,7 +16302,7 @@
         s
         (IrBinLe)
         (IrValueVar index-var)
-        (IrValueI64 (- 9223372036854775807 lanes))
+        (IrValueI64 (lower-avx512-masked-index-limit lanes max-offset))
         (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
@@ -16233,6 +16329,7 @@
   [arrays : LowerArrayVarList]) : LowerExpr
   (let
     [s : LowerState state]
+    [max-offset : i64 (lower-array-var-list-max-offset arrays)]
     [ok : CompilerIrValue IrValueUnit]
     [within : CompilerIrValue IrValueUnit]
     (begin
@@ -16242,6 +16339,21 @@
         (IrValueVar index-var)
         (IrValueI64 0)
         (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop
+        s
+        (IrBinLe)
+        end-value
+        (IrValueI64 (lower-avx512-masked-tail-limit max-offset))
+        (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -16271,29 +16383,21 @@
   [index : String]
   [index-var : i64]
   [expr : AstExpr]) : ResultLowerExpr
-  (match expr
-    [(AstExprSpanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-avx512-masked-index-value state index index-var inner))]
-    [(AstExprAnn inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-avx512-masked-index-value state index index-var inner))]
-    [(AstExprCast inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (lower-avx512-masked-index-value state index index-var inner))]
-    [(AstExprVar name)
-      (if (string-eq (intern-str name) index)
-        (OkLowerExpr (LowerExpr state (IrValueVar index-var) (AstTyI64)))
-        (lower-avx512-masked-unsupported
-          expr
-          "non-direct array indexes in this AVX-512 slice"))]
-    [_
+  (let
+    [offset : i64 (lower-masked-vector-index-offset index expr)]
+    (if (< offset 0)
       (lower-avx512-masked-unsupported
         expr
-        "non-direct array indexes in this AVX-512 slice")]))
+        "non-contiguous array indexes in this AVX-512 slice")
+      (if (= offset 0)
+        (OkLowerExpr (LowerExpr state (IrValueVar index-var) (AstTyI64)))
+        (OkLowerExpr
+          (lower-emit-binop
+            state
+            (IrBinAdd)
+            (IrValueVar index-var)
+            (IrValueI64 offset)
+            (AstTyI64)))))))
 
 (define (lower-avx512-masked-bool-literal
   [state : LowerState]
@@ -26781,10 +26885,16 @@
       (array-set! out i 0)
       (array-set! out i (+ (array-ref xs i) 1)))))")
 
-(define (compiler-lower-avx512-masked-if-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-avx512-masked-if-source)
-    (CompilerLowerAvx512))
+(define (compiler-lower-avx512-masked-if-offset-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (< (array-ref xs (+ i 1)) 0)
+      (array-set! out (+ i 1) 0)
+      (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))")
+
+(define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -26813,6 +26923,14 @@
               (> tail-store-count 0)
               true))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx512-masked-if-shape-ok?) : bool
+  (compiler-lower-avx512-masked-if-source-shape-ok?
+    (compiler-lower-avx512-masked-if-source)))
+
+(define (compiler-lower-avx512-masked-if-offset-shape-ok?) : bool
+  (compiler-lower-avx512-masked-if-source-shape-ok?
+    (compiler-lower-avx512-masked-if-offset-source)))
 
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
@@ -26854,7 +26972,9 @@
       (compiler-lower-scalar-foreach-stays-scalar-ok?))
     (and
       (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)
-      (compiler-lower-avx512-masked-if-shape-ok?))))
+      (and
+        (compiler-lower-avx512-masked-if-shape-ok?)
+        (compiler-lower-avx512-masked-if-offset-shape-ok?)))))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?
   [src : String]

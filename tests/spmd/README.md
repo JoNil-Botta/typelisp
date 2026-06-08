@@ -21,6 +21,8 @@ The corpus emphasizes the cases where SIMD bugs hide:
   width 8/16): all-tail, a different element width. Exit 91.
 - `masked_if_i64.tl` — AVX-512-only masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
+- `masked_if_offset_i64.tl` - AVX-512-only masked varying `if` over `n = 12`
+  i64 lanes with shifted contiguous `(+ i 1)` predicated reads/writes. Exit 42.
 - `../integration/spmd_foreach.tl` — `foreach` add over i64, i32, f64, and
   f32 arrays, self-checked against scalar loops across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -41,8 +43,8 @@ Coverage map:
 
 - `foreach` scalar and SIMD map/zip coverage for `i64`, `i32`, `f64`, and
   `f32` lives in `../integration/spmd_foreach.tl` and the two tail fixtures.
-- AVX-512 masked varying `if` direct-index coverage lives in
-  `masked_if_i64.tl`.
+- AVX-512 masked varying `if` direct-index and shifted-contiguous-index
+  coverage lives in `masked_if_i64.tl` and `masked_if_offset_i64.tl`.
 - `spmd-reduce` scalar coverage for the documented operator/type surface lives
   in `../integration/spmd_reduce_scalar.tl`.
 - SIMD reduction vectorization shape checks live in `selfhost/compiler_lower.tl`

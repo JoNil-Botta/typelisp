@@ -6089,6 +6089,9 @@
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
+    (if (intern-qualified-metadata-tests-ok?)
+      unit
+      (panic "typecheck: intern qualified metadata tests failed"))
     (if (tc-type-env-box-smoke?)
       unit
       (panic "typecheck: boxed type env smoke mismatch"))

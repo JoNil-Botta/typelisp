@@ -5798,9 +5798,9 @@
                       [nested-args : AstPatternList (box-get nested-args-box)]
                       (match ctx
                         [(TcContext _ symbols registries _)
-                          (match (compiler-registries-lookup-variant
+                          (match (compiler-registries-lookup-variant-id
                             registries
-                            nested-name-str)
+                            nested-name)
                             [(NoneI64)
                               (ErrLowerEnv
                                 (lower-diagnostic
@@ -6065,9 +6065,9 @@
                       [nested-name-str : String (intern-str nested-name)]
                       (match ctx
                         [(TcContext _ symbols registries _)
-                          (match (compiler-registries-lookup-variant
+                          (match (compiler-registries-lookup-variant-id
                             registries
-                            nested-name-str)
+                            nested-name)
                             [(NoneI64)
                               (ErrLowerEnv
                                 (lower-diagnostic

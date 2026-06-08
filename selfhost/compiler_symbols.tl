@@ -14,12 +14,7 @@
 (import "../stdlib/string.tl")
 
 (defenum CompilerSymbols
-  (CompilerSymbols
-    StringI64Map
-    StringI64Map
-    StringI64Map
-    (Array AstDecl)
-    (Array String)))
+  (CompilerSymbols I64I64Map I64I64Map I64I64Map (Array AstDecl) (Array String)))
 
 (defenum ResultCompilerSymbols
   (OkCompilerSymbols CompilerSymbols)
@@ -29,15 +24,18 @@
   (CompilerNoString)
   (CompilerSomeString String))
 
+(defenum CompilerQualifiedName
+  (CompilerQualifiedName i64 i64))
+
 (defenum CompilerRegistries
-  (CompilerRegistries StringI64Map StringI64Map))
+  (CompilerRegistries I64I64Map I64I64Map))
 
 (defenum ResultCompilerRegistries
   (OkCompilerRegistries CompilerRegistries)
   (ErrCompilerRegistries String))
 
 (defenum CompilerExports
-  (CompilerExports StringI64Map))
+  (CompilerExports I64I64Map))
 
 (defenum ResultCompilerExports
   (OkCompilerExports CompilerExports)
@@ -112,24 +110,36 @@
     (compiler-symbol-kind-defstruct)
     (compiler-registry-handle-owner-index handle)))
 
-(define (compiler-symbol-map-empty) : StringI64Map
-  (string-i64-map-with-capacity 256))
+(define (compiler-symbol-map-empty) : I64I64Map
+  (i64-i64-map-with-capacity 256))
 
-(define (compiler-symbol-map-lookup [map : StringI64Map] [name : String]) : MaybeI64
-  (match (string-i64-map-get map name)
-    [(StringI64MapFound value) (SomeI64 value)]
-    [(StringI64MapMissing) NoneI64]))
+(define (compiler-symbol-map-lookup-id [map : I64I64Map] [name-id : i64]) : MaybeI64
+  (match (i64-i64-map-get map name-id)
+    [(I64I64MapFound value) (SomeI64 value)]
+    [(I64I64MapMissing) NoneI64]))
 
-(define (compiler-symbol-map-contains? [map : StringI64Map] [name : String]) : bool
-  (match (compiler-symbol-map-lookup map name)
+(define (compiler-symbol-map-lookup [map : I64I64Map] [name : String]) : MaybeI64
+  (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
+
+(define (compiler-symbol-map-contains-id? [map : I64I64Map] [name-id : i64]) : bool
+  (match (compiler-symbol-map-lookup-id map name-id)
     [(SomeI64 _) true]
     [(NoneI64) false]))
 
+(define (compiler-symbol-map-contains? [map : I64I64Map] [name : String]) : bool
+  (compiler-symbol-map-contains-id? map (compiler-symbol-name-key-id name)))
+
+(define (compiler-symbol-map-bind-id
+  [map : I64I64Map]
+  [name-id : i64]
+  [handle : i64]) : I64I64Map
+  (i64-i64-map-put map name-id handle))
+
 (define (compiler-symbol-map-bind
-  [map : StringI64Map]
+  [map : I64I64Map]
   [name : String]
-  [handle : i64]) : StringI64Map
-  (string-i64-map-put map name handle))
+  [handle : i64]) : I64I64Map
+  (compiler-symbol-map-bind-id map (compiler-symbol-name-key-id name) handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
   (match decls
@@ -166,11 +176,22 @@
   [kind : String]
   [module : String]
   [name : String]) : MaybeI64
+  (compiler-exports-lookup-id
+    exports
+    (intern kind)
+    (intern module)
+    (intern name)))
+
+(define (compiler-exports-lookup-id
+  [exports : CompilerExports]
+  [kind-id : i64]
+  [module-id : i64]
+  [name-id : i64]) : MaybeI64
   (match exports
     [(CompilerExports exported)
-      (compiler-symbol-map-lookup
+      (compiler-symbol-map-lookup-id
         exported
-        (compiler-export-key module kind name))]))
+        (compiler-export-key-id-by-id module-id kind-id name-id))]))
 
 (define (compiler-exports-add
   [exports : CompilerExports]
@@ -178,41 +199,81 @@
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerExports
+  (compiler-exports-add-id
+    exports
+    (intern kind)
+    (intern module)
+    (intern name)
+    kind
+    module
+    name
+    handle))
+
+(define (compiler-exports-add-id
+  [exports : CompilerExports]
+  [kind-id : i64]
+  [module-id : i64]
+  [name-id : i64]
+  [kind : String]
+  [module : String]
+  [name : String]
+  [handle : i64]) : ResultCompilerExports
   (match exports
     [(CompilerExports exported)
-      (match (compiler-symbol-map-lookup
-        exported
-        (compiler-export-key module kind name))
-        [(SomeI64 existing)
-          (if (= existing handle)
-            (OkCompilerExports exports)
-            (ErrCompilerExports
-              (compiler-export-duplicate-message kind module name)))]
-        [(NoneI64)
-          (OkCompilerExports
-            (CompilerExports
-              (compiler-symbol-map-bind
-                exported
-                (compiler-export-key module kind name)
-                handle)))])]))
+      (let
+        [key-id : i64 (compiler-export-key-id-by-id module-id kind-id name-id)]
+        (match (compiler-symbol-map-lookup-id exported key-id)
+          [(SomeI64 existing)
+            (if (= existing handle)
+              (OkCompilerExports exports)
+              (ErrCompilerExports
+                (compiler-export-duplicate-message kind module name)))]
+          [(NoneI64)
+            (OkCompilerExports
+              (CompilerExports
+                (compiler-symbol-map-bind-id exported key-id handle)))]))]))
 
 (define (compiler-symbols-lookup-value
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
+  (compiler-symbols-lookup-value-id symbols (intern name)))
+
+(define (compiler-symbols-lookup-value-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]) : MaybeI64
   (match symbols
-    [(CompilerSymbols values _ _ _ _) (compiler-symbol-map-lookup values name)]))
+    [(CompilerSymbols values _ _ _ _)
+      (compiler-symbol-map-lookup-id
+        values
+        (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
+  (compiler-symbols-lookup-type-id symbols (intern name)))
+
+(define (compiler-symbols-lookup-type-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ types _ _ _) (compiler-symbol-map-lookup types name)]))
+    [(CompilerSymbols _ types _ _ _)
+      (compiler-symbol-map-lookup-id
+        types
+        (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-symbols-lookup-macro
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
+  (compiler-symbols-lookup-macro-id symbols (intern name)))
+
+(define (compiler-symbols-lookup-macro-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ _ macros _ _) (compiler-symbol-map-lookup macros name)]))
+    [(CompilerSymbols _ _ macros _ _)
+      (compiler-symbol-map-lookup-id
+        macros
+        (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-symbols-decls [symbols : CompilerSymbols]) : (Array AstDecl)
   (match symbols
@@ -245,6 +306,43 @@
   ;; struct name is part of the key.
   (string-append (string-append struct-name ".") field-name))
 
+(define (compiler-composite-pair-key-id [left-id : i64] [right-id : i64]) : i64
+  (+ (intern-capacity) (+ (* left-id (intern-capacity)) right-id)))
+
+(define (compiler-composite-triple-key-id
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    [stride2 : i64 (* (intern-capacity) (intern-capacity))]
+    (+
+      (+ stride stride2)
+      (+ (* left-id stride2) (+ (* middle-id stride) right-id)))))
+
+(define (compiler-struct-field-key-id-by-id
+  [struct-name-id : i64]
+  [field-name-id : i64]) : i64
+  (if (intern-qualified? struct-name-id)
+    (compiler-composite-triple-key-id
+      (intern-qualified-module-id struct-name-id)
+      (intern-qualified-base-id struct-name-id)
+      field-name-id)
+    (compiler-composite-pair-key-id struct-name-id field-name-id)))
+
+(define (compiler-struct-field-key-id
+  [struct-name : String]
+  [field-name : String]) : i64
+  (compiler-struct-field-key-id-by-id (intern struct-name) (intern field-name)))
+
+(define (compiler-struct-field-key-id-in-module-by-id
+  [module-id : i64]
+  [struct-name-id : i64]
+  [field-name-id : i64]) : i64
+  (if (or (< module-id 0) (= (string-length (intern-str module-id)) 0))
+    (compiler-composite-pair-key-id struct-name-id field-name-id)
+    (compiler-composite-triple-key-id module-id struct-name-id field-name-id)))
+
 (define (compiler-registries-duplicate-field-message
   [struct-name : String]
   [field-name : String]) : String
@@ -256,6 +354,37 @@
   (if (= (string-length module) 0)
     name
     (string-append module (string-append "/" name))))
+
+(define (compiler-qualified-name [module : String] [name : String]) : CompilerQualifiedName
+  (CompilerQualifiedName (intern module) (intern name)))
+
+(define (compiler-symbol-module-key-id-by-id [module-id : i64] [name-id : i64]) : i64
+  (if (or (< module-id 0) (= (string-length (intern-str module-id)) 0))
+    name-id
+    (compiler-composite-pair-key-id module-id name-id)))
+
+(define (compiler-symbol-module-key-id [module : String] [name : String]) : i64
+  (compiler-symbol-module-key-id-by-id (intern module) (intern name)))
+
+(define (compiler-symbol-module-key-id-by-name-id
+  [module : String]
+  [name-id : i64]) : i64
+  (compiler-symbol-module-key-id-by-id (intern module) name-id))
+
+(define (compiler-symbol-name-id-key [name-id : i64]) : i64
+  (if (intern-qualified? name-id)
+    (compiler-composite-pair-key-id
+      (intern-qualified-module-id name-id)
+      (intern-qualified-base-id name-id))
+    name-id))
+
+(define (compiler-symbol-name-key-id [name : String]) : i64
+  (compiler-symbol-name-id-key (intern name)))
+
+(define (compiler-qualified-name-key-id [name : CompilerQualifiedName]) : i64
+  (match name
+    [(CompilerQualifiedName module-id base-id)
+      (compiler-symbol-module-key-id-by-id module-id base-id)]))
 
 (define (compiler-export-kind-value) : String
   "value")
@@ -279,6 +408,18 @@
   (compiler-symbol-module-key
     module
     (string-append kind (string-append ":" name))))
+
+(define (compiler-export-key-id-by-id
+  [module-id : i64]
+  [kind-id : i64]
+  [name-id : i64]) : i64
+  (compiler-composite-triple-key-id module-id kind-id name-id))
+
+(define (compiler-export-key-id
+  [module : String]
+  [kind : String]
+  [name : String]) : i64
+  (compiler-export-key-id-by-id (intern module) (intern kind) (intern name)))
 
 (define (compiler-export-field-name [type-name : String] [field-name : String]) : String
   (compiler-struct-field-key type-name field-name))
@@ -370,10 +511,12 @@
       (match (compiler-symbol-map-lookup macros name)
         [(SomeI64 existing)
           (if (= existing handle)
-            (match (string-i64-map-remove macros name)
-              [(StringI64MapRemoveOk next-macros)
+            (match (i64-i64-map-remove
+              macros
+              (compiler-symbol-name-key-id name))
+              [(I64I64MapRemoveOk next-macros)
                 (CompilerSymbols values types next-macros decls owner-names)]
-              [(StringI64MapRemoveMissing _) symbols])
+              [(I64I64MapRemoveMissing _) symbols])
             symbols)]
         [(NoneI64) symbols])]))
 
@@ -393,16 +536,28 @@
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-value-id
+    symbols
+    (compiler-symbol-name-key-id name)
+    name
+    handle))
+
+(define (compiler-symbols-add-value-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? values name)
-        (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name))
-        (if (compiler-symbol-map-contains? macros name)
+      (if (compiler-symbol-map-contains-id? values name-id)
+        (ErrCompilerSymbols
+          (compiler-symbols-duplicate-value-message display-name))
+        (if (compiler-symbol-map-contains-id? macros name-id)
           (ErrCompilerSymbols
-            (compiler-symbols-duplicate-macro-value-message name))
+            (compiler-symbols-duplicate-macro-value-message display-name))
           (OkCompilerSymbols
             (CompilerSymbols
-              (compiler-symbol-map-bind values name handle)
+              (compiler-symbol-map-bind-id values name-id handle)
               types
               macros
               decls
@@ -412,23 +567,35 @@
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-variant-value-id
+    symbols
+    (compiler-symbol-name-key-id name)
+    name
+    handle))
+
+(define (compiler-symbols-add-variant-value-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup values name)
+      (match (compiler-symbol-map-lookup-id values name-id)
         [(SomeI64 existing)
           (if (=
             (compiler-symbol-handle-kind existing)
             (compiler-symbol-kind-enum-variant))
             (ErrCompilerSymbols
-              (compiler-registries-duplicate-variant-message name))
-            (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name)))]
-        [(NoneI64)
-          (if (compiler-symbol-map-contains? macros name)
+              (compiler-registries-duplicate-variant-message display-name))
             (ErrCompilerSymbols
-              (compiler-symbols-duplicate-macro-value-message name))
+              (compiler-symbols-duplicate-value-message display-name)))]
+        [(NoneI64)
+          (if (compiler-symbol-map-contains-id? macros name-id)
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-macro-value-message display-name))
             (OkCompilerSymbols
               (CompilerSymbols
-                (compiler-symbol-map-bind values name handle)
+                (compiler-symbol-map-bind-id values name-id handle)
                 types
                 macros
                 decls
@@ -438,14 +605,26 @@
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-type-id
+    symbols
+    (compiler-symbol-name-key-id name)
+    name
+    handle))
+
+(define (compiler-symbols-add-type-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? types name)
-        (ErrCompilerSymbols (compiler-symbols-duplicate-type-message name))
+      (if (compiler-symbol-map-contains-id? types name-id)
+        (ErrCompilerSymbols
+          (compiler-symbols-duplicate-type-message display-name))
         (OkCompilerSymbols
           (CompilerSymbols
             values
-            (compiler-symbol-map-bind types name handle)
+            (compiler-symbol-map-bind-id types name-id handle)
             macros
             decls
             owner-names)))]))
@@ -454,18 +633,30 @@
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-macro-id
+    symbols
+    (compiler-symbol-name-key-id name)
+    name
+    handle))
+
+(define (compiler-symbols-add-macro-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? macros name)
-        (ErrCompilerSymbols (compiler-symbols-duplicate-macro-message name))
-        (if (compiler-symbol-map-contains? values name)
+      (if (compiler-symbol-map-contains-id? macros name-id)
+        (ErrCompilerSymbols
+          (compiler-symbols-duplicate-macro-message display-name))
+        (if (compiler-symbol-map-contains-id? values name-id)
           (ErrCompilerSymbols
-            (compiler-symbols-duplicate-macro-value-message name))
+            (compiler-symbols-duplicate-macro-value-message display-name))
           (OkCompilerSymbols
             (CompilerSymbols
               values
               types
-              (compiler-symbol-map-bind macros name handle)
+              (compiler-symbol-map-bind-id macros name-id handle)
               decls
               owner-names))))]))
 
@@ -475,8 +666,9 @@
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (let
-    [key : String (compiler-symbol-module-key module name)]
-    (match (compiler-symbols-add-value symbols key handle)
+    [key-id : i64 (compiler-symbol-module-key-id module name)]
+    [display-name : String (compiler-symbol-module-key module name)]
+    (match (compiler-symbols-add-value-id symbols key-id display-name handle)
       [(OkCompilerSymbols next)
         (OkCompilerSymbols (compiler-symbols-add-value-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
@@ -487,8 +679,9 @@
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (let
-    [key : String (compiler-symbol-module-key module name)]
-    (match (compiler-symbols-add-type symbols key handle)
+    [key-id : i64 (compiler-symbol-module-key-id module name)]
+    [display-name : String (compiler-symbol-module-key module name)]
+    (match (compiler-symbols-add-type-id symbols key-id display-name handle)
       [(OkCompilerSymbols next)
         (OkCompilerSymbols (compiler-symbols-add-type-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
@@ -500,13 +693,18 @@
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
   (let
-    [key : String (compiler-symbol-module-key module name)]
+    [key-id : i64 (compiler-symbol-module-key-id module name)]
+    [display-name : String (compiler-symbol-module-key module name)]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
         enum-index
         variant-index)]
-    (match (compiler-symbols-add-variant-value symbols key handle)
+    (match (compiler-symbols-add-variant-value-id
+      symbols
+      key-id
+      display-name
+      handle)
       [(OkCompilerSymbols next)
         (OkCompilerSymbols (compiler-symbols-add-value-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
@@ -545,8 +743,9 @@
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (let
-    [key : String (compiler-symbol-module-key module name)]
-    (match (compiler-symbols-add-macro symbols key handle)
+    [key-id : i64 (compiler-symbol-module-key-id module name)]
+    [display-name : String (compiler-symbol-module-key module name)]
+    (match (compiler-symbols-add-macro-id symbols key-id display-name handle)
       [(OkCompilerSymbols next)
         (OkCompilerSymbols (compiler-symbols-add-macro-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
@@ -582,35 +781,83 @@
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : MaybeI64
-  (compiler-symbols-lookup-value
+  (compiler-symbols-lookup-value-in-module-id
     symbols
-    (compiler-symbol-module-key module name)))
+    (intern module)
+    (intern name)))
+
+(define (compiler-symbols-lookup-value-in-module-id
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]) : MaybeI64
+  (match symbols
+    [(CompilerSymbols values _ _ _ _)
+      (compiler-symbol-map-lookup-id
+        values
+        (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
 (define (compiler-symbols-lookup-type-in-module
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : MaybeI64
-  (compiler-symbols-lookup-type
+  (compiler-symbols-lookup-type-in-module-id
     symbols
-    (compiler-symbol-module-key module name)))
+    (intern module)
+    (intern name)))
+
+(define (compiler-symbols-lookup-type-in-module-id
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]) : MaybeI64
+  (match symbols
+    [(CompilerSymbols _ types _ _ _)
+      (compiler-symbol-map-lookup-id
+        types
+        (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
 (define (compiler-symbols-lookup-macro-in-module
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : MaybeI64
-  (compiler-symbols-lookup-macro
+  (compiler-symbols-lookup-macro-in-module-id
     symbols
-    (compiler-symbol-module-key module name)))
+    (intern module)
+    (intern name)))
+
+(define (compiler-symbols-lookup-macro-in-module-id
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]) : MaybeI64
+  (match symbols
+    [(CompilerSymbols _ _ macros _ _)
+      (compiler-symbol-map-lookup-id
+        macros
+        (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
 (define (compiler-registries-lookup-field-in-module
   [registries : CompilerRegistries]
   [module : String]
   [type-name : String]
   [field-name : String]) : MaybeI64
-  (compiler-registries-lookup-struct-field
+  (compiler-registries-lookup-field-in-module-id
     registries
-    (compiler-symbol-module-key module type-name)
-    field-name))
+    (intern module)
+    (intern type-name)
+    (intern field-name)))
+
+(define (compiler-registries-lookup-field-in-module-id
+  [registries : CompilerRegistries]
+  [module-id : i64]
+  [type-name-id : i64]
+  [field-name-id : i64]) : MaybeI64
+  (match registries
+    [(CompilerRegistries _ fields)
+      (compiler-symbol-map-lookup-id
+        fields
+        (compiler-struct-field-key-id-in-module-by-id
+          module-id
+          type-name-id
+          field-name-id))]))
 
 (define (compiler-export-type-or-macro-present?
   [symbols : CompilerSymbols]
@@ -1045,8 +1292,9 @@
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-value
+  (compiler-symbols-add-value-id
     symbols
+    (compiler-symbol-module-key-id module name)
     (compiler-symbol-module-key module name)
     handle))
 
@@ -1055,8 +1303,9 @@
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-type
+  (compiler-symbols-add-type-id
     symbols
+    (compiler-symbol-module-key-id module name)
     (compiler-symbol-module-key module name)
     handle))
 
@@ -1065,8 +1314,9 @@
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-macro
+  (compiler-symbols-add-macro-id
     symbols
+    (compiler-symbol-module-key-id module name)
     (compiler-symbol-module-key module name)
     handle))
 
@@ -1104,8 +1354,9 @@
   [name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-variant-value
+  (compiler-symbols-add-variant-value-id
     symbols
+    (compiler-symbol-module-key-id module name)
     (compiler-symbol-module-key module name)
     (compiler-registry-make-handle
       (compiler-symbol-kind-enum-variant)
@@ -1820,18 +2071,35 @@
 (define (compiler-registries-lookup-variant
   [registries : CompilerRegistries]
   [name : String]) : MaybeI64
+  (compiler-registries-lookup-variant-id registries (intern name)))
+
+(define (compiler-registries-lookup-variant-id
+  [registries : CompilerRegistries]
+  [name-id : i64]) : MaybeI64
   (match registries
-    [(CompilerRegistries variants _) (compiler-symbol-map-lookup variants name)]))
+    [(CompilerRegistries variants _)
+      (compiler-symbol-map-lookup-id
+        variants
+        (compiler-symbol-name-id-key name-id))]))
 
 (define (compiler-registries-lookup-struct-field
   [registries : CompilerRegistries]
   [struct-name : String]
   [field-name : String]) : MaybeI64
+  (compiler-registries-lookup-struct-field-id
+    registries
+    (intern struct-name)
+    (intern field-name)))
+
+(define (compiler-registries-lookup-struct-field-id
+  [registries : CompilerRegistries]
+  [struct-name-id : i64]
+  [field-name-id : i64]) : MaybeI64
   (match registries
     [(CompilerRegistries _ fields)
-      (compiler-symbol-map-lookup
+      (compiler-symbol-map-lookup-id
         fields
-        (compiler-struct-field-key struct-name field-name))]))
+        (compiler-struct-field-key-id-by-id struct-name-id field-name-id))]))
 
 (define (compiler-registries-add-variant
   [registries : CompilerRegistries]
@@ -1861,7 +2129,8 @@
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
   (let
-    [key : String (compiler-symbol-module-key module name)]
+    [key-id : i64 (compiler-symbol-module-key-id module name)]
+    [display-name : String (compiler-symbol-module-key module name)]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
@@ -1869,13 +2138,13 @@
         variant-index)]
     (match registries
       [(CompilerRegistries variants fields)
-        (if (compiler-symbol-map-contains? variants key)
+        (if (compiler-symbol-map-contains-id? variants key-id)
           (ErrCompilerRegistries
-            (compiler-registries-duplicate-variant-message key))
+            (compiler-registries-duplicate-variant-message display-name))
           (OkCompilerRegistries
             (compiler-registries-add-variant-alias
               (CompilerRegistries
-                (compiler-symbol-map-bind variants key handle)
+                (compiler-symbol-map-bind-id variants key-id handle)
                 fields)
               name
               handle)))])))
@@ -1886,19 +2155,37 @@
   [field-name : String]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
+  (compiler-registries-add-field-id
+    registries
+    (intern struct-name)
+    (intern field-name)
+    struct-name
+    field-name
+    struct-index
+    field-index))
+
+(define (compiler-registries-add-field-id
+  [registries : CompilerRegistries]
+  [struct-name-id : i64]
+  [field-name-id : i64]
+  [struct-name : String]
+  [field-name : String]
+  [struct-index : i64]
+  [field-index : i64]) : ResultCompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
       (let
-        [key : String (compiler-struct-field-key struct-name field-name)]
-        (if (compiler-symbol-map-contains? fields key)
+        [key-id : i64
+          (compiler-struct-field-key-id-by-id struct-name-id field-name-id)]
+        (if (compiler-symbol-map-contains-id? fields key-id)
           (ErrCompilerRegistries
             (compiler-registries-duplicate-field-message struct-name field-name))
           (OkCompilerRegistries
             (CompilerRegistries
               variants
-              (compiler-symbol-map-bind
+              (compiler-symbol-map-bind-id
                 fields
-                key
+                key-id
                 (compiler-registry-make-handle
                   (compiler-symbol-kind-struct-field)
                   struct-index
@@ -1912,12 +2199,12 @@
   (match registries
     [(CompilerRegistries variants fields)
       (let
-        [key : String (compiler-struct-field-key struct-name field-name)]
-        (if (compiler-symbol-map-contains? fields key)
+        [key-id : i64 (compiler-struct-field-key-id struct-name field-name)]
+        (if (compiler-symbol-map-contains-id? fields key-id)
           registries
           (CompilerRegistries
             variants
-            (compiler-symbol-map-bind fields key handle))))]))
+            (compiler-symbol-map-bind-id fields key-id handle))))]))
 
 (define (compiler-registries-add-variant-aliases-list
   [registries : CompilerRegistries]
@@ -3504,6 +3791,94 @@
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-symbols-structural-id-api-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-module-scope-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (and
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value-id
+                      symbols
+                      (intern "left/same"))
+                    (compiler-symbol-kind-value-define)
+                    0)
+                  1)
+                (and
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-value-in-module-id
+                        symbols
+                        (intern "right")
+                        (intern "same"))
+                      (compiler-symbol-kind-value-define)
+                      3)
+                    1)
+                  (and
+                    (=
+                      (compiler-symbol-lookup-score
+                        (compiler-symbols-lookup-type-in-module-id
+                          symbols
+                          (intern "left")
+                          (intern "Maybe"))
+                        (compiler-symbol-kind-defenum)
+                        1)
+                      1)
+                    (and
+                      (=
+                        (compiler-registry-lookup-score
+                          (compiler-registries-lookup-variant-id
+                            registries
+                            (intern "right/Some"))
+                          (compiler-symbol-kind-enum-variant)
+                          4
+                          1)
+                        1)
+                      (=
+                        (compiler-registry-lookup-score
+                          (compiler-registries-lookup-field-in-module-id
+                            registries
+                            (intern "left")
+                            (intern "Point")
+                            (intern "x"))
+                          (compiler-symbol-kind-struct-field)
+                          2
+                          0)
+                        1)))))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-symbols-direct-qualified-add-ok?) : bool
+  (let
+    [handle : i64
+      (compiler-symbol-make-handle (compiler-symbol-kind-value-define) 17)]
+    (match (compiler-symbols-add-value
+      (compiler-symbols-empty)
+      "left/same"
+      handle)
+      [(OkCompilerSymbols symbols)
+        (and
+          (=
+            (compiler-symbol-lookup-score
+              (compiler-symbols-lookup-value symbols "left/same")
+              (compiler-symbol-kind-value-define)
+              17)
+            1)
+          (=
+            (compiler-symbol-lookup-score
+              (compiler-symbols-lookup-value-in-module-id
+                symbols
+                (intern "left")
+                (intern "same"))
+              (compiler-symbol-kind-value-define)
+              17)
+            1))]
+      [(ErrCompilerSymbols _) false])))
+
 (define (compiler-symbols-import-alias-source) : String
   "(module data)
 (define answer : i64 7)
@@ -3618,6 +3993,12 @@
                     unit
                     (set! ok false))
                   (if (compiler-symbols-module-scope-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-symbols-structural-id-api-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-symbols-direct-qualified-add-ok?)
                     unit
                     (set! ok false))
                   (if (compiler-symbols-import-alias-ok?)

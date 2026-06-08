@@ -4,6 +4,8 @@
 ;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
 ;; import it. Warn-only by default; callers can pass `--check` after the input
 ;; path to exit non-zero when findings remain.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "../stdlib/list.tl")
@@ -65,54 +67,53 @@
       enforcing)
     (let
       [current : String (arg idx)]
-      (cond
-        [(string-eq current "--check")
+      (core/cond
+        (string-eq current "--check")
+        (selfhost-lint-parse-options
+          (+ idx 1)
+          count
+          input-paths
+          manifest-path
+          has-manifest
+          stdlib-roots
+          true)
+        (string-eq current "--stdlib-root")
+        (if (>= (+ idx 1) count)
+          (ErrSelfhostLintConfig
+            "selfhost-lint: --stdlib-root requires a value")
           (selfhost-lint-parse-options
-            (+ idx 1)
+            (+ idx 2)
             count
             input-paths
             manifest-path
             has-manifest
-            stdlib-roots
-            true)]
-        [(string-eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ErrSelfhostLintConfig
-              "selfhost-lint: --stdlib-root requires a value")
+            (string-vec-push stdlib-roots (arg (+ idx 1)))
+            enforcing))
+        (string-eq current "--manifest-path")
+        (if (>= (+ idx 1) count)
+          (ErrSelfhostLintConfig
+            "selfhost-lint: --manifest-path requires a value")
+          (if has-manifest
+            (ErrSelfhostLintConfig "selfhost-lint: duplicate --manifest-path")
             (selfhost-lint-parse-options
               (+ idx 2)
               count
               input-paths
-              manifest-path
-              has-manifest
-              (string-vec-push stdlib-roots (arg (+ idx 1)))
-              enforcing))]
-        [(string-eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ErrSelfhostLintConfig
-              "selfhost-lint: --manifest-path requires a value")
-            (if has-manifest
-              (ErrSelfhostLintConfig "selfhost-lint: duplicate --manifest-path")
-              (selfhost-lint-parse-options
-                (+ idx 2)
-                count
-                input-paths
-                (arg (+ idx 1))
-                true
-                stdlib-roots
-                enforcing)))]
-        [(selfhost-lint-flag? current)
-          (ErrSelfhostLintConfig
-            (string-append "selfhost-lint: unknown flag " current))]
-        [else
-          (selfhost-lint-parse-options
-            (+ idx 1)
-            count
-            (string-vec-push input-paths current)
-            manifest-path
-            has-manifest
-            stdlib-roots
-            enforcing)]))))
+              (arg (+ idx 1))
+              true
+              stdlib-roots
+              enforcing)))
+        (selfhost-lint-flag? current)
+        (ErrSelfhostLintConfig
+          (string-append "selfhost-lint: unknown flag " current))
+        (selfhost-lint-parse-options
+          (+ idx 1)
+          count
+          (string-vec-push input-paths current)
+          manifest-path
+          has-manifest
+          stdlib-roots
+          enforcing)))))
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
@@ -739,89 +740,89 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-two-findings-source)
         (string-vec-new))]
-    (cond
-      ;; one reported finding, carrying the rule id / depth / span
-      [(not (= (lint-findings-count reported) 1)) 1]
-      [(not (selfhost-lint-reported-finding-ok? reported)) 2]
-      [(not (= (lint-findings-count return-reported) 1)) 9]
-      [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
-      [(not (= (lint-findings-count unit-reported) 1)) 12]
-      [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
-      [(not (= (lint-findings-count unit-set-reported) 1)) 16]
-      [(not (selfhost-lint-unit-if-finding-ok? unit-set-reported)) 17]
-      [(not (= (lint-findings-count two-reported) 2)) 18]
-      [(not (selfhost-lint-render-order-ok? two-reported)) 19]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-return-path-chain-source))
-            0))
-        11]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-unit-if-source))
-            0))
-        14]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-when-unless-source))
-            0))
-        15]
-      ;; one suppressed finding (`;; lint-allow: nested-if-ladder`) -> none reported
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-ladder-source))
-            0))
-        3]
-      ;; a directive for a different rule id does not suppress this rule
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-wrong-allow-ladder-source))
-            1))
-        4]
-      ;; one clean file -> none reported
-      [(not
-          (=
-            (selfhost-lint-source-finding-count (selfhost-lint-clean-source))
-            0))
-        5]
-      ;; body-only nested let reports one nested-let finding
-      [(not
-          (selfhost-lint-nested-let-finding-ok?
-            (selfhost-lint-source-with-roots
-              "lint_driver_self_test.tl"
-              (selfhost-lint-nested-let-source)
-              (string-vec-new))))
-        9]
-      ;; inner let shadowing an outer binding is not semantics-preserving to
-      ;; suggest, so it remains clean.
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-shadowing-nested-let-source))
-            0))
-        10]
-      ;; an inner let inside a real begin body is not the body-only pattern.
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-begin-inner-let-source))
-            0))
-        11]
-      ;; nested-let findings use the same inline suppression path.
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-nested-let-source))
-            0))
-        12]
-      ;; enforcing (`--check`) mode exits 1 when findings remain, 0 when clean
-      [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]
-      [(not (= (selfhost-lint-enforce-exit true 0) 0)) 7]
-      ;; warn-only mode (default) exits 0 even with findings
-      [(not (= (selfhost-lint-enforce-exit false 1) 0)) 8]
-      [else 42])))
+    (core/cond
+      (not (= (lint-findings-count reported) 1))
+      1
+      (not (selfhost-lint-reported-finding-ok? reported))
+      2
+      (not (= (lint-findings-count return-reported) 1))
+      9
+      (not (selfhost-lint-return-path-finding-ok? return-reported))
+      10
+      (not (= (lint-findings-count unit-reported) 1))
+      12
+      (not (selfhost-lint-unit-if-finding-ok? unit-reported))
+      13
+      (not (= (lint-findings-count unit-set-reported) 1))
+      16
+      (not (selfhost-lint-unit-if-finding-ok? unit-set-reported))
+      17
+      (not (= (lint-findings-count two-reported) 2))
+      18
+      (not (selfhost-lint-render-order-ok? two-reported))
+      19
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-suppressed-return-path-chain-source))
+          0))
+      11
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-suppressed-unit-if-source))
+          0))
+      14
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-when-unless-source))
+          0))
+      15
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-suppressed-ladder-source))
+          0))
+      3
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-wrong-allow-ladder-source))
+          1))
+      4
+      (not
+        (= (selfhost-lint-source-finding-count (selfhost-lint-clean-source)) 0))
+      5
+      (not
+        (selfhost-lint-nested-let-finding-ok?
+          (selfhost-lint-source-with-roots
+            "lint_driver_self_test.tl"
+            (selfhost-lint-nested-let-source)
+            (string-vec-new))))
+      9
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-shadowing-nested-let-source))
+          0))
+      10
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-begin-inner-let-source))
+          0))
+      11
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-suppressed-nested-let-source))
+          0))
+      12
+      (not (= (selfhost-lint-enforce-exit true 1) 1))
+      6
+      (not (= (selfhost-lint-enforce-exit true 0) 0))
+      7
+      (not (= (selfhost-lint-enforce-exit false 1) 0))
+      8
+      42)))

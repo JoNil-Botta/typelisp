@@ -4,6 +4,8 @@
 ;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
 ;; construction/projection; closure, array, and enum-match lowering remain
 ;; explicit future work.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "../stdlib/arena.tl")
@@ -4287,14 +4289,17 @@
             ty)])]))
 
 (define (lower-copy-chunk-size [remaining : i64]) : i64
-  (cond [(>= remaining 8) 8] [(>= remaining 4) 4] [(>= remaining 2) 2] [else 1]))
+  (core/cond (>= remaining 8) 8 (>= remaining 4) 4 (>= remaining 2) 2 1))
 
 (define (lower-copy-chunk-type [chunk : i64]) : AstType
-  (cond
-    [(= chunk 8) (AstTyU64)]
-    [(= chunk 4) (AstTyU32)]
-    [(= chunk 2) (AstTyU16)]
-    [else (AstTyU8)]))
+  (core/cond
+    (= chunk 8)
+    (AstTyU64)
+    (= chunk 4)
+    (AstTyU32)
+    (= chunk 2)
+    (AstTyU16)
+    (AstTyU8)))
 
 (define (lower-copy-bytes
   [state : LowerState]
@@ -4495,11 +4500,14 @@
           (ast-expr-cons (ast-node-push right) AstExprNil))])))
 
 (define (lower-string-concat-runtime-name [count : i64]) : String
-  (cond
-    [(= count 3) "tl_string_concat3"]
-    [(= count 4) "tl_string_concat4"]
-    [(= count 5) "tl_string_concat5"]
-    [else "tl_string_concat"]))
+  (core/cond
+    (= count 3)
+    "tl_string_concat3"
+    (= count 4)
+    "tl_string_concat4"
+    (= count 5)
+    "tl_string_concat5"
+    "tl_string_concat"))
 
 (define (lower-string-concat-values-rev
   [ctx : TcContext]
@@ -7502,13 +7510,18 @@
 ;; First-class arena primitives (#1633). arena-mark/arena-rewind reuse the
 ;; existing region runtime (they snapshot/rewind the current arena's bump).
 (define (lower-arena-builtin? [name : String]) : bool
-  (cond
-    [(string-eq name "arena-make") true]
-    [(string-eq name "arena-current") true]
-    [(string-eq name "arena-mark") true]
-    [(string-eq name "arena-set!") true]
-    [(string-eq name "arena-destroy") true]
-    [else (string-eq name "arena-rewind")]))
+  (core/cond
+    (string-eq name "arena-make")
+    true
+    (string-eq name "arena-current")
+    true
+    (string-eq name "arena-mark")
+    true
+    (string-eq name "arena-set!")
+    true
+    (string-eq name "arena-destroy")
+    true
+    (string-eq name "arena-rewind")))
 
 (define (lower-arena-builtin-nullary? [name : String]) : bool
   (or
@@ -7516,13 +7529,18 @@
     (or (string-eq name "arena-current") (string-eq name "arena-mark"))))
 
 (define (lower-arena-builtin-symbol [name : String]) : String
-  (cond
-    [(string-eq name "arena-make") "tl_arena_make"]
-    [(string-eq name "arena-current") "tl_arena_current"]
-    [(string-eq name "arena-mark") "tl_region_mark"]
-    [(string-eq name "arena-set!") "tl_arena_set"]
-    [(string-eq name "arena-destroy") "tl_arena_destroy"]
-    [else "tl_region_reset"]))
+  (core/cond
+    (string-eq name "arena-make")
+    "tl_arena_make"
+    (string-eq name "arena-current")
+    "tl_arena_current"
+    (string-eq name "arena-mark")
+    "tl_region_mark"
+    (string-eq name "arena-set!")
+    "tl_arena_set"
+    (string-eq name "arena-destroy")
+    "tl_arena_destroy"
+    "tl_region_reset"))
 
 (define (lower-arena-builtin-call
   [ctx : TcContext]
@@ -8126,10 +8144,12 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
-  (cond
-    [(string-eq name "string-eq") true]
-    [(string-eq name "string=?") true]
-    [else (string-eq name "string->int")]))
+  (core/cond
+    (string-eq name "string-eq")
+    true
+    (string-eq name "string=?")
+    true
+    (string-eq name "string->int")))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -8792,32 +8812,32 @@
             [_ (ErrTcType "lower: call result type is not fast-pathable")])]
         [(ErrTcType message)
           (if (lower-builtin-call-available? ctx env (intern-str name))
-            (cond
-              [(string-eq (intern-str name) "array-length")
-                (OkTcType (AstTyI64))]
-              [(or
-                  (string-eq (intern-str name) "string-ref")
-                  (string-eq (intern-str name) "char-at"))
-                (OkTcType (AstTyChar))]
-              [(string-eq (intern-str name) "clone")
-                (match args
-                  [(AstExprCons arg tail)
-                    (let
-                      [arg : AstExpr (ast-node-get arg)]
-                      [tail : AstExprList (box-get tail)]
-                      (match tail
-                        [(AstExprNil)
-                          (lower-expr-result-type-fast
-                            ctx
-                            env
-                            type-env
-                            type-cache
-                            arg)]
-                        [_
-                          (ErrTcType
-                            "lower: call result type is not fast-pathable")]))]
-                  [_ (ErrTcType "lower: call result type is not fast-pathable")])]
-              [else (ErrTcType message)])
+            (core/cond
+              (string-eq (intern-str name) "array-length")
+              (OkTcType (AstTyI64))
+              (or
+                (string-eq (intern-str name) "string-ref")
+                (string-eq (intern-str name) "char-at"))
+              (OkTcType (AstTyChar))
+              (string-eq (intern-str name) "clone")
+              (match args
+                [(AstExprCons arg tail)
+                  (let
+                    [arg : AstExpr (ast-node-get arg)]
+                    [tail : AstExprList (box-get tail)]
+                    (match tail
+                      [(AstExprNil)
+                        (lower-expr-result-type-fast
+                          ctx
+                          env
+                          type-env
+                          type-cache
+                          arg)]
+                      [_
+                        (ErrTcType
+                          "lower: call result type is not fast-pathable")]))]
+                [_ (ErrTcType "lower: call result type is not fast-pathable")])
+              (ErrTcType message))
             (ErrTcType message))])]
     [(AstExprLambda params maybe-ret body-box)
       (let
@@ -11008,11 +11028,14 @@
         (lower-c-abi-inline-fields-integer-only? ctx (box-get rest)))]))
 
 (define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
-  (cond
-    [(<= size 1) (AstTyU8)]
-    [(<= size 2) (AstTyU16)]
-    [(<= size 4) (AstTyU32)]
-    [else (AstTyU64)]))
+  (core/cond
+    (<= size 1)
+    (AstTyU8)
+    (<= size 2)
+    (AstTyU16)
+    (<= size 4)
+    (AstTyU32)
+    (AstTyU64)))
 
 (define (lower-c-abi-target-name [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
@@ -11929,12 +11952,12 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (cond
-    [(or (string-eq name "string-eq") (string-eq name "string=?"))
-      (lower-string-eq-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "string->int")
-      (lower-string-to-int-call ctx state env type-env args result-ty origin)]
-    [else (lower-direct-call ctx state env type-env name args result-ty origin)]))
+  (core/cond
+    (or (string-eq name "string-eq") (string-eq name "string=?"))
+    (lower-string-eq-call ctx state env type-env args result-ty origin)
+    (string-eq name "string->int")
+    (lower-string-to-int-call ctx state env type-env args result-ty origin)
+    (lower-direct-call ctx state env type-env name args result-ty origin)))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 ;; bounds-checked String byte index. Since #677 the parser emits these names as
@@ -12173,112 +12196,102 @@
             (let
               [builtin-available : bool
                 (not (lower-top-level-value-defined? ctx name))]
-              (cond
-                [(and builtin-available (tc-layout-query-name? name))
-                  (ErrLowerExpr
-                    (lower-diagnostic-at-expr
-                      origin
+              (core/cond
+                (and builtin-available (tc-layout-query-name? name))
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
+                    (string-append
+                      "lower: "
                       (string-append
-                        "lower: "
-                        (string-append
-                          name
-                          " is compile-time only; wrap it in (comptime ...)"))))]
-                [(and
-                    builtin-available
+                        name
+                        " is compile-time only; wrap it in (comptime ...)"))))
+                (and
+                  builtin-available
+                  (or (string-eq name "string-ref") (string-eq name "char-at")))
+                (lower-string-ref-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)
+                (and
+                  builtin-available
+                  (or
+                    (string-eq name "array-length")
                     (or
-                      (string-eq name "string-ref")
-                      (string-eq name "char-at")))
-                  (lower-string-ref-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]
-                [(and
-                    builtin-available
-                    (or
-                      (string-eq name "array-length")
-                      (or
-                        (string-eq name "length")
-                        (string-eq name "string-length"))))
-                  (lower-array-length
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]
-                [(and builtin-available (lower-string-runtime-builtin? name))
-                  (lower-string-runtime-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]
-                [(and builtin-available (string-eq name "cpuid"))
-                  (lower-cpuid-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    args
-                    result-ty
-                    origin)]
-                [(and builtin-available (string-eq name "xgetbv"))
-                  (lower-xgetbv-call ctx state env type-env args origin)]
-                [(and builtin-available (string-eq name "clone"))
-                  (match args
-                    [(AstExprCons arg tail)
-                      (let
-                        [arg : AstExpr (ast-node-get arg)]
-                        [tail : AstExprList (box-get tail)]
-                        (match tail
-                          [(AstExprNil)
-                            (lower-clone-call ctx state env type-env arg)]
-                          [_
-                            (ErrLowerExpr
-                              (lower-diagnostic
-                                "lower: clone expects one argument"))]))]
-                    [_
-                      (ErrLowerExpr
-                        (lower-diagnostic "lower: clone expects one argument"))])]
-                [(and builtin-available (lower-arena-builtin? name))
-                  (lower-arena-builtin-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty)]
-                [(and builtin-available (lower-bootstrap-runtime-builtin? name))
-                  (lower-bootstrap-runtime-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]
-                [else
-                  (lower-call-non-builtin
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]))]))]
+                      (string-eq name "length")
+                      (string-eq name "string-length"))))
+                (lower-array-length
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)
+                (and builtin-available (lower-string-runtime-builtin? name))
+                (lower-string-runtime-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)
+                (and builtin-available (string-eq name "cpuid"))
+                (lower-cpuid-call ctx state env type-env args result-ty origin)
+                (and builtin-available (string-eq name "xgetbv"))
+                (lower-xgetbv-call ctx state env type-env args origin)
+                (and builtin-available (string-eq name "clone"))
+                (match args
+                  [(AstExprCons arg tail)
+                    (let
+                      [arg : AstExpr (ast-node-get arg)]
+                      [tail : AstExprList (box-get tail)]
+                      (match tail
+                        [(AstExprNil)
+                          (lower-clone-call ctx state env type-env arg)]
+                        [_
+                          (ErrLowerExpr
+                            (lower-diagnostic
+                              "lower: clone expects one argument"))]))]
+                  [_
+                    (ErrLowerExpr
+                      (lower-diagnostic "lower: clone expects one argument"))])
+                (and builtin-available (lower-arena-builtin? name))
+                (lower-arena-builtin-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty)
+                (and builtin-available (lower-bootstrap-runtime-builtin? name))
+                (lower-bootstrap-runtime-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)
+                (lower-call-non-builtin
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)))]))]
     [_
       (match (lower-expr ctx state env type-env func)
         [(OkLowerExpr lowered-func)
@@ -12516,10 +12529,12 @@
     [(LowerAlloc allocated var-id)
       (let
         [instr : CompilerIrInstr
-          (cond
-            [(= kind 0) (IrInstrEntryArgc var-id)]
-            [(= kind 1) (IrInstrEntryArgv var-id)]
-            [else (IrInstrEntryEnvp var-id)])]
+          (core/cond
+            (= kind 0)
+            (IrInstrEntryArgc var-id)
+            (= kind 1)
+            (IrInstrEntryArgv var-id)
+            (IrInstrEntryEnvp var-id))]
         (OkLowerExpr
           (LowerExpr
             (lower-state-emit allocated instr)
@@ -13260,36 +13275,36 @@
   [elem-ty : AstType]
   [elem-size : i64]
   [origin : AstExpr]) : ResultLowerState
-  (cond
-    [(= elem-size 0) (OkLowerState state)]
-    [(lower-make-array-zero-fill-supported? ctx elem-ty)
-      (lower-make-array-zero-fill state buf-value byte-count)]
-    [(lower-init-default-share-safe? ctx elem-ty)
-      (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
-        [(OkLowerExpr lowered-init)
-          (match lowered-init
-            [(LowerExpr init-state init-value _)
-              (if (lower-make-array-fill8-supported? ctx elem-ty)
-                (lower-make-array-fill8 init-state buf-value len-i64 init-value)
-                (lower-make-array-store-init-loop-runtime
-                  init-state
-                  buf-value
-                  len-i64
-                  elem-ty
-                  elem-size
-                  init-value))])]
-        [(ErrLowerExpr message) (ErrLowerState message)])]
-    [else
-      (lower-make-array-init-loop-runtime
-        ctx
-        state
-        env
-        type-env
-        buf-value
-        len-i64
-        elem-ty
-        elem-size
-        origin)]))
+  (core/cond
+    (= elem-size 0)
+    (OkLowerState state)
+    (lower-make-array-zero-fill-supported? ctx elem-ty)
+    (lower-make-array-zero-fill state buf-value byte-count)
+    (lower-init-default-share-safe? ctx elem-ty)
+    (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
+      [(OkLowerExpr lowered-init)
+        (match lowered-init
+          [(LowerExpr init-state init-value _)
+            (if (lower-make-array-fill8-supported? ctx elem-ty)
+              (lower-make-array-fill8 init-state buf-value len-i64 init-value)
+              (lower-make-array-store-init-loop-runtime
+                init-state
+                buf-value
+                len-i64
+                elem-ty
+                elem-size
+                init-value))])]
+      [(ErrLowerExpr message) (ErrLowerState message)])
+    (lower-make-array-init-loop-runtime
+      ctx
+      state
+      env
+      type-env
+      buf-value
+      len-i64
+      elem-ty
+      elem-size
+      origin)))
 
 (define (lower-make-array-init-loop
   [ctx : TcContext]
@@ -15189,23 +15204,28 @@
             [right : AstExpr (ast-node-get right-box)]
             [left-offset : i64 (lower-masked-vector-index-offset index left)]
             [right-offset : i64 (lower-masked-vector-index-offset index right)]
-            (cond
-              [(= left-offset 0)
-                (lower-masked-vector-index-literal-offset right)]
-              [(= right-offset 0)
-                (lower-masked-vector-index-literal-offset left)]
-              [else -1]))]
+            (core/cond
+              (= left-offset 0)
+              (lower-masked-vector-index-literal-offset right)
+              (= right-offset 0)
+              (lower-masked-vector-index-literal-offset left)
+              -1))]
         [_ -1])]
     [_ -1]))
 
 (define (lower-masked-vector-lanes-merge [left : i64] [right : i64]) : i64
-  (cond
-    [(< left 0) -1]
-    [(< right 0) -1]
-    [(= left 0) right]
-    [(= right 0) left]
-    [(= left right) left]
-    [else -1]))
+  (core/cond
+    (< left 0)
+    -1
+    (< right 0)
+    -1
+    (= left 0)
+    right
+    (= right 0)
+    left
+    (= left right)
+    left
+    -1))
 
 (define (lower-masked-vector-binop-supported? [op : AstBinOp]) : bool
   (match op

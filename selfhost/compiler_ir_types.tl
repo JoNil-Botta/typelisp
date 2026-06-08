@@ -3,6 +3,8 @@
 ;; This is the first selfhost IR shape for the real compiler pipeline. The data
 ;; model is intentionally close to the Rust IR: functions contain blocks, blocks
 ;; contain typed instructions, and instructions use explicit vars/values.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/string.tl")
 
 (import "compiler_ast_types.tl")
@@ -1161,11 +1163,14 @@
       (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort")))))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
-  (cond
-    [(compiler-ir-runtime-memory-read? name) IrEffectMemoryRead]
-    [(compiler-ir-runtime-memory-write? name) IrEffectMemoryWrite]
-    [(compiler-ir-runtime-control-flow? name) IrEffectControlFlow]
-    [else IrEffectUnknown]))
+  (core/cond
+    (compiler-ir-runtime-memory-read? name)
+    IrEffectMemoryRead
+    (compiler-ir-runtime-memory-write? name)
+    IrEffectMemoryWrite
+    (compiler-ir-runtime-control-flow? name)
+    IrEffectControlFlow
+    IrEffectUnknown))
 
 (define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
   (match instr

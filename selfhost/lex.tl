@@ -665,7 +665,6 @@
                     (set! i (+ i 1))))
                 (set! count (+ count 1)))]
             [(= c #"')
-              ; '"' - a string literal
               (let
                 [start : i64 (+ i 1)]
                 (match (scan-str-end-result src start n)
@@ -683,11 +682,8 @@
                       (set! ok false)
                       (set! message err)
                       (set! err-pos i))]))]
-            [(= c #;')
-              ; ';' - a line comment
-              (set! i (scan-comment-end src (+ i 1) n))]
+            [(= c #;') (set! i (scan-comment-end src (+ i 1) n))]
             [(= c ##')
-              ; '#' - a char literal
               (match (char-literal-value-result src i n)
                 [(OkLexChar value)
                   (match (char-literal-end-result src i n)

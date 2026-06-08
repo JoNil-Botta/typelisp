@@ -8,6 +8,8 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "compiler_ast_types.tl")
@@ -619,60 +621,59 @@
     [else-return : bool (lint-return-branch? else-branch)]
     [cond-not : bool (lint-not-call? cond)]
     [else-side-effect : bool (lint-side-effect-branch? else-branch)]
-    (cond
-      [(and
-          then-unit
-          (and (not else-unit) (or else-return (and cond-not else-side-effect))))
-        (lint-walk-unit-if-guard-branch
-          else-branch
-          tail-return-path
-          threshold
-          (lint-findings-add
-            (lint-unit-if-guard-finding true span)
-            (lint-walk-expr cond threshold acc)))]
-      [(and else-unit (and (not then-unit) then-return))
-        (lint-walk-unit-if-guard-branch
-          then-branch
-          tail-return-path
-          threshold
-          (lint-findings-add
-            (lint-unit-if-guard-finding false span)
-            (lint-walk-expr cond threshold acc)))]
-      [(and tail-return-path (>= return-chain threshold))
-        (lint-walk-return-path-chain
-          (AstExprIf
-            (ast-node-push cond)
-            (ast-node-push then-branch)
-            (ast-node-push else-branch))
-          threshold
-          (lint-findings-add
-            (lint-return-path-chain-finding return-chain span)
-            acc))]
-      [(>= ladder threshold)
-        (lint-walk-ladder
-          (AstExprIf
-            (ast-node-push cond)
-            (ast-node-push then-branch)
-            (ast-node-push else-branch))
-          threshold
-          tail-return-path
-          (lint-findings-add (lint-ladder-finding ladder span) acc))]
-      [tail-return-path
+    (core/cond
+      (and
+        then-unit
+        (and (not else-unit) (or else-return (and cond-not else-side-effect))))
+      (lint-walk-unit-if-guard-branch
+        else-branch
+        tail-return-path
+        threshold
+        (lint-findings-add
+          (lint-unit-if-guard-finding true span)
+          (lint-walk-expr cond threshold acc)))
+      (and else-unit (and (not then-unit) then-return))
+      (lint-walk-unit-if-guard-branch
+        then-branch
+        tail-return-path
+        threshold
+        (lint-findings-add
+          (lint-unit-if-guard-finding false span)
+          (lint-walk-expr cond threshold acc)))
+      (and tail-return-path (>= return-chain threshold))
+      (lint-walk-return-path-chain
+        (AstExprIf
+          (ast-node-push cond)
+          (ast-node-push then-branch)
+          (ast-node-push else-branch))
+        threshold
+        (lint-findings-add
+          (lint-return-path-chain-finding return-chain span)
+          acc))
+      (>= ladder threshold)
+      (lint-walk-ladder
+        (AstExprIf
+          (ast-node-push cond)
+          (ast-node-push then-branch)
+          (ast-node-push else-branch))
+        threshold
+        tail-return-path
+        (lint-findings-add (lint-ladder-finding ladder span) acc))
+      tail-return-path
+      (lint-walk-tail-expr
+        else-branch
+        threshold
         (lint-walk-tail-expr
-          else-branch
+          then-branch
           threshold
-          (lint-walk-tail-expr
-            then-branch
-            threshold
-            (lint-walk-expr cond threshold acc)))]
-      [else
+          (lint-walk-expr cond threshold acc)))
+      (lint-walk-expr
+        else-branch
+        threshold
         (lint-walk-expr
-          else-branch
+          then-branch
           threshold
-          (lint-walk-expr
-            then-branch
-            threshold
-            (lint-walk-expr cond threshold acc)))])))
+          (lint-walk-expr cond threshold acc))))))
 
 ;;; Walk a list of expressions where only the final expression is in tail
 ;;; position.

@@ -112,14 +112,14 @@
   (AstBorrowLifetimeNamed String))
 
 (defenum AstParam
-  (AstParam String AstType bool))
+  (AstParam i64 AstType bool))
 
 (defenum AstParamList
   (AstParamNil)
   (AstParamCons AstParam (Box AstParamList)))
 
 (defenum AstMacroParam
-  (AstMacroParam String AstType bool))
+  (AstMacroParam i64 AstType bool))
 
 (defenum AstMacroParamList
   (AstMacroParamNil)
@@ -127,11 +127,11 @@
 
 (defenum AstFieldCleanup
   (AstFieldNoCleanup)
-  (AstFieldCleanupFn String)
+  (AstFieldCleanupFn i64)
   (AstFieldOwnedCleanup))
 
 (defenum AstFieldDef
-  (AstFieldDef String AstType AstFieldCleanup))
+  (AstFieldDef i64 AstType AstFieldCleanup))
 
 (defenum AstFieldDefList
   (AstFieldDefNil)
@@ -162,22 +162,22 @@
 
 (defenum AstFnExport
   (AstFnNoExport)
-  (AstFnExport String))
+  (AstFnExport i64))
 
 (defenum AstExternMetadata
   (AstExternMetadata AstExternAbi String AstExternLinkInputList bool))
 
 (defenum AstStructCleanup
   (AstStructNoCleanup)
-  (AstStructCleanupFn String))
+  (AstStructCleanupFn i64))
 
 (defenum AstEnumCleanup
   (AstEnumNoCleanup)
-  (AstEnumCleanupFn String))
+  (AstEnumCleanupFn i64))
 
 (defenum AstVariantPayloadCleanup
   (AstVariantPayloadNoCleanup)
-  (AstVariantPayloadCleanupFn String)
+  (AstVariantPayloadCleanupFn i64)
   (AstVariantPayloadOwnedCleanup))
 
 (defenum AstVariantPayloadCleanupList
@@ -187,18 +187,18 @@
     (Box AstVariantPayloadCleanupList)))
 
 (defenum AstVariantDef
-  (AstVariantDef String AstTypeList AstVariantPayloadCleanupList))
+  (AstVariantDef i64 AstTypeList AstVariantPayloadCleanupList))
 
 (defenum AstVariantDefList
   (AstVariantDefNil)
   (AstVariantDefCons AstVariantDef (Box AstVariantDefList)))
 
 (defenum AstPattern
-  (AstPatVar String AstMaybeType)
+  (AstPatVar i64 AstMaybeType)
   (AstPatTuple (Box AstPatternList))
   (AstPatWildcard)
-  (AstPatBinding String)
-  (AstPatVariant String (Box AstPatternList))
+  (AstPatBinding i64)
+  (AstPatVariant i64 (Box AstPatternList))
   (AstPatLiteral AstLiteral))
 
 (defenum AstPatternList
@@ -206,14 +206,14 @@
   (AstPatternCons (Box AstPattern) (Box AstPatternList)))
 
 (defenum AstLetBinding
-  (AstLetBinding String AstMaybeType i64))
+  (AstLetBinding i64 AstMaybeType i64))
 
 (defenum AstLetBindingList
   (AstLetBindingNil)
   (AstLetBindingCons AstLetBinding (Box AstLetBindingList)))
 
 (defenum AstResourceBinding
-  (AstResourceBinding String i64 i64))
+  (AstResourceBinding i64 i64 i64))
 
 (defenum AstResourceBindingList
   (AstResourceBindingNil)
@@ -250,14 +250,14 @@
   ;; unsafe context (v1 has the same runtime/type behavior as `begin`; the
   ;; unsafe-context flag is consumed by later raw-pointer ops, #955).
   (AstExprUnsafe AstExprList)
-  (AstExprSet String i64)
+  (AstExprSet i64 i64)
   (AstExprAnn i64 AstType)
   (AstExprCast i64 AstType)
   (AstExprBorrow bool AstBorrowLifetime i64)
   (AstExprMatch i64 AstMatchArmList)
-  (AstExprForeach String AstType i64 i64 i64)
-  (AstExprSpmdReduce AstReduceOp String AstType i64 i64 i64 i64)
-  (AstExprStructGet i64 String)
+  (AstExprForeach i64 AstType i64 i64 i64)
+  (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
+  (AstExprStructGet i64 i64)
   (AstExprWithRegion String AstExprList)
   (AstExprWithEscape i64 AstExprList)
   (AstExprWithResource AstResourceBindingList AstExprList)
@@ -296,7 +296,7 @@
   (AstExprPtrNullCheck i64)
   ;; Unsafe raw-pointer operations (#1055). The typechecker admits these only
   ;; inside `(unsafe ...)`; lowering maps them to existing pointer IR.
-  (AstExprPtrAddrOf String)
+  (AstExprPtrAddrOf i64)
   (AstExprPtrRead i64)
   (AstExprPtrWrite i64 i64)
   (AstExprPtrOffset i64 i64)
@@ -510,20 +510,16 @@
   (AstSomeGeneratedDeclMeta String String AstExprList String))
 
 (defenum AstDecl
-  (AstDeclModule String)
-  (AstDeclDef String AstMaybeType i64)
-  (AstDeclDefFn String AstParamList AstType i64 AstFnExport)
-  (AstDeclDefMacro String AstMacroParamList AstType i64)
-  (AstDeclExtern String AstExternKind AstExternMetadata AstType)
-  (AstDeclDefEnum String AstEnumCleanup AstVariantDefList)
-  (AstDeclDefEnumLifetimes
-    String
-    AstLifetimeList
-    AstEnumCleanup
-    AstVariantDefList)
-  (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
+  (AstDeclModule i64)
+  (AstDeclDef i64 AstMaybeType i64)
+  (AstDeclDefFn i64 AstParamList AstType i64 AstFnExport)
+  (AstDeclDefMacro i64 AstMacroParamList AstType i64)
+  (AstDeclExtern i64 AstExternKind AstExternMetadata AstType)
+  (AstDeclDefEnum i64 AstEnumCleanup AstVariantDefList)
+  (AstDeclDefEnumLifetimes i64 AstLifetimeList AstEnumCleanup AstVariantDefList)
+  (AstDeclDefStruct i64 AstStructRepr AstStructCleanup AstFieldDefList)
   (AstDeclDefStructLifetimes
-    String
+    i64
     AstLifetimeList
     AstStructRepr
     AstStructCleanup
@@ -531,8 +527,8 @@
   (AstDeclImport AstImportSpec)
   (AstDeclIncludeStr String String)
   (AstDeclExport AstExportItemList)
-  (AstDeclDefDispatch String AstDispatchVariantList)
-  (AstDeclTest String i64 AstSourceSpan)
+  (AstDeclDefDispatch i64 AstDispatchVariantList)
+  (AstDeclTest i64 i64 AstSourceSpan)
   (AstDeclUnsafe (Box AstDecl))
   (AstDeclComptimeDecl AstGeneratedDeclMeta (Box AstDecl)))
 
@@ -584,11 +580,41 @@
 (define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
   (AstLifetimeCons head (box rest)))
 
+(define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
+  (AstParam (intern name) ty is-comptime))
+
+(define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
+  (AstParam name ty is-comptime))
+
 (define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
   (AstParamCons head (box rest)))
 
+(define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
+  (AstMacroParam (intern name) ty variadic))
+
+(define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
+  (AstMacroParam name ty variadic))
+
 (define (ast-macro-param-cons [head : AstMacroParam] [rest : AstMacroParamList]) : AstMacroParamList
   (AstMacroParamCons head (box rest)))
+
+(define (ast-field-cleanup-fn [name : String]) : AstFieldCleanup
+  (AstFieldCleanupFn (intern name)))
+
+(define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
+  (AstFieldCleanupFn name))
+
+(define (ast-field-def
+  [name : String]
+  [ty : AstType]
+  [cleanup : AstFieldCleanup]) : AstFieldDef
+  (AstFieldDef (intern name) ty cleanup))
+
+(define (ast-field-def-id
+  [name : i64]
+  [ty : AstType]
+  [cleanup : AstFieldCleanup]) : AstFieldDef
+  (AstFieldDef name ty cleanup))
 
 (define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
   (AstFieldDefCons head (box rest)))
@@ -597,6 +623,42 @@
   [head : AstExternLinkInput]
   [rest : AstExternLinkInputList]) : AstExternLinkInputList
   (AstExternLinkInputCons head (box rest)))
+
+(define (ast-fn-export [name : String]) : AstFnExport
+  (AstFnExport (intern name)))
+
+(define (ast-fn-export-id [name : i64]) : AstFnExport
+  (AstFnExport name))
+
+(define (ast-struct-cleanup-fn [name : String]) : AstStructCleanup
+  (AstStructCleanupFn (intern name)))
+
+(define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
+  (AstStructCleanupFn name))
+
+(define (ast-enum-cleanup-fn [name : String]) : AstEnumCleanup
+  (AstEnumCleanupFn (intern name)))
+
+(define (ast-enum-cleanup-fn-id [name : i64]) : AstEnumCleanup
+  (AstEnumCleanupFn name))
+
+(define (ast-variant-payload-cleanup-fn [name : String]) : AstVariantPayloadCleanup
+  (AstVariantPayloadCleanupFn (intern name)))
+
+(define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
+  (AstVariantPayloadCleanupFn name))
+
+(define (ast-variant-def
+  [name : String]
+  [fields : AstTypeList]
+  [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
+  (AstVariantDef (intern name) fields cleanups))
+
+(define (ast-variant-def-id
+  [name : i64]
+  [fields : AstTypeList]
+  [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
+  (AstVariantDef name fields cleanups))
 
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
   (AstVariantDefCons head (box rest)))
@@ -609,14 +671,29 @@
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
   (AstPatternCons (box head) (box rest)))
 
+(define (ast-pat-binding [name : String]) : AstPattern
+  (AstPatBinding (intern name)))
+
+(define (ast-pat-binding-id [name : i64]) : AstPattern
+  (AstPatBinding name))
+
 (define (ast-pat-tuple [items : AstPatternList]) : AstPattern
   (AstPatTuple (box items)))
 
 (define (ast-pat-variant [name : String] [items : AstPatternList]) : AstPattern
+  (AstPatVariant (intern name) (box items)))
+
+(define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPatVariant name (box items)))
 
 (define (ast-let-binding
   [name : String]
+  [maybe-ty : AstMaybeType]
+  [value : i64]) : AstLetBinding
+  (AstLetBinding (intern name) maybe-ty value))
+
+(define (ast-let-binding-id
+  [name : i64]
   [maybe-ty : AstMaybeType]
   [value : i64]) : AstLetBinding
   (AstLetBinding name maybe-ty value))
@@ -625,6 +702,9 @@
   (AstLetBindingCons head (box rest)))
 
 (define (ast-resource-binding [name : String] [init : i64] [cleanup : i64]) : AstResourceBinding
+  (AstResourceBinding (intern name) init cleanup))
+
+(define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding name init cleanup))
 
 (define (ast-resource-binding-cons
@@ -687,6 +767,9 @@
   (ast-node-push (AstExprWhile cond body)))
 
 (define (ast-expr-set [name : String] [value : i64]) : i64
+  (ast-node-push (AstExprSet (intern name) value)))
+
+(define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExprSet name value)))
 
 (define (ast-expr-ann [expr : i64] [ty : AstType]) : i64
@@ -710,6 +793,14 @@
   [start : i64]
   [end : i64]
   [body : i64]) : i64
+  (ast-node-push (AstExprForeach (intern name) index-ty start end body)))
+
+(define (ast-expr-foreach-id
+  [name : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [body : i64]) : i64
   (ast-node-push (AstExprForeach name index-ty start end body)))
 
 (define (ast-expr-spmd-reduce
@@ -720,9 +811,23 @@
   [end : i64]
   [init : i64]
   [value : i64]) : i64
+  (ast-node-push
+    (AstExprSpmdReduce op (intern name) index-ty start end init value)))
+
+(define (ast-expr-spmd-reduce-id
+  [op : AstReduceOp]
+  [name : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [init : i64]
+  [value : i64]) : i64
   (ast-node-push (AstExprSpmdReduce op name index-ty start end init value)))
 
 (define (ast-expr-struct-get [target : i64] [field : String]) : i64
+  (ast-node-push (AstExprStructGet target (intern field))))
+
+(define (ast-expr-struct-get-id [target : i64] [field : i64]) : i64
   (ast-node-push (AstExprStructGet target field)))
 
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
@@ -768,6 +873,9 @@
   (ast-node-push (AstExprPtrNullCheck ptr)))
 
 (define (ast-expr-ptr-addr-of [name : String]) : i64
+  (ast-node-push (AstExprPtrAddrOf (intern name))))
+
+(define (ast-expr-ptr-addr-of-id [name : i64]) : i64
   (ast-node-push (AstExprPtrAddrOf name)))
 
 (define (ast-expr-ptr-read [ptr : i64]) : i64
@@ -826,11 +934,27 @@
 (define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (AstDeclCons head (box rest)))
 
+(define (ast-decl-module [name : String]) : AstDecl
+  (AstDeclModule (intern name)))
+
+(define (ast-decl-module-id [name : i64]) : AstDecl
+  (AstDeclModule name))
+
 (define (ast-decl-def [name : String] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
+  (AstDeclDef (intern name) maybe-ty value))
+
+(define (ast-decl-def-id [name : i64] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
   (AstDeclDef name maybe-ty value))
 
 (define (ast-decl-def-fn
   [name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : i64]) : AstDecl
+  (AstDeclDefFn (intern name) params ret body AstFnNoExport))
+
+(define (ast-decl-def-fn-id
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
@@ -842,6 +966,14 @@
   [ret : AstType]
   [body : i64]
   [export : AstFnExport]) : AstDecl
+  (AstDeclDefFn (intern name) params ret body export))
+
+(define (ast-decl-def-fn-export-id
+  [name : i64]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : i64]
+  [export : AstFnExport]) : AstDecl
   (AstDeclDefFn name params ret body export))
 
 (define (ast-decl-def-macro
@@ -849,9 +981,99 @@
   [params : AstMacroParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
+  (AstDeclDefMacro (intern name) params ret body))
+
+(define (ast-decl-def-macro-id
+  [name : i64]
+  [params : AstMacroParamList]
+  [ret : AstType]
+  [body : i64]) : AstDecl
   (AstDeclDefMacro name params ret body))
 
+(define (ast-decl-extern
+  [name : String]
+  [kind : AstExternKind]
+  [metadata : AstExternMetadata]
+  [ty : AstType]) : AstDecl
+  (AstDeclExtern (intern name) kind metadata ty))
+
+(define (ast-decl-extern-id
+  [name : i64]
+  [kind : AstExternKind]
+  [metadata : AstExternMetadata]
+  [ty : AstType]) : AstDecl
+  (AstDeclExtern name kind metadata ty))
+
+(define (ast-decl-def-enum
+  [name : String]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : AstDecl
+  (AstDeclDefEnum (intern name) cleanup variants))
+
+(define (ast-decl-def-enum-id
+  [name : i64]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : AstDecl
+  (AstDeclDefEnum name cleanup variants))
+
+(define (ast-decl-def-enum-lifetimes
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : AstDecl
+  (AstDeclDefEnumLifetimes (intern name) lifetimes cleanup variants))
+
+(define (ast-decl-def-enum-lifetimes-id
+  [name : i64]
+  [lifetimes : AstLifetimeList]
+  [cleanup : AstEnumCleanup]
+  [variants : AstVariantDefList]) : AstDecl
+  (AstDeclDefEnumLifetimes name lifetimes cleanup variants))
+
+(define (ast-decl-def-struct
+  [name : String]
+  [repr : AstStructRepr]
+  [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]) : AstDecl
+  (AstDeclDefStruct (intern name) repr cleanup fields))
+
+(define (ast-decl-def-struct-id
+  [name : i64]
+  [repr : AstStructRepr]
+  [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]) : AstDecl
+  (AstDeclDefStruct name repr cleanup fields))
+
+(define (ast-decl-def-struct-lifetimes
+  [name : String]
+  [lifetimes : AstLifetimeList]
+  [repr : AstStructRepr]
+  [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]) : AstDecl
+  (AstDeclDefStructLifetimes (intern name) lifetimes repr cleanup fields))
+
+(define (ast-decl-def-struct-lifetimes-id
+  [name : i64]
+  [lifetimes : AstLifetimeList]
+  [repr : AstStructRepr]
+  [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]) : AstDecl
+  (AstDeclDefStructLifetimes name lifetimes repr cleanup fields))
+
+(define (ast-decl-def-dispatch
+  [name : String]
+  [variants : AstDispatchVariantList]) : AstDecl
+  (AstDeclDefDispatch (intern name) variants))
+
+(define (ast-decl-def-dispatch-id
+  [name : i64]
+  [variants : AstDispatchVariantList]) : AstDecl
+  (AstDeclDefDispatch name variants))
+
 (define (ast-decl-test [name : String] [body : i64] [span : AstSourceSpan]) : AstDecl
+  (AstDeclTest (intern name) body span))
+
+(define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
   (AstDeclTest name body span))
 
 (define (ast-decl-unsafe [inner : AstDecl]) : AstDecl
@@ -1361,7 +1583,7 @@
       (let
         [args : AstPatternList (box-get args-box)]
         (and
-          (string-eq name "Some")
+          (= name (intern "Some"))
           (match args
             [(AstPatternCons tuple-pattern rest-box)
               (let
@@ -1383,7 +1605,7 @@
                               (and
                                 (match first
                                   [(AstPatBinding bind-name)
-                                    (string-eq bind-name "item")]
+                                    (= bind-name (intern "item"))]
                                   [_ false])
                                 (match tail
                                   [(AstPatternCons second done-box)
@@ -1441,7 +1663,7 @@
                       (let
                         [init : AstExpr (ast-node-get init-box)]
                         (and
-                          (string-eq name "x")
+                          (= name (intern "x"))
                           (compiler-ast-begin-expr? init)))]
                     [_ false])))]
             [_ false])
@@ -1485,7 +1707,7 @@
     [tuple-pattern : AstPattern
       (ast-pat-tuple
         (ast-pattern-cons
-          (AstPatBinding "item")
+          (ast-pat-binding "item")
           (ast-pattern-cons (AstPatWildcard) AstPatternNil)))]
     [variant-pattern : AstPattern
       (ast-pat-variant "Some" (ast-pattern-cons tuple-pattern AstPatternNil))]
@@ -1513,7 +1735,7 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (and
-          (string-eq name want-name)
+          (= name (intern want-name))
           (match value
             [(AstExprLiteral (AstLitInt actual)) (= actual want-value)]
             [_ false])))]
@@ -1618,7 +1840,7 @@
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
-    [param : AstParam (AstParam "x" i64-ty false)]
+    [param : AstParam (ast-param "x" i64-ty false)]
     [params : AstParamList (ast-param-cons param AstParamNil)]
     [decl : AstDecl (ast-decl-def-fn "main" params i64-ty expr)]
     [program : AstProgram (ast-program (ast-decl-cons decl AstDeclNil))]

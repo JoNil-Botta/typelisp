@@ -1,3 +1,5 @@
+(import "core_macros.tl" module stdlib.core-macros as core)
+
 ;# String utility library for TypeLisp.
 ;#
 ;# Provides string operations built on compiler/runtime primitives:
@@ -90,16 +92,18 @@
 (define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit
   (let
     [n : i64 (string-length text)]
-    (cond
-      [(< start 0) (tl_oob_abort)]
-      [(< len 0) (tl_oob_abort)]
-      [(> start n) (tl_oob_abort)]
-      [else
-        (let
-          [remaining : i64 (- n start)]
-          (if (> len remaining)
-            (tl_oob_abort)
-            unit))])))
+    (core/cond
+      (< start 0)
+      (tl_oob_abort)
+      (< len 0)
+      (tl_oob_abort)
+      (> start n)
+      (tl_oob_abort)
+      (let
+        [remaining : i64 (- n start)]
+        (if (> len remaining)
+          (tl_oob_abort)
+          unit)))))
 
 ;: Copy `n` bytes from `src` into `dst` at byte offset `doff`, eight bytes at a
 ;: time with a byte tail. x86 tolerates the unaligned word stores, and the final

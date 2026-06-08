@@ -42,6 +42,9 @@
 (define intern-map-ready : bool
   false)
 
+(define intern-reset-generation : i64
+  0)
+
 ;: djb2 string hash over the raw bytes. Overflow wraps in i64; the result may be
 ;: negative, which is fine -- the bucket mask keeps only the low bits.
 (define (intern-hash [s : String]) : i64
@@ -75,6 +78,7 @@
   (begin
     (set! intern-pool-count 0)
     (intern-fill-empty 0 (array-length intern-map-slots))
+    (set! intern-reset-generation (+ intern-reset-generation 1))
     (set! intern-map-ready true)))
 
 ;: Intern `name`, returning its stable i64 id. Equal strings map to equal ids.
@@ -154,3 +158,6 @@
 ;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String
   (array-ref intern-pool-slots id))
+
+(define (intern-generation) : i64
+  intern-reset-generation)

@@ -1,10 +1,9 @@
 ;# Core expression macros - the implicit prelude (#2060).
 ;#
 ;# The compile driver links this module into every program (alongside
-;# stdlib/runtime.tl), so a bare `when`, `unless`, `cond`, or n-ary `and`/`or`
-;# that is not bound locally resolves to these macros without an import. Local
-;# macros and explicit imports shadow the prelude. (The parser still owns the
-;# two-argument `and`/`or` binary forms pending the builtin removal in #1141.)
+;# stdlib/runtime.tl), so a bare `when`, `unless`, `cond`, `and`, or `or` that is
+;# not bound locally resolves to these macros without an import. Local macros
+;# and explicit imports shadow the prelude.
 ;#
 ;# The qualified surface remains available for explicit callers; the import only
 ;# adds the `core/` alias since the macros are already in scope:

@@ -231,6 +231,9 @@
     (ctfe-hygiene-template-name name)
     name))
 
+(define (ctfe-quote-name-id [env : CtfeEnv] [name : i64]) : i64
+  (intern (ctfe-quote-name env (intern-str name))))
+
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info
     [(CtfeReflectStruct key _ _ _) key]
@@ -270,7 +273,7 @@
         (match field
           [(AstFieldDef name ty _)
             (CtfeReflectFieldCons
-              (CtfeReflectField name ty)
+              (CtfeReflectField (intern-str name) ty)
               (box (ctfe-reflect-field-list-from-fields rest)))]))]))
 
 (define (ctfe-reflect-variant-list-from-variants [variants : AstVariantDefList]) : CtfeReflectVariantList
@@ -282,7 +285,7 @@
         (match variant
           [(AstVariantDef name payloads _)
             (CtfeReflectVariantCons
-              (CtfeReflectVariant name payloads)
+              (CtfeReflectVariant (intern-str name) payloads)
               (box (ctfe-reflect-variant-list-from-variants rest)))]))]))
 
 (define (ctfe-reflect-info-add-alias
@@ -322,139 +325,147 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (ctfe-reflections-from-decls rest next-module infos)]
+            (ctfe-reflections-from-decls rest (intern-str next-module) infos)]
           [(AstDeclDefStruct name _ _ fields)
             (let
+              [name-str : String (intern-str name)]
               [key : String
                 (if (= (string-length module) 0)
-                  name
-                  (string-append module (string-append "/" name)))]
+                  name-str
+                  (string-append module (string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectStruct
                   key
                   module
-                  name
+                  name-str
                   (ctfe-reflect-field-list-from-fields fields))]
               (ctfe-reflections-from-decls
                 rest
                 module
-                (ctfe-reflect-info-add-names infos info name module)))]
+                (ctfe-reflect-info-add-names infos info name-str module)))]
           [(AstDeclDefStructLifetimes name _ _ _ fields)
             (let
+              [name-str : String (intern-str name)]
               [key : String
                 (if (= (string-length module) 0)
-                  name
-                  (string-append module (string-append "/" name)))]
+                  name-str
+                  (string-append module (string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectStruct
                   key
                   module
-                  name
+                  name-str
                   (ctfe-reflect-field-list-from-fields fields))]
               (ctfe-reflections-from-decls
                 rest
                 module
-                (ctfe-reflect-info-add-names infos info name module)))]
+                (ctfe-reflect-info-add-names infos info name-str module)))]
           [(AstDeclDefEnum name _ variants)
             (let
+              [name-str : String (intern-str name)]
               [key : String
                 (if (= (string-length module) 0)
-                  name
-                  (string-append module (string-append "/" name)))]
+                  name-str
+                  (string-append module (string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectEnum
                   key
                   module
-                  name
+                  name-str
                   (ctfe-reflect-variant-list-from-variants variants))]
               (ctfe-reflections-from-decls
                 rest
                 module
-                (ctfe-reflect-info-add-names infos info name module)))]
+                (ctfe-reflect-info-add-names infos info name-str module)))]
           [(AstDeclDefEnumLifetimes name _ _ variants)
             (let
+              [name-str : String (intern-str name)]
               [key : String
                 (if (= (string-length module) 0)
-                  name
-                  (string-append module (string-append "/" name)))]
+                  name-str
+                  (string-append module (string-append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectEnum
                   key
                   module
-                  name
+                  name-str
                   (ctfe-reflect-variant-list-from-variants variants))]
               (ctfe-reflections-from-decls
                 rest
                 module
-                (ctfe-reflect-info-add-names infos info name module)))]
+                (ctfe-reflect-info-add-names infos info name-str module)))]
           [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDeclDefStruct name _ _ fields)
                   (let
+                    [name-str : String (intern-str name)]
                     [key : String
                       (if (= (string-length module) 0)
-                        name
-                        (string-append module (string-append "/" name)))]
+                        name-str
+                        (string-append module (string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectStruct
                         key
                         module
-                        name
+                        name-str
                         (ctfe-reflect-field-list-from-fields fields))]
                     (ctfe-reflections-from-decls
                       rest
                       module
-                      (ctfe-reflect-info-add-names infos info name module)))]
+                      (ctfe-reflect-info-add-names infos info name-str module)))]
                 [(AstDeclDefStructLifetimes name _ _ _ fields)
                   (let
+                    [name-str : String (intern-str name)]
                     [key : String
                       (if (= (string-length module) 0)
-                        name
-                        (string-append module (string-append "/" name)))]
+                        name-str
+                        (string-append module (string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectStruct
                         key
                         module
-                        name
+                        name-str
                         (ctfe-reflect-field-list-from-fields fields))]
                     (ctfe-reflections-from-decls
                       rest
                       module
-                      (ctfe-reflect-info-add-names infos info name module)))]
+                      (ctfe-reflect-info-add-names infos info name-str module)))]
                 [(AstDeclDefEnum name _ variants)
                   (let
+                    [name-str : String (intern-str name)]
                     [key : String
                       (if (= (string-length module) 0)
-                        name
-                        (string-append module (string-append "/" name)))]
+                        name-str
+                        (string-append module (string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectEnum
                         key
                         module
-                        name
+                        name-str
                         (ctfe-reflect-variant-list-from-variants variants))]
                     (ctfe-reflections-from-decls
                       rest
                       module
-                      (ctfe-reflect-info-add-names infos info name module)))]
+                      (ctfe-reflect-info-add-names infos info name-str module)))]
                 [(AstDeclDefEnumLifetimes name _ _ variants)
                   (let
+                    [name-str : String (intern-str name)]
                     [key : String
                       (if (= (string-length module) 0)
-                        name
-                        (string-append module (string-append "/" name)))]
+                        name-str
+                        (string-append module (string-append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectEnum
                         key
                         module
-                        name
+                        name-str
                         (ctfe-reflect-variant-list-from-variants variants))]
                     (ctfe-reflections-from-decls
                       rest
                       module
-                      (ctfe-reflect-info-add-names infos info name module)))]
+                      (ctfe-reflect-info-add-names infos info name-str module)))]
                 [_ (ctfe-reflections-from-decls rest module infos)]))]
           [_ (ctfe-reflections-from-decls rest module infos)]))]))
 
@@ -2965,7 +2976,7 @@
                   (ctfe-eval-let
                     rest
                     body
-                    (ctfe-env-extend env name value)
+                    (ctfe-env-extend env (intern-str name) value)
                     value-fuel)]
                 [(ErrCtfe diag) (ErrCtfe diag)]))]))]))
 
@@ -3097,7 +3108,7 @@
         (match param
           [(AstParam name ty comptime?)
             (ast-param-cons
-              (AstParam (ctfe-quote-name env name) ty comptime?)
+              (AstParam (ctfe-quote-name-id env name) ty comptime?)
               (ctfe-quote-param-list rest env))]))]))
 
 (define (ctfe-quote-pattern-list [patterns : AstPatternList] [env : CtfeEnv]) : AstPatternList
@@ -3113,17 +3124,18 @@
 
 (define (ctfe-quote-pattern [pattern : AstPattern] [env : CtfeEnv]) : AstPattern
   (match pattern
-    [(AstPatVar name maybe-ty) (AstPatVar (ctfe-quote-name env name) maybe-ty)]
+    [(AstPatVar name maybe-ty)
+      (AstPatVar (ctfe-quote-name-id env name) maybe-ty)]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (ast-pat-tuple (ctfe-quote-pattern-list patterns env)))]
     [(AstPatWildcard) AstPatWildcard]
-    [(AstPatBinding name) (AstPatBinding (ctfe-quote-name env name))]
+    [(AstPatBinding name) (AstPatBinding (ctfe-quote-name-id env name))]
     [(AstPatVariant name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
-        (ast-pat-variant name (ctfe-quote-pattern-list args env)))]
+        (ast-pat-variant-id name (ctfe-quote-pattern-list args env)))]
     [(AstPatLiteral lit) (AstPatLiteral lit)]))
 
 (define (ctfe-quote-let-binding-list
@@ -3150,8 +3162,8 @@
                     [(OkCtfeQuoteLetBindings quoted-rest rest-fuel)
                       (OkCtfeQuoteLetBindings
                         (ast-let-binding-cons
-                          (ast-let-binding
-                            (ctfe-quote-name env name)
+                          (ast-let-binding-id
+                            (ctfe-quote-name-id env name)
                             maybe-ty
                             quoted-init)
                           quoted-rest)
@@ -3188,8 +3200,8 @@
                         [(OkCtfeQuoteResourceBindings quoted-rest rest-fuel)
                           (OkCtfeQuoteResourceBindings
                             (ast-resource-binding-cons
-                              (ast-resource-binding
-                                (ctfe-quote-name env name)
+                              (ast-resource-binding-id
+                                (ctfe-quote-name-id env name)
                                 quoted-init
                                 quoted-cleanup)
                               quoted-rest)
@@ -3379,7 +3391,7 @@
         (match (ctfe-quote-expr rhs env fuel quasiquote)
           [(OkCtfeQuoteExpr quoted-rhs _ next-fuel)
             (OkCtfeQuoteExpr
-              (ast-expr-set (ctfe-quote-name env name) quoted-rhs)
+              (ast-expr-set-id (ctfe-quote-name-id env name) quoted-rhs)
               (AstTyExpr)
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
@@ -3432,8 +3444,8 @@
                 (match (ctfe-quote-expr body env end-fuel quasiquote)
                   [(OkCtfeQuoteExpr quoted-body _ body-fuel)
                     (OkCtfeQuoteExpr
-                      (ast-expr-foreach
-                        (ctfe-quote-name env index)
+                      (ast-expr-foreach-id
+                        (ctfe-quote-name-id env index)
                         index-ty
                         quoted-start
                         quoted-end
@@ -3458,9 +3470,9 @@
                     (match (ctfe-quote-expr value env init-fuel quasiquote)
                       [(OkCtfeQuoteExpr quoted-value _ value-fuel)
                         (OkCtfeQuoteExpr
-                          (ast-expr-spmd-reduce
+                          (ast-expr-spmd-reduce-id
                             op
-                            (ctfe-quote-name env index)
+                            (ctfe-quote-name-id env index)
                             index-ty
                             quoted-start
                             quoted-end
@@ -3478,7 +3490,7 @@
         (match (ctfe-quote-expr inner env fuel quasiquote)
           [(OkCtfeQuoteExpr quoted _ next-fuel)
             (OkCtfeQuoteExpr
-              (ast-expr-struct-get quoted field)
+              (ast-expr-struct-get-id quoted field)
               (AstTyExpr)
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
@@ -3647,7 +3659,10 @@
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
     [(AstExprPtrAddrOf name)
-      (OkCtfeQuoteExpr (ast-expr-ptr-addr-of name) (AstTyExpr) fuel)]
+      (OkCtfeQuoteExpr
+        (ast-expr-ptr-addr-of-id (ctfe-quote-name-id env name))
+        (AstTyExpr)
+        fuel)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -3910,7 +3925,7 @@
       (match b
         [(AstParam b-name b-ty b-comptime)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and (ctfe-type-eq a-ty b-ty) (= a-comptime b-comptime)))])]))
 
 (define (ctfe-param-list-eq [a : AstParamList] [b : AstParamList]) : bool
@@ -3936,7 +3951,7 @@
     [(AstPatVar a-name a-ty)
       (match b
         [(AstPatVar b-name b-ty)
-          (and (string-eq a-name b-name) (ctfe-maybe-type-eq a-ty b-ty))]
+          (and (= a-name b-name) (ctfe-maybe-type-eq a-ty b-ty))]
         [_ false])]
     [(AstPatTuple a-items-box)
       (let
@@ -3951,7 +3966,7 @@
         [_ false])]
     [(AstPatBinding a-name)
       (match b
-        [(AstPatBinding b-name) (string-eq a-name b-name)]
+        [(AstPatBinding b-name) (= a-name b-name)]
         [_ false])]
     [(AstPatVariant a-name a-items-box)
       (let
@@ -3959,7 +3974,7 @@
         (match b
           [(AstPatVariant b-name b-items-box)
             (and
-              (string-eq a-name b-name)
+              (= a-name b-name)
               (ctfe-pattern-list-eq a-items (box-get b-items-box)))]
           [_ false]))]
     [(AstPatLiteral a-lit)
@@ -3997,7 +4012,7 @@
             (let
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
-                (string-eq a-name b-name)
+                (= a-name b-name)
                 (and
                   (ctfe-maybe-type-eq a-ty b-ty)
                   (ctfe-expr-eq a-value b-value))))]
@@ -4037,7 +4052,7 @@
               [b-init : AstExpr (ast-node-get b-init-box)]
               [b-cleanup : AstExpr (ast-node-get b-cleanup-box)]
               (and
-                (string-eq a-name b-name)
+                (= a-name b-name)
                 (and
                   (ctfe-expr-eq a-init b-init)
                   (ctfe-expr-eq a-cleanup b-cleanup))))]
@@ -4307,7 +4322,7 @@
           [(AstExprSet b-name b-value-box)
             (let
               [b-value : AstExpr (ast-node-get b-value-box)]
-              (and (string-eq a-name b-name) (ctfe-expr-eq a-value b-value)))]
+              (and (= a-name b-name) (ctfe-expr-eq a-value b-value)))]
           [_ false]))]
     [(AstExprAnn a-inner-box a-ty)
       (let
@@ -4363,7 +4378,7 @@
               [b-end : AstExpr (ast-node-get b-end-box)]
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
-                (string-eq a-name b-name)
+                (= a-name b-name)
                 (and
                   (ctfe-type-eq a-ty b-ty)
                   (and
@@ -4402,7 +4417,7 @@
               (and
                 (ctfe-reduce-op-eq a-op b-op)
                 (and
-                  (string-eq a-name b-name)
+                  (= a-name b-name)
                   (and
                     (ctfe-type-eq a-ty b-ty)
                     (and
@@ -4420,7 +4435,7 @@
           [(AstExprStructGet b-inner-box b-field)
             (let
               [b-inner : AstExpr (ast-node-get b-inner-box)]
-              (and (string-eq a-field b-field) (ctfe-expr-eq a-inner b-inner)))]
+              (and (= a-field b-field) (ctfe-expr-eq a-inner b-inner)))]
           [_ false]))]
     [(AstExprWithRegion a-name a-body)
       (match b
@@ -4456,7 +4471,7 @@
           [_ false]))]
     [(AstExprPtrAddrOf a-name)
       (match b
-        [(AstExprPtrAddrOf b-name) (string-eq a-name b-name)]
+        [(AstExprPtrAddrOf b-name) (= a-name b-name)]
         [_ false])]
     [(AstExprPtrWrite a-ptr-box a-value-box)
       (let

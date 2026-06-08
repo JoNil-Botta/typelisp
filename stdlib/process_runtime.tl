@@ -16,6 +16,8 @@
 ;# matching the previous backend behavior.
 ;#
 ;# Usage: imported by `process.tl` (which provides the public wrappers).
+(import "core_macros.tl" module stdlib.core-macros as core)
+
 (import "process.tl")
 
 (import "io.tl")
@@ -387,16 +389,16 @@
       (while (and (not done) (< off len))
         (let
           [written : i64 (syscall 1 fd (+ data-addr off) (- len off))]
-          (cond
-            [(< written 0)
-              (begin
-                (set! result written)
-                (set! done true))]
-            [(= written 0)
-              (begin
-                (set! result -1)
-                (set! done true))]
-            [else (set! off (+ off written))])))
+          (core/cond
+            (< written 0)
+            (begin
+              (set! result written)
+              (set! done true))
+            (= written 0)
+            (begin
+              (set! result -1)
+              (set! done true))
+            (set! off (+ off written)))))
       result)))
 
 ;: Feed `data-addr`/`len` to the child stdin pipe while ignoring SIGPIPE, then
@@ -663,13 +665,14 @@
         (process-spawn-error))
       (let
         [pid : i64 (syscall 57)]
-        (cond
-          [(< pid 0)
-            (begin
-              (process-linux-cleanup-spawn spawn)
-              (process-spawn-error))]
-          [(= pid 0) (process-linux-exec-child spawn)]
-          [else (process-linux-output-parent spawn pid)])))))
+        (core/cond
+          (< pid 0)
+          (begin
+            (process-linux-cleanup-spawn spawn)
+            (process-spawn-error))
+          (= pid 0)
+          (process-linux-exec-child spawn)
+          (process-linux-output-parent spawn pid))))))
 
 ;: Linux asynchronous start runtime: prepare, fork, and dispatch parent/child.
 (define (process-linux-start [command : ProcessCommand]) : ResultProcessChild
@@ -681,13 +684,14 @@
         (process-spawn-error-child))
       (let
         [pid : i64 (syscall 57)]
-        (cond
-          [(< pid 0)
-            (begin
-              (process-linux-cleanup-spawn spawn)
-              (process-spawn-error-child))]
-          [(= pid 0) (process-linux-exec-child spawn)]
-          [else (process-linux-start-parent spawn pid)])))))
+        (core/cond
+          (< pid 0)
+          (begin
+            (process-linux-cleanup-spawn spawn)
+            (process-spawn-error-child))
+          (= pid 0)
+          (process-linux-exec-child spawn)
+          (process-linux-start-parent spawn pid))))))
 
 ;: Linux asynchronous wait runtime: reap the child, read the memfd-captured
 ;: stdout/stderr, release the capture descriptors, and decode the exit status.

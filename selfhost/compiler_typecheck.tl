@@ -352,7 +352,7 @@
 
 (define (compiler-typecheck-char-range-source) : String
   "(define (is-digit [c : char]) : bool
-  (and (>= c #0') (<= c #9')))
+  (if (>= c #0') (<= c #9') false))
 (define (main [c : char]) : bool (is-digit c))")
 
 (define (compiler-typecheck-never-branch-source) : String
@@ -742,7 +742,7 @@
     [decl : AstDecl
       (ast-decl-comptime-decl-with-meta
         meta
-        (AstDeclDefStruct
+        (ast-decl-def-struct
           "GeneratedStruct"
           (AstStructReprDefault)
           (AstStructNoCleanup)
@@ -1776,7 +1776,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-match-mismatch-source)
-        "typecheck: match arms must agree")
+        "typecheck: match arm result type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2506,24 +2506,24 @@
 (define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (AstDeclDefStruct
+      (ast-decl-def-struct
         "Bad"
         (AstStructReprC)
-        (AstStructCleanupFn "cleanup-bad")
+        (ast-struct-cleanup-fn "cleanup-bad")
         (ast-field-def-cons
-          (AstFieldDef "fd" (AstTyI64) (AstFieldNoCleanup))
+          (ast-field-def "fd" (AstTyI64) (AstFieldNoCleanup))
           AstFieldDefNil))
       AstDeclNil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (AstDeclDefStruct
+      (ast-decl-def-struct
         "Bad"
         (AstStructReprDefault)
         (AstStructNoCleanup)
         (ast-field-def-cons
-          (AstFieldDef "fd" (AstTyI64) (AstFieldCleanupFn "close-fd"))
+          (ast-field-def "fd" (AstTyI64) (ast-field-cleanup-fn "close-fd"))
           AstFieldDefNil))
       AstDeclNil)))
 
@@ -2620,15 +2620,15 @@
 (define (compiler-typecheck-cleanup-enum-payload-outside-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (AstDeclDefEnum
+      (ast-decl-def-enum
         "Bad"
         (AstEnumNoCleanup)
         (ast-variant-def-cons
-          (AstVariantDef
+          (ast-variant-def
             "A"
             (ast-type-cons (AstTyI64) AstTypeNil)
             (ast-variant-payload-cleanup-cons
-              (AstVariantPayloadCleanupFn "close-fd")
+              (ast-variant-payload-cleanup-fn "close-fd")
               AstVariantPayloadCleanupNil))
           AstVariantDefNil))
       AstDeclNil)))
@@ -3110,6 +3110,27 @@
     [(Some v) (let [same : (& items i64) v] (take same))]
     [None 0]))")
 
+(define (compiler-typecheck-borrowed-enum-match-ref-struct-array-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (take [v : (& bag i64)]) : i64 7)
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
+    [Empty (slot-missing bag)]))
+(define (score [bag : (& bag Bag)]) : i64
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (let [same : (& bag i64) v] (take same))]
+    [Empty 0]))
+(define (main [bag : Bag]) : i64
+  (+ (score (& bag))
+    (match (lookup (& bag))
+      [(SlotFound v) (take v)]
+      [SlotMissing 0])))")
+
 (define (compiler-typecheck-borrowed-enum-match-nested-source) : String
   "(defenum Inner (A i64) (B i64))
 (defenum Outer (Wrap Inner) (Empty))
@@ -3135,6 +3156,36 @@
   (match (& m)
     [(Some v) v]
     [None (panic \"none\")]))"))
+
+(define (compiler-typecheck-returned-borrowed-lookup-assign-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (slot-found v)]
+    [Empty (slot-missing bag)]))
+(define (bad [bag : Bag]) : unit
+  (match (lookup (& bag))
+    [(SlotFound value) (set! bag (Bag (make-array Slot 1)))]
+    [SlotMissing unit]))")
+
+(define (compiler-typecheck-returned-borrowed-lookup-array-set-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (slot-found v)]
+    [Empty (slot-missing bag)]))
+(define (bad [bag : Bag]) : unit
+  (match (lookup (& bag))
+    [(SlotFound value) (array-set! (struct-get bag slots) 0 Empty)]
+    [SlotMissing unit]))")
 
 (define (compiler-typecheck-regular-call-lifetime-subst-source) : String
   "(defstruct RefBox (:lifetimes a) (value (& a i64)))
@@ -3441,6 +3492,9 @@
     [borrowed-enum-match-array-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-borrowed-enum-match-array-source))]
+    [borrowed-enum-match-ref-struct-array-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-borrowed-enum-match-ref-struct-array-source))]
     [borrowed-enum-match-nested-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-borrowed-enum-match-nested-source))]
@@ -3452,6 +3506,14 @@
       (compiler-typecheck-error-ok?
         (compiler-typecheck-borrowed-enum-match-escape-source)
         "typecheck: returned reference lifetime must be tied to a parameter")]
+    [returned-borrowed-lookup-assign-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-returned-borrowed-lookup-assign-source)
+        "typecheck: cannot assign to borrowed place `bag`")]
+    [returned-borrowed-lookup-array-set-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-returned-borrowed-lookup-array-set-source)
+        "typecheck: cannot assign to borrowed place `bag.slots.#array.0`")]
     [regular-call-lifetime-subst-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-regular-call-lifetime-subst-source))]
@@ -3605,6 +3667,9 @@
       (if borrowed-enum-match-array-ok
         unit
         (set! ok false))
+      (if borrowed-enum-match-ref-struct-array-ok
+        unit
+        (set! ok false))
       (if borrowed-enum-match-nested-ok
         unit
         (set! ok false))
@@ -3612,6 +3677,12 @@
         unit
         (set! ok false))
       (if borrowed-enum-match-escape-error-ok
+        unit
+        (set! ok false))
+      (if returned-borrowed-lookup-assign-error-ok
+        unit
+        (set! ok false))
+      (if returned-borrowed-lookup-array-set-error-ok
         unit
         (set! ok false))
       (if regular-call-lifetime-subst-ok
@@ -3812,7 +3883,7 @@
   "(define (main) : i64 (+ (* 2 3) (- 10 4)))")
 
 (define (compiler-typecheck-op-ok-cmp-eq-source) : String
-  "(define (main) : bool (and (< 1 2) (= 3 3)))")
+  "(define (main) : bool (if (< 1 2) (= 3 3) false))")
 
 (define (compiler-typecheck-op-ok-shift-count-source) : String
   "(define (main) : u64 (shr (cast -1 : u64) 63))")
@@ -3875,22 +3946,20 @@
                           (compiler-typecheck-op-ok-call-source))))))))))))))
 
 ;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit
-;; coverage for bool operators/equality, cond condition typing, narrow intege
+;; coverage for bool not/equality, cond condition typing, narrow intege
 ;; literal match rules, contextual f32 literals, f32 arithmetic/comparison, and
 ;; f64<->f32-only float casts.
 (define (compiler-typecheck-scalar-bool-ok-source) : String
-  "(define (both [a : bool] [b : bool]) : bool (and (not a) (or a b)))
+  "(define (both [a : bool] [b : bool]) : bool
+  (if (not a)
+    (if a true b)
+    false))
 (define (eq [a : bool] [b : bool]) : bool (= a b))
-(define (main [a : bool] [b : bool]) : bool (or (both a b) (eq a b)))")
+(define (main [a : bool] [b : bool]) : bool
+  (if (both a b) true (eq a b)))")
 
 (define (compiler-typecheck-scalar-not-bad-source) : String
   "(define (main) : bool (not 5))")
-
-(define (compiler-typecheck-scalar-and-bad-source) : String
-  "(define (main [a : bool]) : bool (and a 1))")
-
-(define (compiler-typecheck-scalar-or-bad-source) : String
-  "(define (main [a : bool]) : bool (or 1 a))")
 
 (define (compiler-typecheck-scalar-bool-eq-bad-source) : String
   "(define (main [a : bool]) : bool (= a 1))")
@@ -3978,20 +4047,6 @@
           (compiler-typecheck-error-ok?
             (compiler-typecheck-scalar-not-bad-source)
             "typecheck: not expects bool")))
-      (set!
-        ok
-        (and
-          ok
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-scalar-and-bad-source)
-            "typecheck: boolean operator expects bool operands")))
-      (set!
-        ok
-        (and
-          ok
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-scalar-or-bad-source)
-            "typecheck: boolean operator expects bool operands")))
       (set!
         ok
         (and
@@ -4286,7 +4341,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-arm-mismatch-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4350,7 +4405,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-string-payload-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4401,7 +4456,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-flat-exhaustiveness-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for variant SCons")))
       (set!
         ok
         (and
@@ -4450,7 +4505,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-bool-exhaustive-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for false")))
       (set!
         ok
         (and
@@ -4477,7 +4532,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-scalar-arm-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4504,14 +4559,14 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-maybe-exhaustive-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for variant NoneI64")))
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-result-exhaustive-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for variant ErrI64")))
       (set!
         ok
         (and
@@ -5750,6 +5805,14 @@
   (choose x true false))
 (define (main) : i64 (int-value 10))")
 
+(define (compiler-typecheck-macro-expr-shadow-source) : String
+  "(defmacro (choose [condition : bool] [then-expr : Expr] [else-expr : Expr]) : Expr
+  `(if ,condition ,then-expr ,else-expr))
+(defenum Expr
+  (EUserExpr i64))
+(define (main) : i64
+  (choose true 42 0))")
+
 (define (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source) : String
   "(defmacro (choose [condition : bool] [then-expr : Expr] [else-expr : Expr]) : Expr
   `(if ,condition ,then-expr ,else-expr))
@@ -5833,6 +5896,43 @@
       (core/when true (set! value 21))
       (core/unless false (set! value (+ value 21)))
       (if (core/and (= value 42) (core/or false true)) value 0))))")
+
+(define (compiler-typecheck-macro-prelude-module-source) : String
+  "(module stdlib.core-macros)
+(defmacro (and [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (and ,@(expr-list-tail args))
+       false)))
+(defmacro (or [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool false)
+    `(if ,(expr-list-head args)
+       true
+       (or ,@(expr-list-tail args)))))
+(export (macro and))
+(export (macro or))
+(module main)
+")
+
+(define (compiler-typecheck-macro-prelude-and-or-source) : String
+  (string-append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(define (main [x : bool] [y : bool]) : i64
+  (if (and x y)
+    42
+    (if (or x y) 7 0)))"))
+
+(define (compiler-typecheck-macro-prelude-and-bad-source) : String
+  (string-append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(define (main [a : bool]) : bool (and a 1))"))
+
+(define (compiler-typecheck-macro-prelude-or-bad-source) : String
+  (string-append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(define (main [a : bool]) : bool (or 1 a))"))
 
 (define (compiler-typecheck-macro-hygiene-capture-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
@@ -5934,7 +6034,19 @@
           (compiler-typecheck-ok? (compiler-typecheck-macro-own-and-source))
           (and
             (compiler-typecheck-ok? (compiler-typecheck-macro-own-or-source))
-            (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))))))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-macro-prelude-and-or-source))
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-macro-prelude-and-bad-source)
+                  "typecheck: macro operand type mismatch: expected bool, got i64")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-macro-prelude-or-bad-source)
+                    "typecheck: macro operand type mismatch: expected bool, got i64")
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-compat-guards-source)))))))))))
 
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
@@ -5976,15 +6088,18 @@
               (compiler-typecheck-ok?
                 (compiler-typecheck-macro-expr-wildcard-operand-source))
               (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
-                  "typecheck: if branches must match")
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-macro-expr-shadow-source))
                 (and
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-macro-expr-list-nth-source))
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-macro-expand-depth-source)
-                    "macro expansion exceeded depth limit"))))))))
+                    (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
+                    "typecheck: if branches must match")
+                  (and
+                    (compiler-typecheck-ok?
+                      (compiler-typecheck-macro-expr-list-nth-source))
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-macro-expand-depth-source)
+                      "macro expansion exceeded depth limit")))))))))
     (and
       (compiler-typecheck-macro-export-tests-ok?)
       (and

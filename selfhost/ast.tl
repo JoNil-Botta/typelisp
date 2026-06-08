@@ -1,4 +1,6 @@
 ;; ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "ast_types.tl")
@@ -244,26 +246,44 @@
     [(SCons head rest)
       (match (box-get head)
         [(SSym op)
-          (cond
-            [(string-eq op "+") (parse-binary (OpAdd) (box-get rest))]
-            [(string-eq op "-") (parse-binary (OpSub) (box-get rest))]
-            [(string-eq op "*") (parse-binary (OpMul) (box-get rest))]
-            [(string-eq op "<") (parse-binary (OpLt) (box-get rest))]
-            [(string-eq op "=") (parse-binary (OpEq) (box-get rest))]
-            [(string-eq op "<=") (parse-binary (OpLe) (box-get rest))]
-            [(string-eq op ">") (parse-binary (OpGt) (box-get rest))]
-            [(string-eq op ">=") (parse-binary (OpGe) (box-get rest))]
-            [(string-eq op "!=") (parse-binary (OpNe) (box-get rest))]
-            [(string-eq op "and") (parse-binary (OpAnd) (box-get rest))]
-            [(string-eq op "or") (parse-binary (OpOr) (box-get rest))]
-            [(string-eq op "not") (parse-not (box-get rest))]
-            [(string-eq op "let") (parse-let (box-get rest))]
-            [(string-eq op "if") (parse-if (box-get rest))]
-            [(string-eq op "while") (parse-while (box-get rest))]
-            [(string-eq op "print") (parse-print (box-get rest))]
-            [(string-eq op "set!") (parse-set (box-get rest))]
-            [(string-eq op "begin") (parse-begin (box-get rest))]
-            [else (ECall op (box (parse-args (box-get rest))))])]
+          (core/cond
+            (string-eq op "+")
+            (parse-binary (OpAdd) (box-get rest))
+            (string-eq op "-")
+            (parse-binary (OpSub) (box-get rest))
+            (string-eq op "*")
+            (parse-binary (OpMul) (box-get rest))
+            (string-eq op "<")
+            (parse-binary (OpLt) (box-get rest))
+            (string-eq op "=")
+            (parse-binary (OpEq) (box-get rest))
+            (string-eq op "<=")
+            (parse-binary (OpLe) (box-get rest))
+            (string-eq op ">")
+            (parse-binary (OpGt) (box-get rest))
+            (string-eq op ">=")
+            (parse-binary (OpGe) (box-get rest))
+            (string-eq op "!=")
+            (parse-binary (OpNe) (box-get rest))
+            (string-eq op "and")
+            (parse-binary (OpAnd) (box-get rest))
+            (string-eq op "or")
+            (parse-binary (OpOr) (box-get rest))
+            (string-eq op "not")
+            (parse-not (box-get rest))
+            (string-eq op "let")
+            (parse-let (box-get rest))
+            (string-eq op "if")
+            (parse-if (box-get rest))
+            (string-eq op "while")
+            (parse-while (box-get rest))
+            (string-eq op "print")
+            (parse-print (box-get rest))
+            (string-eq op "set!")
+            (parse-set (box-get rest))
+            (string-eq op "begin")
+            (parse-begin (box-get rest))
+            (ECall op (box (parse-args (box-get rest)))))]
         [_
           (begin
             (panic "ast: malformed expression")

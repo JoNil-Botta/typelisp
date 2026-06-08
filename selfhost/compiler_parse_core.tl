@@ -417,12 +417,6 @@
 (define (compiler-parse-tag-bin-ge) : i64
   20)
 
-(define (compiler-parse-tag-bin-and) : i64
-  21)
-
-(define (compiler-parse-tag-bin-or) : i64
-  22)
-
 (define (compiler-parse-tag-bin-bit-and) : i64
   23)
 
@@ -766,16 +760,14 @@
     [e9 : SymI64Env (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
     [e10 : SymI64Env (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
     [e11 : SymI64Env (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
-    [e12 : SymI64Env (sym-i64-bind e11 "and" (compiler-parse-tag-bin-and))]
-    [e13 : SymI64Env (sym-i64-bind e12 "or" (compiler-parse-tag-bin-or))]
+    [e12 : SymI64Env
+      (sym-i64-bind e11 "bit-and" (compiler-parse-tag-bin-bit-and))]
+    [e13 : SymI64Env
+      (sym-i64-bind e12 "bit-or" (compiler-parse-tag-bin-bit-or))]
     [e14 : SymI64Env
-      (sym-i64-bind e13 "bit-and" (compiler-parse-tag-bin-bit-and))]
-    [e15 : SymI64Env
-      (sym-i64-bind e14 "bit-or" (compiler-parse-tag-bin-bit-or))]
-    [e16 : SymI64Env
-      (sym-i64-bind e15 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
-    [e17 : SymI64Env (sym-i64-bind e16 "shl" (compiler-parse-tag-bin-shl))]
-    (sym-i64-bind e17 "shr" (compiler-parse-tag-bin-shr))))
+      (sym-i64-bind e13 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
+    [e15 : SymI64Env (sym-i64-bind e14 "shl" (compiler-parse-tag-bin-shl))]
+    (sym-i64-bind e15 "shr" (compiler-parse-tag-bin-shr))))
 
 (define (compiler-parse-dispatch-unops [e : SymI64Env]) : SymI64Env
   (let
@@ -1024,8 +1016,6 @@
         (compiler-parse-tag-bin-le)
         (string-eq name ">=")
         (compiler-parse-tag-bin-ge)
-        (string-eq name "or")
-        (compiler-parse-tag-bin-or)
         (string-eq name "i8")
         (compiler-parse-tag-ty-i8)
         (string-eq name "u8")
@@ -1039,8 +1029,6 @@
         (compiler-parse-tag-unknown))
       (= n 3)
       (core/cond
-        (string-eq name "and")
-        (compiler-parse-tag-bin-and)
         (string-eq name "shl")
         (compiler-parse-tag-bin-shl)
         (string-eq name "shr")
@@ -1303,10 +1291,6 @@
     true
     (= tag (compiler-parse-tag-bin-ge))
     true
-    (= tag (compiler-parse-tag-bin-and))
-    true
-    (= tag (compiler-parse-tag-bin-or))
-    true
     (= tag (compiler-parse-tag-bin-bit-and))
     true
     (= tag (compiler-parse-tag-bin-bit-or))
@@ -1316,9 +1300,6 @@
     (= tag (compiler-parse-tag-bin-shl))
     true
     (= tag (compiler-parse-tag-bin-shr))))
-
-(define (compiler-parse-and-or-binop-tag? [tag : i64]) : bool
-  (or (= tag (compiler-parse-tag-bin-and)) (= tag (compiler-parse-tag-bin-or))))
 
 (define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
@@ -1347,10 +1328,6 @@
     (AstBinGt)
     (= tag (compiler-parse-tag-bin-ge))
     (AstBinGe)
-    (= tag (compiler-parse-tag-bin-and))
-    (AstBinAnd)
-    (= tag (compiler-parse-tag-bin-or))
-    (AstBinOr)
     (= tag (compiler-parse-tag-bin-bit-and))
     (AstBinBitAnd)
     (= tag (compiler-parse-tag-bin-bit-or))
@@ -1658,7 +1635,7 @@
                                   (match (parse-ast-type dispatch (box-get ty))
                                     [(OkAstType parsed-ty)
                                       (OkAstParam
-                                        (AstParam name parsed-ty true))]
+                                        (ast-param name parsed-ty true))]
                                     [(ErrAstType message) (ErrAstParam message)])
                                   (ErrAstParam
                                     "parse: expected ':' in parameter"))]
@@ -1676,7 +1653,8 @@
                         (if (sexpr-colon? (box-get colon))
                           (match (parse-ast-type dispatch (box-get ty))
                             [(OkAstType parsed-ty)
-                              (OkAstParam (AstParam first-name parsed-ty false))]
+                              (OkAstParam
+                                (ast-param first-name parsed-ty false))]
                             [(ErrAstType message) (ErrAstParam message)])
                           (ErrAstParam "parse: expected ':' in parameter"))]
                       [_ (ErrAstParam "parse: malformed parameter")])]
@@ -1719,7 +1697,7 @@
                           (match (parse-ast-type dispatch (box-get ty))
                             [(OkAstType parsed-ty)
                               (OkAstMacroParam
-                                (AstMacroParam name parsed-ty false))]
+                                (ast-macro-param name parsed-ty false))]
                             [(ErrAstType message) (ErrAstMacroParam message)])]
                         [(SCons dots end)
                           (match (box-get end)
@@ -1732,7 +1710,7 @@
                                       (box-get ty))
                                       [(OkAstType parsed-ty)
                                         (OkAstMacroParam
-                                          (AstMacroParam name parsed-ty true))]
+                                          (ast-macro-param name parsed-ty true))]
                                       [(ErrAstType message)
                                         (ErrAstMacroParam message)])
                                     (ErrAstMacroParam
@@ -1798,7 +1776,7 @@
                   [(SNil)
                     (match (box-get cleanup-node)
                       [(SSym cleanup-fn)
-                        (OkAstFieldCleanup (AstFieldCleanupFn cleanup-fn))]
+                        (OkAstFieldCleanup (ast-field-cleanup-fn cleanup-fn))]
                       [_
                         (ErrAstFieldCleanup
                           "parse: malformed field :cleanup metadata")])]
@@ -1832,7 +1810,7 @@
                     (match (box-get cleanup-node)
                       [(SSym cleanup-fn)
                         (OkAstVariantPayloadCleanup
-                          (AstVariantPayloadCleanupFn cleanup-fn))]
+                          (ast-variant-payload-cleanup-fn cleanup-fn))]
                       [_
                         (ErrAstVariantPayloadCleanup
                           "parse: malformed enum payload :cleanup metadata")])]
@@ -1876,7 +1854,7 @@
                   (match (parse-ast-type dispatch (box-get ty))
                     [(OkAstType parsed-ty)
                       (OkAstFieldDef
-                        (AstFieldDef name parsed-ty (AstFieldNoCleanup)))]
+                        (ast-field-def name parsed-ty (AstFieldNoCleanup)))]
                     [(ErrAstType message) (ErrAstFieldDef message)])]
                 [(SCons cleanup-meta extra)
                   (match (box-get extra)
@@ -1888,7 +1866,7 @@
                               (box-get cleanup-meta))
                               [(OkAstFieldCleanup parsed-cleanup)
                                 (OkAstFieldDef
-                                  (AstFieldDef name parsed-ty parsed-cleanup))]
+                                  (ast-field-def name parsed-ty parsed-cleanup))]
                               [(ErrAstFieldCleanup message)
                                 (ErrAstFieldDef message)])]
                           [(ErrAstType message) (ErrAstFieldDef message)])
@@ -1953,7 +1931,7 @@
         [(SNil)
           (match (box-get cleanup-node)
             [(SSym cleanup-fn)
-              (OkAstStructCleanup (AstStructCleanupFn cleanup-fn))]
+              (OkAstStructCleanup (ast-struct-cleanup-fn cleanup-fn))]
             [_
               (ErrAstStructCleanup
                 "parse: malformed defstruct :cleanup metadata")])]
@@ -1966,7 +1944,8 @@
       (match (box-get end)
         [(SNil)
           (match (box-get cleanup-node)
-            [(SSym cleanup-fn) (OkAstEnumCleanup (AstEnumCleanupFn cleanup-fn))]
+            [(SSym cleanup-fn)
+              (OkAstEnumCleanup (ast-enum-cleanup-fn cleanup-fn))]
             [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")])]
         [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")])]
     [_ (ErrAstEnumCleanup "parse: malformed defenum :cleanup metadata")]))
@@ -2250,7 +2229,7 @@
               allow-cleanup)
               [(OkAstVariantPayloadParts parsed-fields parsed-cleanups)
                 (OkAstVariantDef
-                  (AstVariantDef name parsed-fields parsed-cleanups))]
+                  (ast-variant-def name parsed-fields parsed-cleanups))]
               [(ErrAstVariantPayloadParts message) (ErrAstVariantDef message)]))]
         [_ (ErrAstVariantDef "parse: malformed variant definition")])]
     [_ (ErrAstVariantDef "parse: malformed variant definition")]))
@@ -2465,7 +2444,7 @@
           (OkAstPattern (AstPatLiteral (AstLitBool true)))
           (= tag (compiler-parse-tag-lit-false))
           (OkAstPattern (AstPatLiteral (AstLitBool false)))
-          (OkAstPattern (AstPatBinding name))))]
+          (OkAstPattern (ast-pat-binding name))))]
     [(SCons name-node args)
       (match (box-get name-node)
         [(SSym name)
@@ -2566,17 +2545,6 @@
                 [(ErrAstExprList message) (ErrAstExprList message)])]
             [(ErrAstExpr message) (ErrAstExprList message)])])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
-
-(define (parse-ast-spanned-list-exactly-two? [s : SpannedSexpr]) : bool
-  (match s
-    [(SpSCons _ tail _)
-      (match (sp-node-get tail)
-        [(SpSCons _ end _)
-          (match (sp-node-get end)
-            [(SpSNil _) true]
-            [_ false])]
-        [_ false])]
-    [_ false]))
 
 (define (parse-ast-binary
   [dispatch : SymI64Env]
@@ -4178,11 +4146,7 @@
             (ast-unop-tag? tag)
             (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
             (ast-binop-tag? tag)
-            (if (and
-              (compiler-parse-and-or-binop-tag? tag)
-              (not (parse-ast-spanned-list-exactly-two? rest)))
-              (parse-ast-call dispatch head rest)
-              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest))
+            (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
             (= tag (compiler-parse-tag-ty-ref))
             (parse-ast-borrow dispatch false rest)
             (= tag (compiler-parse-tag-ty-mut-ref))
@@ -4294,7 +4258,7 @@
           (match (box-get value-node)
             [(SStr value)
               (if (> (string-length value) 0)
-                (OkAstFnExport (AstFnExport value))
+                (OkAstFnExport (ast-fn-export value))
                 (ErrAstFnExport
                   "parse: define :export-symbol must not be empty"))]
             [_
@@ -5103,7 +5067,7 @@
         false
         param-types)
         [(OkAstExternParts metadata ty)
-          (OkAstDecl (AstDeclExtern name (AstExternFunction) metadata ty))]
+          (OkAstDecl (ast-decl-extern name (AstExternFunction) metadata ty))]
         [(ErrAstExternParts message) (ErrAstDecl message)])]
     [(ErrAstExternHeader message) (ErrAstDecl message)]))
 
@@ -5122,7 +5086,7 @@
             false)
             [(OkAstExternParts metadata parsed-ty)
               (OkAstDecl
-                (AstDeclExtern name (AstExternValue) metadata parsed-ty))]
+                (ast-decl-extern name (AstExternValue) metadata parsed-ty))]
             [(ErrAstExternParts message) (ErrAstDecl message)])]
         [_
           (parse-ast-extern-function-head
@@ -5151,10 +5115,11 @@
                 [_
                   (match lifetimes
                     [(AstLifetimeNil)
-                      (OkAstDecl (AstDeclDefEnum name cleanup parsed-variants))]
+                      (OkAstDecl
+                        (ast-decl-def-enum name cleanup parsed-variants))]
                     [_
                       (OkAstDecl
-                        (AstDeclDefEnumLifetimes
+                        (ast-decl-def-enum-lifetimes
                           name
                           lifetimes
                           cleanup
@@ -5186,10 +5151,10 @@
                   (match lifetimes
                     [(AstLifetimeNil)
                       (OkAstDecl
-                        (AstDeclDefStruct name repr cleanup parsed-fields))]
+                        (ast-decl-def-struct name repr cleanup parsed-fields))]
                     [_
                       (OkAstDecl
-                        (AstDeclDefStructLifetimes
+                        (ast-decl-def-struct-lifetimes
                           name
                           lifetimes
                           repr
@@ -5209,7 +5174,7 @@
               (match parsed-variants
                 [(AstDispatchVariantNil)
                   (ErrAstDecl "parse: defdispatch needs at least one variant")]
-                [_ (OkAstDecl (AstDeclDefDispatch name parsed-variants))])]
+                [_ (OkAstDecl (ast-decl-def-dispatch name parsed-variants))])]
             [(ErrAstDispatchVariantList message) (ErrAstDecl message)])]
         [_ (ErrAstDecl "parse: malformed defdispatch")])]
     [_ (ErrAstDecl "parse: malformed defdispatch")]))
@@ -5220,7 +5185,7 @@
       (match (sp-node-get end)
         [(SpSNil _)
           (match (sp-node-get name-node)
-            [(SpSSym name _) (OkAstDecl (AstDeclModule name))]
+            [(SpSSym name _) (OkAstDecl (ast-decl-module name))]
             [_ (ErrAstDecl "parse: malformed module")])]
         [_ (ErrAstDecl "parse: malformed module")])]
     [_ (ErrAstDecl "parse: malformed module")]))
@@ -5607,12 +5572,12 @@
 
 (define (parse-ast-generated-payload-name [decl : AstDecl]) : ResultAstDeclName
   (match decl
-    [(AstDeclDef name _ _) (OkAstDeclName name)]
-    [(AstDeclDefFn name _ _ _ _) (OkAstDeclName name)]
-    [(AstDeclDefEnum name _ _) (OkAstDeclName name)]
-    [(AstDeclDefEnumLifetimes name _ _ _) (OkAstDeclName name)]
-    [(AstDeclDefStruct name _ _ _) (OkAstDeclName name)]
-    [(AstDeclDefStructLifetimes name _ _ _ _) (OkAstDeclName name)]
+    [(AstDeclDef name _ _) (OkAstDeclName (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _) (OkAstDeclName (intern-str name))]
+    [(AstDeclDefEnum name _ _) (OkAstDeclName (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _) (OkAstDeclName (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (OkAstDeclName (intern-str name))]
+    [(AstDeclDefStructLifetimes name _ _ _ _) (OkAstDeclName (intern-str name))]
     [_
       (ErrAstDeclName
         "parse: comptime-decls payload must declare a visible item")]))
@@ -6029,7 +5994,7 @@
             (let
               [rest : AstDeclList (box-get rest)]
               (match rest
-                [(AstDeclNil) (string-eq name "std.io")]
+                [(AstDeclNil) (= name (intern "std.io"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6215,7 +6180,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "dot")
+                    (= name (intern "dot"))
                     (compiler-parse-defdispatch-variants-ok? variants))]
                 [_ false]))]
           [_ false]))]
@@ -6233,7 +6198,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "id")
+                    (= name (intern "id"))
                     (match variants
                       [(AstDispatchVariantCons
                           (AstDispatchVariant (AstDispatchScalar) scalar-name)
@@ -6286,7 +6251,7 @@
           [(AstDeclDefFn name _ _ body-box _)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (if (string-eq name "main")
+              (if (= name (intern "main"))
                 (ast-expr-inner-tag body)
                 (ast-main-body-tag rest)))]
           [_ (ast-main-body-tag rest)]))]))
@@ -6367,7 +6332,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
-                (string-eq name "main")
+                (= name (intern "main"))
                 (match (ast-expr-unspan body)
                   [(AstExprLiteral (AstLitFloat text)) (string-eq text "1.5")]
                   [_ false])))]
@@ -6478,7 +6443,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
-                (string-eq name "main")
+                (= name (intern "main"))
                 (match (ast-expr-unspan body)
                   [(AstExprWithRegion region _) (string-eq region "r")]
                   [_ false])))]
@@ -6596,7 +6561,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "raw-map")
+                    (= name (intern "raw-map"))
                     (match ty
                       [(AstTyFunc args ret)
                         (match args
@@ -6655,7 +6620,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "local-call")
+                    (= name (intern "local-call"))
                     (and
                       (string-eq
                         (ast-extern-metadata-symbol metadata)
@@ -6700,7 +6665,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "snprintf")
+                    (= name (intern "snprintf"))
                     (and
                       (string-eq
                         (ast-extern-metadata-symbol metadata)
@@ -6772,7 +6737,7 @@
   (match decl
     [(AstDeclExtern name _ metadata ty)
       (and
-        (string-eq name "snprintf")
+        (= name (intern "snprintf"))
         (and
           (match (ast-extern-metadata-abi metadata)
             [(AstExternAbiCVarargsTyped fixed-count tail-ty)
@@ -6826,7 +6791,7 @@
   (match decl
     [(AstDeclExtern name _ metadata ty)
       (and
-        (string-eq name "printf")
+        (= name (intern "printf"))
         (and
           (match (ast-extern-metadata-abi metadata)
             [(AstExternAbiCVarargsOpen fixed-count) (= fixed-count 1)]
@@ -6883,7 +6848,7 @@
   (match decl
     [(AstDeclExtern name _ metadata ty)
       (and
-        (string-eq name "local-add")
+        (= name (intern "local-add"))
         (and
           (string-eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
           (match ty
@@ -6939,7 +6904,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "_write")
+                    (= name (intern "_write"))
                     (and
                       (= (compiler-parse-param-list-count params) 3)
                       (and
@@ -6947,7 +6912,7 @@
                           [(AstTyI32) true]
                           [_ false])
                         (match export
-                          [(AstFnExport symbol) (string-eq symbol "_write")]
+                          [(AstFnExport symbol) (= symbol (intern "_write"))]
                           [_ false]))))]
                 [_ false]))]
           [_ false]))]
@@ -7371,15 +7336,39 @@
         false)
       (and
         (compiler-parse-call-body-ok?
-          "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
+          "(define (main [x : bool] [y : bool]) : bool (and x y))"
           "and"
-          3
+          2
           false)
-        (compiler-parse-call-body-ok?
-          "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
-          "or"
-          3
-          false)))))
+        (and
+          (compiler-parse-call-body-ok?
+            "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
+            "and"
+            3
+            false)
+          (and
+            (compiler-parse-call-body-ok?
+              "(define (main) : bool (or))"
+              "or"
+              0
+              false)
+            (and
+              (compiler-parse-call-body-ok?
+                "(define (main [x : bool]) : bool (or x))"
+                "or"
+                1
+                false)
+              (and
+                (compiler-parse-call-body-ok?
+                  "(define (main [x : bool] [y : bool]) : bool (or x y))"
+                  "or"
+                  2
+                  false)
+                (compiler-parse-call-body-ok?
+                  "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
+                  "or"
+                  3
+                  false)))))))))
 
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -7418,7 +7407,7 @@
           (match template
             [(AstDeclDefStruct name _ _ fields)
               (and
-                (string-eq name "Point")
+                (= name (intern "Point"))
                 (= (compiler-parse-field-count fields) 2))]
             [_ false])))]
     [_ false]))
@@ -7431,7 +7420,7 @@
         (and
           (compiler-parse-no-generated-meta-ok? meta)
           (match template
-            [(AstDeclDefEnum name _ _) (string-eq name "Maybe")]
+            [(AstDeclDefEnum name _ _) (= name (intern "Maybe"))]
             [_ false])))]
     [_ false]))
 
@@ -7451,7 +7440,7 @@
               (let
                 [value : AstExpr (ast-node-get value-box)]
                 (and
-                  (string-eq name "option-size")
+                  (= name (intern "option-size"))
                   (match (ast-expr-unspan value)
                     [(AstExprLiteral (AstLitInt actual)) (= actual 8)]
                     [_ false])))]
@@ -7471,7 +7460,7 @@
             1)
           (match template
             [(AstDeclDefFn name _ (AstTyI64) _ _)
-              (string-eq name "make-option")]
+              (= name (intern "make-option"))]
             [_ false])))]
     [_ false]))
 
@@ -7534,7 +7523,7 @@
         (match (box-get template-box)
           [(AstDeclDefStruct name _ _ fields)
             (and
-              (string-eq name "BundleBox")
+              (= name (intern "BundleBox"))
               (= (compiler-parse-field-count fields) 1))]
           [_ false]))]
     [_ false]))
@@ -7549,7 +7538,7 @@
           "BundleChoice"
           2)
         (match (box-get template-box)
-          [(AstDeclDefEnum name _ _) (string-eq name "BundleChoice")]
+          [(AstDeclDefEnum name _ _) (= name (intern "BundleChoice"))]
           [_ false]))]
     [_ false]))
 
@@ -7563,7 +7552,8 @@
           "bundle-score"
           2)
         (match (box-get template-box)
-          [(AstDeclDefFn name _ (AstTyI64) _ _) (string-eq name "bundle-score")]
+          [(AstDeclDefFn name _ (AstTyI64) _ _)
+            (= name (intern "bundle-score"))]
           [_ false]))]
     [_ false]))
 
@@ -7630,9 +7620,9 @@
                                   (match second-inner
                                     [(AstDeclExtern extern-name _ _ extern-ty)
                                       (and
-                                        (string-eq name "danger")
+                                        (= name (intern "danger"))
                                         (and
-                                          (string-eq extern-name "raw-call")
+                                          (= extern-name (intern "raw-call"))
                                           (match extern-ty
                                             [(AstTyFunc _ ret)
                                               (match (ty-node-get ret)
@@ -7723,7 +7713,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "Resource")
+                    (= name (intern "Resource"))
                     (and
                       (match repr
                         [(AstStructReprDefault) true]
@@ -7731,7 +7721,7 @@
                       (and
                         (match cleanup
                           [(AstStructCleanupFn cleanup-name)
-                            (string-eq cleanup-name "close-resource")]
+                            (= cleanup-name (intern "close-resource"))]
                           [_ false])
                         (and
                           (= (compiler-parse-field-count fields) 3)
@@ -7759,11 +7749,11 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "Resource")
+                    (= name (intern "Resource"))
                     (and
                       (match cleanup
                         [(AstEnumCleanupFn cleanup-name)
-                          (string-eq cleanup-name "close-resource")]
+                          (= cleanup-name (intern "close-resource"))]
                         [_ false])
                       (=
                         (compiler-parse-variant-list-cleanup-score variants)
@@ -7831,7 +7821,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "Stat")
+                    (= name (intern "Stat"))
                     (and
                       (ast-struct-repr-c? repr)
                       (= (compiler-parse-field-count fields) 2)))]
@@ -7882,7 +7872,7 @@
               (match tail
                 [(AstDeclNil)
                   (and
-                    (string-eq name "parser-basic")
+                    (= name (intern "parser-basic"))
                     (and
                       (= (ast-source-span-start-line span) 1)
                       (match (ast-expr-unspan body)
@@ -8673,7 +8663,7 @@
 
 ;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
-;; arithmetic/comparison, and bitwise/shift/logical operator forms; reject
+;; arithmetic/comparison, and bitwise/shift operator forms; reject
 ;; parser-owned malformed unary/binary operator expressions. Parse-shape only;
 ;; operator type rules live in the typechecker tests.
 (define (compiler-parse-operator-tests-ok?) : bool
@@ -8685,7 +8675,7 @@
         "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
       (and
         (compiler-parse-ok?
-          "(define (main [a : i64] [b : i64] [p : bool] [q : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (and p q) 1 (if (or p q) 2 0))))")
+          "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
         (and
           (compiler-parse-error-ok?
             "(define (main) : i64 (not))"
@@ -9027,7 +9017,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq name "all")
+                    (= name (intern "all"))
                     (match params
                       [(AstMacroParamCons
                           (AstMacroParam first (AstTyBool) false)
@@ -9039,8 +9029,8 @@
                                 (AstMacroParam rest (AstTyBool) true)
                                 AstMacroParamNil)
                               (and
-                                (string-eq first "first")
-                                (string-eq rest "rest"))]
+                                (= first (intern "first"))
+                                (= rest (intern "rest")))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]

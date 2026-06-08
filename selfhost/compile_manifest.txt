@@ -284,6 +284,7 @@ end
 
 decision|selfhost/compiler_object.tl|structured object-image data model (#2308): main-less, imported by selfhost/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
 decision|selfhost/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
+decision|selfhost/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
 decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
@@ -420,6 +421,8 @@ end
 case|selfhost_compiler_intern|selfhost/compiler_intern.tl|assembly|skip|direct
 contains|_tl_compiler_intern_intern_str:
 end
+
+decision|selfhost/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380): imports only selfhost/compiler_intern.tl; used by selfhost/compiler_lower.tl dispatch and backend target-lowering cache resets; backend emission id dispatch is tracked in #2464
 
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
 contains|_tl_compiler_load_file:

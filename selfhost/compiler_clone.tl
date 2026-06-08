@@ -177,14 +177,14 @@
               rest
               names
               (if (clone-variant-list-able? variants names)
-                (clone-name-set-insert acc name)
+                (clone-name-set-insert acc (intern-str name))
                 acc))]
           [(AstDeclDefStruct name _ _ fields)
             (clone-fixpoint-step
               rest
               names
               (if (clone-struct-fields-able? fields names)
-                (clone-name-set-insert acc name)
+                (clone-name-set-insert acc (intern-str name))
                 acc))]
           [_ (clone-fixpoint-step rest names acc)]))]))
 
@@ -197,9 +197,13 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclDefEnum name _ _)
-            (clone-all-type-names rest (clone-name-set-insert acc name))]
+            (clone-all-type-names
+              rest
+              (clone-name-set-insert acc (intern-str name)))]
           [(AstDeclDefStruct name _ _ _)
-            (clone-all-type-names rest (clone-name-set-insert acc name))]
+            (clone-all-type-names
+              rest
+              (clone-name-set-insert acc (intern-str name)))]
           [_ (clone-all-type-names rest acc)]))]))
 
 (define (clone-fixpoint [decls : AstDeclList] [names : CloneNameSet]) : CloneNameSet
@@ -229,7 +233,7 @@
   (if (>= i count)
     AstPatternNil
     (ast-pattern-cons
-      (AstPatBinding (clone-binder-name i))
+      (ast-pat-binding (clone-binder-name i))
       (clone-variant-pat-args count (+ i 1)))))
 
 ;; Constructor args (clone tlc0) (clone tlc1) ... for `count` fields.
@@ -256,9 +260,9 @@
       (let
         [count : i64 (clone-type-list-len field-types)]
         (ast-match-arm
-          (ast-pat-variant vname (clone-variant-pat-args count 0))
+          (ast-pat-variant-id vname (clone-variant-pat-args count 0))
           (ast-expr-call
-            (ast-node-push (AstExprVar (intern vname)))
+            (ast-node-push (AstExprVar vname))
             (clone-variant-ctor-args count 0))))]))
 
 (define (clone-variant-arms [variants : AstVariantDefList]) : AstMatchArmList
@@ -282,7 +286,7 @@
           [(AstFieldDef fname _ _)
             (ast-expr-cons
               (clone-call-expr
-                (ast-expr-struct-get
+                (ast-expr-struct-get-id
                   (ast-node-push (AstExprVar (intern "x")))
                   fname))
               (clone-struct-ctor-args rest))]))]))
@@ -291,7 +295,7 @@
 (define (clone-make-helper-decl [type-name : String] [body : i64]) : AstDecl
   (ast-decl-def-fn
     (clone-helper-name type-name)
-    (ast-param-cons (AstParam "x" (AstTyVar type-name) false) AstParamNil)
+    (ast-param-cons (ast-param "x" (AstTyVar type-name) false) AstParamNil)
     (AstTyVar type-name)
     body))
 
@@ -316,7 +320,7 @@
 
 (define (clone-variant-name [v : AstVariantDef]) : String
   (match v
-    [(AstVariantDef name _ _) name]))
+    [(AstVariantDef name _ _) (intern-str name)]))
 
 (define (clone-type-is-name? [ty : AstType] [name : String]) : bool
   (match ty
@@ -437,8 +441,8 @@
   (ast-decl-def-fn
     fn-name
     (ast-param-cons
-      (AstParam "x" (AstTyVar type-name) false)
-      (ast-param-cons (AstParam "acc" (AstTyVar type-name) false) AstParamNil))
+      (ast-param "x" (AstTyVar type-name) false)
+      (ast-param-cons (ast-param "acc" (AstTyVar type-name) false) AstParamNil))
     (AstTyVar type-name)
     body))
 
@@ -454,8 +458,8 @@
     (ast-pat-variant
       cons-ctor
       (ast-pattern-cons
-        (AstPatBinding "h")
-        (ast-pattern-cons (AstPatBinding "t") AstPatternNil)))
+        (ast-pat-binding "h")
+        (ast-pattern-cons (ast-pat-binding "t") AstPatternNil)))
     (ast-expr-call
       (ast-node-push (AstExprVar (intern fn-name)))
       (ast-expr-cons
@@ -571,25 +575,29 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclDefEnum name _ variants)
-            (clone-generate-decls
-              rest
-              able
-              (if (clone-name-set-contains? able name)
-                (clone-emit-enum-clone name variants acc)
-                acc))]
+            (let
+              [name-str : String (intern-str name)]
+              (clone-generate-decls
+                rest
+                able
+                (if (clone-name-set-contains? able name-str)
+                  (clone-emit-enum-clone name-str variants acc)
+                  acc)))]
           [(AstDeclDefStruct name _ _ fields)
-            (clone-generate-decls
-              rest
-              able
-              (if (clone-name-set-contains? able name)
-                (ast-decl-cons
-                  (clone-make-helper-decl
-                    name
-                    (ast-expr-call
-                      (ast-node-push (AstExprVar (intern name)))
-                      (clone-struct-ctor-args fields)))
-                  acc)
-                acc))]
+            (let
+              [name-str : String (intern-str name)]
+              (clone-generate-decls
+                rest
+                able
+                (if (clone-name-set-contains? able name-str)
+                  (ast-decl-cons
+                    (clone-make-helper-decl
+                      name-str
+                      (ast-expr-call
+                        (ast-node-push (AstExprVar name))
+                        (clone-struct-ctor-args fields)))
+                    acc)
+                  acc)))]
           [_ (clone-generate-decls rest able acc)]))]))
 
 (define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
@@ -666,11 +674,11 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclDefEnum decl-name _ variants)
-            (if (string-eq decl-name name)
+            (if (string-eq (intern-str decl-name) name)
               (clone-root-add-variants decls able roots variants)
               (clone-root-add-name-deps decls rest able roots name))]
           [(AstDeclDefStruct decl-name _ _ fields)
-            (if (string-eq decl-name name)
+            (if (string-eq (intern-str decl-name) name)
               (clone-root-add-fields decls able roots fields)
               (clone-root-add-name-deps decls rest able roots name))]
           [_ (clone-root-add-name-deps decls rest able roots name)]))]))

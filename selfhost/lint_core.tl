@@ -408,7 +408,7 @@
 
 (define (lint-let-bindings-contain-name?
   [bindings : AstLetBindingList]
-  [name : String]) : bool
+  [name : i64]) : bool
   (match bindings
     [(AstLetBindingNil) false]
     [(AstLetBindingCons binding rest)
@@ -416,7 +416,7 @@
         [rest : AstLetBindingList (box-get rest)]
         (match binding
           [(AstLetBinding binding-name _ _)
-            (if (string-eq binding-name name)
+            (if (= binding-name name)
               true
               (lint-let-bindings-contain-name? rest name))]))]))
 

@@ -172,7 +172,7 @@
 
 (define (spec-param-name [param : AstParam]) : String
   (match param
-    [(AstParam name _ _) name]))
+    [(AstParam name _ _) (intern-str name)]))
 
 (define (spec-param-type [param : AstParam]) : AstType
   (match param
@@ -244,20 +244,22 @@
         (match binding
           [(AstLetBinding name _ _)
             (spec-template-list-remove-let-binding-names
-              (spec-template-list-remove-name templates name)
+              (spec-template-list-remove-name templates (intern-str name))
               rest)]))]))
 
 (define (spec-template-list-remove-pattern
   [templates : SpecTemplateList]
   [pattern : AstPattern]) : SpecTemplateList
   (match pattern
-    [(AstPatVar name _) (spec-template-list-remove-name templates name)]
+    [(AstPatVar name _)
+      (spec-template-list-remove-name templates (intern-str name))]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (spec-template-list-remove-pattern-list templates patterns))]
     [(AstPatWildcard) templates]
-    [(AstPatBinding name) (spec-template-list-remove-name templates name)]
+    [(AstPatBinding name)
+      (spec-template-list-remove-name templates (intern-str name))]
     [(AstPatVariant _ patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
@@ -293,7 +295,7 @@
                     [body : AstExpr (ast-node-get body-box)]
                     (if (spec-param-list-has-comptime? params)
                       (spec-template-cons
-                        (SpecTemplate name params ret body)
+                        (SpecTemplate (intern-str name) params ret body)
                         (spec-collect-templates rest))
                       (spec-collect-templates rest)))]
                 [_ (spec-collect-templates rest)]))]
@@ -302,7 +304,7 @@
               [body : AstExpr (ast-node-get body-box)]
               (if (spec-param-list-has-comptime? params)
                 (spec-template-cons
-                  (SpecTemplate name params ret body)
+                  (SpecTemplate (intern-str name) params ret body)
                   (spec-collect-templates rest))
                 (spec-collect-templates rest)))]
           [_ (spec-collect-templates rest)]))]))
@@ -496,12 +498,13 @@
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
-    [(AstDeclDef name _ _) (SpecSomeString name)]
-    [(AstDeclDefFn name _ _ _ _) (SpecSomeString name)]
-    [(AstDeclDefEnum name _ _) (SpecSomeString name)]
-    [(AstDeclDefEnumLifetimes name _ _ _) (SpecSomeString name)]
-    [(AstDeclDefStruct name _ _ _) (SpecSomeString name)]
-    [(AstDeclDefStructLifetimes name _ _ _ _) (SpecSomeString name)]
+    [(AstDeclDef name _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDefEnum name _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
+      (SpecSomeString (intern-str name))]
     [(AstDeclComptimeDecl _ inner-box)
       (gen-decl-visible-name (box-get inner-box))]
     [_ (SpecNoString)]))
@@ -526,7 +529,7 @@
       (match b
         [(AstParam b-name b-ty b-comptime)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and (ctfe-type-eq a-ty b-ty) (= a-comptime b-comptime)))])]))
 
 (define (gen-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
@@ -555,7 +558,7 @@
         [_ false])]
     [(AstFieldCleanupFn a-name)
       (match b
-        [(AstFieldCleanupFn b-name) (string-eq a-name b-name)]
+        [(AstFieldCleanupFn b-name) (= a-name b-name)]
         [_ false])]
     [(AstFieldOwnedCleanup)
       (match b
@@ -568,7 +571,7 @@
       (match b
         [(AstFieldDef b-name b-ty b-cleanup)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and
               (ctfe-type-eq a-ty b-ty)
               (gen-field-cleanup-eq? a-cleanup b-cleanup)))])]))
@@ -610,7 +613,7 @@
         [_ false])]
     [(AstStructCleanupFn a-name)
       (match b
-        [(AstStructCleanupFn b-name) (string-eq a-name b-name)]
+        [(AstStructCleanupFn b-name) (= a-name b-name)]
         [_ false])]))
 
 (define (gen-enum-cleanup-eq? [a : AstEnumCleanup] [b : AstEnumCleanup]) : bool
@@ -621,7 +624,7 @@
         [_ false])]
     [(AstEnumCleanupFn a-name)
       (match b
-        [(AstEnumCleanupFn b-name) (string-eq a-name b-name)]
+        [(AstEnumCleanupFn b-name) (= a-name b-name)]
         [_ false])]))
 
 (define (gen-variant-payload-cleanup-eq?
@@ -634,7 +637,7 @@
         [_ false])]
     [(AstVariantPayloadCleanupFn a-name)
       (match b
-        [(AstVariantPayloadCleanupFn b-name) (string-eq a-name b-name)]
+        [(AstVariantPayloadCleanupFn b-name) (= a-name b-name)]
         [_ false])]
     [(AstVariantPayloadOwnedCleanup)
       (match b
@@ -667,7 +670,7 @@
       (match b
         [(AstVariantDef b-name b-payloads b-cleanups)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and
               (ctfe-type-list-eq a-payloads b-payloads)
               (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups)))])]))
@@ -698,7 +701,7 @@
         [_ false])]
     [(AstFnExport a-symbol)
       (match b
-        [(AstFnExport b-symbol) (string-eq a-symbol b-symbol)]
+        [(AstFnExport b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
 
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
@@ -711,7 +714,7 @@
             (let
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
-                (string-eq a-name b-name)
+                (= a-name b-name)
                 (and
                   (gen-maybe-type-eq? a-ty b-ty)
                   (gen-expr-eq? a-value b-value))))]
@@ -724,7 +727,7 @@
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
-                (string-eq a-name b-name)
+                (= a-name b-name)
                 (and
                   (gen-param-list-eq? a-params b-params)
                   (and
@@ -737,7 +740,7 @@
       (match b
         [(AstDeclDefEnum b-name b-cleanup b-variants)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and
               (gen-enum-cleanup-eq? a-cleanup b-cleanup)
               (gen-variant-list-eq? a-variants b-variants)))]
@@ -746,7 +749,7 @@
       (match b
         [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and
               (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
               (and
@@ -757,7 +760,7 @@
       (match b
         [(AstDeclDefStruct b-name b-repr b-cleanup b-fields)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and
               (gen-struct-repr-eq? a-repr b-repr)
               (and
@@ -773,7 +776,7 @@
             b-cleanup
             b-fields)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (and
               (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
               (and
@@ -984,13 +987,18 @@
             "hashmap-family: unsupported "
             (string-append role (string-append " type " type-key))))))))
 
+(define (gen-hashmap-borrowed-value-type [value-type : String]) : String
+  (if (string-eq value-type "String")
+    "str"
+    value-type))
+
 (define (gen-hashmap-family-marker-fields? [fields : AstFieldDefList]) : bool
   (match fields
     [(AstFieldDefCons field rest-box)
       (match field
         [(AstFieldDef name ty cleanup)
           (and
-            (string-eq name "__hashmap_family_request")
+            (string-eq (intern-str name) "__hashmap_family_request")
             (and
               (ctfe-type-eq ty (AstTyI64))
               (and
@@ -1010,7 +1018,7 @@
           (match cleanup
             [(AstStructNoCleanup)
               (if (gen-hashmap-family-marker-fields? fields)
-                (SpecSomeString name)
+                (SpecSomeString (intern-str name))
                 (SpecNoString))]
             [_ (SpecNoString)])]
         [_ (SpecNoString)])]
@@ -1032,6 +1040,13 @@
     [lookup : String (string-append map-name "Lookup")]
     [missing : String (string-append map-name "Missing")]
     [found : String (string-append map-name "Found")]
+    [borrowed-value-lookup : String
+      (string-append map-name "BorrowedValueLookup")]
+    [borrowed-value-missing : String
+      (string-append map-name "BorrowedValueMissing")]
+    [borrowed-value-found : String
+      (string-append map-name "BorrowedValueFound")]
+    [borrowed-value-type : String (gen-hashmap-borrowed-value-type value-type)]
     [insert-result : String (string-append map-name "InsertResult")]
     [insert-ok : String (string-append map-name "InsertOk")]
     [insert-full : String (string-append map-name "InsertFull")]
@@ -1089,7 +1104,7 @@
         buf
         (gen-tb2
           buf
-          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          "  (if (> capacity 0)\n    (= (bit-and capacity (- capacity 1)) 0)\n    false))\n"
           ""))
       (set!
         buf
@@ -1159,7 +1174,7 @@
         buf
         (gen-tb2
           buf
-          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (and same (< i left-len))\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
+          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (if same (< i left-len) false)\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
           ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe-borrowed-from\n"))
       (set!
@@ -1262,14 +1277,23 @@
       (set! buf (gen-tb6 buf "(defenum " lookup "\n  (" missing ")\n  (" found))
       (set!
         buf
-        (gen-tb6
+        (gen-tb5
           buf
           " "
           value-type
           "))\n(defenum "
-          insert-result
-          "\n  ("
-          insert-ok))
+          borrowed-value-lookup
+          "\n  (:lifetimes map)\n  ("))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          borrowed-value-missing
+          ")\n  ("
+          borrowed-value-found
+          " (& map "
+          borrowed-value-type))
+      (set! buf (gen-tb4 buf ")))\n(defenum " insert-result "\n  (" insert-ok))
       (set! buf (gen-tb6 buf " " map-name ")\n  (" insert-full " " map-name))
       (set!
         buf
@@ -1348,6 +1372,28 @@
           "-fill-empty slots 0 rounded-capacity)\n      ("
           map-name))
       (set! buf (gen-tb2 buf " slots 0 0))))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-borrowed-value-missing\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "  [map : (& map "
+          map-name
+          ")]) : ("
+          borrowed-value-lookup
+          " map)\n"))
+      (set! buf (gen-tb4 buf "  (" borrowed-value-missing "))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-borrowed-value-found\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "  [value : (& map "
+          borrowed-value-type
+          ")]) : ("
+          borrowed-value-lookup
+          " map)\n"))
+      (set! buf (gen-tb4 buf "  (" borrowed-value-found " value))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-get-borrowed [map : "))
       (set! buf (gen-tb4 buf map-name "] [key : (& key str)]) : " lookup "\n"))
       (set! buf (gen-tb3 buf "  (let\n    [slots : (Array " slot ") ("))
@@ -1392,6 +1438,85 @@
         buf
         (gen-tb5 buf map-name "] [key : String]) : " lookup "\n  (" prefix))
       (set! buf (gen-tb2 buf "-get-borrowed map (& key)))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-get-value-borrowed\n"))
+      (set! buf (gen-tb4 buf "  [map : (& map " map-name ")]\n" ""))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  [key : (& key str)]) : ("
+          borrowed-value-lookup
+          " map)\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  (let\n    [capacity : i64 (array-length (struct-get map slots))]\n    (if (<= capacity 0)\n      ("
+          prefix
+          "-borrowed-value-missing map)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "      (let\n        [hash : i64 ("
+          prefix
+          "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "        [cursor : i64 ("
+          prefix
+          "-normalized-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "        [walked : i64 0]\n        (begin\n          (while (< walked capacity)\n            (match (array-ref (struct-get map slots) cursor)\n              [("
+          ""))
+      (set! buf (gen-tb3 buf empty ")\n                (return (" prefix))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-borrowed-value-missing map))]\n              [("
+          tombstone
+          ")\n                (let\n                  [next : i64 (+ cursor 1)]\n                  (begin\n                    (set!\n                      cursor\n                      (if (>= next capacity)\n                        0\n                        next))\n                    (set! walked (+ walked 1))))]\n              [("
+          occupied))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          " slot-key _ slot-hash)\n                (if (if (= slot-hash hash)\n                  ("
+          prefix
+          "-key-eq? (& slot-key) key)\n                  false)\n                  (match (& (array-ref (struct-get map slots) cursor))\n                    [("
+          occupied))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          " _ value _)\n                      (return ("
+          prefix
+          "-borrowed-value-found value))]\n                    [("))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          empty
+          ")\n                      (return ("
+          prefix
+          "-borrowed-value-missing map))]\n                    [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          ")\n                      (return ("
+          prefix
+          "-borrowed-value-missing map))])\n                  (let\n                    [next : i64 (+ cursor 1)]\n                    (begin\n                      (set!\n                        cursor\n                        (if (>= next capacity)\n                          0\n                          next))\n                      (set! walked (+ walked 1)))))]))\n          ("
+          prefix))
+      (set! buf (gen-tb2 buf "-borrowed-value-missing map))))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-contains-borrowed? [map : "))
       (set!
         buf
@@ -2162,7 +2287,7 @@
         buf
         (gen-tb2
           buf
-          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          "  (if (> capacity 0)\n    (= (bit-and capacity (- capacity 1)) 0)\n    false))\n"
           ""))
       (set!
         buf
@@ -3304,7 +3429,8 @@
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDecl
   (match decl
-    [(AstDeclModule name) (OkGenDecl (gen-single-decl-list decl) registry name)]
+    [(AstDeclModule name)
+      (OkGenDecl (gen-single-decl-list decl) registry (intern-str name))]
     [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -3577,20 +3703,20 @@
         (match binding
           [(AstLetBinding name _ _)
             (spec-value-subst-remove-let-binding-names
-              (spec-value-subst-remove-name subs name)
+              (spec-value-subst-remove-name subs (intern-str name))
               rest)]))]))
 
 (define (spec-value-subst-remove-pattern
   [subs : SpecValueSubst]
   [pattern : AstPattern]) : SpecValueSubst
   (match pattern
-    [(AstPatVar name _) (spec-value-subst-remove-name subs name)]
+    [(AstPatVar name _) (spec-value-subst-remove-name subs (intern-str name))]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
     [(AstPatWildcard) subs]
-    [(AstPatBinding name) (spec-value-subst-remove-name subs name)]
+    [(AstPatBinding name) (spec-value-subst-remove-name subs (intern-str name))]
     [(AstPatVariant _ patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
@@ -3644,20 +3770,20 @@
         (match binding
           [(AstLetBinding name _ _)
             (spec-type-subst-remove-let-binding-names
-              (spec-type-subst-remove-name subs name)
+              (spec-type-subst-remove-name subs (intern-str name))
               rest)]))]))
 
 (define (spec-type-subst-remove-pattern
   [subs : SpecTypeSubst]
   [pattern : AstPattern]) : SpecTypeSubst
   (match pattern
-    [(AstPatVar name _) (spec-type-subst-remove-name subs name)]
+    [(AstPatVar name _) (spec-type-subst-remove-name subs (intern-str name))]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]
     [(AstPatWildcard) subs]
-    [(AstPatBinding name) (spec-type-subst-remove-name subs name)]
+    [(AstPatBinding name) (spec-type-subst-remove-name subs (intern-str name))]
     [(AstPatVariant _ patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
@@ -3815,12 +3941,12 @@
                 [(OkSpecExpr rewritten-value value-state)
                   (match (spec-rewrite-let-bindings
                     rest
-                    (spec-template-list-remove-name templates name)
+                    (spec-template-list-remove-name templates (intern-str name))
                     value-state)
                     [(OkSpecLetBindingList rewritten-rest rest-state)
                       (OkSpecLetBindingList
                         (ast-let-binding-cons
-                          (ast-let-binding name ty rewritten-value)
+                          (ast-let-binding-id name ty rewritten-value)
                           rewritten-rest)
                         rest-state)]
                     [(ErrSpecLetBindingList diag) (ErrSpecLetBindingList diag)])]
@@ -3933,7 +4059,7 @@
                                   (string-append
                                     "comptime argument '"
                                     (string-append
-                                      param-name
+                                      (intern-str param-name)
                                       (string-append
                                         "' for function '"
                                         (string-append
@@ -3958,7 +4084,7 @@
                                 (string-append
                                   "comptime argument '"
                                   (string-append
-                                    param-name
+                                    (intern-str param-name)
                                     (string-append
                                       "' for function '"
                                       (string-append
@@ -4019,7 +4145,10 @@
                             (OkSpecBuild
                               runtime
                               value-subs
-                              (spec-type-subst-cons name actual-ty type-subs))]
+                              (spec-type-subst-cons
+                                (intern-str name)
+                                actual-ty
+                                type-subs))]
                           [_
                             (ErrSpecBuild
                               (compiler-diagnostic-at-start
@@ -4027,7 +4156,10 @@
                                 "specialize: expected type value"))])
                         (OkSpecBuild
                           runtime
-                          (spec-value-subst-cons name value value-subs)
+                          (spec-value-subst-cons
+                            (intern-str name)
+                            value
+                            value-subs)
                           type-subs))]
                     [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
                 [_
@@ -4329,7 +4461,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
           [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-set name rewritten) state2)]
+            (OkSpecExpr (ast-expr-set-id name rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprAnn inner-box ty)
       (let
@@ -4368,11 +4500,11 @@
               [(OkSpecExpr rewritten-end end-state)
                 (match (spec-rewrite-expr
                   body
-                  (spec-template-list-remove-name templates index)
+                  (spec-template-list-remove-name templates (intern-str index))
                   end-state)
                   [(OkSpecExpr rewritten-body body-state)
                     (OkSpecExpr
-                      (ast-expr-foreach
+                      (ast-expr-foreach-id
                         index
                         index-ty
                         rewritten-start
@@ -4396,11 +4528,13 @@
                   [(OkSpecExpr rewritten-init init-state)
                     (match (spec-rewrite-expr
                       value
-                      (spec-template-list-remove-name templates index)
+                      (spec-template-list-remove-name
+                        templates
+                        (intern-str index))
                       init-state)
                       [(OkSpecExpr rewritten-value value-state)
                         (OkSpecExpr
-                          (ast-expr-spmd-reduce
+                          (ast-expr-spmd-reduce-id
                             op
                             index
                             index-ty
@@ -4418,7 +4552,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (spec-rewrite-expr receiver templates state)
           [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-struct-get rewritten field) state2)]
+            (OkSpecExpr (ast-expr-struct-get-id rewritten field) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-rewrite-expr-list body templates state)
@@ -4484,7 +4618,7 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-ptr-null-check rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprPtrAddrOf name) (OkSpecExpr (ast-expr-ptr-addr-of name) state)]
+    [(AstExprPtrAddrOf name) (OkSpecExpr (ast-expr-ptr-addr-of-id name) state)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -4854,18 +4988,18 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (match (spec-value-subst-lookup subs name)
+        (match (spec-value-subst-lookup subs (intern-str name))
           [(SpecSomeString _)
             (ErrSpecSubExpr
               (spec-diagnostic-at-expr
                 expr
                 (string-append
                   "cannot assign to comptime parameter '"
-                  (string-append name "'"))))]
+                  (string-append (intern-str name) "'"))))]
           [(SpecNoString)
             (match (spec-substitute-values-expr value subs)
               [(OkSpecSubExpr rewritten)
-                (OkSpecSubExpr (ast-expr-set name rewritten))]
+                (OkSpecSubExpr (ast-expr-set-id name rewritten))]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
     [(AstExprAnn inner-box ty)
       (let
@@ -4903,10 +5037,10 @@
               [(OkSpecSubExpr rewritten-end)
                 (match (spec-substitute-values-expr
                   body
-                  (spec-value-subst-remove-name subs index))
+                  (spec-value-subst-remove-name subs (intern-str index)))
                   [(OkSpecSubExpr rewritten-body)
                     (OkSpecSubExpr
-                      (ast-expr-foreach
+                      (ast-expr-foreach-id
                         index
                         index-ty
                         rewritten-start
@@ -4929,10 +5063,10 @@
                   [(OkSpecSubExpr rewritten-init)
                     (match (spec-substitute-values-expr
                       value
-                      (spec-value-subst-remove-name subs index))
+                      (spec-value-subst-remove-name subs (intern-str index)))
                       [(OkSpecSubExpr rewritten-value)
                         (OkSpecSubExpr
-                          (ast-expr-spmd-reduce
+                          (ast-expr-spmd-reduce-id
                             op
                             index
                             index-ty
@@ -4949,7 +5083,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (spec-substitute-values-expr receiver subs)
           [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-struct-get rewritten field))]
+            (OkSpecSubExpr (ast-expr-struct-get-id rewritten field))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-values-expr-list body subs)
@@ -5011,15 +5145,15 @@
             (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprPtrAddrOf name)
-      (match (spec-value-subst-lookup subs name)
+      (match (spec-value-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
             (spec-diagnostic-at-expr
               expr
               (string-append
                 "cannot take address of comptime value parameter '"
-                (string-append name "'"))))]
-        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of name))])]
+                (string-append (intern-str name) "'"))))]
+        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -5224,11 +5358,11 @@
                 [(OkSpecSubExpr rewritten-value)
                   (match (spec-substitute-values-let-bindings
                     rest
-                    (spec-value-subst-remove-name subs name))
+                    (spec-value-subst-remove-name subs (intern-str name)))
                     [(OkSpecSubLetBindingList rewritten-rest)
                       (OkSpecSubLetBindingList
                         (ast-let-binding-cons
-                          (ast-let-binding name ty rewritten-value)
+                          (ast-let-binding-id name ty rewritten-value)
                           rewritten-rest))]
                     [(ErrSpecSubLetBindingList diag)
                       (ErrSpecSubLetBindingList diag)])]
@@ -5338,10 +5472,10 @@
               [(OkSpecSubExpr rewritten-end)
                 (match (spec-substitute-types-expr
                   body
-                  (spec-type-subst-remove-name subs index))
+                  (spec-type-subst-remove-name subs (intern-str index)))
                   [(OkSpecSubExpr rewritten-body)
                     (OkSpecSubExpr
-                      (ast-expr-foreach
+                      (ast-expr-foreach-id
                         index
                         (spec-substitute-type index-ty subs)
                         rewritten-start
@@ -5364,10 +5498,10 @@
                   [(OkSpecSubExpr rewritten-init)
                     (match (spec-substitute-types-expr
                       value
-                      (spec-type-subst-remove-name subs index))
+                      (spec-type-subst-remove-name subs (intern-str index)))
                       [(OkSpecSubExpr rewritten-value)
                         (OkSpecSubExpr
-                          (ast-expr-spmd-reduce
+                          (ast-expr-spmd-reduce-id
                             op
                             index
                             (spec-substitute-type index-ty subs)
@@ -5532,18 +5666,18 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (match (spec-type-subst-lookup subs name)
+        (match (spec-type-subst-lookup subs (intern-str name))
           [(SpecSomeString _)
             (ErrSpecSubExpr
               (spec-diagnostic-at-expr
                 expr
                 (string-append
                   "type-valued comptime parameter '"
-                  (string-append name "' cannot be assigned"))))]
+                  (string-append (intern-str name) "' cannot be assigned"))))]
           [(SpecNoString)
             (match (spec-substitute-types-expr value subs)
               [(OkSpecSubExpr rewritten)
-                (OkSpecSubExpr (ast-expr-set name rewritten))]
+                (OkSpecSubExpr (ast-expr-set-id name rewritten))]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
     [(AstExprMatch scrutinee-box arms)
       (let
@@ -5561,7 +5695,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (spec-substitute-types-expr receiver subs)
           [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-struct-get rewritten field))]
+            (OkSpecSubExpr (ast-expr-struct-get-id rewritten field))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-types-expr-list body subs)
@@ -5625,15 +5759,17 @@
             (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprPtrAddrOf name)
-      (match (spec-type-subst-lookup subs name)
+      (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
             (spec-diagnostic-at-expr
               expr
               (string-append
                 "type-valued comptime parameter '"
-                (string-append name "' cannot be used as a runtime value"))))]
-        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of name))])]
+                (string-append
+                  (intern-str name)
+                  "' cannot be used as a runtime value"))))]
+        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -5840,11 +5976,11 @@
                 [(OkSpecSubExpr rewritten-value)
                   (match (spec-substitute-types-let-bindings
                     rest
-                    (spec-type-subst-remove-name subs name))
+                    (spec-type-subst-remove-name subs (intern-str name)))
                     [(OkSpecSubLetBindingList rewritten-rest)
                       (OkSpecSubLetBindingList
                         (ast-let-binding-cons
-                          (ast-let-binding
+                          (ast-let-binding-id
                             name
                             (spec-substitute-maybe-type ty subs)
                             rewritten-value)
@@ -5889,7 +6025,9 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
           [(OkSpecExpr rewritten state2)
-            (OkSpecDecl (SpecSomeDecl (ast-decl-def name ty rewritten)) state2)]
+            (OkSpecDecl
+              (SpecSomeDecl (ast-decl-def-id name ty rewritten))
+              state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
     [(AstDeclDefFn name params ret body-box export)
       (let
@@ -5903,7 +6041,7 @@
             [(OkSpecExpr rewritten state2)
               (OkSpecDecl
                 (SpecSomeDecl
-                  (ast-decl-def-fn-export name params ret rewritten export))
+                  (ast-decl-def-fn-export-id name params ret rewritten export))
                 state2)]
             [(ErrSpecExpr diag) (ErrSpecDecl diag)])))]
     [(AstDeclUnsafe inner-box)
@@ -5922,7 +6060,7 @@
         (match (spec-rewrite-expr body templates state)
           [(OkSpecExpr rewritten state2)
             (OkSpecDecl
-              (SpecSomeDecl (ast-decl-def-macro name params ret rewritten))
+              (SpecSomeDecl (ast-decl-def-macro-id name params ret rewritten))
               state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
     [_ (OkSpecDecl (SpecSomeDecl decl) state)]))
@@ -6002,7 +6140,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq fn-name name)
+                  (if (string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [(AstDeclComptimeDecl _ template-box)
@@ -6010,13 +6148,13 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDeclDefFn fn-name _ _ _ _)
-                        (if (string-eq fn-name name)
+                        (if (string-eq (intern-str fn-name) name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [(AstDeclDefFn fn-name _ _ _ _)
-            (if (string-eq fn-name name)
+            (if (string-eq (intern-str fn-name) name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
           [(AstDeclComptimeDecl _ template-box)
@@ -6024,7 +6162,7 @@
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq fn-name name)
+                  (if (string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
@@ -6172,7 +6310,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq fn-name name)
+                  (if (string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [(AstDeclComptimeDecl _ template-box)
@@ -6180,7 +6318,7 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDeclDefFn fn-name _ _ _ _)
-                        (if (string-eq fn-name name)
+                        (if (string-eq (intern-str fn-name) name)
                           (+
                             1
                             (compiler-specialize-decl-list-count-defs rest name))
@@ -6188,7 +6326,7 @@
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [(AstDeclDefFn fn-name _ _ _ _)
-            (if (string-eq fn-name name)
+            (if (string-eq (intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
           [(AstDeclComptimeDecl _ inner-box)
@@ -6196,7 +6334,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq fn-name name)
+                  (if (string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
@@ -6843,6 +6981,10 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "string-string-map-get-borrowed")]
+                  [string-borrowed-value-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "string-string-map-get-value-borrowed")]
                   [string-round-count : i64
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -6905,6 +7047,9 @@
                       unit
                       (set! ok false))
                     (if (= string-borrowed-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= string-borrowed-value-count 1)
                       unit
                       (set! ok false))
                     (if (= string-round-count 1)
@@ -7004,7 +7149,7 @@
                           [(AstNoGeneratedDeclMeta) false])
                         (match (box-get template-box)
                           [(AstDeclDefStruct name _ _ _)
-                            (string-eq name "Option_String")]
+                            (string-eq (intern-str name) "Option_String")]
                           [_ false]))]
                     [_ false])]
                 [(AstDeclNil) false])])]

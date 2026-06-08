@@ -237,6 +237,19 @@ copy_dep() {
     esac
     mkdir -p "$(dirname -- "$_dst")"
     cp "$_src" "$_dst"
+
+    case "$_dep" in
+        stdlib/core_macros.tl) ;;
+        stdlib/*)
+            if [ "$_source_dir" = "$ROOT/selfhost" ]; then
+                _core_dst="$(dirname -- "$_case_dir")/stdlib/core_macros.tl"
+            else
+                _core_dst="$_case_dir/stdlib/core_macros.tl"
+            fi
+            mkdir -p "$(dirname -- "$_core_dst")"
+            cp "$ROOT/stdlib/core_macros.tl" "$_core_dst"
+            ;;
+    esac
 }
 
 compile_linux_c_deps() {

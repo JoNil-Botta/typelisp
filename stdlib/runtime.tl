@@ -1,3 +1,5 @@
+(import "core_macros.tl" module stdlib.core-macros as core)
+
 ;# stdlib/runtime.tl - Always-linked runtime prelude (#2142 / #2150).
 ;#
 ;# This module holds the pieces of the runtime that call into the OS but that
@@ -55,11 +57,14 @@
 (cfg
   windows
   (define (runtime-windows-fd-handle [fd : i64]) : i64
-    (cond
-      [(= fd 0) (runtime-windows-get-std-handle (cast -10 : i32))]
-      [(= fd 1) (runtime-windows-get-std-handle (cast -11 : i32))]
-      [(= fd 2) (runtime-windows-get-std-handle (cast -12 : i32))]
-      [else fd])))
+    (core/cond
+      (= fd 0)
+      (runtime-windows-get-std-handle (cast -10 : i32))
+      (= fd 1)
+      (runtime-windows-get-std-handle (cast -11 : i32))
+      (= fd 2)
+      (runtime-windows-get-std-handle (cast -12 : i32))
+      fd)))
 
 ;: Write `count` bytes from `buf` to `fd`; returns the bytes written or `-1`.
 ;: OS write primitive shared by the abort handlers (and, in later slices, the

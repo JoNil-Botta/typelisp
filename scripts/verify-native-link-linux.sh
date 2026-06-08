@@ -504,6 +504,7 @@ verify_compiler_driver_stdlib_string_runtime() {
     _driver=$1
     _dir="$WORKDIR/compiler-driver/stdlib-string-runtime"
     mkdir -p "$_dir/stdlib"
+    cp stdlib/core_macros.tl "$_dir/stdlib/core_macros.tl"
     cp stdlib/string.tl "$_dir/stdlib/string.tl"
     _src="$_dir/input.tl"
     _asm="$_dir/output.s"
@@ -536,6 +537,7 @@ verify_compiler_driver_stdlib_json() {
     _driver=$1
     _dir="$WORKDIR/compiler-driver/stdlib-json"
     mkdir -p "$_dir/stdlib"
+    cp stdlib/core_macros.tl "$_dir/stdlib/core_macros.tl"
     cp stdlib/json.tl "$_dir/stdlib/json.tl"
     cp stdlib/io.tl "$_dir/stdlib/io.tl"
     cp stdlib/str_cat.tl "$_dir/stdlib/str_cat.tl"

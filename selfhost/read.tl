@@ -35,6 +35,8 @@
 ;; `token.tl` token model, so this single import transitively pulls in BOTH
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
+(import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
+
 (import "../stdlib/io.tl")
 
 (import "lex.tl")
@@ -219,12 +221,16 @@
     (or (= t (tag-backtick)) (or (= t (tag-comma)) (= t (tag-comma-at))))))
 
 (define (read-prefix-symbol [t : i64]) : String
-  (cond
-    [(= t (tag-quote)) "quote"]
-    [(= t (tag-backtick)) "quasiquote"]
-    [(= t (tag-comma)) "unquote"]
-    [(= t (tag-comma-at)) "unquote-splicing"]
-    [else "quote"]))
+  (core/cond
+    (= t (tag-quote))
+    "quote"
+    (= t (tag-backtick))
+    "quasiquote"
+    (= t (tag-comma))
+    "unquote"
+    (= t (tag-comma-at))
+    "unquote-splicing"
+    "quote"))
 
 (define (read-prefix-form [name : String] [form : Sexpr]) : Sexpr
   (sexpr-cons (SSym name) (sexpr-cons form SNil)))
@@ -263,60 +269,59 @@
     [tok : Token (spanned-token-token st)]
     [span : SourceSpan (spanned-token-span st)]
     [t : i64 (token-tag tok)]
-    (cond
-      [(= t (tag-int))
-        (let
-          [v : i64 (token-int tok)]
-          (begin
-            (advance cur)
-            (OkSpannedSexpr (SpSInt v span))))]
-      [(= t (tag-float))
-        (let
-          [s : String (token-float tok)]
-          (begin
-            (advance cur)
-            (OkSpannedSexpr (SpSFloat s span))))]
-      [(= t (tag-sym))
-        (let
-          [s : String (token-sym tok)]
-          (begin
-            (advance cur)
-            (OkSpannedSexpr (SpSSym s span))))]
-      [(= t (tag-str))
-        (let
-          [s : String (token-str tok)]
-          (begin
-            (advance cur)
-            (OkSpannedSexpr (SpSStr s span))))]
-      [(= t (tag-char))
-        (let
-          [c : char (token-char tok)]
-          (begin
-            (advance cur)
-            (OkSpannedSexpr (SpSChar c span))))]
-      [(= t (tag-lparen))
+    (core/cond
+      (= t (tag-int))
+      (let
+        [v : i64 (token-int tok)]
         (begin
           (advance cur)
-          (read-list-spanned-result toks cur span))]
-      [(= t (tag-lbracket))
+          (OkSpannedSexpr (SpSInt v span))))
+      (= t (tag-float))
+      (let
+        [s : String (token-float tok)]
         (begin
           (advance cur)
-          (read-bracket-list-spanned-result toks cur span))]
-      [(read-prefix-tag? t)
-        (let
-          [name : String (read-prefix-symbol t)]
-          (begin
-            (advance cur)
-            (match (read-form-spanned-result toks cur)
-              [(OkSpannedSexpr form)
-                (OkSpannedSexpr (read-prefix-spanned-form name span form))]
-              [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))]
-      [(= t (tag-rparen))
-        (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
-      [(= t (tag-rbracket))
-        (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))]
-      [else
-        (ErrSpannedSexpr (SourceError "reader: unexpected end of input" span))])))
+          (OkSpannedSexpr (SpSFloat s span))))
+      (= t (tag-sym))
+      (let
+        [s : String (token-sym tok)]
+        (begin
+          (advance cur)
+          (OkSpannedSexpr (SpSSym s span))))
+      (= t (tag-str))
+      (let
+        [s : String (token-str tok)]
+        (begin
+          (advance cur)
+          (OkSpannedSexpr (SpSStr s span))))
+      (= t (tag-char))
+      (let
+        [c : char (token-char tok)]
+        (begin
+          (advance cur)
+          (OkSpannedSexpr (SpSChar c span))))
+      (= t (tag-lparen))
+      (begin
+        (advance cur)
+        (read-list-spanned-result toks cur span))
+      (= t (tag-lbracket))
+      (begin
+        (advance cur)
+        (read-bracket-list-spanned-result toks cur span))
+      (read-prefix-tag? t)
+      (let
+        [name : String (read-prefix-symbol t)]
+        (begin
+          (advance cur)
+          (match (read-form-spanned-result toks cur)
+            [(OkSpannedSexpr form)
+              (OkSpannedSexpr (read-prefix-spanned-form name span form))]
+            [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))
+      (= t (tag-rparen))
+      (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))
+      (= t (tag-rbracket))
+      (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))
+      (ErrSpannedSexpr (SourceError "reader: unexpected end of input" span)))))
 
 (define (read-list-spanned-items-result
   [toks : (Array SpannedToken)]
@@ -380,56 +385,58 @@
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
-    (cond
-      [(= t (tag-int))
-        (let
-          [v : i64 (token-int (peek-tok toks cur))]
-          (begin
-            (advance cur)
-            (OkSexpr (SInt v))))]
-      [(= t (tag-float))
-        (let
-          [s : String (token-float (peek-tok toks cur))]
-          (begin
-            (advance cur)
-            (OkSexpr (SFloat s))))]
-      [(= t (tag-sym))
-        (let
-          [s : String (token-sym (peek-tok toks cur))]
-          (begin
-            (advance cur)
-            (OkSexpr (SSym s))))]
-      [(= t (tag-str))
-        (let
-          [s : String (token-str (peek-tok toks cur))]
-          (begin
-            (advance cur)
-            (OkSexpr (SStr s))))]
-      [(= t (tag-char))
-        (let
-          [c : char (token-char (peek-tok toks cur))]
-          (begin
-            (advance cur)
-            (OkSexpr (SChar c))))]
-      [(= t (tag-lparen))
+    (core/cond
+      (= t (tag-int))
+      (let
+        [v : i64 (token-int (peek-tok toks cur))]
         (begin
           (advance cur)
-          (read-list-result toks cur))]
-      [(= t (tag-lbracket))
+          (OkSexpr (SInt v))))
+      (= t (tag-float))
+      (let
+        [s : String (token-float (peek-tok toks cur))]
         (begin
           (advance cur)
-          (read-bracket-list-result toks cur))]
-      [(read-prefix-tag? t)
-        (let
-          [name : String (read-prefix-symbol t)]
-          (begin
-            (advance cur)
-            (match (read-form-result toks cur)
-              [(OkSexpr form) (OkSexpr (read-prefix-form name form))]
-              [(ErrSexpr message) (ErrSexpr message)])))]
-      [(= t (tag-rparen)) (ErrSexpr "reader: unexpected ')'")]
-      [(= t (tag-rbracket)) (ErrSexpr "reader: unexpected ']'")]
-      [else (ErrSexpr "reader: unexpected end of input")])))
+          (OkSexpr (SFloat s))))
+      (= t (tag-sym))
+      (let
+        [s : String (token-sym (peek-tok toks cur))]
+        (begin
+          (advance cur)
+          (OkSexpr (SSym s))))
+      (= t (tag-str))
+      (let
+        [s : String (token-str (peek-tok toks cur))]
+        (begin
+          (advance cur)
+          (OkSexpr (SStr s))))
+      (= t (tag-char))
+      (let
+        [c : char (token-char (peek-tok toks cur))]
+        (begin
+          (advance cur)
+          (OkSexpr (SChar c))))
+      (= t (tag-lparen))
+      (begin
+        (advance cur)
+        (read-list-result toks cur))
+      (= t (tag-lbracket))
+      (begin
+        (advance cur)
+        (read-bracket-list-result toks cur))
+      (read-prefix-tag? t)
+      (let
+        [name : String (read-prefix-symbol t)]
+        (begin
+          (advance cur)
+          (match (read-form-result toks cur)
+            [(OkSexpr form) (OkSexpr (read-prefix-form name form))]
+            [(ErrSexpr message) (ErrSexpr message)])))
+      (= t (tag-rparen))
+      (ErrSexpr "reader: unexpected ')'")
+      (= t (tag-rbracket))
+      (ErrSexpr "reader: unexpected ']'")
+      (ErrSexpr "reader: unexpected end of input"))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...

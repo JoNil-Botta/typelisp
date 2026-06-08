@@ -120,15 +120,22 @@
   (cast c : i64))
 
 (define (octal-digit [n : i64]) : String
-  (cond
-    [(= n 0) "0"]
-    [(= n 1) "1"]
-    [(= n 2) "2"]
-    [(= n 3) "3"]
-    [(= n 4) "4"]
-    [(= n 5) "5"]
-    [(= n 6) "6"]
-    [else "7"]))
+  (core/cond
+    (= n 0)
+    "0"
+    (= n 1)
+    "1"
+    (= n 2)
+    "2"
+    (= n 3)
+    "3"
+    (= n 4)
+    "4"
+    (= n 5)
+    "5"
+    (= n 6)
+    "6"
+    "7"))
 
 (define (octal-escape [n : i64]) : String
   (string-append
@@ -138,14 +145,20 @@
       (string-append (octal-digit (% (/ n 8) 8)) (octal-digit (% n 8))))))
 
 (define (escape-string-byte [text : String] [idx : i64] [k : i64]) : String
-  (cond
-    [(= k 34) "\\\""]
-    [(= k 92) "\\\\"]
-    [(= k 10) "\\n"]
-    [(= k 9) "\\t"]
-    [(= k 13) "\\r"]
-    [(core/and (>= k 32) (<= k 126)) (substring text idx 1)]
-    [else (octal-escape k)]))
+  (core/cond
+    (= k 34)
+    "\\\""
+    (= k 92)
+    "\\\\"
+    (= k 10)
+    "\\n"
+    (= k 9)
+    "\\t"
+    (= k 13)
+    "\\r"
+    (core/and (>= k 32) (<= k 126))
+    (substring text idx 1)
+    (octal-escape k)))
 
 (define (escape-string [text : String]) : String
   (let
@@ -228,17 +241,22 @@
     n))
 
 (define (arg-reg [idx : i64]) : String
-  (cond
-    [(= idx 0) "%rdi"]
-    [(= idx 1) "%rsi"]
-    [(= idx 2) "%rdx"]
-    [(= idx 3) "%rcx"]
-    [(= idx 4) "%r8"]
-    [(= idx 5) "%r9"]
-    [else
-      (begin
-        (panic "emit: arg register index out of range")
-        "%rdi")]))
+  (core/cond
+    (= idx 0)
+    "%rdi"
+    (= idx 1)
+    "%rsi"
+    (= idx 2)
+    "%rdx"
+    (= idx 3)
+    "%rcx"
+    (= idx 4)
+    "%r8"
+    (= idx 5)
+    "%r9"
+    (begin
+      (panic "emit: arg register index out of range")
+      "%rdi")))
 
 (define (bind-params [params : StrList] [slot : i64] [env : SymI64Env]) : SymI64Env
   (match params

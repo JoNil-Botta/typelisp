@@ -1754,12 +1754,14 @@ ordinary imports. Relative paths, canonical module identities, stdlib-root
 fallback, and `pkg:<alias>/...` package dependency resolution are shared with
 sections 4.4 and 4.4.1; there is no separate macro search path.
 
-There is no automatic stdlib macro prelude in v1. Core macro modules are loaded
-with ordinary explicit imports, for example
-`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, and their
-exports are called through the import alias such as `core/when`, `core/unless`,
-`core/and`, `core/or`, and `core/cond`. Unqualified parser-owned core forms
-remain separate until the final stdlib macro migration.
+The compile driver prepends `stdlib/core_macros.tl` as an implicit macro
+prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped `cond` resolve
+to exported macros from `stdlib.core-macros` unless a local or imported macro
+with the same name takes precedence. The module can also be loaded with an
+ordinary explicit import, for example
+`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, and its
+exports can be called through the import alias such as `core/when`,
+`core/unless`, `core/and`, `core/or`, and `core/cond`.
 
 Before expanding a module's non-import forms, the loader parses the module,
 collects its import declarations, recursively loads imported modules, and builds
@@ -2550,8 +2552,6 @@ All operators are prefix functions (or special forms):
 | `neg` | integer → integer | Unary negation |
 | `/` | integer integer → integer | Signed division |
 | `%` | integer integer → integer | Remainder |
-| `and` | bool bool → bool | Logical AND (short-circuit: **no** — both evaluated) |
-| `or` | bool bool → bool | Logical OR (short-circuit: **no** — both evaluated) |
 | `bit-and` | integer integer → integer | Bitwise AND |
 | `bit-or` | integer integer → integer | Bitwise OR |
 | `bit-xor` | integer integer → integer | Bitwise XOR |
@@ -2562,6 +2562,8 @@ All operators are prefix functions (or special forms):
 - Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N, where N is the result type
   width. Signed integer results use two's-complement interpretation of those
   wrapped bits.
+- Boolean `and` and `or` are core macros, not parser-owned binary operators.
+  All arities expand through `stdlib/core_macros.tl` and short-circuit.
 - Bitwise and shift operators accept integer operands and return the left-hand
   operand type.
 - `+`, `-`, `*`, `/` also operate on `f64` and `f32`; `%` on floating-point values is

@@ -33,6 +33,8 @@
 ;#     (let [text : String "hello from io\n"] (stdout-write (& text)))
 ;#     0))
 ;# ```
+(import "core_macros.tl" module stdlib.core-macros as core)
+
 (import "string.tl")
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
@@ -106,11 +108,14 @@
 (cfg
   windows
   (define (io-windows-fd-handle [fd : i32]) : i64
-    (cond
-      [(= fd (cast 0 : i32)) (io-win-get-std-handle (cast -10 : i32))]
-      [(= fd (cast 1 : i32)) (io-win-get-std-handle (cast -11 : i32))]
-      [(= fd (cast 2 : i32)) (io-win-get-std-handle (cast -12 : i32))]
-      [else (cast fd : i64)])))
+    (core/cond
+      (= fd (cast 0 : i32))
+      (io-win-get-std-handle (cast -10 : i32))
+      (= fd (cast 1 : i32))
+      (io-win-get-std-handle (cast -11 : i32))
+      (= fd (cast 2 : i32))
+      (io-win-get-std-handle (cast -12 : i32))
+      (cast fd : i64))))
 
 ;: Windows `_write` replacement via WriteFile; returns bytes written or -1.
 (cfg
@@ -613,10 +618,12 @@
 
 ;: Return platform open flags for stdlib file mode `mode`.
 (define (io-open-flags-for-mode [mode : i64]) : i64
-  (cond
-    [(= mode 0) (io-open-read-flags)]
-    [(= mode 1) (io-open-write-truncate-flags)]
-    [else (io-open-write-append-flags)]))
+  (core/cond
+    (= mode 0)
+    (io-open-read-flags)
+    (= mode 1)
+    (io-open-write-truncate-flags)
+    (io-open-write-append-flags)))
 
 ;: Return `code` as a negative status value.
 (define (io-neg-status [code : i64]) : i64
@@ -711,10 +718,12 @@
     (begin
       (array-set! (struct-get r limbs) 0 lo)
       (array-set! (struct-get r limbs) 1 hi)
-      (cond
-        [(> hi (cast 0 : u64)) (BigNum (struct-get r limbs) 2)]
-        [(> lo (cast 0 : u64)) (BigNum (struct-get r limbs) 1)]
-        [else (BigNum (struct-get r limbs) 0)]))))
+      (core/cond
+        (> hi (cast 0 : u64))
+        (BigNum (struct-get r limbs) 2)
+        (> lo (cast 0 : u64))
+        (BigNum (struct-get r limbs) 1)
+        (BigNum (struct-get r limbs) 0)))))
 
 ;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
 (define (bn-cmp [a : BigNum] [b : BigNum]) : i64
@@ -735,16 +744,16 @@
                 [av : u64 (array-ref (struct-get a limbs) i)]
                 [bv : u64 (array-ref (struct-get b limbs) i)]
                 (begin
-                  (cond
-                    [(> av bv)
-                      (begin
-                        (set! res 1)
-                        (set! done true))]
-                    [(< av bv)
-                      (begin
-                        (set! res -1)
-                        (set! done true))]
-                    [else unit])
+                  (core/cond
+                    (> av bv)
+                    (begin
+                      (set! res 1)
+                      (set! done true))
+                    (< av bv)
+                    (begin
+                      (set! res -1)
+                      (set! done true))
+                    unit)
                   (set! i (- i 1)))))
             res))))))
 
@@ -946,29 +955,28 @@
     [body : String ""]
     [ndig : i64 (string-length s)]
     (begin
-      (cond
-        [(or (< k -4) (>= k 17))
-          (set!
-            body
+      (core/cond
+        (or (< k -4) (>= k 17))
+        (set!
+          body
+          (string-append
+            (substring s 0 1)
             (string-append
-              (substring s 0 1)
-              (string-append
-                (if (> ndig 1)
-                  (string-append "." (substring s 1 (- ndig 1)))
-                  "")
-                (string-append "e" (ftoa-pad-exp k)))))]
-        [(< k 0)
-          (set!
-            body
-            (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))]
-        [(>= (+ k 1) ndig)
-          (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))]
-        [else
-          (set!
-            body
-            (string-append
-              (substring s 0 (+ k 1))
-              (string-append "." (substring s (+ k 1) (- ndig (+ k 1))))))])
+              (if (> ndig 1)
+                (string-append "." (substring s 1 (- ndig 1)))
+                "")
+              (string-append "e" (ftoa-pad-exp k)))))
+        (< k 0)
+        (set!
+          body
+          (string-append "0." (string-append (ftoa-zeros (- (- 0 k) 1)) s)))
+        (>= (+ k 1) ndig)
+        (set! body (string-append s (ftoa-zeros (- (+ k 1) ndig))))
+        (set!
+          body
+          (string-append
+            (substring s 0 (+ k 1))
+            (string-append "." (substring s (+ k 1) (- ndig (+ k 1)))))))
       (if neg
         (string-append "-" body)
         body))))
@@ -988,75 +996,73 @@
         [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
         [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
         [frac : u64 (bit-and bits (cast 0xfffffffffffff : u64))]
-        (cond
-          [(= expf (cast 0x7ff : u64))
-            (if (= frac (cast 0 : u64))
-              (if neg
-                "-inf"
-                "inf")
-              (if neg
-                "-nan"
-                "nan"))]
-          [(and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+        (core/cond
+          (= expf (cast 0x7ff : u64))
+          (if (= frac (cast 0 : u64))
             (if neg
-              "-0"
-              "0")]
-          [else
-            (let
-              [m : u64
-                (if (= expf (cast 0 : u64))
-                  frac
-                  (bit-or frac (cast 0x10000000000000 : u64)))]
-              [e2 : i64
-                (if (= expf (cast 0 : u64))
-                  -1074
-                  (- (cast expf : i64) 1075))]
-              [msb : i64 (ftoa-msb-index m)]
-              [kest : i64 (ftoa-floor-div (* (+ msb e2) 30103) 100000)]
-              [d : u64 (cast 0 : u64)]
-              [iters : i64 0]
-              [settled : bool false]
-              (begin
-                (while (and (not settled) (< iters 6))
-                  (let
-                    [p : i64 (- 16 kest)]
-                    [num : BigNum (bn-from-u64 m)]
-                    [den : BigNum (bn-from-u64 (cast 1 : u64))]
-                    (begin
-                      (if (>= e2 0)
-                        (set! num (bn-shl-bits num e2))
-                        (set! den (bn-shl-bits den (- 0 e2))))
-                      (if (>= p 0)
-                        (set! num (bn-mul-pow10 num p))
-                        (set! den (bn-mul-pow10 den (- 0 p))))
-                      (let
-                        [q : u64 (bn-div-floor-u64 num den)]
-                        [two-num : BigNum (bn-shl-bits num 1)]
-                        [t : BigNum
-                          (bn-mul-u64
-                            den
-                            (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-                        [c : i64 (bn-cmp two-num t)]
-                        (begin
-                          (set! d q)
-                          (cond
-                            [(> c 0) (set! d (+ q (cast 1 : u64)))]
-                            [(= c 0)
-                              (when
-                                (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
-                                (set! d (+ q (cast 1 : u64))))]
-                            [else unit])
-                          (cond
-                            [(>= d (cast 100000000000000000 : u64))
-                              (set! kest (+ kest 1))]
-                            [(< d (cast 10000000000000000 : u64))
-                              (set! kest (- kest 1))]
-                            [else (set! settled true)])
-                          (set! iters (+ iters 1)))))))
+              "-inf"
+              "inf")
+            (if neg
+              "-nan"
+              "nan"))
+          (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+          (if neg
+            "-0"
+            "0")
+          (let
+            [m : u64
+              (if (= expf (cast 0 : u64))
+                frac
+                (bit-or frac (cast 0x10000000000000 : u64)))]
+            [e2 : i64
+              (if (= expf (cast 0 : u64))
+                -1074
+                (- (cast expf : i64) 1075))]
+            [msb : i64 (ftoa-msb-index m)]
+            [kest : i64 (ftoa-floor-div (* (+ msb e2) 30103) 100000)]
+            [d : u64 (cast 0 : u64)]
+            [iters : i64 0]
+            [settled : bool false]
+            (begin
+              (while (and (not settled) (< iters 6))
                 (let
-                  [s0 : String (int->string (cast d : i64))]
-                  [k : i64 (+ (- (string-length s0) 17) kest)]
-                  (ftoa-render neg (ftoa-strip-zeros (cast d : i64)) k))))])))))
+                  [p : i64 (- 16 kest)]
+                  [num : BigNum (bn-from-u64 m)]
+                  [den : BigNum (bn-from-u64 (cast 1 : u64))]
+                  (begin
+                    (if (>= e2 0)
+                      (set! num (bn-shl-bits num e2))
+                      (set! den (bn-shl-bits den (- 0 e2))))
+                    (if (>= p 0)
+                      (set! num (bn-mul-pow10 num p))
+                      (set! den (bn-mul-pow10 den (- 0 p))))
+                    (let
+                      [q : u64 (bn-div-floor-u64 num den)]
+                      [two-num : BigNum (bn-shl-bits num 1)]
+                      [t : BigNum
+                        (bn-mul-u64 den (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
+                      [c : i64 (bn-cmp two-num t)]
+                      (begin
+                        (set! d q)
+                        (core/cond
+                          (> c 0)
+                          (set! d (+ q (cast 1 : u64)))
+                          (= c 0)
+                          (when
+                            (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
+                            (set! d (+ q (cast 1 : u64))))
+                          unit)
+                        (core/cond
+                          (>= d (cast 100000000000000000 : u64))
+                          (set! kest (+ kest 1))
+                          (< d (cast 10000000000000000 : u64))
+                          (set! kest (- kest 1))
+                          (set! settled true))
+                        (set! iters (+ iters 1)))))))
+              (let
+                [s0 : String (int->string (cast d : i64))]
+                [k : i64 (+ (- (string-length s0) 17) kest)]
+                (ftoa-render neg (ftoa-strip-zeros (cast d : i64)) k)))))))))
 
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (io-format-float [value : f64]) : String
@@ -1284,33 +1290,35 @@
 
 ;: Return the host status code for reading a chunk into the stdlib handle cache.
 (define (file-read-chunk-status [raw : i64] [count : i64]) : i64
-  (cond
-    [(not (io-valid-handle? raw)) 38]
-    [(not (= (io-file-i64-ref (io-file-modes-ptr) raw) 0)) 38]
-    [(< count 0) 22]
-    [(= count 0)
-      (begin
-        (io-file-string-set! (io-file-last-bytes-ptr) raw "")
-        (io-file-bool-set! (io-file-last-ready-ptr) raw true)
-        0)]
-    [else
-      (let
-        [buf : (Array u8) (make-array u8 count)]
-        [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
-        [read-count : i64 (io-platform-read fd (io-array-ptr buf) count)]
-        (if (< read-count 0)
-          (io-last-error-code)
-          (begin
-            (if (= read-count 0)
-              (io-file-bool-set! (io-file-eofs-ptr) raw true)
-              (io-file-bool-set! (io-file-eofs-ptr) raw false))
-            (io-file-string-set!
-              (io-file-last-bytes-ptr)
-              raw
-              (unsafe
-                (string-from-bytes (io-array-const-ptr buf) read-count)))
-            (io-file-bool-set! (io-file-last-ready-ptr) raw true)
-            0)))]))
+  (core/cond
+    (not (io-valid-handle? raw))
+    38
+    (not (= (io-file-i64-ref (io-file-modes-ptr) raw) 0))
+    38
+    (< count 0)
+    22
+    (= count 0)
+    (begin
+      (io-file-string-set! (io-file-last-bytes-ptr) raw "")
+      (io-file-bool-set! (io-file-last-ready-ptr) raw true)
+      0)
+    (let
+      [buf : (Array u8) (make-array u8 count)]
+      [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
+      [read-count : i64 (io-platform-read fd (io-array-ptr buf) count)]
+      (if (< read-count 0)
+        (io-last-error-code)
+        (begin
+          (if (= read-count 0)
+            (io-file-bool-set! (io-file-eofs-ptr) raw true)
+            (io-file-bool-set! (io-file-eofs-ptr) raw false))
+          (io-file-string-set!
+            (io-file-last-bytes-ptr)
+            raw
+            (unsafe
+              (string-from-bytes (io-array-const-ptr buf) read-count)))
+          (io-file-bool-set! (io-file-last-ready-ptr) raw true)
+          0)))))
 
 ;: Return the host status code for writing `contents` through a stdlib handle.
 (define (file-write-status [raw : i64] [contents : String]) : i64
@@ -1575,29 +1583,45 @@
 (define (io-error-from-status [path : (& path str)] [code : i64]) : IoError
   (let
     [owned-path : String (io-copy-path path)]
-    (cond
-      [(io-status-expected-absence? code) (IoNotFound owned-path)]
-      [(= code io-status-permission-denied) (IoPermissionDenied owned-path)]
-      [(= code io-status-invalid) (IoInvalidPath owned-path)]
-      [(= code io-status-name-too-long) (IoInvalidPath owned-path)]
-      [(= code io-status-interrupted) (IoInterrupted owned-path)]
-      [(= code io-status-is-directory) (IoUnsupported owned-path)]
-      [(= code io-status-unsupported) (IoUnsupported owned-path)]
-      [(= code io-status-ok) (IoUnknown owned-path)]
-      [else (IoSystemCode code owned-path)])))
+    (core/cond
+      (io-status-expected-absence? code)
+      (IoNotFound owned-path)
+      (= code io-status-permission-denied)
+      (IoPermissionDenied owned-path)
+      (= code io-status-invalid)
+      (IoInvalidPath owned-path)
+      (= code io-status-name-too-long)
+      (IoInvalidPath owned-path)
+      (= code io-status-interrupted)
+      (IoInterrupted owned-path)
+      (= code io-status-is-directory)
+      (IoUnsupported owned-path)
+      (= code io-status-unsupported)
+      (IoUnsupported owned-path)
+      (= code io-status-ok)
+      (IoUnknown owned-path)
+      (IoSystemCode code owned-path))))
 
 ;: Convert a runtime status code for an already-owned path.
 (define (io-error-from-owned-status [path : String] [code : i64]) : IoError
-  (cond
-    [(io-status-expected-absence? code) (IoNotFound path)]
-    [(= code io-status-permission-denied) (IoPermissionDenied path)]
-    [(= code io-status-invalid) (IoInvalidPath path)]
-    [(= code io-status-name-too-long) (IoInvalidPath path)]
-    [(= code io-status-interrupted) (IoInterrupted path)]
-    [(= code io-status-is-directory) (IoUnsupported path)]
-    [(= code io-status-unsupported) (IoUnsupported path)]
-    [(= code io-status-ok) (IoUnknown path)]
-    [else (IoSystemCode code path)]))
+  (core/cond
+    (io-status-expected-absence? code)
+    (IoNotFound path)
+    (= code io-status-permission-denied)
+    (IoPermissionDenied path)
+    (= code io-status-invalid)
+    (IoInvalidPath path)
+    (= code io-status-name-too-long)
+    (IoInvalidPath path)
+    (= code io-status-interrupted)
+    (IoInterrupted path)
+    (= code io-status-is-directory)
+    (IoUnsupported path)
+    (= code io-status-unsupported)
+    (IoUnsupported path)
+    (= code io-status-ok)
+    (IoUnknown path)
+    (IoSystemCode code path)))
 
 ;: Convert a status code for a fixed diagnostic label.
 (define (io-error-from-label [label : String] [code : i64]) : IoError

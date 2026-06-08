@@ -352,7 +352,7 @@
       (OkCompilerLoadWithPaths
         (compiler-load-decl-list-append
           decls
-          (ast-decl-cons (AstDeclModule "") AstDeclNil))
+          (ast-decl-cons (ast-decl-module "") AstDeclNil))
         (compiler-load-decl-path-list-append
           paths
           (ast-decl-path-cons
@@ -409,7 +409,7 @@
                   path
                   rest
                   fallback
-                  (CompilerLoadSomeModuleId name))]
+                  (CompilerLoadSomeModuleId (intern-str name)))]
               [(CompilerLoadSomeModuleId _)
                 (ErrCompilerLoadModuleId
                   (compiler-diagnostic-at-start
@@ -455,7 +455,7 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule name) name]
+          [(AstDeclModule name) (intern-str name)]
           [_ (compiler-load-decls-source-module rest)]))]))
 
 (define (compiler-load-decl-list-has-module? [decls : AstDeclList]) : bool
@@ -519,7 +519,7 @@
     [after-alias : AstDeclList
       (compiler-load-alias-decl-list import-path expected-module alias rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-cons (AstDeclModule importer-source-module) after-alias)
+      (ast-decl-cons (ast-decl-module importer-source-module) after-alias)
       after-alias)))
 
 (define (compiler-load-paths-after-import
@@ -1334,10 +1334,11 @@
   [stdlib-roots : StringVec]
   [decl-path : String]
   [module : String]
-  [name : String]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]) : AstDecl
   (let
+    [name-str : String (intern-str name)]
     [logical-path : String
       (compiler-load-package-owned-path
         package-owner
@@ -1345,7 +1346,7 @@
         stdlib-roots
         decl-path)]
     [logical : String
-      (compiler-load-package-decl-logical-name "" logical-path module name)]
+      (compiler-load-package-decl-logical-name "" logical-path module name-str)]
     (AstDeclExtern
       name
       (AstExternFunction)
@@ -1431,7 +1432,11 @@
   [decl : AstDecl]) : String
   (match decl
     [(AstDeclDefFn name _ _ _ _)
-      (if (compiler-load-package-entry-main? entry-path decl-path module name)
+      (if (compiler-load-package-entry-main?
+        entry-path
+        decl-path
+        module
+        (intern-str name))
         ""
         (compiler-load-package-owned-path
           package-owner
@@ -1473,7 +1478,7 @@
         [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
           (match decl
-            [(AstDeclModule name) name]
+            [(AstDeclModule name) (intern-str name)]
             [_ module])]
         (ast-decl-path-cons
           (compiler-load-package-owned-decl-path
@@ -1534,7 +1539,7 @@
         [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
           (match decl
-            [(AstDeclModule name) name]
+            [(AstDeclModule name) (intern-str name)]
             [_ module])]
         (match (compiler-load-package-extern-decls
           package-owner
@@ -1941,7 +1946,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (match value
           [(AstExprLiteral (AstLitString text))
-            (and (string-eq got name) (string-eq text want))]
+            (and (string-eq (intern-str got) name) (string-eq text want))]
           [_ false]))]
     [_ false]))
 
@@ -2002,16 +2007,22 @@
                                 (AstDeclDefFn main-name _ _ _ _)
                                 AstDeclNil)
                               (and
-                                (string-eq imported-module "restore.dep")
+                                (string-eq
+                                  (intern-str imported-module)
+                                  "restore.dep")
                                 (and
-                                  (string-eq imported-name "dep-value")
+                                  (string-eq
+                                    (intern-str imported-name)
+                                    "dep-value")
                                   (and
-                                    (string-eq restored-module "")
+                                    (string-eq (intern-str restored-module) "")
                                     (and
                                       (string-eq alias-module "restore.dep")
                                       (and
                                         (string-eq alias-name "dep")
-                                        (string-eq main-name "main"))))))]
+                                        (string-eq
+                                          (intern-str main-name)
+                                          "main"))))))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -2327,7 +2338,8 @@
                           [_ false])))]
                   [_ false])
                 (match template
-                  [(AstDeclExtern name _ _ _) (string-eq name "generated-fn")]
+                  [(AstDeclExtern name _ _ _)
+                    (string-eq (intern-str name) "generated-fn")]
                   [_ false])))]
           [_ false])]
       [(CompilerLoadNoDecl) false])))
@@ -4290,7 +4302,7 @@
         (string-vec-new)
         "C:/dep/src/lib.tl"
         ""
-        "helper"
+        (intern "helper")
         AstParamNil
         (AstTyI64))]
     (match decl

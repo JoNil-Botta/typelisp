@@ -322,6 +322,15 @@ arena_poison_stale_array_trap
 EOF
 }
 
+# Integration cases that are Windows-only in this manifest
+# (kept covered on Windows via native-windows.manifest):
+#   c_abi_win64_sret_return  Win64 hidden-sret aggregate return ABI
+linux_integration_non_applicable_cases() {
+    cat <<'EOF'
+c_abi_win64_sret_return
+EOF
+}
+
 # Cases covered by the selfhost-native generated-program gate rather than the
 # seed-backed integration manifests.
 # Immutable-reference native smoke fixtures are covered by
@@ -448,6 +457,9 @@ EOF
 
     if [ "$HOST_OS" = windows ]; then
         windows_integration_non_applicable_cases >> "$_known"
+    fi
+    if [ "$HOST_OS" = linux ]; then
+        linux_integration_non_applicable_cases >> "$_known"
     fi
     selfhost_native_manifest_cases >> "$_known"
 

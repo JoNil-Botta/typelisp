@@ -6195,6 +6195,18 @@
           fixed-count
           (+ index 1))))))
 
+(define (compiler-backend-call-actual-param-types
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [args : CompilerIrCallArgs]) : AstTypeList
+  (compiler-backend-call-actual-param-types-from
+    types
+    global-types
+    args
+    AstTypeNil
+    0
+    0))
+
 (define (compiler-backend-call-param-types-for-call
   [name : String]
   [args : CompilerIrCallArgs]
@@ -6208,7 +6220,11 @@
     [fixed-count : i64
       (compiler-backend-dynamic-extern-varargs-fixed-count externs name)]
     (if (< fixed-count 0)
-      param-types
+      (if (=
+        (compiler-backend-call-args-count args)
+        (compiler-backend-type-list-count param-types))
+        param-types
+        (compiler-backend-call-actual-param-types types global-types args))
       (compiler-backend-call-actual-param-types-from
         types
         global-types
@@ -8852,13 +8868,22 @@
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
-    [param-types : AstTypeList
+    [declared-param-types : AstTypeList
       (compiler-backend-indirect-call-param-types
         types
         func
         functions
         externs
         program-index)]
+    [param-types : AstTypeList
+      (if (=
+        (compiler-backend-call-args-count args)
+        (compiler-backend-type-list-count declared-param-types))
+        declared-param-types
+        (compiler-backend-call-actual-param-types
+          types
+          (CompilerBackendGlobalTypeNil)
+          args))]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target

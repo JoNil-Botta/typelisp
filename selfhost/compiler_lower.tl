@@ -151,6 +151,7 @@
 (defenum LowerCAbiAggregate
   (LowerCAbiNoAggregate)
   (LowerCAbiIntegerAggregate AstType i64)
+  (LowerCAbiSretAggregate i64)
   (LowerCAbiUnsupportedAggregate String))
 
 (defenum ResultLowerState
@@ -11737,35 +11738,81 @@
           "; this slice supports "
           (lower-c-abi-aggregate-size-message mode))))))
 
-(define (lower-c-abi-aggregate-class
+(define (lower-c-abi-aggregate-class-from-layout
   [ctx : TcContext]
   [mode : CompilerLowerMode]
-  [ty : AstType]) : LowerCAbiAggregate
+  [resolved : AstType]
+  [layout : TcInlineAggregateLayout]
+  [allow-sret? : bool]) : LowerCAbiAggregate
+  (match layout
+    [(TcInlineStructLayout size _ fields)
+      (if (and
+        (lower-c-abi-register-aggregate-size? mode size)
+        (lower-c-abi-inline-fields-integer-only? ctx fields))
+        (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
+        (if (and allow-sret? (and (lower-mode-windows-c-abi? mode) (> size 8)))
+          (LowerCAbiSretAggregate size)
+          (LowerCAbiUnsupportedAggregate
+            (lower-c-abi-unsupported-message mode resolved))))]
+    [(TcInlineEnumLayout _ _ _)
+      (LowerCAbiUnsupportedAggregate
+        (lower-c-abi-unsupported-message mode resolved))]))
+
+(define (lower-c-abi-aggregate-class-for-struct
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [name : String]
+  [resolved : AstType]
+  [allow-sret? : bool]) : LowerCAbiAggregate
+  (match (tc-inline-aggregate-layout-for ctx name)
+    [(OkTcInlineAggregateLayout layout)
+      (lower-c-abi-aggregate-class-from-layout
+        ctx
+        mode
+        resolved
+        layout
+        allow-sret?)]
+    [(ErrTcInlineAggregateLayout message)
+      (LowerCAbiUnsupportedAggregate message)]))
+
+(define (lower-c-abi-aggregate-class-with-sret
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [ty : AstType]
+  [allow-sret? : bool]) : LowerCAbiAggregate
   (let
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyStruct name)
-        (match (tc-inline-aggregate-layout-for ctx name)
-          [(OkTcInlineAggregateLayout layout)
-            (match layout
-              [(TcInlineStructLayout size _ fields)
-                (if (and
-                  (lower-c-abi-register-aggregate-size? mode size)
-                  (lower-c-abi-inline-fields-integer-only? ctx fields))
-                  (LowerCAbiIntegerAggregate
-                    (lower-c-abi-integer-scalar-type size)
-                    size)
-                  (LowerCAbiUnsupportedAggregate
-                    (lower-c-abi-unsupported-message mode resolved)))]
-              [(TcInlineEnumLayout _ _ _)
-                (LowerCAbiUnsupportedAggregate
-                  (lower-c-abi-unsupported-message mode resolved))])]
-          [(ErrTcInlineAggregateLayout message)
-            (LowerCAbiUnsupportedAggregate message)])]
+        (lower-c-abi-aggregate-class-for-struct
+          ctx
+          mode
+          name
+          resolved
+          allow-sret?)]
+      [(AstTyStructArgs name _)
+        (lower-c-abi-aggregate-class-for-struct
+          ctx
+          mode
+          name
+          resolved
+          allow-sret?)]
       [(AstTyEnum _)
         (LowerCAbiUnsupportedAggregate
           (lower-c-abi-unsupported-message mode resolved))]
       [_ (LowerCAbiNoAggregate)])))
+
+(define (lower-c-abi-aggregate-class
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [ty : AstType]) : LowerCAbiAggregate
+  (lower-c-abi-aggregate-class-with-sret ctx mode ty false))
+
+(define (lower-c-abi-return-aggregate-class
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [ty : AstType]) : LowerCAbiAggregate
+  (lower-c-abi-aggregate-class-with-sret ctx mode ty true))
 
 (define (lower-c-abi-args-as
   [ctx : TcContext]
@@ -11834,7 +11881,14 @@
                                       rest-values))]
                                 [(ErrLowerArgs message) (ErrLowerArgs message)])])]
                         [(LowerCAbiUnsupportedAggregate message)
-                          (ErrLowerArgs (lower-diagnostic-at-expr arg message))])])]
+                          (ErrLowerArgs (lower-diagnostic-at-expr arg message))]
+                        [(LowerCAbiSretAggregate _)
+                          (ErrLowerArgs
+                            (lower-diagnostic-at-expr
+                              arg
+                              (lower-c-abi-unsupported-message
+                                (lower-state-mode arg-state)
+                                arg-ty)))])])]
                 [(ErrLowerExpr message) (ErrLowerArgs message)]))]
           [(AstTypeNil)
             (ErrLowerArgs
@@ -11857,6 +11911,8 @@
               (lower-store-at-offset base-state base 0 call-value scalar-ty)
               base
               result-ty))])]
+    [(LowerCAbiSretAggregate _)
+      (OkLowerExpr (LowerExpr state call-value result-ty))]
     [(LowerCAbiUnsupportedAggregate message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
 
@@ -11872,7 +11928,7 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (lower-c-abi-args-as ctx state env type-env args param-types)
     [(OkLowerArgs args-state values)
-      (match (lower-c-abi-aggregate-class
+      (match (lower-c-abi-return-aggregate-class
         ctx
         (lower-state-mode args-state)
         result-ty)
@@ -11909,7 +11965,26 @@
                   (IrValueVar var-id)
                   result-ty
                   (LowerCAbiIntegerAggregate scalar-ty size)
-                  origin))])])]
+                  origin))])]
+        [(LowerCAbiSretAggregate size)
+          (match (lower-reserve-heap-storage args-state size result-ty)
+            [(LowerExpr base-state base _)
+              (match (lower-state-alloc-var base-state)
+                [(LowerAlloc allocated var-id)
+                  (let
+                    [instr : CompilerIrInstr
+                      (IrInstrCall
+                        var-id
+                        (lower-resolve-call-name allocated env name)
+                        (compiler-ir-call-args-from-list
+                          (compiler-ir-value-cons base values))
+                        (AstTyU64))]
+                    (lower-c-abi-finish-call-result
+                      (lower-state-emit-at-expr allocated instr origin)
+                      base
+                      result-ty
+                      (LowerCAbiSretAggregate size)
+                      origin))])])])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-indirect-c-abi-call-values
@@ -11919,7 +11994,10 @@
   [values : CompilerIrValueList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-c-abi-aggregate-class ctx (lower-state-mode state) result-ty)
+  (match (lower-c-abi-return-aggregate-class
+    ctx
+    (lower-state-mode state)
+    result-ty)
     [(LowerCAbiUnsupportedAggregate message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
     [(LowerCAbiNoAggregate)
@@ -11953,7 +12031,26 @@
               (IrValueVar var-id)
               result-ty
               (LowerCAbiIntegerAggregate scalar-ty size)
-              origin))])]))
+              origin))])]
+    [(LowerCAbiSretAggregate size)
+      (match (lower-reserve-heap-storage state size result-ty)
+        [(LowerExpr base-state base _)
+          (match (lower-state-alloc-var base-state)
+            [(LowerAlloc allocated var-id)
+              (let
+                [instr : CompilerIrInstr
+                  (IrInstrCallIndirectC
+                    var-id
+                    func-value
+                    (compiler-ir-call-args-from-list
+                      (compiler-ir-value-cons base values))
+                    (AstTyU64))]
+                (lower-c-abi-finish-call-result
+                  (lower-state-emit-at-expr allocated instr origin)
+                  base
+                  result-ty
+                  (LowerCAbiSretAggregate size)
+                  origin))])])]))
 
 (define (lower-extern-value-c-abi-call
   [ctx : TcContext]

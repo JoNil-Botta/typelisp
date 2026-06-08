@@ -2005,10 +2005,10 @@ Example:
   `--opt-level 0|1|2` overrides the profile's optimizer level. Without an
   explicit level, `release` uses level 2 and `dev` uses level 0.
 - Build outputs are written under
-  `target/typelisp/<profile>/<package-name>/` in the package root. `bin`
-  packages produce `<package-name>` on Linux and `<package-name>.exe` on
-  Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
-  `<package-name>.lib` on Windows.
+  `target/<profile>/` in the package root. `bin` packages produce
+  `<package-name>` on Linux and `<package-name>.exe` on Windows. `staticlib`
+  packages produce `lib<package-name>.a` on Linux and `<package-name>.lib` on
+  Windows. Assembly and object side artifacts use the same profile directory.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,

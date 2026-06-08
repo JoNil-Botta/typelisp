@@ -161,7 +161,7 @@ build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0
 
 The checkout root also has a `typelisp.pkg` whose binary entry is
 `selfhost/cli.tl`, so `typelisp build` from the repository root builds the
-selfhost CLI package into `target/typelisp/typelisp/`. The no-Rust smoke keeps a
+selfhost CLI package into `target/release/`. The no-Rust smoke keeps a
 root package-build check in `scripts/verify-selfhost-cli-build-run.sh`; the
 published stage0 workflow intentionally keeps using the direct
 `compile selfhost/cli.tl` path plus native linking so a seed compiler can build

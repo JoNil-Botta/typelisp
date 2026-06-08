@@ -553,6 +553,13 @@ unsupported key descriptor instead of using source-level traits or implicit
 identity even when the key/value types and public item names are otherwise the
 same.
 
+Generated hashmap families may also expose borrowed-value lookup helpers such
+as `*-get-value-borrowed`. These helpers are independent from borrowed-key
+lookup: the key path controls whether lookup can inspect a borrowed key without
+copying it, while borrowed-value lookup returns a lifetime-parameterized result
+whose found branch borrows the map-owned value and is invalidated by map
+mutation, removal, resizing, or rehashing.
+
 The payload declaration name must match `generated-item-name`. The compiler may
 derive display names from keys, but the generated identity, not the display
 spelling alone, is the stable reuse key. Generated identities use canonical

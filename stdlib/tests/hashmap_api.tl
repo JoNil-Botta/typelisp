@@ -62,6 +62,12 @@
     [(StringI64MapFound v) v]
     [(StringI64MapMissing) fallback]))
 
+(define (string-i64-borrowed-value-found?
+  [l : (StringI64MapBorrowedValueLookup map)]) : bool
+  (match l
+    [(StringI64MapBorrowedValueFound _) true]
+    [(StringI64MapBorrowedValueMissing) false]))
+
 (define (insert-ok? [r : StringI64MapInsertResult]) : bool
   (match r
     [(StringI64MapInsertOk _) true]
@@ -191,6 +197,18 @@
   (match l
     [(I64I64MapFound v) v]
     [(I64I64MapMissing) fallback]))
+
+(define (i64-i64-borrowed-value-found? [l : (I64I64MapBorrowedValueLookup map)]) : bool
+  (match l
+    [(I64I64MapBorrowedValueFound _) true]
+    [(I64I64MapBorrowedValueMissing) false]))
+
+(define (i64-string-borrowed-value-length-or
+  [l : (I64StringMapBorrowedValueLookup map)]
+  [fallback : i64]) : i64
+  (match l
+    [(I64StringMapBorrowedValueFound v) (string-length v)]
+    [(I64StringMapBorrowedValueMissing) fallback]))
 
 (define (i64-i64-insert-result-map [r : I64I64MapInsertResult]) : I64I64Map
   (match r
@@ -330,6 +348,12 @@
             [(I64StringMapMissing) "missing"])
           "seven"
           "i64->String fixture generated get helper")
+        (assert-i64-eq
+          (i64-string-borrowed-value-length-or
+            (i64-string-map-get-value-borrowed (& fixture1) 7)
+            -1)
+          5
+          "i64->String fixture borrowed value helper")
         (assert-false
           (i64-string-map-contains? fixture1 9)
           "i64->String fixture generated contains helper")))
@@ -467,6 +491,8 @@
           "absent at the tombstone slot")))
     ;; --- map API (#826): with-capacity / insert / get / contains? / len ---
     (let
+      [alpha-key : String "alpha"]
+      [missing-key : String "missing"]
       [m0 : StringI64Map (string-i64-map-with-capacity 8)]
       (begin
         (assert-i64-eq (string-i64-map-len m0) 0 "fresh map len 0")
@@ -488,6 +514,10 @@
               (lookup-value-or (string-i64-map-get m3 "alpha") -1)
               11
               "get alpha")
+            (assert-true
+              (string-i64-borrowed-value-found?
+                (string-i64-map-get-value-borrowed (& m3) (& alpha-key)))
+              "StringI64 borrowed value get finds alpha")
             (assert-i64-eq
               (lookup-value-or (string-i64-map-get m3 "beta") -1)
               22
@@ -504,6 +534,10 @@
               (lookup-value-or (string-i64-map-get m3 "missing") -1)
               -1
               "get missing -> fallback")
+            (assert-false
+              (string-i64-borrowed-value-found?
+                (string-i64-map-get-value-borrowed (& m3) (& missing-key)))
+              "StringI64 missing borrowed value get")
             ;; updating an existing key keeps len and changes the value
             (let
               [m4 : StringI64Map
@@ -1058,6 +1092,10 @@
           (i64-i64-lookup-value-or (i64-i64-map-get ii5 1) -1)
           99
           "I64I64 updated key 1")
+        (assert-true
+          (i64-i64-borrowed-value-found?
+            (i64-i64-map-get-value-borrowed (& ii5) 1))
+          "I64I64 borrowed value get finds key 1")
         (assert-i64-eq
           (i64-i64-lookup-value-or (i64-i64-map-get ii5 3) -1)
           30
@@ -1066,6 +1104,10 @@
           (i64-i64-lookup-value-or (i64-i64-map-get ii5 99) -1)
           -1
           "I64I64 missing key")
+        (assert-false
+          (i64-i64-borrowed-value-found?
+            (i64-i64-map-get-value-borrowed (& ii5) 99))
+          "I64I64 missing borrowed value get")
         (assert-true (i64-i64-map-contains? ii5 2) "I64I64 contains key 2")
         (let
           [removed : I64I64MapRemoveResult (i64-i64-map-remove ii5 2)]

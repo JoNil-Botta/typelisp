@@ -6402,7 +6402,10 @@
         [(IrBlock _ instrs)
           (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
             true
-            (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]))
+            (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-blocks-need-outgoing-space?
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-instr-outgoing-stack-space [instr : CompilerIrInstr]) : i64
   (match instr
@@ -6444,7 +6447,11 @@
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
             (box-get rest)
-            (compiler-backend-instr-seq-outgoing-stack-space instrs max-space))])]))
+            (compiler-backend-instr-seq-outgoing-stack-space instrs max-space))])]
+    [(IrBlockArray seq)
+      (compiler-backend-blocks-outgoing-stack-space
+        (compiler-ir-block-seq-to-list seq)
+        max-space)]))
 
 (define (compiler-backend-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -6904,7 +6911,13 @@
               assignments
               (box-get rest)
               target-label
-              from-label))])]))
+              from-label))])]
+    [(IrBlockArray seq)
+      (compiler-backend-emit-phi-edge-copies
+        assignments
+        (compiler-ir-block-seq-to-list seq)
+        target-label
+        from-label)]))
 
 (define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
   (if (= (compiler-backend-type-size ty) 0)
@@ -6942,7 +6955,10 @@
         [(IrBlock _ instrs)
           (+
             (compiler-backend-instr-seq-return-count instrs)
-            (compiler-backend-block-list-return-count (box-get rest)))])]))
+            (compiler-backend-block-list-return-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-block-list-return-count
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-use-shared-return?
   [assignments : CompilerRegAssignmentList]
@@ -7152,7 +7168,16 @@
               from-label
               assignments
               vars
-              ret-ty))])]))
+              ret-ty))])]
+    [(IrBlockArray seq)
+      (compiler-backend-emit-trivial-phi-return-edge
+        source-function
+        (compiler-ir-block-seq-to-list seq)
+        target-label
+        from-label
+        assignments
+        vars
+        ret-ty)]))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
   [source-function : String]
@@ -7232,7 +7257,18 @@
               vars
               ret-ty
               moved-dst
-              moved-src))])]))
+              moved-src))])]
+    [(IrBlockArray seq)
+      (compiler-backend-emit-mov-trivial-phi-return-edge
+        source-function
+        (compiler-ir-block-seq-to-list seq)
+        target-label
+        from-label
+        assignments
+        vars
+        ret-ty
+        moved-dst
+        moved-src)]))
 
 ;; The destination's home register, or "" if it is spilled / has no home. Used to
 ;; load a move's source directly into the destination register (1 instr) instead
@@ -8140,7 +8176,11 @@
         [(IrBlock _ instrs)
           (begin
             (compiler-backend-count-instr-seq-uses counts instrs)
-            (compiler-backend-count-block-uses counts (box-get rest)))])]))
+            (compiler-backend-count-block-uses counts (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-count-block-uses
+        counts
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-function-use-counts
   [vars : i64]
@@ -10218,7 +10258,9 @@
     [(IrBlockNil) (CompilerBackendNoLabel)]
     [(IrBlockCons block _)
       (match block
-        [(IrBlock label _) (CompilerBackendSomeLabel label)])]))
+        [(IrBlock label _) (CompilerBackendSomeLabel label)])]
+    [(IrBlockArray seq)
+      (compiler-backend-next-block-label (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-emit-blocks-into
   [target : CompilerBackendTarget]
@@ -10281,7 +10323,27 @@
             func-diag
             use-counts
             (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(IrBlockArray seq)
+      (compiler-backend-emit-blocks-into
+        target
+        function
+        source-function
+        all-blocks
+        (compiler-ir-block-seq-to-list seq)
+        assignments
+        vars
+        types
+        global-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index
+        spans
+        func-diag
+        use-counts
+        buf)]))
 
 (define (compiler-backend-emit-blocks
   [target : CompilerBackendTarget]
@@ -10470,19 +10532,23 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]) : ResultCompilerBackend
   (match func
-    [(IrFunction name params ret-ty vars blocks)
+    [(IrFunction name params ret-ty vars raw-blocks)
       ;; The provenance fallback diagnostic for this function (#605): backend
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
+        [blocks : CompilerIrBlockList
+          (compiler-ir-block-list-force-cons raw-blocks)]
+        [walk-func : CompilerIrFunction
+          (IrFunction name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index span-index name "")]
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar func)
-              (compiler-reg-plan-function-stack-only func))
-            (compiler-reg-plan-function func))]
+              (compiler-reg-plan-function-scalar walk-func)
+              (compiler-reg-plan-function-stack-only walk-func))
+            (compiler-reg-plan-function walk-func))]
         [raw-assignments : CompilerRegAssignmentList
           (compiler-reg-plan-assignments reg-plan)]
         [assignments : CompilerRegAssignmentList raw-assignments]
@@ -10784,13 +10850,14 @@
     IrParamNil
     (AstTyI64)
     1
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons
-          (IrInstrReturn (IrSomeValue (IrValueI64 0)))
-          IrInstrNil))
-      IrBlockNil)))
+    (compiler-ir-block-list-compact
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil))
+        IrBlockNil))))
 
 (define (compiler-backend-functions-with-implicit-main
   [functions : CompilerIrFunctionList]
@@ -11380,7 +11447,11 @@
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-collections
             (compiler-backend-collect-instr-seq-collections collections instrs)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (compiler-backend-collect-block-collections
+        collections
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-collect-function-collections
   [collections : CompilerBackendProgramCollections]
@@ -11868,7 +11939,11 @@
         [(IrBlock _ instrs)
           (compiler-backend-runtime-index-blocks
             (compiler-backend-runtime-index-instr-seq index instrs)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (compiler-backend-runtime-index-blocks
+        index
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-runtime-index-functions
   [index : CompilerBackendRuntimeIndex]
@@ -16087,7 +16162,15 @@ tl_string_concat5:
               label-scope
               (box-get rest)
               plan
-              program-index))])]))
+              program-index))])]
+    [(IrBlockArray seq)
+      (compiler-backend-object-blocks
+        parts
+        function-symbol
+        label-scope
+        (compiler-ir-block-seq-to-list seq)
+        plan
+        program-index)]))
 
 (define (compiler-backend-object-functions
   [parts : CompilerBackendObjectParts]

@@ -1165,7 +1165,9 @@
         [(IrBlock _ instrs)
           (opt-collect-blocks-uses
             (opt-collect-instr-seq-uses set instrs)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-collect-blocks-uses set (compiler-ir-block-seq-to-list seq))]))
 
 ;; Division, modulo, and shift can trap at runtime (zero divisor, signed
 ;; MIN / -1, shift count out of range), so a BinOp using one of those operators
@@ -1241,7 +1243,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-dce-block set block)
-        (opt-dce-block-list set (box-get rest)))]))
+        (opt-dce-block-list set (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-dce-block-list set (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-used-array-fill
   [items : (Array bool)]
@@ -1448,7 +1452,11 @@
         [(IrBlock _ instrs)
           (begin
             (opt-collect-instr-seq-uses-array items instrs)
-            (opt-collect-blocks-uses-array-into items (box-get rest)))])]))
+            (opt-collect-blocks-uses-array-into items (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-collect-blocks-uses-array-into
+        items
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-collect-blocks-uses-array
   [vars : i64]
@@ -1512,7 +1520,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-dce-block-array items block)
-        (opt-dce-block-list-array items (box-get rest)))]))
+        (opt-dce-block-list-array items (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-dce-block-list-array items (compiler-ir-block-seq-to-list seq))]))
 
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;
@@ -1997,7 +2007,9 @@
           (opt-aggregate-instr-seq-append-from
             instrs
             0
-            (opt-aggregate-flatten-blocks (box-get rest)))])]))
+            (opt-aggregate-flatten-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-aggregate-flatten-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-aggregate-allocation-candidates-function
   [func : CompilerIrFunction]) : OptAggregateAllocCandidateList
@@ -2194,7 +2206,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-aggregate-promote-block slots block)
-        (opt-aggregate-promote-blocks slots (box-get rest)))]))
+        (opt-aggregate-promote-blocks slots (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-aggregate-promote-blocks slots (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -2490,7 +2504,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-aggregate-sroa-block candidates block)
-        (opt-aggregate-sroa-blocks candidates (box-get rest)))]))
+        (opt-aggregate-sroa-blocks candidates (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-aggregate-sroa-blocks candidates (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-aggregate-sroa-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -3382,7 +3398,11 @@
           (and
             (opt-block-eq ah bh)
             (opt-block-list-eq (box-get at) (box-get bt)))]
-        [_ false])]))
+        [(IrBlockArray seq)
+          (opt-block-list-eq a (compiler-ir-block-seq-to-list seq))]
+        [_ false])]
+    [(IrBlockArray seq)
+      (opt-block-list-eq (compiler-ir-block-seq-to-list seq) b)]))
 
 (define (opt-param-eq [a : CompilerIrParam] [b : CompilerIrParam]) : bool
   (match a
@@ -4104,7 +4124,9 @@
         [(IrBlock block-label _)
           (if (string-eq block-label label)
             (OptSomeBlock block)
-            (opt-cfg-find-block (box-get rest) label))])]))
+            (opt-cfg-find-block (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-cfg-find-block (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : String]) : bool
   (match (opt-cfg-find-block blocks label)
@@ -4116,7 +4138,9 @@
     [(IrBlockNil) ""]
     [(IrBlockCons block _)
       (match block
-        [(IrBlock label _) label])]))
+        [(IrBlock label _) label])]
+    [(IrBlockArray seq)
+      (opt-cfg-entry-label (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-block-labels [blocks : CompilerIrBlockList]) : OptLabelSet
   (match blocks
@@ -4124,7 +4148,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label _)
-          (opt-label-add (opt-cfg-block-labels (box-get rest)) label)])]))
+          (opt-label-add (opt-cfg-block-labels (box-get rest)) label)])]
+    [(IrBlockArray seq)
+      (opt-cfg-block-labels (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-block-labels-unique-from?
   [blocks : CompilerIrBlockList]
@@ -4138,7 +4164,11 @@
             false
             (opt-cfg-block-labels-unique-from?
               (box-get rest)
-              (opt-label-add seen label)))])]))
+              (opt-label-add seen label)))])]
+    [(IrBlockArray seq)
+      (opt-cfg-block-labels-unique-from?
+        (compiler-ir-block-seq-to-list seq)
+        seen)]))
 
 (define (opt-cfg-block-labels-unique? [blocks : CompilerIrBlockList]) : bool
   (opt-cfg-block-labels-unique-from? blocks (OptLabelNil)))
@@ -4160,7 +4190,11 @@
             block
             (opt-cfg-entry-label (box-get rest)))
           labels)
-        (opt-cfg-successor-targets-known-in-blocks? (box-get rest) labels))]))
+        (opt-cfg-successor-targets-known-in-blocks? (box-get rest) labels))]
+    [(IrBlockArray seq)
+      (opt-cfg-successor-targets-known-in-blocks?
+        (compiler-ir-block-seq-to-list seq)
+        labels)]))
 
 (define (opt-cfg-predecessors-scan
   [blocks : CompilerIrBlockList]
@@ -4179,7 +4213,9 @@
                 (opt-cfg-entry-label (box-get rest)))
               label)
               (opt-label-add tail block-label)
-              tail))])]))
+              tail))])]
+    [(IrBlockArray seq)
+      (opt-cfg-predecessors-scan (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
   (opt-cfg-index-predecessors (opt-cfg-index-build blocks) label))
@@ -4196,7 +4232,11 @@
             (compiler-ir-block-cons
               block
               (opt-cfg-filter-blocks-by-labels labels (box-get rest)))
-            (opt-cfg-filter-blocks-by-labels labels (box-get rest)))])]))
+            (opt-cfg-filter-blocks-by-labels labels (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-cfg-filter-blocks-by-labels
+        labels
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-reachable-block-order [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-cfg-filter-blocks-by-labels (opt-cfg-reachable-blocks blocks) blocks))
@@ -4293,7 +4333,13 @@
               (box-get rest)
               reachable
               entry-label
-              all-reachable))])]))
+              all-reachable))])]
+    [(IrBlockArray seq)
+      (opt-cfg-dominators-initial
+        (compiler-ir-block-seq-to-list seq)
+        reachable
+        entry-label
+        all-reachable)]))
 
 ;; CFG index (#2175): integer block ids are assigned in block-list order and
 ;; reused for successor/predecessor CSR rows, reachability, RPO, and RPO slot
@@ -4342,7 +4388,13 @@
               (box-get rest)
               (string-i64-map-put ids label index)
               labels
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(IrBlockArray seq)
+      (opt-cfg-index-fill-labels!
+        (compiler-ir-block-seq-to-list seq)
+        ids
+        labels
+        index)]))
 
 (define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
   (match items
@@ -4464,7 +4516,14 @@
                 ids
                 succ-rows
                 pred-rows
-                (+ index 1))))])]))
+                (+ index 1))))])]
+    [(IrBlockArray seq)
+      (opt-cfg-index-fill-rows!
+        (compiler-ir-block-seq-to-list seq)
+        ids
+        succ-rows
+        pred-rows
+        index)]))
 
 (define (opt-cfg-csr-fill-rows!
   [rows : (Array OptI64List)]
@@ -5481,7 +5540,15 @@
                     reachable))
                 (not (opt-dom-strict-dominates? doms label block-label))))
               (opt-label-add tail block-label)
-              tail))])]))
+              tail))])]
+    [(IrBlockArray seq)
+      (opt-cfg-dominance-frontier-blocks
+        all-blocks
+        (compiler-ir-block-seq-to-list seq)
+        pred-map
+        reachable
+        doms
+        label)]))
 
 (define (opt-cfg-dominance-frontier-with-context
   [blocks : CompilerIrBlockList]
@@ -5625,7 +5692,9 @@
         [(IrBlock _ instrs)
           (match (opt-verify-instr-def-seq-from instrs 0 set)
             [(OptVarSetOk next) (opt-verify-block-def-set (box-get rest) next)]
-            [(OptVarSetErr) (OptVarSetErr)])])]))
+            [(OptVarSetErr) (OptVarSetErr)])])]
+    [(IrBlockArray seq)
+      (opt-verify-block-def-set (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (opt-verify-single-defs?
   [params : CompilerIrParamList]
@@ -5709,7 +5778,9 @@
         [(IrBlock label instrs)
           (opt-var-defs-from-blocks
             (box-get rest)
-            (opt-var-defs-from-instr-seq-from instrs label 0 1 defs))])]))
+            (opt-var-defs-from-instr-seq-from instrs label 0 1 defs))])]
+    [(IrBlockArray seq)
+      (opt-var-defs-from-blocks (compiler-ir-block-seq-to-list seq) defs)]))
 
 (define (opt-var-defs-from-function
   [params : CompilerIrParamList]
@@ -6127,7 +6198,11 @@
             [(OkCompilerOptimizeVerify)
               (opt-verify-phi-predecessors-blocks pred-map (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
-              (ErrCompilerOptimizeVerify message)])])]))
+              (ErrCompilerOptimizeVerify message)])])]
+    [(IrBlockArray seq)
+      (opt-verify-phi-predecessors-blocks
+        pred-map
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-verify-block-uses
   [defs : OptVarDefList]
@@ -6142,7 +6217,9 @@
             [(OkCompilerOptimizeVerify)
               (opt-verify-block-uses defs doms (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
-              (ErrCompilerOptimizeVerify message)])])]))
+              (ErrCompilerOptimizeVerify message)])])]
+    [(IrBlockArray seq)
+      (opt-verify-block-uses defs doms (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-verify-function-with-context
   [func : CompilerIrFunction]
@@ -6398,7 +6475,9 @@
         [(IrBlock _ instrs)
           (opt-ssa-facts-add-blocks
             (box-get rest)
-            (opt-ssa-facts-add-instr-seq-from instrs 0 facts))])]))
+            (opt-ssa-facts-add-instr-seq-from instrs 0 facts))])]
+    [(IrBlockArray seq)
+      (opt-ssa-facts-add-blocks (compiler-ir-block-seq-to-list seq) facts)]))
 
 (define (opt-ssa-facts-from-function
   [params : CompilerIrParamList]
@@ -6531,7 +6610,12 @@
           (opt-ssa-def-blocks-add-blocks
             facts
             (box-get rest)
-            (opt-ssa-def-blocks-add-instr-seq-from facts label instrs 0 defs))])]))
+            (opt-ssa-def-blocks-add-instr-seq-from facts label instrs 0 defs))])]
+    [(IrBlockArray seq)
+      (opt-ssa-def-blocks-add-blocks
+        facts
+        (compiler-ir-block-seq-to-list seq)
+        defs)]))
 
 (define (opt-ssa-def-blocks-from-function
   [facts : OptSsaFacts]
@@ -7227,7 +7311,14 @@
               facts
               sites
               initial-env
-              next-state))])]))
+              next-state))])]
+    [(IrBlockArray seq)
+      (opt-ssa-rename-missing-blocks
+        (compiler-ir-block-seq-to-list seq)
+        facts
+        sites
+        initial-env
+        state)]))
 
 (define (opt-ssa-rename-function-blocks
   [context : OptCfgContext]
@@ -7329,7 +7420,14 @@
                 pred-map
                 renamed
                 outs
-                sites)))])]))
+                sites)))])]
+    [(IrBlockArray seq)
+      (opt-ssa-materialize-blocks
+        (compiler-ir-block-seq-to-list seq)
+        pred-map
+        renamed
+        outs
+        sites)]))
 
 (define (opt-ssa-instr-seq-has-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -7346,7 +7444,9 @@
         [(IrBlock _ instrs)
           (if (opt-ssa-instr-seq-has-phi? instrs 0)
             true
-            (opt-ssa-blocks-have-phi? (box-get rest)))])]))
+            (opt-ssa-blocks-have-phi? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-ssa-blocks-have-phi? (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-ssa-construct-checked
   [fallback : CompilerIrFunction]
@@ -7634,7 +7734,12 @@
             (opt-global-copy-facts-from-instr-seq
               (opt-global-block-id doms label)
               instrs
-              rest-facts)]))]))
+              rest-facts)]))]
+    [(IrBlockArray seq)
+      (opt-global-copy-facts-from-blocks
+        doms
+        (compiler-ir-block-seq-to-list seq)
+        tail)]))
 
 (define (opt-global-copy-facts-max-dst
   [facts : OptGlobalCopyFacts]
@@ -8029,7 +8134,9 @@
             (compiler-ir-block
               label
               (opt-global-copy-instr-seq facts doms label instrs))
-            (opt-global-copy-blocks facts doms (box-get rest)))])]))
+            (opt-global-copy-blocks facts doms (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-global-copy-blocks facts doms (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-global-expr-facts-from-instrs
   [block-id : i64]
@@ -8107,7 +8214,12 @@
             (opt-global-expr-facts-from-instr-seq
               (opt-global-block-id doms label)
               instrs
-              rest-facts)]))]))
+              rest-facts)]))]
+    [(IrBlockArray seq)
+      (opt-global-expr-facts-from-blocks
+        doms
+        (compiler-ir-block-seq-to-list seq)
+        tail)]))
 
 (define (opt-global-fact-bucket-capacity [count : i64]) : i64
   (let
@@ -8299,7 +8411,9 @@
             (compiler-ir-block
               label
               (opt-global-cse-instr-seq facts doms label instrs))
-            (opt-global-cse-blocks facts doms (box-get rest)))])]))
+            (opt-global-cse-blocks facts doms (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-global-cse-blocks facts doms (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-global-value-number-blocks-with-context
   [context : OptCfgContext]
@@ -8388,7 +8502,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-cfg-fold-branches-block block)
-        (opt-cfg-fold-branches-blocks (box-get rest)))]))
+        (opt-cfg-fold-branches-blocks (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-cfg-fold-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-instr-successors [set : OptLabelSet] [instr : CompilerIrInstr]) : OptLabelSet
   (match instr
@@ -8459,7 +8575,9 @@
             (opt-cfg-block-successors-with-next
               block
               (opt-cfg-entry-label (box-get rest)))
-            (opt-cfg-blocks-successors-scan (box-get rest) label))])]))
+            (opt-cfg-blocks-successors-scan (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-cfg-blocks-successors-scan (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-cfg-blocks-successors
   [blocks : CompilerIrBlockList]
@@ -8537,7 +8655,12 @@
                 (if (opt-loop-body-member-array-contains-id? members id)
                   (compiler-ir-block-cons block tail)
                   tail)]
-              [(OptNoI64) tail]))])]))
+              [(OptNoI64) tail]))])]
+    [(IrBlockArray seq)
+      (opt-loop-body-blocks-from
+        index
+        members
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-loop-body-build
   [blocks : CompilerIrBlockList]
@@ -8587,7 +8710,12 @@
                 (if (opt-loop-body-contains-id? body id)
                   (compiler-ir-block-cons block tail)
                   tail)]
-              [(OptNoI64) tail]))])]))
+              [(OptNoI64) tail]))])]
+    [(IrBlockArray seq)
+      (opt-loop-body-current-blocks-from
+        body
+        index
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-natural-loop-header [loop : OptNaturalLoop]) : String
   (match loop
@@ -8861,7 +8989,14 @@
                       (opt-cfg-entry-label (box-get rest)))
                     tail)]
                 [(OptNoI64) tail])
-              tail))])]))
+              tail))])]
+    [(IrBlockArray seq)
+      (opt-cfg-natural-loop-blocks
+        all-blocks
+        (compiler-ir-block-seq-to-list seq)
+        pred-map
+        reachable
+        doms)]))
 
 (define (opt-cfg-natural-loops-with-context
   [blocks : CompilerIrBlockList]
@@ -8933,7 +9068,9 @@
         [(IrBlock _ instrs)
           (opt-licm-collect-defs-blocks
             (box-get rest)
-            (opt-licm-collect-defs-instr-seq instrs set))])]))
+            (opt-licm-collect-defs-instr-seq instrs set))])]
+    [(IrBlockArray seq)
+      (opt-licm-collect-defs-blocks (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (opt-licm-value-invariant?
   [loop-defs : I64I64Map]
@@ -9058,7 +9195,12 @@
                       rest-blocks)
                     (opt-aggregate-instr-list-append moved rest-moved)
                     final-hoisted
-                    (or block-changed rest-changed))])])])]))
+                    (or block-changed rest-changed))])])])]
+    [(IrBlockArray seq)
+      (opt-licm-filter-body-blocks
+        loop-defs
+        (compiler-ir-block-seq-to-list seq)
+        hoisted)]))
 
 (define (opt-licm-replace-body-blocks
   [blocks : CompilerIrBlockList]
@@ -9081,7 +9223,13 @@
                         (box-get replacement-rest)))
                     (compiler-ir-block-cons
                       block
-                      (opt-licm-replace-body-blocks (box-get rest) body-blocks)))])])])]))
+                      (opt-licm-replace-body-blocks (box-get rest) body-blocks)))])])]
+        [(IrBlockArray seq)
+          (opt-licm-replace-body-blocks
+            (compiler-ir-block-seq-to-list seq)
+            body-blocks)])]
+    [(IrBlockArray seq)
+      (opt-licm-replace-body-blocks blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-insert-before-terminator
   [hoisted : CompilerIrInstrList]
@@ -9140,7 +9288,12 @@
                 label
                 (opt-licm-insert-before-terminator-seq hoisted instrs))
               block)
-            (opt-licm-insert-preheader-blocks preheader hoisted (box-get rest)))])]))
+            (opt-licm-insert-preheader-blocks preheader hoisted (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-licm-insert-preheader-blocks
+        preheader
+        hoisted
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
@@ -9433,7 +9586,13 @@
                 (box-get rest)
                 phi-var
                 next-var
-                ty)])])]))
+                ty)])])]
+    [(IrBlockArray seq)
+      (opt-induction-find-update-blocks
+        (compiler-ir-block-seq-to-list seq)
+        phi-var
+        next-var
+        ty)]))
 
 (define (opt-induction-fact-from-phi
   [body-blocks : CompilerIrBlockList]
@@ -9562,7 +9721,9 @@
         [(IrBlock _ instrs)
           (if (opt-induction-blocker-instr-seq? instrs)
             true
-            (opt-induction-loop-blocked? (box-get rest)))])]))
+            (opt-induction-loop-blocked? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-induction-loop-blocked? (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-small-const? [value : i64]) : bool
   (and (>= value (- 0 1000000)) (<= value 1000000)))
@@ -9693,7 +9854,12 @@
             [(OptSomeInductionLoopCandidate found-fact kind)
               (OptSomeInductionLoopCandidate found-fact kind)]
             [(OptNoInductionLoopCandidate)
-              (opt-induction-find-derived-blocks fact loop-defs (box-get rest))])])]))
+              (opt-induction-find-derived-blocks fact loop-defs (box-get rest))])])]
+    [(IrBlockArray seq)
+      (opt-induction-find-derived-blocks
+        fact
+        loop-defs
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-derived-type [derived : OptInductionDerived]) : AstType
   (match derived
@@ -9814,7 +9980,15 @@
               fact
               derived
               derived-phi
-              (box-get rest)))])]))
+              (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-induction-rewrite-blocks
+        body
+        index
+        fact
+        derived
+        derived-phi
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-seed-instr
   [fact : OptInductionFact]
@@ -9907,7 +10081,16 @@
                 seed-instr
                 phi-instr
                 next-instr
-                (box-get rest))))])]))
+                (box-get rest))))])]
+    [(IrBlockArray seq)
+      (opt-induction-insert-support-blocks
+        header
+        preheader
+        latch
+        seed-instr
+        phi-instr
+        next-instr
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-apply-loop
   [index : OptCfgIndex]
@@ -10107,7 +10290,11 @@
             (compiler-ir-block-cons
               (opt-cfg-clean-block reachable block)
               (opt-cfg-filter-clean-blocks reachable (box-get rest)))
-            (opt-cfg-filter-clean-blocks reachable (box-get rest)))])]))
+            (opt-cfg-filter-clean-blocks reachable (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-cfg-filter-clean-blocks
+        reachable
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-simplify-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
@@ -10442,7 +10629,9 @@
     [(IrBlockCons block rest)
       (opt-sccp-process-blocks
         (opt-sccp-process-block state block)
-        (box-get rest))]))
+        (box-get rest))]
+    [(IrBlockArray seq)
+      (opt-sccp-process-blocks state (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-sccp-env-from-params
   [params : CompilerIrParamList]
@@ -10787,7 +10976,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-sccp-rewrite-block env block)
-        (opt-sccp-rewrite-blocks env (box-get rest)))]))
+        (opt-sccp-rewrite-blocks env (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-sccp-rewrite-blocks env (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-sccp-blocks
   [params : CompilerIrParamList]
@@ -10977,7 +11168,9 @@
         [(IrBlock _ instrs)
           (opt-gvn-sources-blocks
             (box-get rest)
-            (opt-gvn-sources-instr-seq-from instrs 0 acc))])]))
+            (opt-gvn-sources-instr-seq-from instrs 0 acc))])]
+    [(IrBlockArray seq)
+      (opt-gvn-sources-blocks (compiler-ir-block-seq-to-list seq) acc)]))
 
 (define (opt-gvn-block-id [doms : OptDomInfo] [label : String]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
@@ -11022,7 +11215,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-gvn-record-count-instr-seq-from sources instrs 0)
-            (opt-gvn-record-count-blocks sources (box-get rest)))])]))
+            (opt-gvn-record-count-blocks sources (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-gvn-record-count-blocks sources (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
   (opt-global-fact-bucket-capacity count))
@@ -11251,7 +11446,9 @@
                 block)]
             (compiler-ir-block-cons
               material
-              (opt-gvn-materialize-blocks doms out (box-get rest))))])]))
+              (opt-gvn-materialize-blocks doms out (box-get rest))))])]
+    [(IrBlockArray seq)
+      (opt-gvn-materialize-blocks doms out (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-gvn-rewrite-id
   [context : OptCfgContext]
@@ -11410,7 +11607,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (optimize-block block)
-        (optimize-block-list (box-get rest)))]))
+        (optimize-block-list (box-get rest)))]
+    [(IrBlockArray seq)
+      (optimize-block-list (compiler-ir-block-seq-to-list seq))]))
 
 (define (optimize-block-list-fast [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -11418,7 +11617,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (optimize-block-fast block)
-        (optimize-block-list-fast (box-get rest)))]))
+        (optimize-block-list-fast (box-get rest)))]
+    [(IrBlockArray seq)
+      (optimize-block-list-fast (compiler-ir-block-seq-to-list seq))]))
 
 ;; Block-count ceiling for the super-linear dominator-based passes (GVN, LICM,
 ;; induction, global GVN). Functions with more basic blocks than this skip those
@@ -11635,7 +11836,15 @@
               params
               n
               base
-              entry-label))])]))
+              entry-label))])]
+    [(IrBlockArray seq)
+      (opt-tailrec-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        fname
+        params
+        n
+        base
+        entry-label)]))
 
 (define (opt-tailrec-instrs-have-convertible?
   [instrs : CompilerIrInstrList]
@@ -11679,7 +11888,12 @@
         [(IrBlock _ instrs)
           (if (opt-tailrec-instr-seq-has-convertible? instrs fname n)
             true
-            (opt-tailrec-blocks-have-convertible? (box-get rest) fname n))])]))
+            (opt-tailrec-blocks-have-convertible? (box-get rest) fname n))])]
+    [(IrBlockArray seq)
+      (opt-tailrec-blocks-have-convertible?
+        (compiler-ir-block-seq-to-list seq)
+        fname
+        n)]))
 
 (define (opt-tailrec-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -12134,7 +12348,9 @@
           (opt-callgraph-blocks
             index
             (opt-callgraph-instr-seq index callees instrs)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-callgraph-blocks index callees (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-callgraph-callees
   [index : OptFunctionIndex]
@@ -12425,7 +12641,12 @@
           (opt-inline-census-blocks
             index
             (opt-inline-census-instr-seq index census instrs)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-inline-census-blocks
+        index
+        census
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-inline-census-function
   [index : OptFunctionIndex]
@@ -12742,7 +12963,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-cons
         (opt-devirt-known-function-block block)
-        (opt-devirt-known-function-blocks (box-get rest)))]))
+        (opt-devirt-known-function-blocks (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-devirt-known-function-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-devirt-known-function-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -13653,7 +13876,16 @@
                       (compiler-ir-block label new-instrs)
                       rest-blocks)
                     vars3
-                    added3)])])])]))
+                    added3)])])])]
+    [(IrBlockArray seq)
+      (opt-inline-blocks
+        (compiler-ir-block-seq-to-list seq)
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far)]))
 
 (define (opt-inline-blocks-with-spans
   [blocks : CompilerIrBlockList]
@@ -13698,7 +13930,18 @@
                       rest-blocks)
                     vars3
                     added3
-                    spans3)])])])]))
+                    spans3)])])])]
+    [(IrBlockArray seq)
+      (opt-inline-blocks-with-spans
+        (compiler-ir-block-seq-to-list seq)
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        source-spans
+        out-spans)]))
 
 (define (opt-inline-structure-ok? [blocks : CompilerIrBlockList]) : bool
   (if (opt-cfg-block-labels-unique? blocks)
@@ -14074,7 +14317,9 @@
           (opt-reach-blocks
             index
             (opt-reach-instr-seq index state instrs)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-reach-blocks index state (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-reach-function
   [index : OptFunctionIndex]
@@ -14456,7 +14701,13 @@
             source-spans
             (opt-remap-spans-instr-seq source-spans out function instrs)
             function
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (opt-remap-spans-blocks
+        source-spans
+        out
+        function
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-remap-spans-function
   [source-spans : CompilerSourceSpans]
@@ -15281,10 +15532,11 @@
 (define (opt-aggregate-promote-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match (opt-aggregate-promote-test-function instrs)
     [(IrFunction _ _ _ _ blocks)
-      (match blocks
+      (match (compiler-ir-block-list-force-cons blocks)
         [(IrBlockCons block _)
           (match block
             [(IrBlock _ optimized) (compiler-ir-instr-seq-to-list optimized)])]
+        [(IrBlockArray _) IrInstrNil]
         [(IrBlockNil) IrInstrNil])]))
 
 (define (opt-aggregate-promote-test-frame [instrs : CompilerIrInstrList]) : i64
@@ -15496,7 +15748,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-load-dst-instr-seq instrs dst)
-            (opt-count-load-dst-blocks (box-get rest) dst))])]))
+            (opt-count-load-dst-blocks (box-get rest) dst))])]
+    [(IrBlockArray seq)
+      (opt-count-load-dst-blocks (compiler-ir-block-seq-to-list seq) dst)]))
 
 (define (opt-count-mov-i64-value-blocks
   [blocks : CompilerIrBlockList]
@@ -15508,15 +15762,20 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-mov-i64-value-instr-seq instrs needle)
-            (opt-count-mov-i64-value-blocks (box-get rest) needle))])]))
+            (opt-count-mov-i64-value-blocks (box-get rest) needle))])]
+    [(IrBlockArray seq)
+      (opt-count-mov-i64-value-blocks
+        (compiler-ir-block-seq-to-list seq)
+        needle)]))
 
 (define (opt-aggregate-sroa-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match (opt-aggregate-sroa-function (opt-spans-function instrs))
     [(IrFunction _ _ _ _ blocks)
-      (match blocks
+      (match (compiler-ir-block-list-force-cons blocks)
         [(IrBlockCons block _)
           (match block
             [(IrBlock _ optimized) (compiler-ir-instr-seq-to-list optimized)])]
+        [(IrBlockArray _) IrInstrNil]
         [(IrBlockNil) IrInstrNil])]))
 
 (define (opt-aggregate-sroa-test-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -16231,7 +16490,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-arith-instr-seq instrs)
-            (opt-gvn-count-binops-blocks (box-get rest)))])]))
+            (opt-gvn-count-binops-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-gvn-count-binops-blocks (compiler-ir-block-seq-to-list seq))]))
 
 ;; Diamond: `a + b` computed in the entry block and recomputed in the
 ;; post-dominating join. The entry strictly dominates the join, so the join's
@@ -16618,7 +16879,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-bounds-instr-seq instrs)
-            (opt-count-bounds-blocks (box-get rest)))])]))
+            (opt-count-bounds-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-bounds-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-bounds-duplicate-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -16773,10 +17036,11 @@
 (define (opt-function-first-instrs [func : CompilerIrFunction]) : CompilerIrInstrList
   (match func
     [(IrFunction _ _ _ _ blocks)
-      (match blocks
+      (match (compiler-ir-block-list-force-cons blocks)
         [(IrBlockCons block _)
           (match block
             [(IrBlock _ instrs) (compiler-ir-instr-seq-to-list instrs)])]
+        [(IrBlockArray _) (IrInstrNil)]
         [(IrBlockNil) (IrInstrNil)])]))
 
 (define (opt-program-first-instrs [program : CompilerIrProgram]) : CompilerIrInstrList
@@ -17866,7 +18130,9 @@
         [(IrBlock block-label _)
           (if (string-eq block-label label)
             true
-            (opt-block-list-has-label? (box-get rest) label))])]))
+            (opt-block-list-has-label? (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-block-list-has-label? (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-block-list-label-at?
   [blocks : CompilerIrBlockList]
@@ -17878,7 +18144,9 @@
       (if (= index 0)
         (match block
           [(IrBlock block-label _) (string-eq block-label label)])
-        (opt-block-list-label-at? (box-get rest) (- index 1) label))]))
+        (opt-block-list-label-at? (box-get rest) (- index 1) label))]
+    [(IrBlockArray seq)
+      (opt-block-list-label-at? (compiler-ir-block-seq-to-list seq) index label)]))
 
 (define (opt-count-branches-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -17922,7 +18190,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-branches-instr-seq instrs)
-            (opt-count-branches-blocks (box-get rest)))])]))
+            (opt-count-branches-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-jump-to-instrs
   [instrs : CompilerIrInstrList]
@@ -17981,7 +18251,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-jump-to-instr-seq instrs target)
-            (opt-count-jump-to-blocks (box-get rest) target))])]))
+            (opt-count-jump-to-blocks (box-get rest) target))])]
+    [(IrBlockArray seq)
+      (opt-count-jump-to-blocks (compiler-ir-block-seq-to-list seq) target)]))
 
 (define (opt-count-tail-call-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -18025,7 +18297,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-tail-call-instr-seq instrs)
-            (opt-count-tail-call-blocks (box-get rest)))])]))
+            (opt-count-tail-call-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-tail-call-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-tailrec-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
@@ -18129,7 +18403,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-phi-instr-seq instrs)
-            (opt-count-phi-blocks (box-get rest)))])]))
+            (opt-count-phi-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-phi-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-mov-dst-instrs [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
@@ -18182,7 +18458,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-mov-dst-instr-seq instrs dst)
-            (opt-count-mov-dst-blocks (box-get rest) dst))])]))
+            (opt-count-mov-dst-blocks (box-get rest) dst))])]
+    [(IrBlockArray seq)
+      (opt-count-mov-dst-blocks (compiler-ir-block-seq-to-list seq) dst)]))
 
 (define (opt-count-arith-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -18192,7 +18470,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-arith-instr-seq instrs)
-            (opt-count-arith-blocks (box-get rest)))])]))
+            (opt-count-arith-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-arith-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-arith-label-blocks
   [blocks : CompilerIrBlockList]
@@ -18204,7 +18484,9 @@
         [(IrBlock block-label instrs)
           (if (string-eq block-label label)
             (opt-count-arith-instr-seq instrs)
-            (opt-count-arith-label-blocks (box-get rest) label))])]))
+            (opt-count-arith-label-blocks (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-count-arith-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-count-mul-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -18256,7 +18538,9 @@
         [(IrBlock block-label instrs)
           (if (string-eq block-label label)
             (opt-count-mul-instr-seq instrs)
-            (opt-count-mul-label-blocks (box-get rest) label))])]))
+            (opt-count-mul-label-blocks (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-count-mul-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-blocks-mov-dst-i64-value
   [blocks : CompilerIrBlockList]
@@ -18271,7 +18555,12 @@
             [value : i64 (opt-mov-dst-i64-value-instr-seq instrs dst fallback)]
             (if (= value fallback)
               (opt-blocks-mov-dst-i64-value (box-get rest) dst fallback)
-              value))])]))
+              value))])]
+    [(IrBlockArray seq)
+      (opt-blocks-mov-dst-i64-value
+        (compiler-ir-block-seq-to-list seq)
+        dst
+        fallback)]))
 
 (define (opt-count-cast-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -18281,7 +18570,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-cast-instr-seq instrs)
-            (opt-count-cast-blocks (box-get rest)))])]))
+            (opt-count-cast-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-cast-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-gep-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -18325,7 +18616,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-gep-instr-seq instrs)
-            (opt-count-gep-blocks (box-get rest)))])]))
+            (opt-count-gep-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-gep-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-gep-label-blocks
   [blocks : CompilerIrBlockList]
@@ -18337,7 +18630,9 @@
         [(IrBlock block-label instrs)
           (if (string-eq block-label label)
             (opt-count-gep-instr-seq instrs)
-            (opt-count-gep-label-blocks (box-get rest) label))])]))
+            (opt-count-gep-label-blocks (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-count-gep-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-count-load-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -18381,7 +18676,9 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-load-instr-seq instrs)
-            (opt-count-load-blocks (box-get rest)))])]))
+            (opt-count-load-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-load-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-blocks-binop-lhs-var
   [blocks : CompilerIrBlockList]
@@ -18396,7 +18693,12 @@
             [value : i64 (opt-copy-binop-lhs-var-instr-seq instrs dst)]
             (if (= value (- 0 1))
               (opt-blocks-binop-lhs-var (box-get rest) dst fallback)
-              value))])]))
+              value))])]
+    [(IrBlockArray seq)
+      (opt-blocks-binop-lhs-var
+        (compiler-ir-block-seq-to-list seq)
+        dst
+        fallback)]))
 
 (define (opt-blocks-mov-src-var
   [blocks : CompilerIrBlockList]
@@ -18411,7 +18713,9 @@
             [value : i64 (opt-mov-src-var-instr-seq instrs dst fallback)]
             (if (= value fallback)
               (opt-blocks-mov-src-var (box-get rest) dst fallback)
-              value))])]))
+              value))])]
+    [(IrBlockArray seq)
+      (opt-blocks-mov-src-var (compiler-ir-block-seq-to-list seq) dst fallback)]))
 
 (define (opt-mov-src-var
   [instrs : CompilerIrInstrList]

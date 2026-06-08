@@ -168,9 +168,14 @@
 (defenum CompilerIrBlock
   (IrBlock String CompilerIrInstrSeq))
 
+(defstruct CompilerIrBlockSeq
+  (slots (Array CompilerIrBlock))
+  (len i64))
+
 (defenum CompilerIrBlockList
   (IrBlockNil)
-  (IrBlockCons CompilerIrBlock (Box CompilerIrBlockList)))
+  (IrBlockCons CompilerIrBlock (Box CompilerIrBlockList))
+  (IrBlockArray CompilerIrBlockSeq))
 
 (defenum CompilerIrParam
   (IrParam String AstType i64))
@@ -289,6 +294,79 @@
   [block : CompilerIrBlock]
   [rest : CompilerIrBlockList]) : CompilerIrBlockList
   (IrBlockCons block (box rest)))
+
+(define (compiler-ir-block-list-count-cons [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons _ rest)
+      (+ 1 (compiler-ir-block-list-count-cons (box-get rest)))]
+    [(IrBlockArray seq) (struct-get seq len)]))
+
+(define (compiler-ir-block-list-fill-array
+  [blocks : CompilerIrBlockList]
+  [slots : (Array CompilerIrBlock)]
+  [index : i64]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (array-set! slots index block)
+        (compiler-ir-block-list-fill-array (box-get rest) slots (+ index 1)))]
+    [(IrBlockArray seq)
+      (let
+        [i : i64 0]
+        [n : i64 (struct-get seq len)]
+        (while (< i n)
+          (begin
+            (array-set! slots (+ index i) (array-ref (struct-get seq slots) i))
+            (set! i (+ i 1)))))]))
+
+(define (compiler-ir-block-seq-from-list [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
+  (let
+    [count : i64 (compiler-ir-block-list-count-cons blocks)]
+    [slots : (Array CompilerIrBlock) (make-array CompilerIrBlock count)]
+    (begin
+      (compiler-ir-block-list-fill-array blocks slots 0)
+      (CompilerIrBlockSeq slots count))))
+
+(define (compiler-ir-block-seq-to-list-rev
+  [slots : (Array CompilerIrBlock)]
+  [index : i64]
+  [acc : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrBlockList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set! out (compiler-ir-block-cons (array-ref slots cursor) out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-block-seq-to-list [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
+  (compiler-ir-block-seq-to-list-rev
+    (struct-get blocks slots)
+    (- (struct-get blocks len) 1)
+    IrBlockNil))
+
+(define (compiler-ir-block-list-force-cons [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockArray seq) (compiler-ir-block-seq-to-list seq)]
+    [_ blocks]))
+
+(define (compiler-ir-block-list-compact [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockArray _) blocks]
+    [_ (IrBlockArray (compiler-ir-block-seq-from-list blocks))]))
+
+(define (compiler-ir-function-block-list [func : CompilerIrFunction]) : CompilerIrBlockList
+  (match func
+    [(IrFunction _ _ _ _ blocks) (compiler-ir-block-list-force-cons blocks)]))
+
+(define (compiler-ir-function-compact-blocks [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret vars blocks)
+      (IrFunction name params ret vars (compiler-ir-block-list-compact blocks))]))
 
 (define (compiler-ir-param-cons
   [param : CompilerIrParam]
@@ -687,7 +765,9 @@
     [(IrBlockCons block rest)
       (compiler-ir-clone-block-list-acc
         (box-get rest)
-        (compiler-ir-block-cons (compiler-ir-clone-block block) acc))]))
+        (compiler-ir-block-cons (compiler-ir-clone-block block) acc))]
+    [(IrBlockArray seq)
+      (compiler-ir-clone-block-list-acc (compiler-ir-block-seq-to-list seq) acc)]))
 
 (define (compiler-ir-block-list-reverse-onto
   [blocks : CompilerIrBlockList]
@@ -697,7 +777,11 @@
     [(IrBlockCons block rest)
       (compiler-ir-block-list-reverse-onto
         (box-get rest)
-        (compiler-ir-block-cons block acc))]))
+        (compiler-ir-block-cons block acc))]
+    [(IrBlockArray seq)
+      (compiler-ir-block-list-reverse-onto
+        (compiler-ir-block-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-clone-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (compiler-ir-block-list-reverse-onto
@@ -741,7 +825,7 @@
         (compiler-ir-clone-param-list params)
         (clone ret)
         vars
-        (compiler-ir-clone-block-list blocks))]))
+        (compiler-ir-block-list-compact (compiler-ir-clone-block-list blocks)))]))
 
 (define (compiler-ir-clone-function-list-acc
   [functions : CompilerIrFunctionList]
@@ -1819,7 +1903,8 @@
 (define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
-    [(IrBlockCons _ rest) (+ 1 (compiler-ir-block-list-count (box-get rest)))]))
+    [(IrBlockCons _ rest) (+ 1 (compiler-ir-block-list-count (box-get rest)))]
+    [(IrBlockArray seq) (struct-get seq len)]))
 
 (define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -1831,7 +1916,9 @@
             (if (= (compiler-ir-instr-seq-count instrs) 0)
               1
               0)
-            (compiler-ir-block-list-empty-count (box-get rest)))])]))
+            (compiler-ir-block-list-empty-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-ir-block-list-empty-count (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-ir-block-list-max-instruction-count
   [blocks : CompilerIrBlockList]) : i64
@@ -1842,7 +1929,10 @@
         [(IrBlock _ instrs)
           (compiler-ir-max-i64
             (compiler-ir-instr-seq-count instrs)
-            (compiler-ir-block-list-max-instruction-count (box-get rest)))])]))
+            (compiler-ir-block-list-max-instruction-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-ir-block-list-max-instruction-count
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-ir-block-list-call-arg-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -1852,7 +1942,10 @@
         [(IrBlock _ instrs)
           (+
             (compiler-ir-instr-seq-call-arg-count instrs)
-            (compiler-ir-block-list-call-arg-count (box-get rest)))])]))
+            (compiler-ir-block-list-call-arg-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-ir-block-list-call-arg-count
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-ir-block-list-phi-input-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -1862,7 +1955,10 @@
         [(IrBlock _ instrs)
           (+
             (compiler-ir-instr-seq-phi-input-count instrs)
-            (compiler-ir-block-list-phi-input-count (box-get rest)))])]))
+            (compiler-ir-block-list-phi-input-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-ir-block-list-phi-input-count
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-ir-block-list-instruction-count
   [blocks : CompilerIrBlockList]) : i64
@@ -1873,7 +1969,10 @@
         [(IrBlock _ instrs)
           (+
             (compiler-ir-instr-seq-count instrs)
-            (compiler-ir-block-list-instruction-count (box-get rest)))])]))
+            (compiler-ir-block-list-instruction-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-ir-block-list-instruction-count
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-ir-function-list-count [functions : CompilerIrFunctionList]) : i64
   (match functions
@@ -2816,6 +2915,16 @@
         [(IrInstrMov dst _ _) (= dst want)]
         [_ false])]))
 
+(define (compiler-ir-block-list-first-label?
+  [blocks : CompilerIrBlockList]
+  [want : String]) : bool
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(IrBlockCons block _)
+      (match block
+        [(IrBlock label _) (string-eq label want)])]
+    [(IrBlockNil) false]
+    [(IrBlockArray _) false]))
+
 (define (compiler-ir-instr-seq-roundtrip-ok?) : bool
   (let
     [instrs : CompilerIrInstrList
@@ -2830,6 +2939,8 @@
     [roundtrip : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
     [block-list : CompilerIrBlockList
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
+    [compact-blocks : CompilerIrBlockList
+      (compiler-ir-block-list-compact block-list)]
     (and
       (= (compiler-ir-instr-seq-count seq) 3)
       (and
@@ -2842,7 +2953,11 @@
           (= (compiler-ir-instr-list-count roundtrip) 3)
           (and
             (= (compiler-ir-block-list-instruction-count block-list) 3)
-            (compiler-ir-instr-list-first-mov-dst? roundtrip 1)))))))
+            (and
+              (= (compiler-ir-block-list-count compact-blocks) 1)
+              (and
+                (compiler-ir-block-list-first-label? compact-blocks "entry")
+                (compiler-ir-instr-list-first-mov-dst? roundtrip 1)))))))))
 
 (define (compiler-ir-effect-self-test) : i64
   (begin

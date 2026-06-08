@@ -527,7 +527,7 @@
             (match (compiler-symbols-add-variant-value-in-module
               symbols
               module
-              name
+              (intern-str name)
               enum-index
               variant-index)
               [(OkCompilerSymbols next)
@@ -881,7 +881,7 @@
       (compiler-symbols-add-value-in-module
         symbols
         module
-        cleanup-name
+        (intern-str cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
 (define (compiler-symbols-add-enum-cleanup-in-module
@@ -895,7 +895,7 @@
       (compiler-symbols-add-value-in-module
         symbols
         module
-        cleanup-name
+        (intern-str cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
 
 (define (compiler-symbols-add-decl-in-module
@@ -908,13 +908,13 @@
       (compiler-symbols-add-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
     [(AstDeclDefFn name _ _ _ _)
       (compiler-symbols-add-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
@@ -922,25 +922,25 @@
       (compiler-symbols-add-macro-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDeclExtern name _ _ _)
       (compiler-symbols-add-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
     [(AstDeclDefDispatch name _)
       (compiler-symbols-add-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDeclDefEnum name cleanup variants)
       (match (compiler-symbols-add-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-variant-values-in-module
@@ -961,7 +961,7 @@
       (match (compiler-symbols-add-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-variant-values-in-module
@@ -982,13 +982,13 @@
       (match (compiler-symbols-add-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-value-in-module
             next
             module
-            name
+            (intern-str name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
             [(OkCompilerSymbols with-constructor)
               (compiler-symbols-add-struct-cleanup-in-module
@@ -1002,13 +1002,13 @@
       (match (compiler-symbols-add-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-value-in-module
             next
             module
-            name
+            (intern-str name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
             [(OkCompilerSymbols with-constructor)
               (compiler-symbols-add-struct-cleanup-in-module
@@ -1081,7 +1081,7 @@
       (compiler-symbols-add-local-value-in-module
         symbols
         module
-        cleanup-name
+        (intern-str cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
 (define (compiler-symbols-add-local-enum-cleanup-in-module
@@ -1095,7 +1095,7 @@
       (compiler-symbols-add-local-value-in-module
         symbols
         module
-        cleanup-name
+        (intern-str cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
 
 (define (compiler-symbols-add-local-variant-value-in-module
@@ -1128,7 +1128,7 @@
             (match (compiler-symbols-add-local-variant-value-in-module
               symbols
               module
-              name
+              (intern-str name)
               enum-index
               variant-index)
               [(OkCompilerSymbols next)
@@ -1150,13 +1150,13 @@
       (compiler-symbols-add-local-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
     [(AstDeclDefFn name _ _ _ _)
       (compiler-symbols-add-local-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
@@ -1164,25 +1164,25 @@
       (compiler-symbols-add-local-macro-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDeclExtern name _ _ _)
       (compiler-symbols-add-local-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
     [(AstDeclDefDispatch name _)
       (compiler-symbols-add-local-value-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDeclDefEnum name cleanup variants)
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-local-variant-values-in-module
@@ -1203,7 +1203,7 @@
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-local-variant-values-in-module
@@ -1224,13 +1224,13 @@
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-local-value-in-module
             next
             module
-            name
+            (intern-str name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
             [(OkCompilerSymbols with-constructor)
               (compiler-symbols-add-local-struct-cleanup-in-module
@@ -1244,13 +1244,13 @@
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         [(OkCompilerSymbols next)
           (match (compiler-symbols-add-local-value-in-module
             next
             module
-            name
+            (intern-str name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
             [(OkCompilerSymbols with-constructor)
               (compiler-symbols-add-local-struct-cleanup-in-module
@@ -1298,7 +1298,7 @@
             (compiler-symbols-add-variant-value-aliases
               (compiler-symbols-add-value-alias
                 symbols
-                (compiler-symbol-module-key alias name)
+                (compiler-symbol-module-key alias (intern-str name))
                 (compiler-registry-make-handle
                   (compiler-symbol-kind-enum-variant)
                   enum-index
@@ -1318,7 +1318,7 @@
     [(AstStructCleanupFn cleanup-name)
       (compiler-symbols-add-value-alias
         symbols
-        (compiler-symbol-module-key alias cleanup-name)
+        (compiler-symbol-module-key alias (intern-str cleanup-name))
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
 
 (define (compiler-symbols-add-enum-cleanup-alias
@@ -1331,7 +1331,7 @@
     [(AstEnumCleanupFn cleanup-name)
       (compiler-symbols-add-value-alias
         symbols
-        (compiler-symbol-module-key alias cleanup-name)
+        (compiler-symbol-module-key alias (intern-str cleanup-name))
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
 
 (define (compiler-symbols-add-decl-alias-in-module
@@ -1343,36 +1343,36 @@
     [(AstDeclDef name _ _)
       (compiler-symbols-add-value-alias
         symbols
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
     [(AstDeclDefFn name _ _ _ _)
       (compiler-symbols-add-value-alias
         symbols
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
     [(AstDeclDefMacro name _ _ _)
       (compiler-symbols-add-macro-alias
         symbols
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDeclExtern name _ _ _)
       (compiler-symbols-add-value-alias
         symbols
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
     [(AstDeclDefDispatch name _)
       (compiler-symbols-add-value-alias
         symbols
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDeclDefEnum name cleanup variants)
       (compiler-symbols-add-enum-cleanup-alias
         (compiler-symbols-add-variant-value-aliases
           (compiler-symbols-add-type-alias
             symbols
-            (compiler-symbol-module-key alias name)
+            (compiler-symbol-module-key alias (intern-str name))
             (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
           alias
           variants
@@ -1386,7 +1386,7 @@
         (compiler-symbols-add-variant-value-aliases
           (compiler-symbols-add-type-alias
             symbols
-            (compiler-symbol-module-key alias name)
+            (compiler-symbol-module-key alias (intern-str name))
             (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
           alias
           variants
@@ -1400,9 +1400,9 @@
         (compiler-symbols-add-value-alias
           (compiler-symbols-add-type-alias
             symbols
-            (compiler-symbol-module-key alias name)
+            (compiler-symbol-module-key alias (intern-str name))
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-          (compiler-symbol-module-key alias name)
+          (compiler-symbol-module-key alias (intern-str name))
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         alias
         cleanup
@@ -1412,9 +1412,9 @@
         (compiler-symbols-add-value-alias
           (compiler-symbols-add-type-alias
             symbols
-            (compiler-symbol-module-key alias name)
+            (compiler-symbol-module-key alias (intern-str name))
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-          (compiler-symbol-module-key alias name)
+          (compiler-symbol-module-key alias (intern-str name))
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         alias
         cleanup
@@ -1437,7 +1437,7 @@
     [(AstDeclDefMacro name _ _ _)
       (compiler-symbols-remove-macro-alias-if-handle
         symbols
-        name
+        (intern-str name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDeclComptimeDecl _ template-box)
       (let
@@ -1490,7 +1490,7 @@
               rest
               target-module
               index
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
@@ -1566,7 +1566,7 @@
               target-module
               alias
               index
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (compiler-symbols-add-module-aliases-list
               symbols
@@ -1653,12 +1653,14 @@
 
 (define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
   (match decl
-    [(AstDeclDefEnum name _ _) (compiler-symbol-module-key module name)]
+    [(AstDeclDefEnum name _ _)
+      (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnumLifetimes name _ _ _)
-      (compiler-symbol-module-key module name)]
-    [(AstDeclDefStruct name _ _ _) (compiler-symbol-module-key module name)]
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefStruct name _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefStructLifetimes name _ _ _ _)
-      (compiler-symbol-module-key module name)]
+      (compiler-symbol-module-key module (intern-str name))]
     [_ ""]))
 
 (define (compiler-symbols-index-decl!
@@ -1710,7 +1712,7 @@
               rest
               symbols
               index
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (build-compiler-symbol-list-in-module rest symbols index module)]
           [_
@@ -1783,7 +1785,7 @@
               rest
               symbols
               index
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (build-compiler-local-symbol-list-in-module
               rest
@@ -1933,7 +1935,7 @@
             (compiler-registries-add-variant-aliases-list
               (compiler-registries-add-variant-alias
                 registries
-                (compiler-symbol-module-key alias name)
+                (compiler-symbol-module-key alias (intern-str name))
                 (compiler-registry-make-handle
                   (compiler-symbol-kind-enum-variant)
                   enum-index
@@ -1960,7 +1962,7 @@
               (compiler-registries-add-field-alias
                 registries
                 struct-name
-                name
+                (intern-str name)
                 (compiler-registry-make-handle
                   (compiler-symbol-kind-struct-field)
                   struct-index
@@ -1993,14 +1995,14 @@
     [(AstDeclDefStruct name _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         fields
         index
         0)]
     [(AstDeclDefStructLifetimes name _ _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
-        (compiler-symbol-module-key alias name)
+        (compiler-symbol-module-key alias (intern-str name))
         fields
         index
         0)]
@@ -2058,7 +2060,7 @@
               target-module
               alias
               index
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (compiler-registries-add-module-aliases-list
               registries
@@ -2150,7 +2152,7 @@
             (match (compiler-registries-add-variant-in-module
               registries
               module
-              name
+              (intern-str name)
               enum-index
               variant-index)
               [(OkCompilerRegistries next-registries)
@@ -2176,20 +2178,22 @@
         [rest : AstFieldDefList (box-get rest)]
         (match field
           [(AstFieldDef name _ _)
-            (if (sym-i64-contains seen name)
+            (if (sym-i64-contains-id seen name)
               (ErrCompilerRegistries
-                (compiler-registries-duplicate-field-message struct-name name))
+                (compiler-registries-duplicate-field-message
+                  struct-name
+                  (intern-str name)))
               (match (compiler-registries-add-field
                 registries
                 struct-name
-                name
+                (intern-str name)
                 struct-index
                 field-index)
                 [(OkCompilerRegistries next-registries)
                   (build-compiler-field-registry-list
                     rest
                     next-registries
-                    (sym-i64-bind seen name field-index)
+                    (sym-i64-bind-id seen name field-index)
                     struct-name
                     struct-index
                     (+ field-index 1))]
@@ -2236,7 +2240,7 @@
               rest
               registries
               index
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclTest _ _ _)
             (build-compiler-registry-list-in-module
               rest
@@ -2276,7 +2280,7 @@
               fields
               registries
               (sym-i64-empty)
-              (compiler-symbol-module-key module name)
+              (compiler-symbol-module-key module (intern-str name))
               index
               0)
               [(OkCompilerRegistries next-registries)
@@ -2291,7 +2295,7 @@
               fields
               registries
               (sym-i64-empty)
-              (compiler-symbol-module-key module name)
+              (compiler-symbol-module-key module (intern-str name))
               index
               0)
               [(OkCompilerRegistries next-registries)
@@ -2340,7 +2344,7 @@
                     fields
                     registries
                     (sym-i64-empty)
-                    (compiler-symbol-module-key module name)
+                    (compiler-symbol-module-key module (intern-str name))
                     index
                     0)
                     [(OkCompilerRegistries next-registries)
@@ -2356,7 +2360,7 @@
                     fields
                     registries
                     (sym-i64-empty)
-                    (compiler-symbol-module-key module name)
+                    (compiler-symbol-module-key module (intern-str name))
                     index
                     0)
                     [(OkCompilerRegistries next-registries)
@@ -2477,7 +2481,7 @@
               symbols
               registries
               exports
-              next-module)]
+              (intern-str next-module))]
           [(AstDeclExport items)
             (match (build-compiler-export-items
               exports

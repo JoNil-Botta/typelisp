@@ -742,7 +742,7 @@
     [decl : AstDecl
       (ast-decl-comptime-decl-with-meta
         meta
-        (AstDeclDefStruct
+        (ast-decl-def-struct
           "GeneratedStruct"
           (AstStructReprDefault)
           (AstStructNoCleanup)
@@ -2506,24 +2506,24 @@
 (define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (AstDeclDefStruct
+      (ast-decl-def-struct
         "Bad"
         (AstStructReprC)
-        (AstStructCleanupFn "cleanup-bad")
+        (ast-struct-cleanup-fn "cleanup-bad")
         (ast-field-def-cons
-          (AstFieldDef "fd" (AstTyI64) (AstFieldNoCleanup))
+          (ast-field-def "fd" (AstTyI64) (AstFieldNoCleanup))
           AstFieldDefNil))
       AstDeclNil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (AstDeclDefStruct
+      (ast-decl-def-struct
         "Bad"
         (AstStructReprDefault)
         (AstStructNoCleanup)
         (ast-field-def-cons
-          (AstFieldDef "fd" (AstTyI64) (AstFieldCleanupFn "close-fd"))
+          (ast-field-def "fd" (AstTyI64) (ast-field-cleanup-fn "close-fd"))
           AstFieldDefNil))
       AstDeclNil)))
 
@@ -2620,15 +2620,15 @@
 (define (compiler-typecheck-cleanup-enum-payload-outside-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (AstDeclDefEnum
+      (ast-decl-def-enum
         "Bad"
         (AstEnumNoCleanup)
         (ast-variant-def-cons
-          (AstVariantDef
+          (ast-variant-def
             "A"
             (ast-type-cons (AstTyI64) AstTypeNil)
             (ast-variant-payload-cleanup-cons
-              (AstVariantPayloadCleanupFn "close-fd")
+              (ast-variant-payload-cleanup-fn "close-fd")
               AstVariantPayloadCleanupNil))
           AstVariantDefNil))
       AstDeclNil)))

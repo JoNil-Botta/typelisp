@@ -300,8 +300,8 @@
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef name _ _) (string-eq name "main")]
-    [(AstDeclDefFn name _ _ _ _) (string-eq name "main")]
+    [(AstDeclDef name _ _) (= name (intern "main"))]
+    [(AstDeclDefFn name _ _ _ _) (= name (intern "main"))]
     [(AstDeclDefMacro _ _ _ _) false]
     [(AstDeclUnsafe inner-box)
       (let
@@ -346,7 +346,7 @@
                 (array-push!
                   tests
                   (InlineTest
-                    name
+                    (intern-str name)
                     decl-path
                     (tltest-source-line span)
                     body
@@ -432,10 +432,10 @@
 
 (define (tltest-print-runtime-write-params) : AstParamList
   (ast-param-cons
-    (AstParam "fd" (AstTyI32) false)
+    (ast-param "fd" (AstTyI32) false)
     (ast-param-cons
-      (AstParam "buf" (ast-ty-ptr (AstTyU8)) false)
-      (ast-param-cons (AstParam "n" (AstTyI32) false) AstParamNil))))
+      (ast-param "buf" (ast-ty-ptr (AstTyU8)) false)
+      (ast-param-cons (ast-param "n" (AstTyI32) false) AstParamNil))))
 
 (define (tltest-linux-write-ptr-arg) : i64
   (ast-node-push
@@ -466,7 +466,7 @@
     (ast-expr-cast (tltest-linux-write-syscall) (AstTyI32))))
 
 (define (tltest-windows-get-std-handle-decl) : AstDecl
-  (AstDeclExtern
+  (ast-decl-extern
     "__tl_test_get_std_handle"
     (AstExternFunction)
     (AstExternMetadata
@@ -477,7 +477,7 @@
     (ast-ty-func (ast-type-cons (AstTyI32) AstTypeNil) (AstTyI64))))
 
 (define (tltest-windows-write-file-decl) : AstDecl
-  (AstDeclExtern
+  (ast-decl-extern
     "__tl_test_write_file"
     (AstExternFunction)
     (AstExternMetadata (AstExternAbiC) "WriteFile" AstExternLinkInputNil true)
@@ -553,7 +553,7 @@
     [(BackendTargetWindows) (tltest-windows-print-runtime-write-decl)]))
 
 (define (tltest-text-param-list) : AstParamList
-  (ast-param-cons (AstParam "text" (AstTyString) false) AstParamNil))
+  (ast-param-cons (ast-param "text" (AstTyString) false) AstParamNil))
 
 (define (tltest-text-length-expr) : i64
   (ast-expr-call
@@ -851,7 +851,9 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (tltest-reach-mark-expr value (tltest-reach-mark-name names name)))]
+        (tltest-reach-mark-expr
+          value
+          (tltest-reach-mark-name names (intern-str name))))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -1039,7 +1041,7 @@
     [(AstDeclDef name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
-        (if (string-i64-map-contains? names name)
+        (if (string-i64-map-contains? names (intern-str name))
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDeclDefFn name _ _ body-box export)
@@ -1047,9 +1049,11 @@
         [body : AstExpr (ast-node-get body-box)]
         (match export
           [(AstFnExport _)
-            (tltest-reach-mark-expr body (tltest-reach-mark-name names name))]
+            (tltest-reach-mark-expr
+              body
+              (tltest-reach-mark-name names (intern-str name)))]
           [(AstFnNoExport)
-            (if (string-i64-map-contains? names name)
+            (if (string-i64-map-contains? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
     [(AstDeclDefMacro _ _ _ _) names]
@@ -1098,12 +1102,13 @@
 
 (define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : StringI64Map]) : bool
   (match decl
-    [(AstDeclDef name _ _) (string-i64-map-contains? names name)]
+    [(AstDeclDef name _ _) (string-i64-map-contains? names (intern-str name))]
     [(AstDeclDefFn name _ _ _ export)
       (match export
         [(AstFnExport _) true]
-        [(AstFnNoExport) (string-i64-map-contains? names name)])]
-    [(AstDeclExtern name _ _ _) (string-i64-map-contains? names name)]
+        [(AstFnNoExport) (string-i64-map-contains? names (intern-str name))])]
+    [(AstDeclExtern name _ _ _)
+      (string-i64-map-contains? names (intern-str name))]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
       (let
@@ -1192,9 +1197,9 @@
 
 (define (tltest-decl-name [decl : AstDecl]) : String
   (match decl
-    [(AstDeclDef name _ _) name]
-    [(AstDeclDefFn name _ _ _ _) name]
-    [(AstDeclExtern name _ _ _) name]
+    [(AstDeclDef name _ _) (intern-str name)]
+    [(AstDeclDefFn name _ _ _ _) (intern-str name)]
+    [(AstDeclExtern name _ _ _) (intern-str name)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]

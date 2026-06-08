@@ -1776,7 +1776,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-match-mismatch-source)
-        "typecheck: match arms must agree")
+        "typecheck: match arm result type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4357,7 +4357,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-arm-mismatch-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4421,7 +4421,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-string-payload-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4548,7 +4548,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-scalar-arm-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and

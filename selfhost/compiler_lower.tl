@@ -10877,6 +10877,10 @@
           then-branch
           else-branch
           expected-ty))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+        (lower-match ctx state env type-env scrutinee arms expected-ty))]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstNoType)
@@ -23895,7 +23899,7 @@
         (+ (score (& bag))
           (match (lookup (& bag))
             [(SlotFound v) (take v)]
-            [SlotMissing 0])))))))")
+            [SlotMissing 0]))))))")
 
 (define (compiler-lower-borrowed-enum-match-str-source) : String
   "(defenum Item (Named String) (Empty))

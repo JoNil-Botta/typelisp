@@ -138,7 +138,7 @@ contains|_tl_build_package:
 contains|_tl_build_package_emit:
 contains|_tl_host_plan_netline:
 contains|could not find typelisp.pkg
-contains|Generated:
+contains|Built
 end
 
 case|selfhost_clean|selfhost/clean.tl|assembly|skip|direct
@@ -283,6 +283,7 @@ not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
 decision|selfhost/compiler_object.tl|structured object-image data model (#2308): main-less, imported by selfhost/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
+decision|selfhost/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by selfhost/compiler_backend_tests.tl and exercised through selfhost_compiler_backend_smoke
 decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
@@ -801,6 +802,7 @@ contains|fmt_files:
 contains|fmt_package:
 contains|package_source_discover_for
 contains|fmt: would reformat 
+contains|fmt: failed to write
 contains|fmt: cannot combine input paths with --manifest-path
 end
 

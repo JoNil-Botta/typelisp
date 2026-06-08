@@ -80,11 +80,13 @@ The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
 and checks representative symbol/literal markers in the emitted assembly.
 By default those markers are checked in `stage0` mode (the published seed's
-symbol coverage). The Linux capability tier also runs the same manifest through
-the freshly bootstrapped stage1 compiler with
-`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode `_tl_foo`
-symbol markers also accept the selfhost compiler's module/path-qualified
-`_tl_<module>_<path>_foo` labels without changing the manifest list.
+symbol coverage). `_tl_foo` and `call _tl_foo` markers are logical symbol
+markers, so both expectation modes accept direct labels such as `_tl_foo` and
+emitted module/path-qualified labels such as `_tl_calc_foo` without changing the
+manifest list. The Linux capability tier also runs the same manifest through the
+freshly bootstrapped stage1 compiler with
+`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode symbol markers
+also accept compact selfhost symbol metadata.
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
@@ -126,7 +128,10 @@ TYPELISP_BIN=target/stage0/typelisp scripts/measure-instruction-counts.sh --self
 The script writes `runs.tsv` and `summary.tsv` under
 `target/instruction-counts/` by default and fails if a case's `Ir` count differs
 across repeated runs. It intentionally measures full-process instruction counts;
-the benchmark loops and self-compile workload dominate startup overhead.
+the benchmark loops and self-compile workload dominate startup overhead. The
+default output root is repo-relative so the measured self-compile `-o` argument
+is stable across machines; use a repo-relative `--output` when collecting counts
+intended for baseline comparison.
 
 ### Coverage policy
 
@@ -386,11 +391,12 @@ explicit fallback/skip path is tied to #1662 and #1437.
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
 `stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
 canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
-`typelisp doc --test` for each file with `--stdlib-root`. This gate does not
-use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
-automatically adds doctest coverage. In no-Rust command-tier lanes it runs
-through the compiler selected by `scripts/ci-verify.sh`; runnable
-doctest files are required and executed on both Linux and Windows.
+one `typelisp doc --test --batch <listfile>` process with `--stdlib-root`.
+This gate does not use a hand-maintained file manifest, so adding documented
+TypeLisp source with fenced examples automatically adds doctest coverage. In
+no-Rust command-tier lanes it runs through the compiler selected by
+`scripts/ci-verify.sh`; runnable doctest files are required and executed on both
+Linux and Windows.
 
 ### Repository inline-test gate
 

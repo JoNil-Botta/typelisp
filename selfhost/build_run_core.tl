@@ -1142,9 +1142,7 @@
                   [(SourceToolCommandOk)
                     (begin
                       (print-string
-                        (string-append
-                          "Generated: "
-                          (string-append bin-path "\n")))
+                        (string-append "Built " (string-append bin-path "\n")))
                       (source-tool-clean-temp
                         temp-dir
                         asm-path

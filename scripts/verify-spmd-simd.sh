@@ -80,6 +80,7 @@ spmd_corpus() {
 tests/spmd/tail_i64_add.tl
 tests/spmd/tail_i32_add.tl
 tests/spmd/masked_if_i64.tl
+tests/spmd/masked_if_offset_i64.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_reduce_scalar.tl
 EOF
@@ -94,6 +95,7 @@ spmd_mode_supported() {
     _mode=$2
     case "$_prog:$_mode" in
         tests/spmd/masked_if_i64.tl:avx2) return 1 ;;
+        tests/spmd/masked_if_offset_i64.tl:avx2) return 1 ;;
         *) return 0 ;;
     esac
 }

@@ -2203,7 +2203,10 @@
                       1)]
                   [(SourceToolCommandOk)
                     (begin
-                      (print-string (string-append "Generated: " artifact-path))
+                      (print-string
+                        (string-append
+                          "Built "
+                          (string-append artifact-path "\n")))
                       0)])])])))))
 
 (define (build-package-worker-unified-cli?) : bool

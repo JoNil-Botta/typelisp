@@ -1195,13 +1195,21 @@
 (define (write-file-status [path : String] [contents : String]) : i64
   (io-write-path-status path contents (io-open-write-truncate-flags)))
 
+;: Render the raw `write-file` panic payload with path and host status.
+(define (write-file-failure-message [path : String] [status : i64]) : String
+  (string-append
+    "tl: write-file failed: "
+    (string-append
+      (io-error-message (io-error-from-owned-status path status))
+      "\n")))
+
 ;: Write a whole file, aborting on host write failure.
 (define (write-file [path : String] [contents : String]) : unit
   (let
     [status : i64 (write-file-status path contents)]
     (if (= status 0)
       unit
-      (panic "tl: write-file failed\n"))))
+      (panic (write-file-failure-message path status)))))
 
 ;: Return the host status code for appending `contents` to `path`.
 (define (append-file-status [path : String] [contents : String]) : i64

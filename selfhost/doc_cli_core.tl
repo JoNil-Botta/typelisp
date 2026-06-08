@@ -6,6 +6,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --html input.tl output.html
 ;;   typelisp run selfhost/cli.tl -- doc --html entry.tl imported.tl output.html
 ;;   typelisp run selfhost/cli.tl -- doc --test input.tl
+;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import "../stdlib/io.tl")
 
@@ -31,6 +32,10 @@
   (DocTestCliFileConfig StringVec StringVec)
   (DocTestCliPackageConfig String bool StringVec))
 
+(defenum ResultDocTestBatchPaths
+  (OkDocTestBatchPaths StringVec)
+  (ErrDocTestBatchPaths String))
+
 (defenum ResultDocTestCliConfig
   (OkDocTestCliConfig DocTestCliConfig)
   (ErrDocTestCliConfig String))
@@ -43,8 +48,8 @@
   (OkDocDefaultCliConfig DocDefaultCliConfig)
   (ErrDocDefaultCliConfig String))
 
-(define (doc-print-generated [output-path : String]) : unit
-  (print-string (string-append "Generated: " (string-append output-path "\n"))))
+(define (doc-print-wrote [output-path : String]) : unit
+  (print-string (string-append "Wrote " (string-append output-path "\n"))))
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
@@ -52,7 +57,7 @@
     [markdown : String (doc-render-markdown (doc-extract-source source))]
     (begin
       (write-file output-path markdown)
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-cli-module-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
@@ -113,7 +118,7 @@
     [(OkCompilerLoadWithPaths _ paths _ _)
       (begin
         (write-file output-path (doc-render-loaded-markdown input-path paths))
-        (doc-print-generated output-path)
+        (doc-print-wrote output-path)
         0)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
@@ -135,7 +140,7 @@
           output-path
           (doc-render-module-graph-markdown
             (doc-modules-from-string-list (struct-get source-set sources))))
-        (doc-print-generated output-path)
+        (doc-print-wrote output-path)
         0)]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
@@ -144,7 +149,7 @@
     [html : String (doc-html-render-source input-path source)]
     (begin
       (write-file output-path html)
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
@@ -152,7 +157,7 @@
     [modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-html-render-module-graph modules))
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
 
 (define (doc-test-file [input-path : String] [stdlib-roots : StringVec]) : i64
@@ -206,21 +211,92 @@
         (- (string-vec-len paths) 1))]
     (begin
       (write-file output-path (doc-render-module-graph-markdown modules))
-      (doc-print-generated output-path)
+      (doc-print-wrote output-path)
       0)))
+
+(define (doc-test-batch-line-end [text : String] [start : i64] [n : i64]) : i64
+  (let
+    [i : i64 start]
+    [keep : bool true]
+    (begin
+      (while keep
+        (if (< i n)
+          (if (or
+            (= (string-ref text i) #\newline')
+            (= (string-ref text i) #\return'))
+            (set! keep false)
+            (set! i (+ i 1)))
+          (set! keep false)))
+      i)))
+
+(define (doc-test-batch-next-line-start
+  [text : String]
+  [line-end : i64]
+  [n : i64]) : i64
+  (begin
+    (unless (< line-end n) (return line-end))
+    (let
+      [c : char (string-ref text line-end)]
+      (begin
+        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
+        (if (= (string-ref text (+ line-end 1)) #\newline')
+          (+ line-end 2)
+          (+ line-end 1))))))
+
+(define (doc-test-batch-paths-from-text [text : String]) : StringVec
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [paths : StringVec (string-vec-new)]
+    (begin
+      (while (< i n)
+        (let
+          [line-end : i64 (doc-test-batch-line-end text i n)]
+          [line : String (substring text i (- line-end i))]
+          (begin
+            (if (> (string-length line) 0)
+              (set! paths (string-vec-push paths line))
+              unit)
+            (set! i (doc-test-batch-next-line-start text line-end n)))))
+      paths)))
+
+(define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
+  (match (try-read-file (& list-path))
+    [(OkIoString text)
+      (OkDocTestBatchPaths (doc-test-batch-paths-from-text text))]
+    [(ErrIoString error)
+      (ErrDocTestBatchPaths
+        (string-append
+          "doc: failed to read --batch list file: "
+          (io-error-message error)))]))
 
 (define (doc-test-config-finish
   [input-paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultDocTestCliConfig
-  (if (string-vec-is-empty? input-paths)
-    (OkDocTestCliConfig
-      (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
-    (if has-manifest
-      (ErrDocTestCliConfig
-        "doc: cannot combine input paths with --manifest-path")
-      (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots)))))
+  [stdlib-roots : StringVec]
+  [batch-list : DocMaybeString]) : ResultDocTestCliConfig
+  (match batch-list
+    [(DocSomeString list-path)
+      (if has-manifest
+        (ErrDocTestCliConfig "doc: cannot combine --batch with --manifest-path")
+        (if (not (string-vec-is-empty? input-paths))
+          (ErrDocTestCliConfig "doc: cannot combine input paths with --batch")
+          (match (doc-test-batch-paths list-path)
+            [(OkDocTestBatchPaths paths)
+              (if (string-vec-is-empty? paths)
+                (ErrDocTestCliConfig "doc: --batch list is empty")
+                (OkDocTestCliConfig (DocTestCliFileConfig paths stdlib-roots)))]
+            [(ErrDocTestBatchPaths message) (ErrDocTestCliConfig message)])))]
+    [(DocNoString)
+      (if (string-vec-is-empty? input-paths)
+        (OkDocTestCliConfig
+          (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))
+        (if has-manifest
+          (ErrDocTestCliConfig
+            "doc: cannot combine input paths with --manifest-path")
+          (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots))))]))
 
 (define (doc-test-parse-options
   [idx : i64]
@@ -228,9 +304,15 @@
   [input-paths : StringVec]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultDocTestCliConfig
+  [stdlib-roots : StringVec]
+  [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (if (>= idx count)
-    (doc-test-config-finish input-paths manifest-path has-manifest stdlib-roots)
+    (doc-test-config-finish
+      input-paths
+      manifest-path
+      has-manifest
+      stdlib-roots
+      batch-list)
     (let
       [current : String (arg idx)]
       (cond
@@ -243,7 +325,8 @@
               input-paths
               manifest-path
               has-manifest
-              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              batch-list))]
         [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrDocTestCliConfig "doc: --manifest-path requires a value")
@@ -255,7 +338,22 @@
                 input-paths
                 (arg (+ idx 1))
                 true
-                stdlib-roots)))]
+                stdlib-roots
+                batch-list)))]
+        [(string-eq current "--batch")
+          (if (>= (+ idx 1) count)
+            (ErrDocTestCliConfig "doc: --batch requires a value")
+            (match batch-list
+              [(DocSomeString _) (ErrDocTestCliConfig "doc: duplicate --batch")]
+              [(DocNoString)
+                (doc-test-parse-options
+                  (+ idx 2)
+                  count
+                  input-paths
+                  manifest-path
+                  has-manifest
+                  stdlib-roots
+                  (DocSomeString (arg (+ idx 1))))]))]
         [(doc-flag? current)
           (ErrDocTestCliConfig (string-append "doc: unknown flag " current))]
         [else
@@ -265,7 +363,8 @@
             (string-vec-push input-paths current)
             manifest-path
             has-manifest
-            stdlib-roots)]))))
+            stdlib-roots
+            batch-list)]))))
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (doc-test-parse-options
@@ -274,7 +373,8 @@
     (string-vec-new)
     ""
     false
-    (string-vec-new)))
+    (string-vec-new)
+    (DocNoString)))
 
 (define (doc-test-files-from
   [input-paths : StringVec]

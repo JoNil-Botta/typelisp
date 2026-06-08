@@ -29,6 +29,10 @@
   (OkCompilerDriverLowered CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerDriverLowered CompilerDiagnostic))
 
+(define (compiler-driver-ty-node-pool-exhausted-diagnostic
+  [input-path : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start input-path (ty-node-pool-exhausted-message)))
+
 (cfg
   compile-profile
   (define compiler-driver-profile-total-start-ms : i64
@@ -277,44 +281,51 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (begin
-    (cfg compile-profile (compiler-driver-profile-start-phase))
-    (match (optimize-program-with-spans-and-level program spans opt-level)
-      [(CompilerOptimizedProgram optimized optimized-spans)
-        (begin
-          (cfg
-            compile-profile
-            (compiler-driver-profile-finish-phase "optimize"))
-          (compiler-backend-set-scalar-registers! (>= opt-level 2))
-          (cfg compile-profile (compiler-driver-profile-start-phase))
-          (match (if has-target
-            (compiler-backend-emit-program-target-with-mode-and-crt
-              optimized
-              target
-              mode
-              optimized-spans
-              emit-entry
-              crt-entry)
-            (compiler-backend-emit-program-target-with-mode-and-crt
-              optimized
-              (BackendTargetLinux)
-              mode
-              optimized-spans
-              emit-entry
-              crt-entry))
-            [(OkCompilerBackend asm)
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerDriver
+      (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+    (begin
+      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase "optimize"))
+            (if (ty-node-pool-exhausted?)
+              (ErrCompilerDriver
+                (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
               (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "backend"))
-                (OkCompilerDriver asm))]
-            [(ErrCompilerBackend diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "backend"))
-                (ErrCompilerDriver
-                  (compiler-diagnostic-with-path diag input-path)))]))])))
+                (compiler-backend-set-scalar-registers! (>= opt-level 2))
+                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (match (if has-target
+                  (compiler-backend-emit-program-target-with-mode-and-crt
+                    optimized
+                    target
+                    mode
+                    optimized-spans
+                    emit-entry
+                    crt-entry)
+                  (compiler-backend-emit-program-target-with-mode-and-crt
+                    optimized
+                    (BackendTargetLinux)
+                    mode
+                    optimized-spans
+                    emit-entry
+                    crt-entry))
+                  [(OkCompilerBackend asm)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (OkCompilerDriver asm))]
+                  [(ErrCompilerBackend diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (ErrCompilerDriver
+                        (compiler-diagnostic-with-path diag input-path)))]))))]))))
 
 (define (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
   [input-path : String]
@@ -325,42 +336,49 @@
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
-  (begin
-    (cfg compile-profile (compiler-driver-profile-start-phase))
-    (match (optimize-program-with-spans-and-level program spans opt-level)
-      [(CompilerOptimizedProgram optimized optimized-spans)
-        (begin
-          (cfg
-            compile-profile
-            (compiler-driver-profile-finish-phase "optimize"))
-          (compiler-backend-set-scalar-registers! (>= opt-level 2))
-          (cfg compile-profile (compiler-driver-profile-start-phase))
-          (match (if has-target
-            (compiler-backend-emit-program-target-with-mode-buffer
-              optimized
-              target
-              mode
-              optimized-spans
-              emit-entry)
-            (compiler-backend-emit-program-target-with-mode-buffer
-              optimized
-              (BackendTargetLinux)
-              mode
-              optimized-spans
-              emit-entry))
-            [(OkCompilerBackendBuffer buf)
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerDriverBuffer
+      (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+    (begin
+      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase "optimize"))
+            (if (ty-node-pool-exhausted?)
+              (ErrCompilerDriverBuffer
+                (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
               (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "backend"))
-                (OkCompilerDriverBuffer buf))]
-            [(ErrCompilerBackendBuffer diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "backend"))
-                (ErrCompilerDriverBuffer
-                  (compiler-diagnostic-with-path diag input-path)))]))])))
+                (compiler-backend-set-scalar-registers! (>= opt-level 2))
+                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (match (if has-target
+                  (compiler-backend-emit-program-target-with-mode-buffer
+                    optimized
+                    target
+                    mode
+                    optimized-spans
+                    emit-entry)
+                  (compiler-backend-emit-program-target-with-mode-buffer
+                    optimized
+                    (BackendTargetLinux)
+                    mode
+                    optimized-spans
+                    emit-entry))
+                  [(OkCompilerBackendBuffer buf)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (OkCompilerDriverBuffer buf))]
+                  [(ErrCompilerBackendBuffer diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (ErrCompilerDriverBuffer
+                        (compiler-diagnostic-with-path diag input-path)))]))))]))))
 
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
@@ -482,7 +500,10 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (OkCompilerDriverLowered program spans))]
+              (if (ty-node-pool-exhausted?)
+                (ErrCompilerDriverLowered
+                  (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+                (OkCompilerDriverLowered program spans)))]
           [(ErrCompilerLower diag)
             (begin
               (cfg
@@ -980,11 +1001,16 @@
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [opt-level : i64]) : ResultCompilerDriver
-  (match (optimize-program-with-spans-and-level program spans opt-level)
-    [(CompilerOptimizedProgram optimized _)
-      (OkCompilerDriver
-        (compiler-driver-ir-summary-render
-          (compiler-ir-program-summary optimized)))]))
+  (if (ty-node-pool-exhausted?)
+    (ErrCompilerDriver (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
+    (match (optimize-program-with-spans-and-level program spans opt-level)
+      [(CompilerOptimizedProgram optimized _)
+        (if (ty-node-pool-exhausted?)
+          (ErrCompilerDriver
+            (compiler-driver-ty-node-pool-exhausted-diagnostic ""))
+          (OkCompilerDriver
+            (compiler-driver-ir-summary-render
+              (compiler-ir-program-summary optimized))))])))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
@@ -1082,8 +1108,7 @@
         (write-file output-path asm)
         (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (print-string
-          (string-append "Generated: " (string-append output-path "\n")))
+        (print-string (string-append "Wrote " (string-append output-path "\n")))
         0)]
     [(ErrCompilerDriver diag)
       (begin
@@ -1107,7 +1132,7 @@
           (if (= status 0)
             (begin
               (print-string
-                (string-append "Generated: " (string-append output-path "\n")))
+                (string-append "Wrote " (string-append output-path "\n")))
               0)
             status)))]
     [(ErrCompilerDriverBuffer diag)

@@ -802,6 +802,7 @@ contains|fmt_files:
 contains|fmt_package:
 contains|package_source_discover_for
 contains|fmt: would reformat 
+contains|fmt: failed to write
 contains|fmt: cannot combine input paths with --manifest-path
 end
 

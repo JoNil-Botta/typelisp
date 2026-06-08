@@ -21,6 +21,7 @@ generated_option_result_families|tests/integration/generated_option_result_famil
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
 tail_call_stack_args|tests/integration/tail_call_stack_args.tl|42|-|-|-
+tail_direct_mutual|tests/integration/tail_direct_mutual.tl|42|-|-|-
 early_return|tests/integration/early_return.tl|42|-|-|-
 div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 enum_match|tests/integration/enum_match.tl|42|-|-|-

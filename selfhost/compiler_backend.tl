@@ -2088,6 +2088,14 @@
     (compiler-backend-emit-restore-callee-regs assignments vars)
     "    leave\n    ret\n"))
 
+(define (compiler-backend-tail-jump-tail
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [target : String]) : String
+  (string-append
+    (compiler-backend-emit-restore-callee-regs assignments vars)
+    (backend-cat4 "    leave\n    jmp " target "\n" "")))
+
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
 
@@ -6001,6 +6009,18 @@
           (+ stack-count 1)
           stack-count)))))
 
+(define (compiler-backend-register-only-tail-call?
+  [target : CompilerBackendTarget]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (and
+    (compiler-backend-index-function-defines? program-index name)
+    (and
+      (<= (compiler-backend-call-args-count args) 4)
+      (= (compiler-backend-call-stack-arg-count target args types 0 0 0 0 0) 0))))
+
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
 ;; this is 0 whenever every arg fits in registers.
@@ -6722,6 +6742,8 @@
         externs
         program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
+    [target-symbol : String
+      (compiler-backend-call-symbol-index name plan program-index)]
     (match (compiler-backend-emit-call-args
       target
       assignments
@@ -6734,31 +6756,41 @@
       0
       instr-diag)
       [(OkCompilerBackend args-asm)
-        (OkCompilerBackend
-          (string-append
-            (compiler-backend-emit-call-space-sub call-space)
+        (if (compiler-backend-register-only-tail-call?
+          target
+          name
+          args
+          param-types
+          program-index)
+          (OkCompilerBackend
             (string-append
               args-asm
+              (compiler-backend-tail-jump-tail assignments vars target-symbol)))
+          (OkCompilerBackend
+            (string-append
+              (compiler-backend-emit-call-space-sub call-space)
               (string-append
-                (compiler-backend-varargs-pre-call
-                  target
-                  name
-                  externs
-                  param-types)
-                (backend-cat5
-                  "    call "
-                  (compiler-backend-call-symbol-index name plan program-index)
-                  "\n"
-                  (string-append
-                    (compiler-backend-emit-call-space-add call-space)
+                args-asm
+                (string-append
+                  (compiler-backend-varargs-pre-call
+                    target
+                    name
+                    externs
+                    param-types)
+                  (backend-cat5
+                    "    call "
+                    target-symbol
+                    "\n"
                     (string-append
-                      (compiler-backend-tail-call-return-normalize ty)
-                      (compiler-backend-return-tail
-                        source-function
-                        assignments
-                        vars
-                        blocks)))
-                  "")))))]
+                      (compiler-backend-emit-call-space-add call-space)
+                      (string-append
+                        (compiler-backend-tail-call-return-normalize ty)
+                        (compiler-backend-return-tail
+                          source-function
+                          assignments
+                          vars
+                          blocks)))
+                    ""))))))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs

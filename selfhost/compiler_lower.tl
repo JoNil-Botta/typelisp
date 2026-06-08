@@ -18671,19 +18671,96 @@
                   (IrValueVar var-id)
                   expr-ty))])]))))
 
+(define (lower-tail-call-var-unshadowed? [env : SymI64Env] [name : i64]) : bool
+  (match (sym-i64-lookup-id env name)
+    [(SomeI64 _) false]
+    [(NoneI64) true]))
+
 (define (lower-tail-call-target?
-  [state : LowerState]
+  [_state : LowerState]
   [env : SymI64Env]
   [callee : AstExpr]) : bool
   (match (ast-expr-unspan callee)
-    [(AstExprVar name)
-      (match (sym-i64-lookup-id env name)
-        [(SomeI64 _) false]
-        [(NoneI64)
-          (string-eq
-            (lower-resolve-name state (intern-str name))
-            (lower-state-current-function state))])]
+    [(AstExprVar name) (lower-tail-call-var-unshadowed? env name)]
     [_ false]))
+
+(define (lower-tail-call-self-target? [state : LowerState] [name : i64]) : bool
+  (string-eq
+    (lower-resolve-name state (intern-str name))
+    (lower-state-current-function state)))
+
+(define (lower-symbol-function-define? [ctx : TcContext] [name : String]) : bool
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    (match (compiler-symbols-lookup-value
+      symbols
+      (lower-hygiene-source-name name))
+      [(SomeI64 handle)
+        (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-function-define))]
+      [(NoneI64) false])))
+
+(define (lower-tail-call-compatible-return?
+  [ctx : TcContext]
+  [callee-ret : AstType]
+  [ret-ty : AstType]) : bool
+  (tc-type-eq
+    (tc-type-without-regions (tc-resolve-type ctx callee-ret))
+    (tc-type-without-regions (tc-resolve-type ctx ret-ty))))
+
+(define (lower-tail-call-direct-supported?
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : i64]
+  [ret-ty : AstType]) : bool
+  (if (lower-tail-call-self-target? state name)
+    true
+    (let
+      [source-name : String (intern-str name)]
+      (if (lower-symbol-function-define? ctx source-name)
+        (match (lower-lookup-type-id
+          (lower-state-type-cache state)
+          env
+          type-env
+          name)
+          [(OkTcType fn-ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+              [(AstTyFunc param-types callee-ret)
+                (and
+                  (<=
+                    (tc-type-list-len (tc-resolve-type-list ctx param-types))
+                    4)
+                  (lower-tail-call-compatible-return?
+                    ctx
+                    (ty-node-get callee-ret)
+                    ret-ty))]
+              [_ false])]
+          [(ErrTcType _) false])
+        false))))
+
+(define (lower-tail-call-args-for-target
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : i64]
+  [args : AstExprList]) : ResultLowerArgs
+  (match (lower-lookup-type-id (lower-state-type-cache state) env type-env name)
+    [(OkTcType fn-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+        [(AstTyFunc param-types _)
+          (lower-args-as
+            ctx
+            state
+            env
+            type-env
+            args
+            (tc-resolve-type-list ctx param-types))]
+        [_ (lower-args ctx state env type-env args)])]
+    [(ErrTcType _) (lower-args ctx state env type-env args)]))
 
 (define (lower-tail-let-bindings-candidate-env
   [env : SymI64Env]
@@ -18807,21 +18884,32 @@
   [args : AstExprList]
   [ret-ty : AstType]
   [origin : AstExpr]) : ResultLowerState
-  (if (and
-    (lower-tail-call-target? state env callee)
-    (not (lower-mode-inline-aggregates? (lower-state-mode state))))
-    (match (lower-args ctx state env type-env args)
-      [(OkLowerArgs args-state values)
-        (OkLowerState
-          (lower-state-emit-at-expr
-            args-state
-            (IrInstrTailCall
-              (lower-state-current-function args-state)
-              (compiler-ir-call-args-from-list values)
-              ret-ty)
-            origin))]
-      [(ErrLowerArgs message) (ErrLowerState message)])
-    (lower-return-expr ctx state env type-env origin ret-ty)))
+  (match (ast-expr-unspan callee)
+    [(AstExprVar name)
+      (if (and
+        (and
+          (lower-tail-call-var-unshadowed? env name)
+          (not (lower-mode-inline-aggregates? (lower-state-mode state))))
+        (lower-tail-call-direct-supported? ctx state env type-env name ret-ty))
+        (match (lower-tail-call-args-for-target
+          ctx
+          state
+          env
+          type-env
+          name
+          args)
+          [(OkLowerArgs args-state values)
+            (OkLowerState
+              (lower-state-emit-at-expr
+                args-state
+                (IrInstrTailCall
+                  (lower-resolve-name args-state (intern-str name))
+                  (compiler-ir-call-args-from-list values)
+                  ret-ty)
+                origin))]
+          [(ErrLowerArgs message) (ErrLowerState message)])
+        (lower-return-expr ctx state env type-env origin ret-ty))]
+    [_ (lower-return-expr ctx state env type-env origin ret-ty)]))
 
 (define (lower-tail-begin
   [ctx : TcContext]
@@ -23065,6 +23153,7 @@
 (define (lower-test-instr-call-name? [instr : CompilerIrInstr] [name : String]) : bool
   (match instr
     [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
+    [(IrInstrTailCall call-name _ _) (string-eq call-name name)]
     [_ false]))
 
 (define (lower-test-instrs-call-before?
@@ -24228,6 +24317,25 @@
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count (box-get rest) name))])]))
 
+(define (lower-test-functions-tail-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-tail-call-count blocks name)
+            (lower-test-functions-tail-call-count (box-get rest) name))])]))
+
+(define (lower-test-functions-direct-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (+
+    (lower-test-functions-call-count funcs name)
+    (lower-test-functions-tail-call-count funcs name)))
+
 (define (lower-test-functions-cpuid-count [funcs : CompilerIrFunctionList]) : i64
   (match funcs
     [(IrFunctionNil) 0]
@@ -24366,6 +24474,14 @@
           (if (string-eq fname name)
             (lower-test-blocks-tail-call-count blocks call-name)
             (lower-test-function-tail-call-count (box-get rest) name call-name))])]))
+
+(define (lower-test-function-direct-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [call-name : String]) : i64
+  (+
+    (lower-test-function-call-count funcs name call-name)
+    (lower-test-function-tail-call-count funcs name call-name)))
 
 (define (lower-test-function-store-ptr-count
   [funcs : CompilerIrFunctionList]
@@ -24684,7 +24800,7 @@
                 (lower-test-function-defined? functions "dot-avx512")
                 (set! ok false))
               (if (=
-                (lower-test-function-call-count
+                (lower-test-function-direct-call-count
                   functions
                   scalar-name
                   "dispatch-helper")
@@ -24692,7 +24808,7 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-call-count
+                (lower-test-function-direct-call-count
                   functions
                   avx2-name
                   "dispatch-helper")
@@ -24700,7 +24816,7 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-call-count
+                (lower-test-function-direct-call-count
                   functions
                   avx512-name
                   "dispatch-helper")
@@ -24740,7 +24856,7 @@
                 (and
                   (lower-test-function-defined? functions "main")
                   (=
-                    (lower-test-function-call-count
+                    (lower-test-function-direct-call-count
                       functions
                       "main"
                       "lib.tl::after")
@@ -24772,7 +24888,9 @@
                 (lower-test-global-list-has-name? globals "lib.tl::answer")
                 (and
                   (>
-                    (lower-test-functions-call-count functions "lib.tl::inc")
+                    (lower-test-functions-direct-call-count
+                      functions
+                      "lib.tl::inc")
                     0)
                   (and
                     (>
@@ -24953,7 +25071,7 @@
           (match lowered
             [(IrProgram _ functions _)
               (>
-                (lower-test-functions-call-count
+                (lower-test-functions-direct-call-count
                   functions
                   "__tl_specialized_alloc_type_i64_none")
                 0)])]
@@ -25156,6 +25274,29 @@
   (+ 1 (loop (- n 1))))
 (define (main) : i64 (loop 3))")
 
+(define (compiler-lower-tail-direct-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64]) : i64 (finish x 1))
+(define (main) : i64 (step 41))")
+
+(define (compiler-lower-tail-direct-stack-source) : String
+  "(define (finish5
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]) : i64
+  (+ a (+ b (+ c (+ d e)))))
+(define (step5 [x : i64]) : i64 (finish5 x 1 2 3 4))
+(define (main) : i64 (step5 32))")
+
+(define (compiler-lower-tail-cleanup-source) : String
+  "(define (finish [x : i64]) : i64 x)
+(define (step [x : i64]) : i64
+  (with-arena scratch
+    (finish x)))
+(define (main) : i64 (step 42))")
+
 (define (compiler-lower-tail-simple-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-simple-source))
     [(OkCompilerLower program _)
@@ -25186,12 +25327,54 @@
             (> (lower-test-function-call-count functions "loop" "loop") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-tail-direct-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-direct-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              1)
+            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-direct-stack-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-direct-stack-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-tail-call-count functions "step5" "finish5")
+              0)
+            (> (lower-test-function-call-count functions "step5" "finish5") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-cleanup-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-cleanup-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-tail-call-count functions "step" "finish")
+              0)
+            (> (lower-test-function-call-count functions "step" "finish") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-tail-call-shape-ok?) : bool
   (and
     (compiler-lower-tail-simple-shape-ok?)
     (and
       (compiler-lower-tail-context-shape-ok?)
-      (compiler-lower-tail-operand-shape-ok?))))
+      (and
+        (compiler-lower-tail-operand-shape-ok?)
+        (and
+          (compiler-lower-tail-direct-shape-ok?)
+          (and
+            (compiler-lower-tail-direct-stack-shape-ok?)
+            (compiler-lower-tail-cleanup-shape-ok?)))))))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
@@ -25507,14 +25690,14 @@
         [(IrProgram _ functions _)
           (and
             (=
-              (lower-test-function-call-count
+              (lower-test-function-direct-call-count
                 functions
                 "cleanup-file-handle"
                 "close-fd")
               1)
             (and
               (>
-                (lower-test-function-call-count
+                (lower-test-function-direct-call-count
                   functions
                   "main"
                   "cleanup-file-handle")
@@ -25529,7 +25712,7 @@
         [(IrProgram _ functions _)
           (and
             (=
-              (lower-test-function-call-count
+              (lower-test-function-direct-call-count
                 functions
                 "cleanup-file-handle"
                 "close-fd")
@@ -25543,7 +25726,7 @@
                 1)
               (and
                 (=
-                  (lower-test-function-call-count
+                  (lower-test-function-direct-call-count
                     functions
                     "cleanup-buffered-file"
                     "cleanup-file-handle")
@@ -25662,16 +25845,22 @@
                 0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-functions-call-count functions "substring") 0)
-                unit
-                (set! ok false))
               (if (>
-                (lower-test-functions-call-count functions "string-append")
+                (lower-test-functions-direct-call-count functions "substring")
                 0)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-functions-call-count functions "string-concat")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "string-append")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-functions-direct-call-count
+                  functions
+                  "string-concat")
                 0)
                 unit
                 (set! ok false))
@@ -25688,11 +25877,15 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "print-string")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "print-string")
                 2)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "print-str") 1)
+              (if (=
+                (lower-test-functions-direct-call-count functions "print-str")
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -25727,7 +25920,9 @@
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-functions-call-count functions "string-append")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "string-append")
                 0)
                 unit
                 (set! ok false))
@@ -25742,8 +25937,14 @@
           (and
             (= (lower-test-functions-call-count functions "tl_print_str") 0)
             (and
-              (= (lower-test-functions-call-count functions "print-string") 2)
-              (= (lower-test-functions-call-count functions "print-str") 1)))])]
+              (=
+                (lower-test-functions-direct-call-count
+                  functions
+                  "print-string")
+                2)
+              (=
+                (lower-test-functions-direct-call-count functions "print-str")
+                1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -25755,7 +25956,7 @@
             [ok : bool true]
             (begin
               (if (>
-                (lower-test-function-call-count
+                (lower-test-function-direct-call-count
                   functions
                   "main"
                   "borrowed-score")
@@ -25804,7 +26005,10 @@
                     unit
                     (set! ok false))
                   (if (=
-                    (lower-test-function-call-count functions "main" name)
+                    (lower-test-function-direct-call-count
+                      functions
+                      "main"
+                      name)
                     1)
                     unit
                     (set! ok false))
@@ -27356,17 +27560,23 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "env-var-exists?")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "env-var-exists?")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "env-var-value")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "env-var-value")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "env-path-separator")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "env-path-separator")
                 1)
                 unit
                 (set! ok false))

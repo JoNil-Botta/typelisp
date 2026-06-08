@@ -986,6 +986,57 @@
     (compiler-backend-c-abi-aggregate-linux-ok?)
     (compiler-backend-c-abi-aggregate-windows-ok?)))
 
+(define (compiler-backend-c-abi-sret-aggregate-source) : String
+  "(defstruct Wide
+  (:repr c)
+  (a u64)
+  (b u64))
+(extern (wide-make [a : u32] [b : u32] [c : u32] [d : u32] [tag : u64]) : Wide (:symbol \"tl_cabi_wide_make\"))
+(extern wide-maker (:symbol \"tl_cabi_wide_make_ptr\") : (-> u32 u32 u32 u32 u64 Wide))
+(define (wide-score [value : Wide]) : i64
+  (+ (cast (struct-get value a) : i64) (cast (struct-get value b) : i64)))
+(define (main) : i64
+  (let
+    [direct : Wide
+      (wide-make
+        (cast 1 : u32)
+        (cast 2 : u32)
+        (cast 3 : u32)
+        (cast 4 : u32)
+        (cast 10 : u64))]
+    [via-ptr : Wide
+      (wide-maker
+        (cast 5 : u32)
+        (cast 6 : u32)
+        (cast 7 : u32)
+        (cast 8 : u32)
+        (cast 2 : u64))]
+    (if (= (wide-score direct) 120)
+      (if (= (wide-score via-ptr) 52) 42 2)
+      1)))")
+
+(define (compiler-backend-c-abi-sret-aggregate-windows-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-sret-aggregate-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_cabi_wide_make\n")
+        (compiler-backend-string-contains?
+          asm
+          ".extern tl_cabi_wide_make_ptr\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_wide_make\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-string-contains-alloc-size? asm 16)
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "lower: unsupported windows-x86_64 C aggregate ABI"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+        true)]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and
     (match (compiler-backend-emit-source-for-target
@@ -5511,7 +5562,9 @@
                             (compiler-backend-extern-value-fnptr-ok?)
                             (and
                               (compiler-backend-varargs-ffi-ok?)
-                              (compiler-backend-c-abi-aggregate-ok?)))))
+                              (and
+                                (compiler-backend-c-abi-aggregate-ok?)
+                                (compiler-backend-c-abi-sret-aggregate-windows-ok?))))))
                       (and
                         (backend-and4
                           (compiler-backend-string-ref-shape-ok?)

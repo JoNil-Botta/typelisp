@@ -27,9 +27,11 @@
 ;# `stdlib/hashmap-family` generation keys include a key descriptor identity in
 ;# addition to key and value `type-key` strings. The built-in descriptors are:
 ;# - `stdlib/hashmap/string-key-v1`: owned `String` keys, `hash-string`,
-;#   `hash-key-string-eq?`, and borrowed lookup/contains/remove wrappers.
+;#   `hash-key-string-eq?`, borrowed key lookup/contains/remove wrappers, and
+;#   borrowed value lookup results tied to the map lifetime.
 ;# - `stdlib/hashmap/i64-key-v1`: scalar `i64` keys, `hash-i64`,
-;#   `hash-key-i64-eq?`, and no borrowed-key wrappers.
+;#   `hash-key-i64-eq?`, no borrowed-key wrappers, and generated borrowed
+;#   value lookup results tied to the map lifetime.
 ;# Unsupported key types are intentionally rejected by the generator request
 ;# path instead of falling back to a trait or implicit `Hash`/`Eq` bound.
 ;#
@@ -286,6 +288,13 @@
   (StringI64MapMissing)
   (StringI64MapFound i64))
 
+;: Result of a borrowed-value lookup: a reference to the map-owned value, or
+;: missing. The returned reference is tied to the borrowed map.
+(defenum StringI64MapBorrowedValueLookup
+  (:lifetimes map)
+  (StringI64MapBorrowedValueMissing)
+  (StringI64MapBorrowedValueFound (& map i64)))
+
 ;: Result of an insert: the updated map (the bucket array is mutated in place,
 ;: so callers thread the returned map forward), or `Full` when the
 ;: fixed-capacity table has no slot for a new key.
@@ -352,6 +361,16 @@
       (string-i64-map-fill-empty slots 0 rounded-capacity)
       (StringI64Map slots 0 0))))
 
+;: Construct a missing borrowed-value lookup result tied to `map`.
+(define (string-i64-map-borrowed-value-missing [map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
+  map)
+  (StringI64MapBorrowedValueMissing))
+
+;: Construct a found borrowed-value lookup result tied to `map`.
+(define (string-i64-map-borrowed-value-found [value : (& map i64)]) : (StringI64MapBorrowedValueLookup
+  map)
+  (StringI64MapBorrowedValueFound value))
+
 ;: Look up borrowed `key`, returning its copied `i64` value or `Missing`.
 (define (string-i64-map-get-borrowed [map : StringI64Map] [key : (& key str)]) : StringI64MapLookup
   (let
@@ -396,6 +415,56 @@
 ;: Compatibility owned-key lookup wrapper for existing callers.
 (define (string-i64-map-get [map : StringI64Map] [key : String]) : StringI64MapLookup
   (string-i64-map-get-borrowed map (& key)))
+
+;: Look up borrowed `key`, returning a reference to the map-owned `i64` value
+;: or `Missing`. The reference is invalidated by any map mutation/resizing.
+(define (string-i64-map-get-value-borrowed
+  [map : (& map StringI64Map)]
+  [key : (& key str)]) : (StringI64MapBorrowedValueLookup map)
+  (let
+    [capacity : i64 (array-length (struct-get map slots))]
+    (if (<= capacity 0)
+      (string-i64-map-borrowed-value-missing map)
+      (let
+        [hash : i64 (hash-string key)]
+        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref (struct-get map slots) cursor)
+              [(StringI64MapEmpty)
+                (return (string-i64-map-borrowed-value-missing map))]
+              [(StringI64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(StringI64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (hash-key-string-eq? (& slot-key) key)
+                  false)
+                  (match (& (array-ref (struct-get map slots) cursor))
+                    [(StringI64MapOccupied _ value _)
+                      (return (string-i64-map-borrowed-value-found value))]
+                    [(StringI64MapEmpty)
+                      (return (string-i64-map-borrowed-value-missing map))]
+                    [(StringI64MapTombstone)
+                      (return (string-i64-map-borrowed-value-missing map))])
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1)))))]))
+          (string-i64-map-borrowed-value-missing map))))))
 
 ;: True when borrowed `key` has a live value in `map`.
 (define (string-i64-map-contains-borrowed?

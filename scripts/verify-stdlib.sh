@@ -266,6 +266,11 @@ stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/borrowed_str_gate.tl|pass|-
 stdlib/tests/io_caller_result_check.tl|pass|-
 stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_value_borrow_put_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_value_borrow_resize_live.tl|fail|typecheck: cannot assign to borrowed place `m`
 stdlib/tests/process_borrowed_check.tl|pass|-
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/string_caller_result_check.tl|pass|-

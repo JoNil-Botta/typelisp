@@ -16591,6 +16591,110 @@
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
 
+(define (tc-string-has-suffix-at?
+  [text : String]
+  [suffix : String]
+  [base : i64]
+  [index : i64]
+  [n : i64]) : bool
+  (if (>= index n)
+    true
+    (if (=
+      (cast (string-ref text (+ base index)) : i64)
+      (cast (string-ref suffix index) : i64))
+      (tc-string-has-suffix-at? text suffix base (+ index 1) n)
+      false)))
+
+(define (tc-string-has-suffix? [text : String] [suffix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [suffix-len : i64 (string-length suffix)]
+    (if (< text-len suffix-len)
+      false
+      (tc-string-has-suffix-at?
+        text
+        suffix
+        (- text-len suffix-len)
+        0
+        suffix-len))))
+
+(define (tc-hashmap-mutating-call-name? [name : String]) : bool
+  (core/cond
+    (tc-string-has-suffix? name "-map-insert")
+    true
+    (tc-string-has-suffix? name "-map-put")
+    true
+    (tc-string-has-suffix? name "-map-remove")
+    true
+    (tc-string-has-suffix? name "-map-remove-borrowed")
+    true
+    (tc-string-has-suffix? name "-map-update-if-present")
+    true
+    (tc-string-has-suffix? name "-map-update-borrowed-if-present")
+    true
+    (tc-string-has-suffix? name "-map-insert-or-update")
+    true
+    (tc-string-has-suffix? name "-map-entry-or-insert")
+    true
+    (tc-string-has-suffix? name "-map-resized")
+    true
+    (tc-string-has-suffix? name "-map-grow")
+    true
+    false))
+
+(define (tc-borrow-check-first-call-arg-root-mutation
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : AstExprList]) : TcBorrowCheckResult
+  (match args
+    [(AstExprCons arg _)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        (match (tc-borrow-check-root-mutation-conflict locals borrowed arg)
+          [(OkTcUnit) (OkTcBorrowCheck borrowed)]
+          [(ErrTcUnit message) (ErrTcBorrowCheck message)]))]
+    [(AstExprNil) (OkTcBorrowCheck borrowed)]))
+
+(define (tc-borrow-check-after-call-effects
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : AstExpr]
+  [func : AstExpr]
+  [args : AstExprList]) : TcBorrowCheckResult
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (if (tc-hashmap-mutating-call-name? name)
+        (match (tc-borrow-check-first-call-arg-root-mutation
+          locals
+          borrowed
+          args)
+          [(OkTcBorrowCheck _)
+            (tc-borrow-check-after-returning-call
+              ctx
+              env
+              locals
+              borrowed
+              call-expr
+              args)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+        (tc-borrow-check-after-returning-call
+          ctx
+          env
+          locals
+          borrowed
+          call-expr
+          args))]
+    [(TcNoString)
+      (tc-borrow-check-after-returning-call
+        ctx
+        env
+        locals
+        borrowed
+        call-expr
+        args)]))
+
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
   (match names
     [(TcStringNil) locals]
@@ -16957,12 +17061,13 @@
                             args
                             expanded-params)
                             [(OkTcBorrowCheck _)
-                              (tc-borrow-check-after-returning-call
+                              (tc-borrow-check-after-call-effects
                                 ctx
                                 env
                                 locals
                                 borrowed1
                                 expr
+                                func
                                 args)]
                             [(ErrTcBorrowCheck message)
                               (ErrTcBorrowCheck message)])]
@@ -16975,12 +17080,13 @@
                         args
                         params)
                         [(OkTcBorrowCheck _)
-                          (tc-borrow-check-after-returning-call
+                          (tc-borrow-check-after-call-effects
                             ctx
                             env
                             locals
                             borrowed1
                             expr
+                            func
                             args)]
                         [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
                   [(TcNoExternAbi)
@@ -16992,12 +17098,13 @@
                       args
                       params)
                       [(OkTcBorrowCheck _)
-                        (tc-borrow-check-after-returning-call
+                        (tc-borrow-check-after-call-effects
                           ctx
                           env
                           locals
                           borrowed1
                           expr
+                          func
                           args)]
                       [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
               [(ErrTcTypeList _)
@@ -17008,12 +17115,13 @@
                   (tc-moved-clone borrowed1)
                   args)
                   [(OkTcBorrowCheck _)
-                    (tc-borrow-check-after-returning-call
+                    (tc-borrow-check-after-call-effects
                       ctx
                       env
                       locals
                       borrowed1
                       expr
+                      func
                       args)]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]

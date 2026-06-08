@@ -2239,6 +2239,13 @@
     [lookup : String (string-append map-name "Lookup")]
     [missing : String (string-append map-name "Missing")]
     [found : String (string-append map-name "Found")]
+    [borrowed-value-lookup : String
+      (string-append map-name "BorrowedValueLookup")]
+    [borrowed-value-missing : String
+      (string-append map-name "BorrowedValueMissing")]
+    [borrowed-value-found : String
+      (string-append map-name "BorrowedValueFound")]
+    [borrowed-value-type : String (gen-hashmap-borrowed-value-type value-type)]
     [insert-result : String (string-append map-name "InsertResult")]
     [insert-ok : String (string-append map-name "InsertOk")]
     [insert-full : String (string-append map-name "InsertFull")]
@@ -2426,14 +2433,23 @@
       (set! buf (gen-tb6 buf "(defenum " lookup "\n  (" missing ")\n  (" found))
       (set!
         buf
-        (gen-tb6
+        (gen-tb5
           buf
           " "
           value-type
           "))\n(defenum "
-          insert-result
-          "\n  ("
-          insert-ok))
+          borrowed-value-lookup
+          "\n  (:lifetimes map)\n  ("))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          borrowed-value-missing
+          ")\n  ("
+          borrowed-value-found
+          " (& map "
+          borrowed-value-type))
+      (set! buf (gen-tb4 buf ")))\n(defenum " insert-result "\n  (" insert-ok))
       (set! buf (gen-tb6 buf " " map-name ")\n  (" insert-full " " map-name))
       (set!
         buf
@@ -2512,6 +2528,28 @@
           "-fill-empty slots 0 rounded-capacity)\n      ("
           map-name))
       (set! buf (gen-tb2 buf " slots 0 0))))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-borrowed-value-missing\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "  [map : (& map "
+          map-name
+          ")]) : ("
+          borrowed-value-lookup
+          " map)\n"))
+      (set! buf (gen-tb4 buf "  (" borrowed-value-missing "))\n" ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-borrowed-value-found\n"))
+      (set!
+        buf
+        (gen-tb5
+          buf
+          "  [value : (& map "
+          borrowed-value-type
+          ")]) : ("
+          borrowed-value-lookup
+          " map)\n"))
+      (set! buf (gen-tb4 buf "  (" borrowed-value-found " value))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-get [map : "))
       (set!
         buf
@@ -2569,6 +2607,78 @@
           " _) ("
           missing))
       (set! buf (gen-tb5 buf ")]\n      [(" probe-full ") (" missing ")])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-get-value-borrowed\n"))
+      (set! buf (gen-tb4 buf "  [map : (& map " map-name ")]\n" ""))
+      (set!
+        buf
+        (gen-tb4 buf "  [key : i64]) : (" borrowed-value-lookup " map)\n" ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "  (let\n    [capacity : i64 (array-length (struct-get map slots))]\n    (if (<= capacity 0)\n      ("
+          prefix
+          "-borrowed-value-missing map)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "      (let\n        [hash : i64 ("
+          prefix
+          "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "        [cursor : i64 ("
+          prefix
+          "-normalized-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "        [walked : i64 0]\n        (begin\n          (while (< walked capacity)\n            (match (array-ref (struct-get map slots) cursor)\n              [("
+          ""))
+      (set! buf (gen-tb3 buf empty ")\n                (return (" prefix))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-borrowed-value-missing map))]\n              [("
+          tombstone
+          ")\n                (let\n                  [next : i64 (+ cursor 1)]\n                  (begin\n                    (set!\n                      cursor\n                      (if (>= next capacity)\n                        0\n                        next))\n                    (set! walked (+ walked 1))))]\n              [("
+          occupied))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          " slot-key _ slot-hash)\n                (if (if (= slot-hash hash)\n                  (= slot-key key)\n                  false)\n                  (match (& (array-ref (struct-get map slots) cursor))\n                    [("
+          occupied
+          " _ value _)\n                      (return ("
+          prefix))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "-borrowed-value-found value))]\n                    [("
+          empty
+          ")\n                      (return ("))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          prefix
+          "-borrowed-value-missing map))]\n                    [("
+          tombstone
+          ")\n                      (return ("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          prefix
+          "-borrowed-value-missing map))])\n                  (let\n                    [next : i64 (+ cursor 1)]\n                    (begin\n                      (set!\n                        cursor\n                        (if (>= next capacity)\n                          0\n                          next))\n                      (set! walked (+ walked 1)))))]))\n          ("
+          prefix))
+      (set! buf (gen-tb2 buf "-borrowed-value-missing map))))))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-contains? [map : "))
       (set!
         buf
@@ -6973,6 +7083,10 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "i64-string-map-put")]
+                  [i64-string-borrowed-value-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-string-map-get-value-borrowed")]
                   [string-map-count : i64
                     (compiler-specialize-decl-list-count-visible
                       decls
@@ -6997,6 +7111,10 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "i64-i64-map-put")]
+                  [i64-borrowed-value-count : i64
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "i64-i64-map-get-value-borrowed")]
                   [i64-round-count : i64
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -7020,6 +7138,9 @@
                       unit
                       (set! ok false))
                     (if (= put-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-string-borrowed-value-count 1)
                       unit
                       (set! ok false))
                     (if (=
@@ -7080,6 +7201,9 @@
                       unit
                       (set! ok false))
                     (if (= i64-put-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-borrowed-value-count 1)
                       unit
                       (set! ok false))
                     (if (= i64-round-count 1)

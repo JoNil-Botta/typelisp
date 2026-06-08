@@ -402,7 +402,7 @@
 ;; pre-sized for real inputs and fails closed when exhausted because global array
 ;; reassignment in this hot path has triggered opt2 miscompiles.
 (define ty-node-pool-slots : (Array AstType)
-  (make-array AstType 2000000))
+  (make-array AstType 4000000))
 
 (define ty-node-pool-count : i64
   0)

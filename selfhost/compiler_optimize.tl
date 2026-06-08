@@ -11936,9 +11936,18 @@
         [buckets : (Array OptGvnBucket) (struct-get table buckets)]
         [bucket : i64 (opt-gvn-bucket-index buckets key)]
         [old-head : OptGvnBucket (array-ref buckets bucket)]
+        ;; #2357: under #1867 inline-by-value aggregates `array-ref` of a
+        ;; memory-backed aggregate returns the element ADDRESS (in-place), not a
+        ;; value snapshot the way main's old heap-handle GVN assumed. So the
+        ;; scope-change MUST capture old-head's value BEFORE the array-set! below
+        ;; overwrites the slot -- otherwise restore writes back the just-pushed
+        ;; head and scoped dominance breaks (a dominated sibling reuses a value
+        ;; that does not dominate it).
+        [result : OptGvnScopeChanges
+          (OptGvnScopeCons (OptGvnScopeChange bucket old-head) (box changes))]
         (begin
           (array-set! buckets bucket (OptGvnBucketCons entry (box old-head)))
-          (OptGvnScopeCons (OptGvnScopeChange bucket old-head) (box changes))))]))
+          result))]))
 
 (define (opt-gvn-table-insert! [table : OptGvnMap] [entry : OptGvnEntry]) : unit
   (begin

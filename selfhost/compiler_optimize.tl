@@ -2833,6 +2833,19 @@
     [(IrValueString value) (hash-combine 9 (hash-string (& value)))]
     [(IrValueUnit) (hash-i64 10)]))
 
+(define (opt-expr-key-hash [key : OptExprKey]) : i64
+  (match key
+    [(OptBinKey op lhs rhs)
+      (hash-combine
+        1
+        (hash-combine
+          (hash-i64 (opt-binop-tag op))
+          (hash-combine (opt-value-hash lhs) (opt-value-hash rhs))))]
+    [(OptUnKey op value)
+      (hash-combine
+        2
+        (hash-combine (hash-i64 (opt-unop-tag op)) (opt-value-hash value)))]))
+
 (define (opt-type-list-hash [types : AstTypeList]) : i64
   (match types
     [(AstTypeNil) (hash-i64 0)]
@@ -10750,11 +10763,14 @@
 ;; membership; previously a linked list scanned O(n) per query inside the
 ;; per-instruction build and rewrite loops (O(n^2) per GVN pass).
 (defenum OptGvnEntry
-  (OptGvnEntry OptExprKey i64 String))
+  (OptGvnEntry OptExprKey i64 i64))
 
-(defenum OptGvnMap
-  (OptGvnMapNil)
-  (OptGvnMapCons OptGvnEntry (Box OptGvnMap)))
+(defenum OptGvnBucket
+  (OptGvnBucketNil)
+  (OptGvnBucketCons OptGvnEntry (Box OptGvnBucket)))
+
+(defstruct OptGvnMap
+  (buckets (Array OptGvnBucket)))
 
 ;; Number of times `var` appears as a definition site (instruction destination
 ;; or seeded parameter) in the collected value-source list.
@@ -10881,100 +10897,187 @@
             (box-get rest)
             (opt-gvn-sources-instr-seq-from instrs 0 acc))])]))
 
+(define (opt-gvn-block-id [doms : OptDomInfo] [label : String]) : i64
+  (match (opt-cfg-index-id (struct-get doms index) label)
+    [(OptSomeI64 id) id]
+    [(OptNoI64) (- 0 1)]))
+
+(define (opt-gvn-recordable-instr?
+  [instr : CompilerIrInstr]
+  [sources : I64I64Map]) : bool
+  (match instr
+    [(IrInstrBinOp dst _ l r _)
+      (and
+        (opt-gvn-stable-var? sources dst)
+        (and
+          (opt-gvn-value-stable? sources l)
+          (opt-gvn-value-stable? sources r)))]
+    [(IrInstrUnOp dst _ v _)
+      (and (opt-gvn-stable-var? sources dst) (opt-gvn-value-stable? sources v))]
+    [_ false]))
+
+(define (opt-gvn-record-count-instr-seq-from
+  [sources : I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (if (opt-gvn-recordable-instr?
+        (compiler-ir-instr-seq-ref instrs index)
+        sources)
+        1
+        0)
+      (opt-gvn-record-count-instr-seq-from sources instrs (+ index 1)))))
+
+(define (opt-gvn-record-count-blocks
+  [sources : I64I64Map]
+  [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-gvn-record-count-instr-seq-from sources instrs 0)
+            (opt-gvn-record-count-blocks sources (box-get rest)))])]))
+
+(define (opt-gvn-bucket-capacity [count : i64]) : i64
+  (opt-global-fact-bucket-capacity count))
+
+(define (opt-gvn-buckets-fill-empty!
+  [buckets : (Array OptGvnBucket)]
+  [index : i64]) : unit
+  (if (>= index (array-length buckets))
+    unit
+    (begin
+      (array-set! buckets index (OptGvnBucketNil))
+      (opt-gvn-buckets-fill-empty! buckets (+ index 1)))))
+
+(define (opt-gvn-map-empty [record-count : i64]) : OptGvnMap
+  (let
+    [buckets : (Array OptGvnBucket)
+      (make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))]
+    (begin
+      (opt-gvn-buckets-fill-empty! buckets 0)
+      (OptGvnMap buckets))))
+
+(define (opt-gvn-bucket-index
+  [buckets : (Array OptGvnBucket)]
+  [key : OptExprKey]) : i64
+  (bit-and (opt-expr-key-hash key) (- (array-length buckets) 1)))
+
+(define (opt-gvn-table-insert! [table : OptGvnMap] [entry : OptGvnEntry]) : unit
+  (match entry
+    [(OptGvnEntry key _ _)
+      (let
+        [buckets : (Array OptGvnBucket) (struct-get table buckets)]
+        [bucket : i64 (opt-gvn-bucket-index buckets key)]
+        (array-set!
+          buckets
+          bucket
+          (OptGvnBucketCons entry (box (array-ref buckets bucket)))))]))
+
 ;; Record a `BinOp`/`UnOp` whose result and operands are all single-source as an
 ;; available value keyed by its expression and tagged with its defining block.
 (define (opt-gvn-record
   [instr : CompilerIrInstr]
-  [label : String]
+  [def-block-id : i64]
   [sources : I64I64Map]
-  [acc : OptGvnMap]) : OptGvnMap
+  [table : OptGvnMap]) : unit
   (match instr
     [(IrInstrBinOp dst op l r _)
-      (if (and
-        (opt-gvn-stable-var? sources dst)
-        (and
-          (opt-gvn-value-stable? sources l)
-          (opt-gvn-value-stable? sources r)))
-        (OptGvnMapCons (OptGvnEntry (OptBinKey op l r) dst label) (box acc))
-        acc)]
+      (if (opt-gvn-recordable-instr? instr sources)
+        (opt-gvn-table-insert!
+          table
+          (OptGvnEntry (OptBinKey op l r) dst def-block-id))
+        unit)]
     [(IrInstrUnOp dst op v _)
-      (if (and
-        (opt-gvn-stable-var? sources dst)
-        (opt-gvn-value-stable? sources v))
-        (OptGvnMapCons (OptGvnEntry (OptUnKey op v) dst label) (box acc))
-        acc)]
-    [_ acc]))
-
-(define (opt-gvn-build-map-instrs
-  [sources : I64I64Map]
-  [label : String]
-  [instrs : CompilerIrInstrList]
-  [acc : OptGvnMap]) : OptGvnMap
-  (match instrs
-    [(IrInstrNil) acc]
-    [(IrInstrCons instr rest)
-      (opt-gvn-build-map-instrs
-        sources
-        label
-        (box-get rest)
-        (opt-gvn-record instr label sources acc))]))
+      (if (opt-gvn-recordable-instr? instr sources)
+        (opt-gvn-table-insert!
+          table
+          (OptGvnEntry (OptUnKey op v) dst def-block-id))
+        unit)]
+    [_ unit]))
 
 (define (opt-gvn-build-map-instr-seq-from
   [sources : I64I64Map]
-  [label : String]
+  [def-block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [acc : OptGvnMap]) : OptGvnMap
+  [table : OptGvnMap]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    acc
-    (opt-gvn-build-map-instr-seq-from
-      sources
-      label
-      instrs
-      (+ index 1)
+    unit
+    (begin
       (opt-gvn-record
         (compiler-ir-instr-seq-ref instrs index)
-        label
+        def-block-id
         sources
-        acc))))
+        table)
+      (opt-gvn-build-map-instr-seq-from
+        sources
+        def-block-id
+        instrs
+        (+ index 1)
+        table))))
 
 (define (opt-gvn-build-map-blocks
+  [doms : OptDomInfo]
   [sources : I64I64Map]
   [blocks : CompilerIrBlockList]
-  [acc : OptGvnMap]) : OptGvnMap
+  [table : OptGvnMap]) : unit
   (match blocks
-    [(IrBlockNil) acc]
+    [(IrBlockNil) unit]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (opt-gvn-build-map-blocks
-            sources
-            (box-get rest)
-            (opt-gvn-build-map-instr-seq-from sources label instrs 0 acc))])]))
+          (begin
+            (opt-gvn-build-map-instr-seq-from
+              sources
+              (opt-gvn-block-id doms label)
+              instrs
+              0
+              table)
+            (opt-gvn-build-map-blocks doms sources (box-get rest) table))])]))
 
 ;; Find the result var of an available expression matching `key` whose defining
-;; block strictly dominates `use-label`, or -1 if none qualifies.
+;; block strictly dominates `use-block-id`, or -1 if none qualifies.
+(define (opt-gvn-lookup-bucket
+  [bucket : OptGvnBucket]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [key : OptExprKey]) : i64
+  (match bucket
+    [(OptGvnBucketNil) (- 0 1)]
+    [(OptGvnBucketCons entry rest)
+      (match entry
+        [(OptGvnEntry ekey evar def-block-id)
+          (if (and
+            (opt-expr-key-eq ekey key)
+            (and
+              (not (= def-block-id use-block-id))
+              (opt-dom-info-dominates-id? doms def-block-id use-block-id)))
+            evar
+            (opt-gvn-lookup-bucket (box-get rest) doms use-block-id key))])]))
+
 (define (opt-gvn-lookup
   [table : OptGvnMap]
   [doms : OptDomInfo]
-  [use-label : String]
+  [use-block-id : i64]
   [key : OptExprKey]) : i64
-  (match table
-    [(OptGvnMapNil) (- 0 1)]
-    [(OptGvnMapCons entry rest)
-      (match entry
-        [(OptGvnEntry ekey evar elabel)
-          (if (and
-            (opt-expr-key-eq ekey key)
-            (opt-dom-strict-dominates? doms elabel use-label))
-            evar
-            (opt-gvn-lookup (box-get rest) doms use-label key))])]))
+  (let
+    [buckets : (Array OptGvnBucket) (struct-get table buckets)]
+    (opt-gvn-lookup-bucket
+      (array-ref buckets (opt-gvn-bucket-index buckets key))
+      doms
+      use-block-id
+      key)))
 
 (define (opt-gvn-rewrite-instr
   [table : OptGvnMap]
   [doms : OptDomInfo]
   [sources : I64I64Map]
-  [use-label : String]
+  [use-block-id : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(IrInstrBinOp dst op l r ty)
@@ -10983,7 +11086,7 @@
         (opt-gvn-value-stable? sources r))
         (let
           [earlier : i64
-            (opt-gvn-lookup table doms use-label (OptBinKey op l r))]
+            (opt-gvn-lookup table doms use-block-id (OptBinKey op l r))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (IrInstrMov dst (IrValueVar earlier) ty)
             instr))
@@ -10991,7 +11094,8 @@
     [(IrInstrUnOp dst op v ty)
       (if (opt-gvn-value-stable? sources v)
         (let
-          [earlier : i64 (opt-gvn-lookup table doms use-label (OptUnKey op v))]
+          [earlier : i64
+            (opt-gvn-lookup table doms use-block-id (OptUnKey op v))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (IrInstrMov dst (IrValueVar earlier) ty)
             instr))
@@ -11002,20 +11106,20 @@
   [table : OptGvnMap]
   [doms : OptDomInfo]
   [sources : I64I64Map]
-  [use-label : String]
+  [use-block-id : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (compiler-ir-instr-cons
-        (opt-gvn-rewrite-instr table doms sources use-label instr)
-        (opt-gvn-rewrite-instrs table doms sources use-label (box-get rest)))]))
+        (opt-gvn-rewrite-instr table doms sources use-block-id instr)
+        (opt-gvn-rewrite-instrs table doms sources use-block-id (box-get rest)))]))
 
 (define (opt-gvn-rewrite-instr-seq-from
   [table : OptGvnMap]
   [doms : OptDomInfo]
   [sources : I64I64Map]
-  [use-label : String]
+  [use-block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [out : CompilerIrInstrList]) : CompilerIrInstrList
@@ -11025,7 +11129,7 @@
       table
       doms
       sources
-      use-label
+      use-block-id
       instrs
       (- index 1)
       (compiler-ir-instr-cons
@@ -11033,7 +11137,7 @@
           table
           doms
           sources
-          use-label
+          use-block-id
           (compiler-ir-instr-seq-ref instrs index))
         out))))
 
@@ -11041,13 +11145,13 @@
   [table : OptGvnMap]
   [doms : OptDomInfo]
   [sources : I64I64Map]
-  [use-label : String]
+  [use-block-id : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-gvn-rewrite-instr-seq-from
     table
     doms
     sources
-    use-label
+    use-block-id
     instrs
     (- (compiler-ir-instr-seq-count instrs) 1)
     IrInstrNil))
@@ -11061,7 +11165,12 @@
     [(IrBlock label instrs)
       (compiler-ir-block
         label
-        (opt-gvn-rewrite-instr-seq table doms sources label instrs))]))
+        (opt-gvn-rewrite-instr-seq
+          table
+          doms
+          sources
+          (opt-gvn-block-id doms label)
+          instrs))]))
 
 (define (opt-gvn-rewrite-blocks
   [table : OptGvnMap]
@@ -11087,8 +11196,11 @@
       (opt-gvn-sources-blocks
         blocks
         (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
-    [table : OptGvnMap (opt-gvn-build-map-blocks sources blocks (OptGvnMapNil))]
-    (opt-gvn-rewrite-blocks table doms sources blocks)))
+    [table : OptGvnMap
+      (opt-gvn-map-empty (opt-gvn-record-count-blocks sources blocks))]
+    (begin
+      (opt-gvn-build-map-blocks doms sources blocks table)
+      (opt-gvn-rewrite-blocks table doms sources blocks))))
 
 (define (opt-gvn-blocks
   [params : CompilerIrParamList]
@@ -17611,6 +17723,55 @@
           [(IrNoValue) true]
           [(IrSomeValue _) false])))))
 
+(define (opt-gvn-table-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "mid") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "mid"
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "use"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            (IrInstrNil)))
+        (IrBlockNil)))))
+
+(define (opt-gvn-hash-collision-guard-ok?) : bool
+  (let
+    [key : OptExprKey (OptBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2))]
+    [other-key : OptExprKey
+      (OptBinKey (IrBinSub) (IrValueVar 1) (IrValueVar 2))]
+    [buckets : (Array OptGvnBucket) (make-array OptGvnBucket 1)]
+    [table : OptGvnMap (OptGvnMap buckets)]
+    [doms : OptDomInfo (opt-cfg-dominators (opt-gvn-table-test-blocks))]
+    [entry-id : i64 (opt-gvn-block-id doms "entry")]
+    [use-id : i64 (opt-gvn-block-id doms "use")]
+    (begin
+      (array-set! buckets 0 (OptGvnBucketNil))
+      (opt-gvn-table-insert! table (OptGvnEntry key 7 entry-id))
+      (and
+        (= (opt-gvn-lookup table doms use-id key) 7)
+        (= (opt-gvn-lookup table doms use-id other-key) (- 0 1))))))
+
+(define (opt-gvn-table-order-preserved-ok?) : bool
+  (let
+    [key : OptExprKey (OptBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2))]
+    [buckets : (Array OptGvnBucket) (make-array OptGvnBucket 1)]
+    [table : OptGvnMap (OptGvnMap buckets)]
+    [doms : OptDomInfo (opt-cfg-dominators (opt-gvn-table-test-blocks))]
+    [entry-id : i64 (opt-gvn-block-id doms "entry")]
+    [mid-id : i64 (opt-gvn-block-id doms "mid")]
+    [use-id : i64 (opt-gvn-block-id doms "use")]
+    (begin
+      (array-set! buckets 0 (OptGvnBucketNil))
+      (opt-gvn-table-insert! table (OptGvnEntry key 7 entry-id))
+      (opt-gvn-table-insert! table (OptGvnEntry key 8 mid-id))
+      (= (opt-gvn-lookup table doms use-id key) 8))))
+
 (define (compiler-optimize-global-value-number-self-test) : i64
   (let
     [dominated : CompilerIrBlockList
@@ -17684,6 +17845,8 @@
       [(not (= (opt-count-gep-blocks gep) 1)) 12]
       [(not (= (opt-count-mov-dst-blocks gep 4) 0)) 13]
       [(not (opt-global-expr-hash-collision-guard-ok?)) 14]
+      [(not (opt-gvn-hash-collision-guard-ok?)) 15]
+      [(not (opt-gvn-table-order-preserved-ok?)) 16]
       [else 42])))
 
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList

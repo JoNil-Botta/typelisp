@@ -1,5 +1,8 @@
 (import "stdlib/core_macros.tl" module stdlib.core-macros as core)
 
+(defenum Expr
+  (ECoreMacroShadow i64))
+
 (define (stdlib-core-macros-api-fixture [flag : bool]) : unit
   (let
     [value : i64 0]
@@ -16,6 +19,9 @@
 
 (define (stdlib-core-cond-i64 [value : i64]) : i64
   (core/cond (< value 0) 0 (= value 0) 1 (+ value 1)))
+
+(define (stdlib-core-cond-user-expr-shadow) : i64
+  (core/cond true 42 0))
 
 (define (stdlib-core-cond-string [flag : bool]) : String
   (core/cond flag "yes" "no"))

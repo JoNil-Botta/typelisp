@@ -5191,12 +5191,14 @@
     [_ (ErrAstDecl "parse: malformed module")]))
 
 (define (parse-ast-import-spec
+  [kind : AstImportKind]
   [path : String]
   [module-name : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]) : ResultAstDecl
-  (OkAstDecl (AstDeclImport (AstImportSpec path module-name alias))))
+  (OkAstDecl (AstDeclImport (AstImportSpec kind path module-name alias))))
 
 (define (parse-ast-import-alias
+  [kind : AstImportKind]
   [path : String]
   [module-name : AstMaybeModuleName]
   [tail : SpannedSexpr]) : ResultAstDecl
@@ -5214,6 +5216,7 @@
                         (string-eq as-name "as")
                         (string-eq as-name ":as"))
                         (parse-ast-import-spec
+                          kind
                           path
                           module-name
                           (AstSomeImportAlias alias))
@@ -5232,11 +5235,13 @@
           (match (sp-node-get after-module)
             [(SpSNil _)
               (parse-ast-import-spec
+                (AstImportPath)
                 path
                 (AstSomeModuleName module-name)
                 AstNoImportAlias)]
             [_
               (parse-ast-import-alias
+                (AstImportPath)
                 path
                 (AstSomeModuleName module-name)
                 (sp-node-get after-module))])]
@@ -5245,23 +5250,88 @@
 
 (define (parse-ast-import-tail [path : String] [tail : SpannedSexpr]) : ResultAstDecl
   (match tail
-    [(SpSNil _) (parse-ast-import-spec path AstNoModuleName AstNoImportAlias)]
+    [(SpSNil _)
+      (parse-ast-import-spec
+        (AstImportPath)
+        path
+        AstNoModuleName
+        AstNoImportAlias)]
     [(SpSCons head-node after-head _)
       (match (sp-node-get head-node)
         [(SpSSym head _)
           (if (string-eq head "as")
-            (parse-ast-import-alias path AstNoModuleName tail)
+            (parse-ast-import-alias (AstImportPath) path AstNoModuleName tail)
             (if (string-eq head "module")
               (parse-ast-import-module-tail path (sp-node-get after-head))
               (ErrAstDecl "parse: malformed import")))]
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-dotted-import-tl-suffix? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    (if (< n 3)
+      false
+      (string-eq (substring name (- n 3) 3) ".tl"))))
+
+(define (parse-ast-dotted-import-name-valid? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    [i : i64 0]
+    [ok : bool (and (> n 0) (not (parse-ast-dotted-import-tl-suffix? name)))]
+    [last-was-dot : bool true]
+    (begin
+      (while ok
+        (if (< i n)
+          (let
+            [c : char (string-ref name i)]
+            (core/cond
+              (or (char-eq c #/') (or (char-eq c #\\') (char-eq c #:')))
+              (set! ok false)
+              (char-eq c #.')
+              (if last-was-dot
+                (set! ok false)
+                (begin
+                  (set! last-was-dot true)
+                  (set! i (+ i 1))))
+              (begin
+                (set! last-was-dot false)
+                (set! i (+ i 1)))))
+          (set! ok false)))
+      (and (= i n) (not last-was-dot)))))
+
+(define (parse-ast-dotted-import-tail
+  [module-name : String]
+  [tail : SpannedSexpr]) : ResultAstDecl
+  (if (not (parse-ast-dotted-import-name-valid? module-name))
+    (ErrAstDecl "parse: invalid dotted import module name")
+    (match tail
+      [(SpSNil _)
+        (parse-ast-import-spec
+          (AstImportModule)
+          module-name
+          (AstSomeModuleName module-name)
+          AstNoImportAlias)]
+      [(SpSCons head-node _ _)
+        (match (sp-node-get head-node)
+          [(SpSSym head _)
+            (if (or (string-eq head "as") (string-eq head ":as"))
+              (parse-ast-import-alias
+                (AstImportModule)
+                module-name
+                (AstSomeModuleName module-name)
+                tail)
+              (ErrAstDecl "parse: malformed import"))]
+          [_ (ErrAstDecl "parse: malformed import")])]
+      [_ (ErrAstDecl "parse: malformed import")])))
+
 (define (parse-ast-import [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons path-node tail _)
       (match (sp-node-get path-node)
         [(SpSStr path _) (parse-ast-import-tail path (sp-node-get tail))]
+        [(SpSSym module-name _)
+          (parse-ast-dotted-import-tail module-name (sp-node-get tail))]
         [_ (ErrAstDecl "parse: malformed import")])]
     [_ (ErrAstDecl "parse: malformed import")]))
 
@@ -5974,7 +6044,7 @@
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclCons (AstDeclImport (AstImportSpec path _ _)) _)
+    [(AstDeclCons (AstDeclImport (AstImportSpec (AstImportPath) path _ _)) _)
       (string-eq path "stdlib/test.tl")]
     [_ false]))
 
@@ -6008,6 +6078,7 @@
           [(AstDeclCons
               (AstDeclImport
                 (AstImportSpec
+                  (AstImportPath)
                   path
                   (AstSomeModuleName module-name)
                   (AstSomeImportAlias alias)))
@@ -6024,6 +6095,50 @@
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
+
+(define (compiler-parse-dotted-import-metadata-ok?) : bool
+  (match (parse-ast-source "(import stdlib.core_macros :as core)")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons
+              (AstDeclImport
+                (AstImportSpec
+                  (AstImportModule)
+                  module-path
+                  (AstSomeModuleName module-name)
+                  (AstSomeImportAlias alias)))
+              rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq module-path "stdlib.core_macros")
+                    (and
+                      (string-eq module-name "stdlib.core_macros")
+                      (string-eq alias "core")))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-dotted-import-errors-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(import stdlib..core)"
+      "parse: invalid dotted import module name")
+    (and
+      (compiler-parse-error-ok?
+        "(import stdlib/core)"
+        "parse: invalid dotted import module name")
+      (and
+        (compiler-parse-error-ok?
+          "(import pkg:math.core)"
+          "parse: invalid dotted import module name")
+        (compiler-parse-error-ok?
+          "(import stdlib.core_macros module stdlib.core_macros)"
+          "parse: malformed import")))))
 
 (define (compiler-parse-include-str-ok?) : bool
   (match (parse-ast-source "(include-str payload \"data.txt\")")
@@ -9070,14 +9185,16 @@
           (and
             (compiler-parse-import-metadata-ok?)
             (and
-              (compiler-parse-export-decl-ok?)
+              (compiler-parse-dotted-import-metadata-ok?)
               (and
-                (compiler-parse-defdispatch-tests-ok?)
+                (compiler-parse-export-decl-ok?)
                 (and
-                  (compiler-parse-flat-let-call-body-ok?)
+                  (compiler-parse-defdispatch-tests-ok?)
                   (and
-                    (compiler-parse-inline-test-ok?)
-                    (compiler-parse-try-ok?)))))))))))
+                    (compiler-parse-flat-let-call-body-ok?)
+                    (and
+                      (compiler-parse-inline-test-ok?)
+                      (compiler-parse-try-ok?))))))))))))
 
 (define (compiler-parse-error-suite-front-ok?) : bool
   (and
@@ -9116,7 +9233,9 @@
           (compiler-parse-quote-syntax-tests-ok?)
           (and
             (compiler-parse-export-error-tests-ok?)
-            (compiler-parse-define-export-metadata-error-tests-ok?)))))))
+            (and
+              (compiler-parse-define-export-metadata-error-tests-ok?)
+              (compiler-parse-dotted-import-errors-ok?))))))))
 
 (define (compiler-parse-smoke-shapes [program : AstProgram]) : unit
   (begin
@@ -9216,52 +9335,54 @@
                         (and
                           (compiler-parse-import-metadata-ok?)
                           (and
-                            (compiler-parse-export-decl-ok?)
+                            (compiler-parse-dotted-import-metadata-ok?)
                             (and
-                              (compiler-parse-defdispatch-tests-ok?)
+                              (compiler-parse-export-decl-ok?)
                               (and
-                                (compiler-parse-flat-let-call-body-ok?)
+                                (compiler-parse-defdispatch-tests-ok?)
                                 (and
-                                  (compiler-parse-inline-test-ok?)
+                                  (compiler-parse-flat-let-call-body-ok?)
                                   (and
-                                    (compiler-parse-try-ok?)
+                                    (compiler-parse-inline-test-ok?)
                                     (and
+                                      (compiler-parse-try-ok?)
                                       (and
-                                        (compiler-parse-return-ok?)
                                         (and
-                                          (compiler-parse-guard-forms-ok?)
+                                          (compiler-parse-return-ok?)
                                           (and
-                                            (compiler-parse-flat-cond-call-ok?)
-                                            (compiler-parse-and-or-macro-call-candidates-ok?))))
-                                      (and
-                                        (compiler-parse-repr-c-ok?)
-                                        (and
-                                          (compiler-parse-cleanup-metadata-ok?)
-                                          (and
-                                            (compiler-parse-raw-pointer-ok?)
+                                            (compiler-parse-guard-forms-ok?)
                                             (and
-                                              (compiler-parse-extern-metadata-ok?)
+                                              (compiler-parse-flat-cond-call-ok?)
+                                              (compiler-parse-and-or-macro-call-candidates-ok?))))
+                                        (and
+                                          (compiler-parse-repr-c-ok?)
+                                          (and
+                                            (compiler-parse-cleanup-metadata-ok?)
+                                            (and
+                                              (compiler-parse-raw-pointer-ok?)
                                               (and
-                                                (compiler-parse-extern-varargs-metadata-ok?)
+                                                (compiler-parse-extern-metadata-ok?)
                                                 (and
-                                                  (compiler-parse-extern-function-head-varargs-ok?)
+                                                  (compiler-parse-extern-varargs-metadata-ok?)
                                                   (and
-                                                    (compiler-parse-raw-pointer-ops-ok?)
+                                                    (compiler-parse-extern-function-head-varargs-ok?)
                                                     (and
-                                                      (compiler-parse-init-ok?)
+                                                      (compiler-parse-raw-pointer-ops-ok?)
                                                       (and
-                                                        (compiler-parse-contextual-init-ok?)
+                                                        (compiler-parse-init-ok?)
                                                         (and
-                                                          (compiler-parse-init-call-name-ok?)
+                                                          (compiler-parse-contextual-init-ok?)
                                                           (and
-                                                            (compiler-parse-box-ok?)
+                                                            (compiler-parse-init-call-name-ok?)
                                                             (and
-                                                              (compiler-parse-reference-ok?)
+                                                              (compiler-parse-box-ok?)
                                                               (and
-                                                                (compiler-parse-borrow-ok?)
+                                                                (compiler-parse-reference-ok?)
                                                                 (and
-                                                                  (compiler-parse-resource-with-shape-ok?)
-                                                                  (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))))))))))
+                                                                  (compiler-parse-borrow-ok?)
+                                                                  (and
+                                                                    (compiler-parse-resource-with-shape-ok?)
+                                                                    (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and
@@ -9294,7 +9415,9 @@
                                       (compiler-parse-quote-syntax-tests-ok?)
                                       (and
                                         (compiler-parse-export-error-tests-ok?)
-                                        (compiler-parse-cfg-tests-ok?)))))))))))))))))
+                                        (and
+                                          (compiler-parse-dotted-import-errors-ok?)
+                                          (compiler-parse-cfg-tests-ok?))))))))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

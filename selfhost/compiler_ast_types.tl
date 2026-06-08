@@ -478,8 +478,12 @@
   (AstNoImportAlias)
   (AstSomeImportAlias String))
 
+(defenum AstImportKind
+  (AstImportPath)
+  (AstImportModule))
+
 (defenum AstImportSpec
-  (AstImportSpec String AstMaybeModuleName AstMaybeImportAlias))
+  (AstImportSpec AstImportKind String AstMaybeModuleName AstMaybeImportAlias))
 
 (defenum AstExportItem
   (AstExportValue String)

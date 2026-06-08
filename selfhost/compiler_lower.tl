@@ -1270,6 +1270,7 @@
             [(AstDeclImport
                 (AstImportSpec
                   _
+                  _
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)))
               (lower-name-env-add-module-aliases

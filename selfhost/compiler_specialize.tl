@@ -1104,7 +1104,7 @@
         buf
         (gen-tb2
           buf
-          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          "  (if (> capacity 0)\n    (= (bit-and capacity (- capacity 1)) 0)\n    false))\n"
           ""))
       (set!
         buf
@@ -1174,7 +1174,7 @@
         buf
         (gen-tb2
           buf
-          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (and same (< i left-len))\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
+          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (if same (< i left-len) false)\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
           ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe-borrowed-from\n"))
       (set!
@@ -2287,7 +2287,7 @@
         buf
         (gen-tb2
           buf
-          "  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))\n"
+          "  (if (> capacity 0)\n    (= (bit-and capacity (- capacity 1)) 0)\n    false))\n"
           ""))
       (set!
         buf

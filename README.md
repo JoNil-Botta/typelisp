@@ -214,16 +214,13 @@ Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
 [stdlib/README.md](stdlib/README.md) for the current stdlib layout and
 verification conventions.
 
-Stdlib macros are explicit imports, not an automatic prelude. The checked-in
-core macro module is available as
-`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, after
-which exported macros are called through the alias, for example `core/when` and
-`core/unless`, boolean `core/and` and `core/or`, and flat `core/cond`.
-Unqualified built-in guard forms remain available during the transition to the
-final stdlib macro migration, but local macros named `when`, `unless`, `and`,
-`or`, or `cond` now take precedence before the compatibility desugaring runs.
-The legacy bracket-arm `cond` form remains compatibility parsed while flat
-call-shaped `cond` is owned by macros.
+The compile driver prepends the stdlib runtime and the core macro module as an
+implicit prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped
+`cond` resolve to `stdlib/core_macros.tl` unless a local or imported macro
+shadows them. The same module can still be imported explicitly as
+`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` for
+qualified calls such as `core/when`, `core/unless`, `core/and`, `core/or`, and
+`core/cond`. The legacy bracket-arm `cond` form remains compatibility parsed.
 
 `typelisp compile` accepts `--cfg <name>` to enable source-level conditional
 compilation flags. Source may wrap a top-level declaration as

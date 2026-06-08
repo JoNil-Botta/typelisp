@@ -417,12 +417,6 @@
 (define (compiler-parse-tag-bin-ge) : i64
   20)
 
-(define (compiler-parse-tag-bin-and) : i64
-  21)
-
-(define (compiler-parse-tag-bin-or) : i64
-  22)
-
 (define (compiler-parse-tag-bin-bit-and) : i64
   23)
 
@@ -766,16 +760,14 @@
     [e9 : SymI64Env (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
     [e10 : SymI64Env (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
     [e11 : SymI64Env (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
-    [e12 : SymI64Env (sym-i64-bind e11 "and" (compiler-parse-tag-bin-and))]
-    [e13 : SymI64Env (sym-i64-bind e12 "or" (compiler-parse-tag-bin-or))]
+    [e12 : SymI64Env
+      (sym-i64-bind e11 "bit-and" (compiler-parse-tag-bin-bit-and))]
+    [e13 : SymI64Env
+      (sym-i64-bind e12 "bit-or" (compiler-parse-tag-bin-bit-or))]
     [e14 : SymI64Env
-      (sym-i64-bind e13 "bit-and" (compiler-parse-tag-bin-bit-and))]
-    [e15 : SymI64Env
-      (sym-i64-bind e14 "bit-or" (compiler-parse-tag-bin-bit-or))]
-    [e16 : SymI64Env
-      (sym-i64-bind e15 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
-    [e17 : SymI64Env (sym-i64-bind e16 "shl" (compiler-parse-tag-bin-shl))]
-    (sym-i64-bind e17 "shr" (compiler-parse-tag-bin-shr))))
+      (sym-i64-bind e13 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
+    [e15 : SymI64Env (sym-i64-bind e14 "shl" (compiler-parse-tag-bin-shl))]
+    (sym-i64-bind e15 "shr" (compiler-parse-tag-bin-shr))))
 
 (define (compiler-parse-dispatch-unops [e : SymI64Env]) : SymI64Env
   (let
@@ -1024,8 +1016,6 @@
         (compiler-parse-tag-bin-le)
         (string-eq name ">=")
         (compiler-parse-tag-bin-ge)
-        (string-eq name "or")
-        (compiler-parse-tag-bin-or)
         (string-eq name "i8")
         (compiler-parse-tag-ty-i8)
         (string-eq name "u8")
@@ -1039,8 +1029,6 @@
         (compiler-parse-tag-unknown))
       (= n 3)
       (core/cond
-        (string-eq name "and")
-        (compiler-parse-tag-bin-and)
         (string-eq name "shl")
         (compiler-parse-tag-bin-shl)
         (string-eq name "shr")
@@ -1303,10 +1291,6 @@
     true
     (= tag (compiler-parse-tag-bin-ge))
     true
-    (= tag (compiler-parse-tag-bin-and))
-    true
-    (= tag (compiler-parse-tag-bin-or))
-    true
     (= tag (compiler-parse-tag-bin-bit-and))
     true
     (= tag (compiler-parse-tag-bin-bit-or))
@@ -1316,9 +1300,6 @@
     (= tag (compiler-parse-tag-bin-shl))
     true
     (= tag (compiler-parse-tag-bin-shr))))
-
-(define (compiler-parse-and-or-binop-tag? [tag : i64]) : bool
-  (or (= tag (compiler-parse-tag-bin-and)) (= tag (compiler-parse-tag-bin-or))))
 
 (define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
@@ -1347,10 +1328,6 @@
     (AstBinGt)
     (= tag (compiler-parse-tag-bin-ge))
     (AstBinGe)
-    (= tag (compiler-parse-tag-bin-and))
-    (AstBinAnd)
-    (= tag (compiler-parse-tag-bin-or))
-    (AstBinOr)
     (= tag (compiler-parse-tag-bin-bit-and))
     (AstBinBitAnd)
     (= tag (compiler-parse-tag-bin-bit-or))
@@ -2568,17 +2545,6 @@
                 [(ErrAstExprList message) (ErrAstExprList message)])]
             [(ErrAstExpr message) (ErrAstExprList message)])])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
-
-(define (parse-ast-spanned-list-exactly-two? [s : SpannedSexpr]) : bool
-  (match s
-    [(SpSCons _ tail _)
-      (match (sp-node-get tail)
-        [(SpSCons _ end _)
-          (match (sp-node-get end)
-            [(SpSNil _) true]
-            [_ false])]
-        [_ false])]
-    [_ false]))
 
 (define (parse-ast-binary
   [dispatch : SymI64Env]
@@ -4180,11 +4146,7 @@
             (ast-unop-tag? tag)
             (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
             (ast-binop-tag? tag)
-            (if (and
-              (compiler-parse-and-or-binop-tag? tag)
-              (not (parse-ast-spanned-list-exactly-two? rest)))
-              (parse-ast-call dispatch head rest)
-              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest))
+            (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
             (= tag (compiler-parse-tag-ty-ref))
             (parse-ast-borrow dispatch false rest)
             (= tag (compiler-parse-tag-ty-mut-ref))
@@ -7374,15 +7336,39 @@
         false)
       (and
         (compiler-parse-call-body-ok?
-          "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
+          "(define (main [x : bool] [y : bool]) : bool (and x y))"
           "and"
-          3
+          2
           false)
-        (compiler-parse-call-body-ok?
-          "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
-          "or"
-          3
-          false)))))
+        (and
+          (compiler-parse-call-body-ok?
+            "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
+            "and"
+            3
+            false)
+          (and
+            (compiler-parse-call-body-ok?
+              "(define (main) : bool (or))"
+              "or"
+              0
+              false)
+            (and
+              (compiler-parse-call-body-ok?
+                "(define (main [x : bool]) : bool (or x))"
+                "or"
+                1
+                false)
+              (and
+                (compiler-parse-call-body-ok?
+                  "(define (main [x : bool] [y : bool]) : bool (or x y))"
+                  "or"
+                  2
+                  false)
+                (compiler-parse-call-body-ok?
+                  "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
+                  "or"
+                  3
+                  false)))))))))
 
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -8677,7 +8663,7 @@
 
 ;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
-;; arithmetic/comparison, and bitwise/shift/logical operator forms; reject
+;; arithmetic/comparison, and bitwise/shift operator forms; reject
 ;; parser-owned malformed unary/binary operator expressions. Parse-shape only;
 ;; operator type rules live in the typechecker tests.
 (define (compiler-parse-operator-tests-ok?) : bool
@@ -8689,7 +8675,7 @@
         "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
       (and
         (compiler-parse-ok?
-          "(define (main [a : i64] [b : i64] [p : bool] [q : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (and p q) 1 (if (or p q) 2 0))))")
+          "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
         (and
           (compiler-parse-error-ok?
             "(define (main) : i64 (not))"

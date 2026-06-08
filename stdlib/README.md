@@ -46,11 +46,13 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   dispatched calls should not require user code to import this module. Import it
   with `(import "stdlib/cpu.tl")` when code needs explicit host capability
   checks.
-- `core_macros.tl`: explicit-import typed expression macros for core guard
-  forms. Import it with
-  `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` and call
-  exported macros through the alias, such as `core/when`, `core/unless`,
-  `core/and`, `core/or`, and `core/cond`.
+- `core_macros.tl`: typed expression macros for core guard and boolean forms.
+  The compile driver imports it as an implicit prelude, so bare `when`,
+  `unless`, `and`, `or`, and flat `cond` are available without imports. Import
+  it explicitly with
+  `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` for
+  qualified calls such as `core/when`, `core/unless`, `core/and`, `core/or`,
+  and `core/cond`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, and coarse file-kind
@@ -118,7 +120,7 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   helpers. Import it with `(import "stdlib/string.tl")`.
 - `str_cat.tl`: the variadic `str-cat` concatenation macro, which expands to a
   single-allocation copy regardless of arity. Kept separate from
-  `core_macros.tl` so importing it does not shadow the builtin guard/boolean
+  `core_macros.tl` so importing it does not shadow core guard/boolean macro
   forms. Import it with `(import "stdlib/str_cat.tl")` alongside
   `stdlib/string.tl`.
 - `string_caller_result.tl`: lifetime-preserving string replacement

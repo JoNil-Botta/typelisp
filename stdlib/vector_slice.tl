@@ -30,15 +30,12 @@
 (comptime-decl
   (:generated vector-family i64-slice-range-valid? "i64")
   (define (i64-slice-range-valid? [source-len : i64] [start : i64] [len : i64]) : bool
-    (if (>= source-len 0)
-      (if (>= start 0)
-        (if (>= len 0)
-          (if (<= start source-len)
-            (<= len (- source-len start))
-            false)
-          false)
-        false)
-      false)))
+    (cond
+      [(< source-len 0) false]
+      [(< start 0) false]
+      [(< len 0) false]
+      [(> start source-len) false]
+      [else (<= len (- source-len start))])))
 
 ;: True when an explicit array live count is inside the backing array.
 (comptime-decl

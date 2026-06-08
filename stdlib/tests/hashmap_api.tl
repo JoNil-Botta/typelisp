@@ -725,6 +725,49 @@
         (assert-true
           (> (string-i64-map-capacity grow3) 1)
           "insert-or-update grows tiny table")))
+    (let
+      [key : String "alpha"]
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+      (begin
+        (let
+          [entry : (StringI64MapMutEntry u1)
+            (string-i64-map-get-mut-entry-borrowed u1 (& key))]
+          (begin
+            (assert-true
+              (string-i64-map-mut-entry-present? entry)
+              "mut entry finds existing key")
+            (assert-i64-eq
+              (string-i64-map-mut-entry-value-or entry -1)
+              10
+              "mut entry reads existing value")
+            (string-i64-map-mut-entry-set! entry 77)))
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u1 "alpha") -1)
+          77
+          "mut entry set updates map storage")))
+    (let
+      [key : String "missing"]
+      [u0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [u1 : StringI64Map (string-i64-map-insert-or-update u0 "alpha" 10)]
+      (begin
+        (let
+          [entry : (StringI64MapMutEntry u1)
+            (string-i64-map-get-mut-entry-borrowed u1 (& key))]
+          (begin
+            (assert-false
+              (string-i64-map-mut-entry-present? entry)
+              "mut entry reports missing key")
+            (assert-i64-eq
+              (string-i64-map-mut-entry-value-or entry -1)
+              -1
+              "missing mut entry returns fallback")
+            (string-i64-map-mut-entry-set! entry 99)))
+        (assert-i64-eq (string-i64-map-len u1) 1 "missing mut entry no-op")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get u1 "alpha") -1)
+          10
+          "missing mut entry leaves map unchanged")))
     ;; --- resize / rehash (#827) ---
     ;; needs-grow? threshold: a fresh capacity-4 table is below the 3/4 load.
     (assert-false

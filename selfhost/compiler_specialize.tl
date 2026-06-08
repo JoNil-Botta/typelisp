@@ -505,6 +505,7 @@
     [(AstDeclDefStruct name _ _ _) (SpecSomeString (intern-str name))]
     [(AstDeclDefStructLifetimes name _ _ _ _)
       (SpecSomeString (intern-str name))]
+    [(AstDeclDefMacro name _ _ _) (SpecSomeString (intern-str name))]
     [(AstDeclComptimeDecl _ inner-box)
       (gen-decl-visible-name (box-get inner-box))]
     [_ (SpecNoString)]))
@@ -548,6 +549,35 @@
               (and
                 (gen-param-eq? a-head b-head)
                 (gen-param-list-eq? a-rest b-rest)))]
+          [_ false]))]))
+
+(define (gen-macro-param-eq? [a : AstMacroParam] [b : AstMacroParam]) : bool
+  (match a
+    [(AstMacroParam a-name a-ty a-variadic)
+      (match b
+        [(AstMacroParam b-name b-ty b-variadic)
+          (and
+            (= a-name b-name)
+            (and (ctfe-type-eq a-ty b-ty) (= a-variadic b-variadic)))])]))
+
+(define (gen-macro-param-list-eq?
+  [a : AstMacroParamList]
+  [b : AstMacroParamList]) : bool
+  (match a
+    [(AstMacroParamNil)
+      (match b
+        [(AstMacroParamNil) true]
+        [_ false])]
+    [(AstMacroParamCons a-head a-rest)
+      (let
+        [a-rest : AstMacroParamList (box-get a-rest)]
+        (match b
+          [(AstMacroParamCons b-head b-rest)
+            (let
+              [b-rest : AstMacroParamList (box-get b-rest)]
+              (and
+                (gen-macro-param-eq? a-head b-head)
+                (gen-macro-param-list-eq? a-rest b-rest)))]
           [_ false]))]))
 
 (define (gen-field-cleanup-eq? [a : AstFieldCleanup] [b : AstFieldCleanup]) : bool
@@ -785,6 +815,19 @@
                   (gen-struct-cleanup-eq? a-cleanup b-cleanup)
                   (gen-field-list-eq? a-fields b-fields)))))]
         [_ false])]
+    [(AstDeclDefMacro a-name a-params a-ret a-body-box)
+      (let
+        [a-body : AstExpr (ast-node-get a-body-box)]
+        (match b
+          [(AstDeclDefMacro b-name b-params b-ret b-body-box)
+            (let
+              [b-body : AstExpr (ast-node-get b-body-box)]
+              (and
+                (= a-name b-name)
+                (and
+                  (gen-macro-param-list-eq? a-params b-params)
+                  (and (ctfe-type-eq a-ret b-ret) (gen-expr-eq? a-body b-body)))))]
+          [_ false]))]
     [(AstDeclComptimeDecl _ a-inner-box)
       (let
         [a-inner : AstDecl (box-get a-inner-box)]
@@ -1062,6 +1105,8 @@
       (string-append map-name "EntryOrInsertFound")]
     [entry-or-insert-inserted : String
       (string-append map-name "EntryOrInsertInserted")]
+    [mut-entry-info : String (string-append map-name "MutEntryInfo")]
+    [mut-entry : String (string-append map-name "MutEntry")]
     [entry : String (string-append map-name "Entry")]
     [entry-none : String (string-append map-name "EntryNone")]
     [entry-some : String (string-append map-name "EntrySome")]
@@ -1323,6 +1368,28 @@
         buf
         (gen-tb5 buf map-name " " value-type ")\n  (" entry-or-insert-inserted))
       (set! buf (gen-tb6 buf " " map-name " " value-type "))\n" ""))
+      (set! buf (gen-tb3 buf "(defstruct " mut-entry-info "\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (index i64)\n  (present bool)\n  (key String)\n  (hash i64))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(defstruct " mut-entry "\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  (:lifetimes map)\n  (slots (Array "
+          slot
+          "))\n  (borrow (&mut map (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          ")))\n  (index i64)\n  (present bool)\n  (key String)\n  (hash i64))\n"
+          ""))
       (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
       (set!
         buf
@@ -2126,7 +2193,149 @@
           buf
           "          ("
           entry-or-insert-inserted
-          " updated default-value))])))\n(defenum "))
+          " updated default-value))])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-info\n"))
+      (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  [capacity : i64]\n  [key : (& key str)]) : "
+          mut-entry-info))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "\n  (if (<= capacity 0)\n    ("
+          mut-entry-info
+          " -1 false \"\" 0)\n"))
+      (set!
+        buf
+        (gen-tb3 buf "    (let\n      [hash : i64 (" prefix "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "      [cursor : i64 ("
+          prefix
+          "-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "      [walked : i64 0]\n      [found : i64 -1]\n      [present : bool false]\n      [entry-key : String \"\"]\n      [entry-hash : i64 0]\n      [done : bool false]\n      (begin\n        (while (if (< walked capacity) (not done) false)\n          (match (array-ref slots cursor)\n            [("
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          occupied
+          " slot-key _ slot-hash)\n              (if (if (= slot-hash hash)\n                ("
+          prefix))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "-key-eq? (& slot-key) key)\n                false)\n                (begin\n                  (set! found cursor)\n                  (set! present true)\n                  (set! entry-key slot-key)\n                  (set! entry-hash slot-hash)\n                  (set! done true))\n                (begin\n                  (set! cursor ("
+          prefix
+          ""))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-next-index cursor capacity))\n                  (set! walked (+ walked 1))))]\n            [("
+          empty
+          ") (set! done true)]\n            [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          ")\n              (begin\n                (set! cursor ("
+          prefix
+          "-next-index cursor capacity))\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "                (set! walked (+ walked 1)))]))\n        ("
+          mut-entry-info
+          " found present entry-key entry-hash)))))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-from-info\n"))
+      (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
+      (set! buf (gen-tb3 buf "  [borrow : (&mut map (Array " slot "))]\n"))
+      (set! buf (gen-tb3 buf "  [info : " mut-entry-info "]) : ("))
+      (set! buf (gen-tb3 buf mut-entry " map)\n  (" mut-entry))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "\n    slots\n    borrow\n    (struct-get info index)\n    (struct-get info present)\n    (struct-get info key)\n    (struct-get info hash)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(defmacro\n  ("
+          prefix
+          "-get-mut-entry-borrowed [map : Expr] [key : Expr])\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  :\n  Expr\n  `(" prefix "-mut-entry-from-info\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "    (struct-get ,map slots)\n    (&mut (struct-get ,map slots))\n    ("
+          prefix
+          "-mut-entry-info\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "      (struct-get ,map slots)\n      (array-length (struct-get ,map slots))\n      ,key)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-mut-entry-present? [entry : ("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          mut-entry
+          " map)]) : bool\n  (struct-get entry present))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-value-or\n"))
+      (set! buf (gen-tb3 buf "  [entry : (" mut-entry " map)]\n"))
+      (set! buf (gen-tb4 buf "  [fallback : " value-type "]) : " value-type))
+      (set! buf (gen-tb3 buf "\n  (if (" prefix "-mut-entry-present? entry)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "    (match (array-ref (struct-get entry slots) (struct-get entry index))\n      [("
+          occupied
+          " _ value _) value]\n      [("
+          empty))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          ") fallback]\n      [("
+          tombstone
+          ") fallback])\n    fallback))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-set!\n"))
+      (set! buf (gen-tb3 buf "  [entry : (" mut-entry " map)]\n"))
+      (set! buf (gen-tb3 buf "  [value : " value-type "]) : unit\n"))
+      (set! buf (gen-tb3 buf "  (if (" prefix "-mut-entry-present? entry)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "    (array-set!\n      (struct-get entry slots)\n      (struct-get entry index)\n      ("
+          occupied
+          "\n        (struct-get entry key)\n        value\n        (struct-get entry hash)))\n    unit))\n(defenum "))
       (set! buf (gen-tb2 buf entry ""))
       (set!
         buf
@@ -2261,6 +2470,8 @@
       (string-append map-name "EntryOrInsertFound")]
     [entry-or-insert-inserted : String
       (string-append map-name "EntryOrInsertInserted")]
+    [mut-entry-info : String (string-append map-name "MutEntryInfo")]
+    [mut-entry : String (string-append map-name "MutEntry")]
     [entry : String (string-append map-name "Entry")]
     [entry-none : String (string-append map-name "EntryNone")]
     [entry-some : String (string-append map-name "EntrySome")]
@@ -2479,6 +2690,28 @@
         buf
         (gen-tb5 buf map-name " " value-type ")\n  (" entry-or-insert-inserted))
       (set! buf (gen-tb6 buf " " map-name " " value-type "))\n" ""))
+      (set! buf (gen-tb3 buf "(defstruct " mut-entry-info "\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "  (index i64)\n  (present bool)\n  (key i64)\n  (hash i64))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(defstruct " mut-entry "\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "  (:lifetimes map)\n  (slots (Array "
+          slot
+          "))\n  (borrow (&mut map (Array "
+          slot))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          ")))\n  (index i64)\n  (present bool)\n  (key i64)\n  (hash i64))\n"
+          ""))
       (set! buf (gen-tb4 buf "(define (" prefix "-slots [map : " map-name))
       (set!
         buf
@@ -3250,7 +3483,139 @@
           buf
           "          ("
           entry-or-insert-inserted
-          " updated default-value))])))\n(defenum "))
+          " updated default-value))])))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-info\n"))
+      (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
+      (set!
+        buf
+        (gen-tb2 buf "  [capacity : i64]\n  [key : i64]) : " mut-entry-info))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "\n  (if (<= capacity 0)\n    ("
+          mut-entry-info
+          " -1 false 0 0)\n"))
+      (set!
+        buf
+        (gen-tb3 buf "    (let\n      [hash : i64 (" prefix "-hash-key key)]\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "      [cursor : i64 ("
+          prefix
+          "-bucket-index hash capacity)]\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "      [walked : i64 0]\n      [found : i64 -1]\n      [present : bool false]\n      [entry-key : i64 0]\n      [entry-hash : i64 0]\n      [done : bool false]\n      (begin\n        (while (if (< walked capacity) (not done) false)\n          (match (array-ref slots cursor)\n            [("
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          occupied
+          " slot-key _ slot-hash)\n              (if (if (= slot-hash hash)\n                (= slot-key key)\n                false)\n                (begin\n                  (set! found cursor)\n                  (set! present true)\n                  (set! entry-key slot-key)\n                  (set! entry-hash slot-hash)\n                  (set! done true))\n                (begin\n                  (set! cursor ("
+          prefix))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "-next-index cursor capacity))\n                  (set! walked (+ walked 1))))]\n            [("
+          empty
+          ") (set! done true)]\n            [("
+          tombstone))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          ")\n              (begin\n                (set! cursor ("
+          prefix
+          "-next-index cursor capacity))\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "                (set! walked (+ walked 1)))]))\n        ("
+          mut-entry-info
+          " found present entry-key entry-hash)))))\n"))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-from-info\n"))
+      (set! buf (gen-tb3 buf "  [slots : (Array " slot ")]\n"))
+      (set! buf (gen-tb3 buf "  [borrow : (&mut map (Array " slot "))]\n"))
+      (set! buf (gen-tb3 buf "  [info : " mut-entry-info "]) : ("))
+      (set! buf (gen-tb3 buf mut-entry " map)\n  (" mut-entry))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "\n    slots\n    borrow\n    (struct-get info index)\n    (struct-get info present)\n    (struct-get info key)\n    (struct-get info hash)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "(defmacro\n  ("
+          prefix
+          "-get-mut-entry [map : Expr] [key : Expr])\n"))
+      (set!
+        buf
+        (gen-tb3 buf "  :\n  Expr\n  `(" prefix "-mut-entry-from-info\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "    (struct-get ,map slots)\n    (&mut (struct-get ,map slots))\n    ("
+          prefix
+          "-mut-entry-info\n"))
+      (set!
+        buf
+        (gen-tb2
+          buf
+          "      (struct-get ,map slots)\n      (array-length (struct-get ,map slots))\n      ,key)))\n"
+          ""))
+      (set!
+        buf
+        (gen-tb3 buf "(define (" prefix "-mut-entry-present? [entry : ("))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          mut-entry
+          " map)]) : bool\n  (struct-get entry present))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-value-or\n"))
+      (set! buf (gen-tb3 buf "  [entry : (" mut-entry " map)]\n"))
+      (set! buf (gen-tb4 buf "  [fallback : " value-type "]) : " value-type))
+      (set! buf (gen-tb3 buf "\n  (if (" prefix "-mut-entry-present? entry)\n"))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          "    (match (array-ref (struct-get entry slots) (struct-get entry index))\n      [("
+          occupied
+          " _ value _) value]\n      [("
+          empty))
+      (set!
+        buf
+        (gen-tb4
+          buf
+          ") fallback]\n      [("
+          tombstone
+          ") fallback])\n    fallback))\n"
+          ""))
+      (set! buf (gen-tb3 buf "(define (" prefix "-mut-entry-set!\n"))
+      (set! buf (gen-tb3 buf "  [entry : (" mut-entry " map)]\n"))
+      (set! buf (gen-tb3 buf "  [value : " value-type "]) : unit\n"))
+      (set! buf (gen-tb3 buf "  (if (" prefix "-mut-entry-present? entry)\n"))
+      (set!
+        buf
+        (gen-tb3
+          buf
+          "    (array-set!\n      (struct-get entry slots)\n      (struct-get entry index)\n      ("
+          occupied
+          "\n        (struct-get entry key)\n        value\n        (struct-get entry hash)))\n    unit))\n(defenum "))
       (set! buf (gen-tb2 buf entry ""))
       (set!
         buf
@@ -7040,6 +7405,11 @@
     [i64-round-needle : String "i64-i64-map-round-capacity"]
     [mask-needle : String "(bit-and hash (- capacity 1))"]
     [modulo-needle : String "(% hash capacity)"]
+    [string-mut-entry-needle : String "StringStringMapMutEntry"]
+    [string-mut-entry-macro-needle : String
+      "string-string-map-get-mut-entry-borrowed"]
+    [i64-mut-entry-needle : String "I64I64MapMutEntry"]
+    [i64-mut-entry-macro-needle : String "i64-i64-map-get-mut-entry"]
     (and
       (string-contains (& string-source) (& string-round-needle))
       (and
@@ -7050,7 +7420,21 @@
             (string-contains (& i64-source) (& mask-needle))
             (and
               (not (string-contains (& string-source) (& modulo-needle)))
-              (not (string-contains (& i64-source) (& modulo-needle))))))))))
+              (and
+                (not (string-contains (& i64-source) (& modulo-needle)))
+                (and
+                  (string-contains
+                    (& string-source)
+                    (& string-mut-entry-needle))
+                  (and
+                    (string-contains
+                      (& string-source)
+                      (& string-mut-entry-macro-needle))
+                    (and
+                      (string-contains (& i64-source) (& i64-mut-entry-needle))
+                      (string-contains
+                        (& i64-source)
+                        (& i64-mut-entry-macro-needle)))))))))))))
 
 (define (compiler-generated-hashmap-family-bundle-ok?) : bool
   (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))
@@ -7075,6 +7459,10 @@
                     (compiler-specialize-decl-list-count-visible
                       decls
                       "I64StringMapEntry")]
+                  [mut-entry-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64StringMapMutEntry")]
                   [len-count : i64
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -7091,6 +7479,10 @@
                     (compiler-specialize-decl-list-count-visible
                       decls
                       "StringStringMap")]
+                  [string-mut-entry-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "StringStringMapMutEntry")]
                   [string-borrowed-count : i64
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -7107,6 +7499,10 @@
                     (compiler-specialize-decl-list-count-visible
                       decls
                       "I64I64Map")]
+                  [i64-mut-entry-count : i64
+                    (compiler-specialize-decl-list-count-visible
+                      decls
+                      "I64I64MapMutEntry")]
                   [i64-put-count : i64
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -7132,6 +7528,9 @@
                       unit
                       (set! ok false))
                     (if (= entry-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= mut-entry-count 1)
                       unit
                       (set! ok false))
                     (if (= len-count 1)
@@ -7164,7 +7563,17 @@
                       1)
                       unit
                       (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-string-map-mut-entry-set!")
+                      1)
+                      unit
+                      (set! ok false))
                     (if (= string-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= string-mut-entry-count 1)
                       unit
                       (set! ok false))
                     (if (= string-borrowed-count 1)
@@ -7197,7 +7606,17 @@
                       1)
                       unit
                       (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "string-string-map-mut-entry-set!")
+                      1)
+                      unit
+                      (set! ok false))
                     (if (= i64-map-count 1)
+                      unit
+                      (set! ok false))
+                    (if (= i64-mut-entry-count 1)
                       unit
                       (set! ok false))
                     (if (= i64-put-count 1)
@@ -7227,6 +7646,13 @@
                       (compiler-specialize-decl-list-count-defs
                         decls
                         "i64-i64-map-entry-or-insert")
+                      1)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-specialize-decl-list-count-defs
+                        decls
+                        "i64-i64-map-mut-entry-set!")
                       1)
                       unit
                       (set! ok false))

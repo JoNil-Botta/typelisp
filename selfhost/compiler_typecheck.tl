@@ -3770,6 +3770,17 @@
   "(define bad : i64
   missing)")
 
+(define (compiler-typecheck-call-arity-located-source) : String
+  "(define (need3 [a : i64] [b : i64] [c : i64]) : i64 a)
+(define (main) : i64
+  (let
+    [x : i64 1]
+    [y : i64 2]
+    [z : i64 3]
+    (begin
+      (+ x y)
+      (need3 x y))))")
+
 (define (compiler-typecheck-located-source-ok? [src : String]) : bool
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
@@ -3786,8 +3797,20 @@
   (and
     (compiler-typecheck-located-source-ok?
       (compiler-typecheck-located-fn-source))
-    (compiler-typecheck-located-source-ok?
-      (compiler-typecheck-located-value-source))))
+    (and
+      (compiler-typecheck-located-source-ok?
+        (compiler-typecheck-located-value-source))
+      (match (typecheck-compiler-source
+        (compiler-typecheck-call-arity-located-source))
+        [(ErrCompilerTypecheck diag)
+          (and
+            (string-eq
+              (compiler-diagnostic-message diag)
+              "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
+            (and
+              (= (compiler-diagnostic-line diag) 9)
+              (= (compiler-diagnostic-col diag) 7)))]
+        [(OkCompilerTypecheck _) false]))))
 
 ;; Statement and control-flow type rules (#1042): if/while conditions, the
 ;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
@@ -3917,11 +3940,11 @@
         (and
           (compiler-typecheck-error-ok?
             (compiler-typecheck-op-arity-many-source)
-            "typecheck: arity mismatch")
+            "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments")
           (and
             (compiler-typecheck-error-ok?
               (compiler-typecheck-op-arity-few-source)
-              "typecheck: arity mismatch")
+              "typecheck: call arity mismatch: f expected 2 arguments, got 1 argument")
             (and
               (compiler-typecheck-ok? (compiler-typecheck-op-ok-arith-source))
               (and
@@ -4772,11 +4795,11 @@
       (and
         (compiler-typecheck-error-ok?
           (compiler-typecheck-argv-builtin-bad-arg-arity-source)
-          "typecheck: arity mismatch")
+          "typecheck: call arity mismatch: arg expected 1 argument, got 2 arguments")
         (and
           (compiler-typecheck-error-ok?
             (compiler-typecheck-argv-builtin-bad-count-arity-source)
-            "typecheck: arity mismatch")
+            "typecheck: call arity mismatch: arg-count expected 0 arguments, got 1 argument")
           (and
             (compiler-typecheck-error-ok?
               (compiler-typecheck-argv-no-import-count-source)
@@ -5284,7 +5307,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : String]) : unit (write-file p))")
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: write-file expected 2 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5308,13 +5331,13 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [from : String]) : i64 (fs-rename-status from))")
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: fs-rename-status expected 2 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [path : String]) : i64 (fs-current-dir-status path))")
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: fs-current-dir-status expected 0 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5332,7 +5355,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f) : i64 (file-flush-status))")
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: file-flush-status expected 1 argument, got 0 arguments")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -8139,13 +8162,13 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (panic))")
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: panic expected 1 argument, got 0 arguments")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source
           "(define (f) : i64 (error \"a\" \"b\"))")
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: error expected 1 argument, got 2 arguments")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

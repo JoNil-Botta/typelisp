@@ -279,6 +279,79 @@
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (tc-canonical-diagnostic (compiler-diagnostic-at-start "" message)))
 
+(define (tc-located-error-prefix) : String
+  "__tl_tc_loc|")
+
+(define (tc-diag-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (< text-len prefix-len)
+      false
+      (string-eq (substring text 0 prefix-len) prefix))))
+
+(define (tc-located-error? [message : String]) : bool
+  (tc-diag-string-prefix? message (tc-located-error-prefix)))
+
+(define (tc-located-error-field-end [text : String] [start : i64]) : i64
+  (let
+    [i : i64 start]
+    [n : i64 (string-length text)]
+    [done : bool false]
+    (begin
+      (while (and (< i n) (not done))
+        (if (= (cast (string-ref text i) : i64) 124)
+          (set! done true)
+          (set! i (+ i 1))))
+      i)))
+
+(define (tc-located-error-field [text : String] [start : i64] [end : i64]) : String
+  (substring text start (- end start)))
+
+(define (tc-located-error [span : AstSourceSpan] [message : String]) : String
+  (string-append
+    (tc-located-error-prefix)
+    (string-append
+      (int->string (struct-get span start-line))
+      (string-append
+        "|"
+        (string-append
+          (int->string (struct-get span start-col))
+          (string-append
+            "|"
+            (string-append
+              (int->string (struct-get span end-line))
+              (string-append
+                "|"
+                (string-append
+                  (int->string (struct-get span end-col))
+                  (string-append "|" message))))))))))
+
+(define (tc-located-error-diag [message : String]) : CompilerDiagnostic
+  (let
+    [prefix-len : i64 (string-length (tc-located-error-prefix))]
+    [line-end : i64 (tc-located-error-field-end message prefix-len)]
+    [col-start : i64 (+ line-end 1)]
+    [col-end : i64 (tc-located-error-field-end message col-start)]
+    [end-line-start : i64 (+ col-end 1)]
+    [end-line-end : i64 (tc-located-error-field-end message end-line-start)]
+    [end-col-start : i64 (+ end-line-end 1)]
+    [end-col-end : i64 (tc-located-error-field-end message end-col-start)]
+    [clean-start : i64 (+ end-col-end 1)]
+    [clean-message : String
+      (substring message clean-start (- (string-length message) clean-start))]
+    (tc-canonical-diagnostic
+      (compiler-diagnostic-from-ast-span
+        ""
+        (AstSourceSpan
+          (string->int (tc-located-error-field message prefix-len line-end))
+          (string->int (tc-located-error-field message col-start col-end))
+          (string->int
+            (tc-located-error-field message end-line-start end-line-end))
+          (string->int
+            (tc-located-error-field message end-col-start end-col-end)))
+        clean-message))))
+
 (define (tc-ty-node-pool-exhausted-diagnostic) : CompilerDiagnostic
   (tc-diag-at-start (ty-node-pool-exhausted-message)))
 
@@ -652,11 +725,13 @@
         compiler-tc-decl-profile-other-count))))
 
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
-  (match expr
-    [(AstExprSpanned _ span)
-      (tc-canonical-diagnostic
-        (compiler-diagnostic-from-ast-span "" span message))]
-    [_ (tc-diag-at-start message)]))
+  (if (tc-located-error? message)
+    (tc-located-error-diag message)
+    (match expr
+      [(AstExprSpanned _ span)
+        (tc-canonical-diagnostic
+          (compiler-diagnostic-from-ast-span "" span message))]
+      [_ (tc-diag-at-start message)])))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
@@ -681,31 +756,33 @@
     [(AstNoGeneratedDeclMeta) diag]))
 
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
-  (match decl
-    [(AstDeclDef _ _ expr-box)
-      (let
-        [expr : AstExpr (ast-node-get expr-box)]
-        (tc-expr-diag expr message))]
-    [(AstDeclDefFn _ _ _ body-box _)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (tc-expr-diag body message))]
-    [(AstDeclDefMacro _ _ _ body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (tc-expr-diag body message))]
-    [(AstDeclTest _ _ span)
-      (tc-canonical-diagnostic
-        (compiler-diagnostic-from-ast-span "" span message))]
-    [(AstDeclUnsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (tc-decl-diag inner message))]
-    [(AstDeclComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-generated-decl-diag meta (tc-decl-diag template message)))]
-    [_ (tc-diag-at-start message)]))
+  (if (tc-located-error? message)
+    (tc-located-error-diag message)
+    (match decl
+      [(AstDeclDef _ _ expr-box)
+        (let
+          [expr : AstExpr (ast-node-get expr-box)]
+          (tc-expr-diag expr message))]
+      [(AstDeclDefFn _ _ _ body-box _)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (tc-expr-diag body message))]
+      [(AstDeclDefMacro _ _ _ body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (tc-expr-diag body message))]
+      [(AstDeclTest _ _ span)
+        (tc-canonical-diagnostic
+          (compiler-diagnostic-from-ast-span "" span message))]
+      [(AstDeclUnsafe inner-box)
+        (let
+          [inner : AstDecl (box-get inner-box)]
+          (tc-decl-diag inner message))]
+      [(AstDeclComptimeDecl meta template-box)
+        (let
+          [template : AstDecl (box-get template-box)]
+          (tc-generated-decl-diag meta (tc-decl-diag template message)))]
+      [_ (tc-diag-at-start message)])))
 
 (define (tc-empty-env) : TcTypeEnv
   TcTypeNil)
@@ -5704,10 +5781,12 @@
   [expr : AstExpr]
   [expected : AstType]) : ResultTcType
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExprSpanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-with-expected-or-actual ctx env inner expected))]
+        (match (tc-expr-with-expected-or-actual ctx env inner expected)
+          [(OkTcType ty) (OkTcType ty)]
+          [(ErrTcType message) (tc-locate-call-arity-error inner span message)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -5913,6 +5992,63 @@
   (match (ast-expr-unspan expr)
     [(AstExprVar name) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
+
+(define (tc-call-arity-message-prefix) : String
+  "typecheck: call arity mismatch: ")
+
+(define (tc-call-arity-message? [message : String]) : bool
+  (tc-diag-string-prefix? message (tc-call-arity-message-prefix)))
+
+(define (tc-call-expr? [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprCall _ _) true]
+    [_ false]))
+
+(define (tc-locate-call-arity-error
+  [inner : AstExpr]
+  [span : AstSourceSpan]
+  [message : String]) : ResultTcType
+  (if (and
+    (tc-call-expr? inner)
+    (and (tc-call-arity-message? message) (not (tc-located-error? message))))
+    (ErrTcType (tc-located-error span message))
+    (ErrTcType message)))
+
+(define (tc-call-arity-callee-name [func : AstExpr]) : String
+  (match (tc-expr-var-name func)
+    [(TcSomeString name) name]
+    [(TcNoString)
+      (match (ast-expr-unspan func)
+        [(AstExprLambda _ _ _) "lambda"]
+        [_ "call target"])]))
+
+(define (tc-call-arity-argument-word [count : i64]) : String
+  (if (= count 1)
+    " argument"
+    " arguments"))
+
+(define (tc-call-arity-message
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]) : String
+  (let
+    [expected : i64 (tc-type-list-len params)]
+    [actual : i64 (tc-expr-list-len args)]
+    (string-append
+      (tc-call-arity-message-prefix)
+      (string-append
+        (tc-call-arity-callee-name func)
+        (string-append
+          " expected "
+          (string-append
+            (int->string expected)
+            (string-append
+              (tc-call-arity-argument-word expected)
+              (string-append
+                ", got "
+                (string-append
+                  (int->string actual)
+                  (tc-call-arity-argument-word actual))))))))))
 
 (define (tc-nullary-variant-call-expr
   [ctx : TcContext]
@@ -6483,6 +6619,7 @@
   (let
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func ctx env func)]
+    [arity-message : String (tc-call-arity-message func args params)]
     (if (tc-call-lifetime-constructor-for-func? ctx func ret)
       (tc-call-lifetime-constructor-type
         ctx
@@ -6515,13 +6652,14 @@
                 (tc-call-function-lifetimes params ret)]
               (match lifetimes
                 [(AstLifetimeNil)
-                  (match (tc-check-call-args
+                  (match (tc-check-call-args-with-message
                     ctx
                     env
                     args
                     params
                     allow-region-args
-                    constructor-target)
+                    constructor-target
+                    arity-message)
                     [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [_
@@ -6534,18 +6672,19 @@
                     lifetimes
                     allow-region-args)]))])))))
 
-(define (tc-check-call-args
+(define (tc-check-call-args-with-message
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : AstExprList]
   [params : AstTypeList]
   [allow-region-args : bool]
-  [constructor-target : AstMaybeType]) : ResultTcUnit
+  [constructor-target : AstMaybeType]
+  [arity-message : String]) : ResultTcUnit
   (match args
     [(AstExprNil)
       (match params
         [(AstTypeNil) OkTcUnit]
-        [_ (ErrTcUnit "typecheck: arity mismatch")])]
+        [_ (ErrTcUnit arity-message)])]
     [(AstExprCons arg rest-args)
       (let
         [arg : AstExpr (ast-node-get arg)]
@@ -6581,26 +6720,44 @@
                                   got
                                   "constructor result")
                                   [(OkTcUnit)
-                                    (tc-check-call-args
+                                    (tc-check-call-args-with-message
                                       ctx
                                       env
                                       rest-args
                                       rest-params
                                       allow-region-args
-                                      constructor-target)]
+                                      constructor-target
+                                      arity-message)]
                                   [(ErrTcUnit message) (ErrTcUnit message)])]
                               [(ErrTcUnit message) (ErrTcUnit message)])]
                           [(AstNoType)
-                            (tc-check-call-args
+                            (tc-check-call-args-with-message
                               ctx
                               env
                               rest-args
                               rest-params
                               allow-region-args
-                              constructor-target)]))]
+                              constructor-target
+                              arity-message)]))]
                     [(ErrTcUnit message) (ErrTcUnit message)])]
                 [(ErrTcType message) (ErrTcUnit message)]))]
-          [(AstTypeNil) (ErrTcUnit "typecheck: arity mismatch")]))]))
+          [(AstTypeNil) (ErrTcUnit arity-message)]))]))
+
+(define (tc-check-call-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [allow-region-args : bool]
+  [constructor-target : AstMaybeType]) : ResultTcUnit
+  (tc-check-call-args-with-message
+    ctx
+    env
+    args
+    params
+    allow-region-args
+    constructor-target
+    "typecheck: arity mismatch"))
 
 (define (tc-check-args
   [ctx : TcContext]
@@ -6663,13 +6820,14 @@
             [(AstTyRegion _ inner)
               (match (ty-node-get inner)
                 [(AstTyFunc params ret)
-                  (match (tc-check-call-args
+                  (match (tc-check-call-args-with-message
                     ctx
                     env
                     args
                     params
                     false
-                    (AstNoType))
+                    (AstNoType)
+                    (tc-call-arity-message func args params))
                     [(OkTcUnit)
                       (OkTcType (tc-tag-active-region env (ty-node-get ret)))]
                     [(ErrTcUnit message) (ErrTcType message)])]
@@ -13892,10 +14050,12 @@
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExprSpanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr ctx env inner))]
+        (match (tc-expr ctx env inner)
+          [(OkTcType ty) (OkTcType ty)]
+          [(ErrTcType message) (tc-locate-call-arity-error inner span message)]))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
       (if (tc-hygiene-global-name? (intern-str name))

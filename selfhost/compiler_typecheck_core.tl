@@ -2254,7 +2254,11 @@
   [projected-ty : AstType]) : AstType
   (match (tc-type-outer-region container-ty)
     [(TcSomeString region) (tc-tag-region region projected-ty)]
-    [(TcNoString) projected-ty]))
+    [(TcNoString)
+      (match (tc-type-strip-region container-ty)
+        [(AstTyRef region _) (tc-tag-region region projected-ty)]
+        [(AstTyMutRef region _) (tc-tag-region region projected-ty)]
+        [_ projected-ty])]))
 
 ;; Region-tagged aggregate flow uses the same lexical owner ordering as
 ;; references, but only considers arena owners. A value from an outer region can
@@ -5717,6 +5721,13 @@
           then-branch
           else-branch
           expected))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+        (match (tc-expr ctx env scrutinee)
+          [(OkTcType scrut-ty)
+            (tc-match-expr-with-expected ctx env scrut-ty arms expected)]
+          [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprArray exprs)
       (match (tc-type-strip-region expected)
         [(AstTyArray elem-ty len)
@@ -5733,6 +5744,20 @@
           (tc-expr-tuple-with-expected-or-actual ctx env exprs expected-elems)]
         [_ (tc-expr ctx env expr)])]
     [(AstExprBegin exprs) (tc-begin-list-with-expected ctx env exprs expected)]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (match (tc-let-bindings-for-body ctx env bindings body)
+          [(OkTcEnv next-env)
+            (match (tc-expr-with-expected-or-actual ctx next-env body expected)
+              [(OkTcType body-ty)
+                (match (tc-ensure-reference-type-does-not-escape-names
+                  body-ty
+                  (tc-let-binding-list-add-bound-names bindings TcStringNil))
+                  [(OkTcUnit) (OkTcType body-ty)]
+                  [(ErrTcUnit message) (ErrTcType message)])]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcEnv message) (ErrTcType message)]))]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstNoType) (tc-init-expr ctx env expected)]
@@ -11828,15 +11853,55 @@
           "typecheck: unknown struct field "
           (compiler-struct-field-key struct-name field)))]))
 
+(define (tc-struct-get-result-type
+  [ctx : TcContext]
+  [receiver-ty : AstType]
+  [field : String]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyStruct struct-name)
+      (match (tc-struct-field-type ctx struct-name field)
+        [(OkTcType field-ty)
+          (OkTcType (tc-project-from-region-container receiver-ty field-ty))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(AstTyStructArgs struct-name lifetimes)
+      (match (tc-struct-field-type-with-args ctx struct-name lifetimes field)
+        [(OkTcType field-ty)
+          (OkTcType (tc-project-from-region-container receiver-ty field-ty))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(AstTyRef lifetime referent-ty)
+      (match (tc-struct-get-result-type ctx (ty-node-get referent-ty) field)
+        [(OkTcType field-ty) (OkTcType (tc-tag-region lifetime field-ty))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(AstTyMutRef lifetime referent-ty)
+      (match (tc-struct-get-result-type ctx (ty-node-get referent-ty) field)
+        [(OkTcType field-ty) (OkTcType (tc-tag-region lifetime field-ty))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: struct-get requires struct")]))
+
+(define (tc-borrow-place-var-by-value [name : String] [ty : AstType]) : ResultTcBorrowPlace
+  (match (tc-type-outer-region ty)
+    [(TcSomeString region)
+      (OkTcBorrowPlace (TcBorrowPlace region (tc-borrow-referent-type ty)))]
+    [(TcNoString)
+      (OkTcBorrowPlace (TcBorrowPlace name (tc-borrow-referent-type ty)))]))
+
 (define (tc-borrow-place-var [name : String] [ty : AstType]) : ResultTcBorrowPlace
-  (if (tc-type-contains-reference? ty)
-    (ErrTcBorrowPlace
-      "typecheck: borrowing reference-typed places is not implemented (#804)")
-    (match (tc-type-outer-region ty)
-      [(TcSomeString region)
-        (OkTcBorrowPlace (TcBorrowPlace region (tc-borrow-referent-type ty)))]
-      [(TcNoString)
-        (OkTcBorrowPlace (TcBorrowPlace name (tc-borrow-referent-type ty)))])))
+  (match (tc-type-strip-region ty)
+    [(AstTyRef lifetime referent-ty)
+      (OkTcBorrowPlace
+        (TcBorrowPlace
+          lifetime
+          (tc-borrow-referent-type (ty-node-get referent-ty))))]
+    [(AstTyMutRef lifetime referent-ty)
+      (OkTcBorrowPlace
+        (TcBorrowPlace
+          lifetime
+          (tc-borrow-referent-type (ty-node-get referent-ty))))]
+    [_
+      (if (tc-type-contains-reference? ty)
+        (ErrTcBorrowPlace
+          "typecheck: borrowing places that contain references is not implemented")
+        (tc-borrow-place-var-by-value name ty))]))
 
 (define (tc-borrow-referent-type [ty : AstType]) : AstType
   (match (tc-type-without-regions ty)
@@ -12466,6 +12531,53 @@
           [(OkTcEnv arm-env) (tc-expr ctx arm-env body)]
           [(ErrTcEnv message) (ErrTcType message)]))]))
 
+(define (tc-match-arm-type-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arm : AstMatchArm]
+  [expected : AstType]) : ResultTcType
+  (match arm
+    [(AstMatchArm pattern body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+          [(OkTcEnv arm-env)
+            (match (tc-expr-with-expected-or-actual ctx arm-env body expected)
+              [(OkTcType got)
+                (match (tc-expect
+                  got
+                  expected
+                  "typecheck: match arm result type mismatch")
+                  [(OkTcUnit) (OkTcType expected)]
+                  [(ErrTcUnit message) (ErrTcType message)])]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcEnv message) (ErrTcType message)]))]))
+
+(define (tc-check-match-arm-types-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [expected : AstType]) : ResultTcType
+  (match arms
+    [(AstMatchArmNil) (ErrTcType "typecheck: match must have at least one arm")]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match (tc-match-arm-type-with-expected ctx env scrut-ty arm expected)
+          [(OkTcType _)
+            (match rest
+              [(AstMatchArmNil) (OkTcType expected)]
+              [_
+                (tc-check-match-arm-types-with-expected
+                  ctx
+                  env
+                  scrut-ty
+                  rest
+                  expected)])]
+          [(ErrTcType message) (ErrTcType message)]))]))
+
 (define (tc-match-rest-types
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12893,6 +13005,29 @@
     (match (tc-match-arm-reachability-ok ctx coverage-ty arms)
       [(OkTcUnit)
         (match (tc-check-match-arm-types ctx env scrut-ty arms)
+          [(OkTcType result-ty)
+            (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
+              [(OkTcUnit) (OkTcType result-ty)]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)])]
+      [(ErrTcUnit message) (ErrTcType message)])))
+
+(define (tc-match-expr-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [expected : AstType]) : ResultTcType
+  (let
+    [coverage-ty : AstType (tc-match-coverage-type ctx scrut-ty)]
+    (match (tc-match-arm-reachability-ok ctx coverage-ty arms)
+      [(OkTcUnit)
+        (match (tc-check-match-arm-types-with-expected
+          ctx
+          env
+          scrut-ty
+          arms
+          expected)
           [(OkTcType result-ty)
             (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
               [(OkTcUnit) (OkTcType result-ty)]
@@ -14205,24 +14340,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (tc-expr ctx env receiver)
           [(OkTcType receiver-ty)
-            (match (tc-type-strip-region receiver-ty)
-              [(AstTyStruct struct-name)
-                (match (tc-struct-field-type ctx struct-name (intern-str field))
-                  [(OkTcType field-ty)
-                    (OkTcType
-                      (tc-project-from-region-container receiver-ty field-ty))]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [(AstTyStructArgs struct-name lifetimes)
-                (match (tc-struct-field-type-with-args
-                  ctx
-                  struct-name
-                  lifetimes
-                  (intern-str field))
-                  [(OkTcType field-ty)
-                    (OkTcType
-                      (tc-project-from-region-container receiver-ty field-ty))]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [_ (ErrTcType "typecheck: struct-get requires struct")])]
+            (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprWithRegion region body)
       (let
@@ -16583,6 +16701,105 @@
             (tc-borrow-check-exprs ctx env locals borrowed1 rest)]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]))
 
+(define (tc-borrow-check-add-returned-call-arg-borrow
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [arg : AstExpr]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (match (tc-expr ctx env arg)
+    [(OkTcType arg-ty)
+      (if (tc-string-list-overlaps?
+        (tc-type-collect-reference-lifetimes (tc-resolve-type ctx arg-ty))
+        result-lifetimes)
+        (match (ast-expr-unspan arg)
+          [(AstExprBorrow mutable _ place-box)
+            (let
+              [place : AstExpr (ast-node-get place-box)]
+              (tc-borrow-check-add-place-with-mutability
+                locals
+                borrowed
+                mutable
+                place))]
+          [(AstExprAnn inner-box _)
+            (let
+              [inner : AstExpr (ast-node-get inner-box)]
+              (tc-borrow-check-add-returned-call-arg-borrow
+                ctx
+                env
+                locals
+                borrowed
+                inner
+                result-lifetimes))]
+          [(AstExprCast inner-box _)
+            (let
+              [inner : AstExpr (ast-node-get inner-box)]
+              (tc-borrow-check-add-returned-call-arg-borrow
+                ctx
+                env
+                locals
+                borrowed
+                inner
+                result-lifetimes))]
+          [_ (OkTcBorrowCheck borrowed)])
+        (OkTcBorrowCheck borrowed))]
+    [(ErrTcType _) (OkTcBorrowCheck borrowed)]))
+
+(define (tc-borrow-check-add-returned-call-borrows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : AstExprList]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (match args
+    [(AstExprNil) (OkTcBorrowCheck borrowed)]
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-borrow-check-add-returned-call-arg-borrow
+          ctx
+          env
+          locals
+          borrowed
+          arg
+          result-lifetimes)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-add-returned-call-borrows
+              ctx
+              env
+              locals
+              borrowed1
+              rest
+              result-lifetimes)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]))
+
+(define (tc-borrow-check-after-returning-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : AstExpr]
+  [args : AstExprList]) : TcBorrowCheckResult
+  (match (tc-expr ctx env call-expr)
+    [(OkTcType result-ty)
+      (let
+        [result-lifetimes : TcStringList
+          (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
+        (match result-lifetimes
+          [(TcStringNil) (OkTcBorrowCheck borrowed)]
+          [_
+            (tc-borrow-check-add-returned-call-borrows
+              ctx
+              env
+              locals
+              borrowed
+              args
+              result-lifetimes)]))]
+    [(ErrTcType _) (OkTcBorrowCheck borrowed)]))
+
 (define (tc-borrow-check-let-bindings
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -16755,7 +16972,14 @@
                             (tc-moved-clone borrowed1)
                             args
                             expanded-params)
-                            [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                            [(OkTcBorrowCheck _)
+                              (tc-borrow-check-after-returning-call
+                                ctx
+                                env
+                                locals
+                                borrowed1
+                                expr
+                                args)]
                             [(ErrTcBorrowCheck message)
                               (ErrTcBorrowCheck message)])]
                         [(ErrTcTypeList message) (ErrTcBorrowCheck message)])
@@ -16766,7 +16990,14 @@
                         (tc-moved-clone borrowed1)
                         args
                         params)
-                        [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                        [(OkTcBorrowCheck _)
+                          (tc-borrow-check-after-returning-call
+                            ctx
+                            env
+                            locals
+                            borrowed1
+                            expr
+                            args)]
                         [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
                   [(TcNoExternAbi)
                     (match (tc-borrow-check-exprs-with-types
@@ -16776,7 +17007,14 @@
                       (tc-moved-clone borrowed1)
                       args
                       params)
-                      [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                      [(OkTcBorrowCheck _)
+                        (tc-borrow-check-after-returning-call
+                          ctx
+                          env
+                          locals
+                          borrowed1
+                          expr
+                          args)]
                       [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
               [(ErrTcTypeList _)
                 (match (tc-borrow-check-exprs
@@ -16785,7 +17023,14 @@
                   locals
                   (tc-moved-clone borrowed1)
                   args)
-                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
+                  [(OkTcBorrowCheck _)
+                    (tc-borrow-check-after-returning-call
+                      ctx
+                      env
+                      locals
+                      borrowed1
+                      expr
+                      args)]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)

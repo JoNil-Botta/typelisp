@@ -1776,7 +1776,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-match-mismatch-source)
-        "typecheck: match arms must agree")
+        "typecheck: match arm result type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -3110,6 +3110,27 @@
     [(Some v) (let [same : (& items i64) v] (take same))]
     [None 0]))")
 
+(define (compiler-typecheck-borrowed-enum-match-ref-struct-array-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (take [v : (& bag i64)]) : i64 7)
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
+    [Empty (slot-missing bag)]))
+(define (score [bag : (& bag Bag)]) : i64
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (let [same : (& bag i64) v] (take same))]
+    [Empty 0]))
+(define (main [bag : Bag]) : i64
+  (+ (score (& bag))
+    (match (lookup (& bag))
+      [(SlotFound v) (take v)]
+      [SlotMissing 0])))")
+
 (define (compiler-typecheck-borrowed-enum-match-nested-source) : String
   "(defenum Inner (A i64) (B i64))
 (defenum Outer (Wrap Inner) (Empty))
@@ -3135,6 +3156,36 @@
   (match (& m)
     [(Some v) v]
     [None (panic \"none\")]))"))
+
+(define (compiler-typecheck-returned-borrowed-lookup-assign-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (slot-found v)]
+    [Empty (slot-missing bag)]))
+(define (bad [bag : Bag]) : unit
+  (match (lookup (& bag))
+    [(SlotFound value) (set! bag (Bag (make-array Slot 1)))]
+    [SlotMissing unit]))")
+
+(define (compiler-typecheck-returned-borrowed-lookup-array-set-source) : String
+  "(defenum Slot (Empty) (Occupied i64))
+(defstruct Bag (slots (Array Slot)))
+(defenum SlotLookup (:lifetimes bag) (SlotMissing) (SlotFound (& bag i64)))
+(define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
+(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
+(define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
+  (match (& (array-ref (struct-get bag slots) 0))
+    [(Occupied v) (slot-found v)]
+    [Empty (slot-missing bag)]))
+(define (bad [bag : Bag]) : unit
+  (match (lookup (& bag))
+    [(SlotFound value) (array-set! (struct-get bag slots) 0 Empty)]
+    [SlotMissing unit]))")
 
 (define (compiler-typecheck-regular-call-lifetime-subst-source) : String
   "(defstruct RefBox (:lifetimes a) (value (& a i64)))
@@ -3441,6 +3492,9 @@
     [borrowed-enum-match-array-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-borrowed-enum-match-array-source))]
+    [borrowed-enum-match-ref-struct-array-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-borrowed-enum-match-ref-struct-array-source))]
     [borrowed-enum-match-nested-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-borrowed-enum-match-nested-source))]
@@ -3452,6 +3506,14 @@
       (compiler-typecheck-error-ok?
         (compiler-typecheck-borrowed-enum-match-escape-source)
         "typecheck: returned reference lifetime must be tied to a parameter")]
+    [returned-borrowed-lookup-assign-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-returned-borrowed-lookup-assign-source)
+        "typecheck: cannot assign to borrowed place `bag`")]
+    [returned-borrowed-lookup-array-set-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-returned-borrowed-lookup-array-set-source)
+        "typecheck: cannot assign to borrowed place `bag.slots.#array.0`")]
     [regular-call-lifetime-subst-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-regular-call-lifetime-subst-source))]
@@ -3605,6 +3667,9 @@
       (if borrowed-enum-match-array-ok
         unit
         (set! ok false))
+      (if borrowed-enum-match-ref-struct-array-ok
+        unit
+        (set! ok false))
       (if borrowed-enum-match-nested-ok
         unit
         (set! ok false))
@@ -3612,6 +3677,12 @@
         unit
         (set! ok false))
       (if borrowed-enum-match-escape-error-ok
+        unit
+        (set! ok false))
+      (if returned-borrowed-lookup-assign-error-ok
+        unit
+        (set! ok false))
+      (if returned-borrowed-lookup-array-set-error-ok
         unit
         (set! ok false))
       (if regular-call-lifetime-subst-ok
@@ -4286,7 +4357,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-arm-mismatch-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4350,7 +4421,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-string-payload-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and
@@ -4477,7 +4548,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-scalar-arm-source)
-            "typecheck: match arms must agree")))
+            "typecheck: match arm result type mismatch")))
       (set!
         ok
         (and

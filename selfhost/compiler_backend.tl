@@ -8516,78 +8516,79 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  (if (compiler-backend-group-type? program-index ty)
+  (core/cond
+    (compiler-backend-group-type? program-index ty)
     ;; #2386: moving a register-group value copies BOTH words (via %rax:%rdx so
     ;; memory<->memory slot moves are legal).
     (OkCompilerBackend
       (string-append
         (compiler-backend-emit-group-load assignments src "%rax" "%rdx" vars)
         (compiler-backend-emit-group-store assignments dst "%rax" "%rdx" vars)))
-    (if (compiler-backend-value-same-home? assignments dst src)
-      (OkCompilerBackend "")
-      (if (compiler-backend-float-type? ty)
-        (match (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          src
-          ty
-          program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  "%xmm0"
-                  ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-        (match (compiler-backend-emit-store-immediate-to-var-home
-          assignments
-          dst
-          src)
-          [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-          [(CompilerBackendNoAsm)
-            (let
-              [dst-home : String
-                (compiler-backend-var-register-home assignments dst)]
-              ;; Full-width (8-byte) value into a register home: load src straight
-              ;; into that register (a plain movq / leaq), skipping the %rax store.
-              ;; emit-load-value-with-plan handles var/global/global-addr/immediate
-              ;; sources and elides the move when src already lives in dst's home.
-              (if (if (= (compiler-backend-type-size ty) 8)
-                (not (string-eq dst-home ""))
-                false)
-                (compiler-backend-emit-load-value-with-plan
+    (compiler-backend-value-same-home? assignments dst src)
+    (OkCompilerBackend "")
+    (compiler-backend-float-type? ty)
+    (match (compiler-backend-emit-load-typed-value-with-plan
+      assignments
+      src
+      ty
+      program-index)
+      [(OkCompilerBackend load)
+        (OkCompilerBackend
+          (string-append
+            load
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              "%xmm0"
+              ty)))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+    (match (compiler-backend-emit-store-immediate-to-var-home
+      assignments
+      dst
+      src)
+      [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+      [(CompilerBackendNoAsm)
+        (let
+          [dst-home : String
+            (compiler-backend-var-register-home assignments dst)]
+          ;; Full-width (8-byte) value into a register home: load src straight
+          ;; into that register (a plain movq / leaq), skipping the %rax store.
+          ;; emit-load-value-with-plan handles var/global/global-addr/immediate
+          ;; sources and elides the move when src already lives in dst's home.
+          (if (if (= (compiler-backend-type-size ty) 8)
+            (not (string-eq dst-home ""))
+            false)
+            (compiler-backend-emit-load-value-with-plan
+              assignments
+              src
+              dst-home)
+            (match (match src
+              [(IrValueGlobalAddr name)
+                (OkCompilerBackend
+                  (backend-cat5
+                    "    leaq "
+                    (compiler-backend-function-or-global-addr-symbol
+                      program-index
+                      name)
+                    "(%rip), %rax\n"
+                    ""
+                    ""))]
+              [_
+                (compiler-backend-emit-load-typed-value-with-plan
                   assignments
                   src
-                  dst-home)
-                (match (match src
-                  [(IrValueGlobalAddr name)
-                    (OkCompilerBackend
-                      (backend-cat5
-                        "    leaq "
-                        (compiler-backend-function-or-global-addr-symbol
-                          program-index
-                          name)
-                        "(%rip), %rax\n"
-                        ""
-                        ""))]
-                  [_
-                    (compiler-backend-emit-load-typed-value-with-plan
+                  ty
+                  program-index)])
+              [(OkCompilerBackend load)
+                (OkCompilerBackend
+                  (string-append
+                    load
+                    (compiler-backend-emit-store-typed-var-with-plan
                       assignments
-                      src
-                      ty
-                      program-index)])
-                  [(OkCompilerBackend load)
-                    (OkCompilerBackend
-                      (string-append
-                        load
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          "%rax"
-                          ty)))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])))))
+                      dst
+                      "%rax"
+                      ty)))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])))
 
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]

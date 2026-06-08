@@ -126,7 +126,10 @@ TYPELISP_BIN=target/stage0/typelisp scripts/measure-instruction-counts.sh --self
 The script writes `runs.tsv` and `summary.tsv` under
 `target/instruction-counts/` by default and fails if a case's `Ir` count differs
 across repeated runs. It intentionally measures full-process instruction counts;
-the benchmark loops and self-compile workload dominate startup overhead.
+the benchmark loops and self-compile workload dominate startup overhead. The
+default output root is repo-relative so the measured self-compile `-o` argument
+is stable across machines; use a repo-relative `--output` when collecting counts
+intended for baseline comparison.
 
 ### Coverage policy
 

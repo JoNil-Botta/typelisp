@@ -15,7 +15,7 @@ cd "$ROOT"
 
 RUNS=${TYPELISP_IR_RUNS:-3}
 FILTER=${TYPELISP_IR_FILTER:-}
-WORKDIR=${TYPELISP_IR_OUT:-"$ROOT/target/instruction-counts"}
+WORKDIR=${TYPELISP_IR_OUT:-target/instruction-counts}
 OPT_LEVEL=${TYPELISP_IR_OPT_LEVEL:-1}
 MEASURE_BENCHMARKS=1
 MEASURE_SELF_COMPILE=1
@@ -309,7 +309,6 @@ build_benchmark() {
     echo "[ir-count] build benchmark $name"
     if ! "$COMPILER" build "$bench_tl" -o "$bin" \
         --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root selfhost \
         >"$stdout" 2>"$stderr"; then

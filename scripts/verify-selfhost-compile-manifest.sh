@@ -45,6 +45,7 @@ fi
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 MANIFEST_INPUT="$WORKDIR/compile-manifest.normalized.txt"
+BATCH_INPUT="$WORKDIR/compile-batch.txt"
 tr -d '\r' < "$MANIFEST" > "$MANIFEST_INPUT"
 
 check_selfhost_manifest_sync() {
@@ -314,6 +315,89 @@ stage1_compact_count_text() {
     printf '%s\n' "$total"
 }
 
+prepare_compile_batch() {
+    : > "$BATCH_INPUT"
+    prep_case_id=
+    prep_case_source=
+    prep_case_mode=
+    prep_case_dir=
+    prep_requires_stage0_mode=
+
+    while IFS='|' read -r kind a b c d e; do
+        case "$kind" in
+            ""|\#*) ;;
+            decision) ;;
+            case)
+                prep_case_id=$a
+                prep_case_source=$b
+                prep_output_mode=$c
+                prep_main_policy=$d
+                prep_case_mode=$e
+                [ "$prep_output_mode" = "assembly" ] || fail "$prep_case_id has unsupported output mode: $prep_output_mode"
+                [ "$prep_case_mode" = "direct" ] || [ "$prep_case_mode" = "stage" ] || fail "$prep_case_id has unknown mode: $prep_case_mode"
+                prep_case_dir="$WORKDIR/$prep_case_id"
+                rm -rf "$prep_case_dir"
+                mkdir -p "$prep_case_dir"
+                if [ "$prep_case_mode" = "stage" ]; then
+                    cp "$prep_case_source" "$prep_case_dir/$(basename "$prep_case_source")"
+                fi
+                prep_requires_stage0_mode=
+                ;;
+            requires-stage0-symbol)
+                [ -n "$prep_case_id" ] || fail "requires-stage0-symbol appears before a case"
+                ;;
+            requires-stage0-mode)
+                [ -n "$prep_case_id" ] || fail "requires-stage0-mode appears before a case"
+                prep_requires_stage0_mode=$a
+                ;;
+            copy)
+                [ -n "$prep_case_id" ] || fail "copy appears before a case"
+                [ "$prep_case_mode" = "stage" ] || fail "$prep_case_id copy is only valid for staged cases"
+                mkdir -p "$(dirname -- "$prep_case_dir/$b")"
+                cp "$a" "$prep_case_dir/$b"
+                ;;
+            contains | not-contains | count-at-least) ;;
+            end)
+                [ -n "$prep_case_id" ] || fail "end appears before a case"
+                if [ "$EXPECTATION_MODE" = stage1 ] && [ -n "$prep_requires_stage0_mode" ]; then
+                    fail "$prep_case_id declares a stage1 blocker in fail-closed CI: $prep_requires_stage0_mode"
+                fi
+                if [ "$prep_case_mode" = "stage" ]; then
+                    prep_compile_source="$prep_case_dir/$(basename "$prep_case_source")"
+                else
+                    prep_compile_source="$ROOT/$prep_case_source"
+                fi
+                printf '%s|%s\n' "$prep_compile_source" "$prep_case_dir/$prep_case_id.s" >> "$BATCH_INPUT"
+                prep_case_id=
+                ;;
+            *)
+                fail "unknown manifest directive: $kind"
+                ;;
+        esac
+    done < "$MANIFEST_INPUT"
+
+    if [ -n "$prep_case_id" ]; then
+        fail "manifest ended before case $prep_case_id had an end directive"
+    fi
+}
+
+run_compile_batch() {
+    batch_out="$WORKDIR/compile-batch.out"
+    batch_err="$WORKDIR/compile-batch.err"
+    echo "[selfhost-compile] batch compile manifest"
+    set +e
+    "$COMPILER" compile --batch "$BATCH_INPUT" --stdlib-root "$ROOT/stdlib" > "$batch_out" 2> "$batch_err"
+    code=$?
+    set -e
+    if [ "$code" -ne 0 ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$batch_out" >&2
+        echo "stderr:" >&2
+        sed 's/^/  /' "$batch_err" >&2
+        fail "batch compile manifest exited $code in $EXPECTATION_MODE mode"
+    fi
+}
+
 main_label_count() {
     awk 'BEGIN { count = 0 } /^main:$/ { count += 1 } END { print count }' "$asm_path"
 }
@@ -328,30 +412,8 @@ ensure_compiled() {
     fi
 
     asm_path="$case_dir/$case_id.s"
-    out_path="$case_dir/$case_id.out"
-    err_path="$case_dir/$case_id.err"
-
-    if [ "$case_mode" = "stage" ]; then
-        compile_source="$case_dir/$(basename "$case_source")"
-    else
-        compile_source="$ROOT/$case_source"
-    fi
-
-    if [ "$EXPECTATION_MODE" = stage1 ] && [ -n "$case_requires_stage0_mode" ]; then
-        fail "$case_id declares a stage1 blocker in fail-closed CI: $case_requires_stage0_mode"
-    fi
-
-    echo "[selfhost-compile] $case_id ($case_source)"
-    set +e
-    "$COMPILER" compile "$compile_source" --stdlib-root "$ROOT/stdlib" -o "$asm_path" > "$out_path" 2> "$err_path"
-    code=$?
-    set -e
-    if [ "$code" -ne 0 ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$out_path" >&2
-        echo "stderr:" >&2
-        sed 's/^/  /' "$err_path" >&2
-        fail "$case_id compile exited $code in $EXPECTATION_MODE mode"
+    if [ ! -f "$asm_path" ]; then
+        fail "$case_id batch compile did not produce assembly: $asm_path"
     fi
 
     if grep -F -- "# TODO" "$asm_path" >/dev/null; then
@@ -397,6 +459,8 @@ ensure_compiled() {
 }
 
 check_selfhost_manifest_sync
+prepare_compile_batch
+run_compile_batch
 
 case_id=
 case_source=
@@ -420,11 +484,7 @@ while IFS='|' read -r kind a b c d e; do
             [ "$output_mode" = "assembly" ] || fail "$case_id has unsupported output mode: $output_mode"
             [ "$case_mode" = "direct" ] || [ "$case_mode" = "stage" ] || fail "$case_id has unknown mode: $case_mode"
             case_dir="$WORKDIR/$case_id"
-            rm -rf "$case_dir"
             mkdir -p "$case_dir"
-            if [ "$case_mode" = "stage" ]; then
-                cp "$case_source" "$case_dir/$(basename "$case_source")"
-            fi
             asm_path=
             compiled=0
             case_requires_symbol=

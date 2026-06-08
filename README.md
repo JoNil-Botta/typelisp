@@ -644,6 +644,7 @@ typelisp lsp                      # Start stdio LSP diagnostics server
 typelisp repl                     # Start minimal stdio REPL (.help, .type, .exit)
 typelisp check          file.tl    # Type check
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>, --cfg <name>
+typelisp compile --batch list.txt  # Compile input|output pairs in one compiler process
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
 typelisp build                    # Build nearest typelisp.pkg artifact; --profile dev|release, --target <target>, --backend-mode <mode>

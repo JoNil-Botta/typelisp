@@ -37,6 +37,13 @@
   [input-path : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start input-path (ty-node-pool-exhausted-message)))
 
+(define (compiler-driver-reset-file-state!) : unit
+  (begin
+    (ast-node-pool-reset!)
+    (ty-node-pool-reset!)
+    (intern-reset!)
+    (compiler-builtin-reset!)))
+
 (cfg
   compile-profile
   (define compiler-driver-profile-total-start-ms : i64

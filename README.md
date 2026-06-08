@@ -110,11 +110,20 @@ struct/enum fields, and (optionally) `let` bindings.
 
 ;; Casts
 (cast 300 : u8)
+
+;; Zero/identity initialization
+(let ([n : i64 (init)]
+      [text : String (init : String)]
+      [items : (Array i64) (make-array i64 4)])
+  (+ n (array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,
 narrowing, and truncation; `f64` <-> `f32` precision changes; and integer/char
 <-> float conversions (float -> integer truncates toward zero).
+`(init : T)` constructs a valid initialized value for supported `T`;
+contextual `(init)` works where an expected type is known. `make-array`
+initializes every live element under the same ZII rules.
 
 ### Types
 

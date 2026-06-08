@@ -210,6 +210,9 @@ narrower or unsigned integer is required. Floating-point literals are always
 - Runtime-sized element buffer allocated with `tl_alloc`.
 - `make-array` rejects negative lengths and traps if `length * sizeof(type)`
   would overflow an `i64` byte count before calling `tl_alloc`.
+- `make-array` initializes every live element according to the ZII `init`
+  rules in section 5.12.1. The language rule is source-level initialization,
+  not "whatever bits the allocator happened to return".
 - A dynamic-array value is a pointer to inline fat storage
   `(data_ptr : u64, length : i64)` - 16 bytes total.
 - The stored `length` field is always non-negative.
@@ -2673,6 +2676,70 @@ See §3.8. Casts cover the full scalar numeric matrix: integer/`char`
 widening, narrowing, and truncation; `f64` ↔ `f32` precision changes; and
 integer/`char` ↔ float conversions (float → integer truncates toward zero).
 
+### 5.12.1 `(init : T)` and contextual `(init)` - zero/identity initialization
+
+TypeLisp follows Zero Is Initialization (ZII): `init` constructs a valid
+initialized source value for its type. It does not expose arbitrary zero-bit
+states. For example, `String` initializes to a valid empty string handle, an
+enum initializes through a real variant constructor, and a default-layout struct
+initializes by recursively initializing its fields.
+
+There are two source forms:
+
+- `(init : T)` is the explicit form. It carries the target type in the source.
+- `(init)` is contextual. It is accepted only where an expected type is known,
+  such as an annotated `define`, annotated `let`, declared function return,
+  function argument, struct/enum constructor field, array literal element,
+  `array-set!`, or `array-push!` position. Ambiguous `(init)` is rejected with
+  a diagnostic asking for `(init : T)` or an annotation.
+
+`init` remains compatible with ordinary functions named `init`: `(init)` and
+`(init : T)` are parser-owned special forms, while `(init arg...)` is parsed as
+an ordinary call unless the first argument is `:`.
+
+ZII eligibility:
+
+| Type shape | `init` value |
+|------------|--------------|
+| Signed/unsigned integers | numeric zero of that width |
+| `f64`, `f32` | `0.0` |
+| `bool` | `false` |
+| `char` | NUL byte (`#\nul'`) |
+| `unit` | `unit` |
+| `(Ptr T)`, `(MutPtr T)` | typed null raw pointer |
+| `String` | valid empty string |
+| `(Array T)` | valid empty dynamic array; `make-array` uses the same element rules for live elements |
+| `(Tuple T0 T1 ...)` | tuple of recursively initialized elements |
+| `(Array T N)` | fixed array of `N` recursively initialized elements; `N` must be non-negative |
+| Default-layout `defstruct` without cleanup | constructor with every field recursively initialized |
+| `defenum` without cleanup | first declared variant, with payload fields recursively initialized |
+| `(Box T)` | `box` containing recursively initialized `T` |
+
+Unsupported or ambiguous cases are rejected rather than producing invalid
+values. Current rejected cases include function/closure values, references,
+`never`, `Expr`/`ExprList`, `(:repr c)` structs, cleanup-owning structs/enums,
+empty enums, negative fixed-array lengths, unsupported dynamic-array element
+types, and recursive aggregate layouts that fail finite-layout analysis.
+
+Cleanup-owning aggregates are intentionally not initialized by `init` yet:
+constructing one would also commit to cleanup execution and failure behavior.
+They require explicit constructors until a cleanup-aware default policy is
+specified.
+
+```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
+(defstruct Point (x i64) (y i64))
+(defenum MaybeI64 (None) (Some i64))
+
+(define zero : i64 (init))
+
+(define (main) : i64
+  (let
+    [p : Point (init)]                 ; (Point 0 0)
+    [m : MaybeI64 (init : MaybeI64)]   ; first variant, None
+    [xs : (Array i64) (make-array i64 4)]
+    (+ zero (+ (struct-get p x) (array-ref xs 0)))))
+```
+
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
 
 - Enum scrutinees support variant patterns such as `Red` and `(Some value)`.
@@ -3632,7 +3699,7 @@ stdlib extern wrappers.
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
-| `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer; invalid lengths trap |
+| `make-array` | `type i64 → (Array type)` | Allocate a dynamic array and initialize every live element under ZII; invalid lengths trap |
 | `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element, including through an immutable or mutable reference receiver (bounds checked) |
 | `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element through an owned array or mutable reference receiver (bounds checked) |
 | `array-push!` | `(Array t) t → unit` | Append to a dynamic array through an owned array or mutable reference receiver |
@@ -3652,6 +3719,11 @@ stdlib extern wrappers.
 - `make-array` checks the runtime length before allocation. Negative lengths and
   `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap
   used by bounds checks.
+- For positive lengths, `make-array` initializes each element according to the
+  `init` eligibility rules in section 5.12.1. Scalar zero-like elements may use
+  a bulk zero helper, and share-safe 8-byte defaults may use a fill helper, but
+  those helpers are implementation details; safe code observes initialized
+  source values.
 - `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice`
   perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime
   trap (writes to stderr and exits with code 134). The slice range is checked

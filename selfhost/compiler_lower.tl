@@ -21774,7 +21774,11 @@
       (if (and
         (and
           (lower-tail-call-var-unshadowed? env name)
-          (not (lower-mode-inline-aggregates? (lower-state-mode state))))
+          ;; #2357: only suppress TCO when THIS call actually involves inline
+          ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
+          ;; disabled tail-call optimization for every call (mode is always on),
+          ;; losing TCO entirely (deep self-recursion, smoke shape failure).
+          (not (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)))
         (lower-tail-call-direct-supported? ctx state env type-env name ret-ty))
         (match (lower-tail-call-args-for-target
           ctx

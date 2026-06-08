@@ -3308,7 +3308,7 @@
           [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprTypeLiteral ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstExprInit ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstExprInit maybe-ty) (tc-source-maybe-type-policy-ok ctx maybe-ty)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -5644,6 +5644,16 @@
           (tc-expr-tuple-with-expected-or-actual ctx env exprs expected-elems)]
         [_ (tc-expr ctx env expr)])]
     [(AstExprBegin exprs) (tc-begin-list-with-expected ctx env exprs expected)]
+    [(AstExprInit maybe-ty)
+      (match maybe-ty
+        [(AstNoType) (tc-init-expr ctx env expected)]
+        [(AstSomeType ty)
+          (match (tc-init-expr ctx env ty)
+            [(OkTcType actual)
+              (if (tc-type-compatible? expected actual)
+                (OkTcType (tc-contextual-result-type expected actual))
+                (OkTcType actual))]
+            [(ErrTcType message) (ErrTcType message)])])]
     [_
       (if (and
         (tc-type-eq (tc-type-strip-region expected) (AstTyF32))
@@ -13368,7 +13378,12 @@
           (string-append
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
-    [(AstExprInit ty) (tc-init-expr ctx env ty)]
+    [(AstExprInit maybe-ty)
+      (match maybe-ty
+        [(AstSomeType ty) (tc-init-expr ctx env ty)]
+        [(AstNoType)
+          (ErrTcType
+            "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")])]
     [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -17316,7 +17331,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (ast-expr-box-get (macro-hygiene-expr inner env macro-name depth)))]
     [(AstExprTypeLiteral ty) (ast-node-push (AstExprTypeLiteral ty))]
-    [(AstExprInit ty) (ast-expr-init ty)]
+    [(AstExprInit maybe-ty) (ast-expr-init-maybe maybe-ty)]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

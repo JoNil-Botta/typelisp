@@ -8661,7 +8661,7 @@
             state
             env
             type-env
-            (AstExprInit (ty-node-get elem))
+            (AstExprInit (AstSomeType (ty-node-get elem)))
             expr-ty)]
         [(AstTyTuple elems)
           (lower-tuple
@@ -9285,8 +9285,12 @@
       (match (lower-lookup-type-id type-cache env type-env name)
         [(OkTcType expr-ty) (OkTcType (tc-type-without-regions expr-ty))]
         [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprInit ty)
-      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExprInit maybe-ty)
+      (match maybe-ty
+        [(AstSomeType ty)
+          (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+        [(AstNoType)
+          (ErrTcType "lower: contextual init requires an expected type")])]
     [(AstExprAnn _ ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprCast _ ty)
@@ -9608,8 +9612,12 @@
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
     [(AstExprLiteral lit)
       (lower-materialize-at-expr state (lower-literal-value lit) expr-ty origin)]
-    [(AstExprInit ty)
-      (lower-init-expr ctx state env type-env ty origin expr-ty)]
+    [(AstExprInit maybe-ty)
+      (match maybe-ty
+        [(AstSomeType ty)
+          (lower-init-expr ctx state env type-env ty origin expr-ty)]
+        [(AstNoType)
+          (lower-init-expr ctx state env type-env expr-ty origin expr-ty)])]
     [(AstExprVar name)
       (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)]
     [(AstExprAnn inner-box _)
@@ -10256,6 +10264,26 @@
         origin
         expected-ty
         expected-ty)]
+    [(AstExprArray _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExprTuple _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -10270,6 +10298,19 @@
           then-branch
           else-branch
           expected-ty))]
+    [(AstExprInit maybe-ty)
+      (match maybe-ty
+        [(AstNoType)
+          (lower-init-expr
+            ctx
+            state
+            env
+            type-env
+            expected-ty
+            origin
+            expected-ty)]
+        [(AstSomeType _)
+          (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
     [(AstExprCall func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
@@ -10566,7 +10607,7 @@
       (let
         [value : AstExpr (ast-node-get value)]
         [rest-values : AstExprList (box-get rest-values)]
-        (match (lower-expr ctx state env type-env value)
+        (match (lower-expr-expected ctx state env type-env value elem-ty value)
           [(OkLowerExpr lowered)
             (match lowered
               [(LowerExpr elem-state elem-value _)
@@ -11459,16 +11500,35 @@
             (IrValueVar var-id)
             result-ty)))]))
 
+(define (lower-indirect-call-args
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [func-ty : AstType]) : ResultLowerArgs
+  (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
+    [(AstTyFunc param-types _)
+      (lower-args-as
+        ctx
+        state
+        env
+        type-env
+        args
+        (tc-resolve-type-list ctx param-types))]
+    [_ (lower-args ctx state env type-env args)]))
+
 (define (lower-indirect-call
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [func-ty : AstType]
   [func-value : CompilerIrValue]
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-args ctx state env type-env args)
+  (match (lower-indirect-call-args ctx state env type-env args func-ty)
     [(OkLowerArgs args-state values)
       (lower-indirect-call-values args-state func-value values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
@@ -12151,6 +12211,7 @@
                       func-state
                       env
                       type-env
+                      fn-ty
                       func-value
                       args
                       result-ty
@@ -12176,6 +12237,7 @@
                     state
                     env
                     type-env
+                    fn-ty
                     (IrValueVar local-id)
                     args
                     result-ty
@@ -12303,6 +12365,7 @@
                   func-state
                   env
                   type-env
+                  func-ty
                   func-value
                   args
                   result-ty
@@ -13661,11 +13724,13 @@
                               [(OkLowerExpr idx-lowered)
                                 (match idx-lowered
                                   [(LowerExpr idx-state idx-value _)
-                                    (match (lower-expr
+                                    (match (lower-expr-expected
                                       ctx
                                       idx-state
                                       env
                                       type-env
+                                      value
+                                      elem-ir-ty
                                       value)
                                       [(OkLowerExpr value-lowered)
                                         (match value-lowered
@@ -13992,7 +14057,14 @@
                   [(OkLowerExpr arr-lowered)
                     (match arr-lowered
                       [(LowerExpr arr-state arr-value _)
-                        (match (lower-expr ctx arr-state env type-env value)
+                        (match (lower-expr-expected
+                          ctx
+                          arr-state
+                          env
+                          type-env
+                          value
+                          elem-ir-ty
+                          value)
                           [(OkLowerExpr value-lowered)
                             (match value-lowered
                               [(LowerExpr value-state value-ir _)
@@ -22009,6 +22081,13 @@
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
 
+(define (compiler-lower-function-value-contextual-init-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : i64
+  (let
+    [f : (-> i64 i64) inc]
+    (f (init))))")
+
 (define (compiler-lower-noncapturing-lambda-value-source) : String
   "(define (get-fn) : (-> i64 i64)
   (lambda ([x : i64]) : i64 (+ x 1)))")
@@ -22531,20 +22610,25 @@
 (define (compiler-lower-init-source) : String
   "(defstruct Point (x i64) (flag bool))
 (defenum Maybe (None) (Some i64))
+(define (take [n : i64]) : i64 n)
 (define (main) : i64
   (let
     [n : i64 (init : i64)]
-    [flag : bool (init : bool)]
-    [ch : char (init : char)]
-    [text : String (init : String)]
-    [ptr : (Ptr i64) (init : (Ptr i64))]
-    [items : (Array i64) (init : (Array i64))]
-    [tupled : (Tuple i64 bool) (init : (Tuple i64 bool))]
-    [fixed : (Array i64 2) (init : (Array i64 2))]
-    [point : Point (init : Point)]
-    [maybe : Maybe (init : Maybe)]
-    [boxed : (Box i64) (init : (Box i64))]
-    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed)))))))")
+    [flag : bool (init)]
+    [ch : char (init)]
+    [text : String (init)]
+    [ptr : (Ptr i64) (init)]
+    [items : (Array i64) (init)]
+    [tupled : (Tuple i64 bool) (init)]
+    [fixed : (Array i64 2) (array (init) 2)]
+    [point : Point (init)]
+    [constructed : Point (Point (init) (init))]
+    [maybe : Maybe (init)]
+    [boxed : (Box i64) (init)]
+    [called : i64 (take (init))]
+    (begin
+      (array-set! fixed 0 (init))
+      (+ n (+ called (+ (struct-get point x) (+ (struct-get constructed x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed))))))))))")
 
 ;; Tuple construction + ref lowering (#1583): `(tuple true 42)` reserves
 ;; struct-shaped aggregate storage and stores each element at its field offset;
@@ -26610,6 +26694,15 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-function-value-contextual-init-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-function-value-contextual-init-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (= (lower-test-function-indirect-call-count functions "main") 1)])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-noncapturing-lambda-value-source))
@@ -28301,6 +28394,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-function-value-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-function-value-contextual-init-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-noncapturing-lambda-tests-ok?)

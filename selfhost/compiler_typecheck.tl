@@ -2113,8 +2113,40 @@
     [boxed : (Box i64) (init : (Box i64))]
     (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed)))))))")
 
+(define (compiler-typecheck-contextual-init-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(defenum Maybe (None) (Some i64))
+(define zero : i64 (init))
+(define (take [n : i64]) : i64 n)
+(define (return-init) : i64 (init))
+(define (point-x [p : Point]) : i64 (struct-get p x))
+(define (main) : i64
+  (let
+    [n : i64 (init)]
+    [items : (Array i64) (init)]
+    [fixed : (Array i64 2) (array (init) 5)]
+    [point : Point (Point (init) (init))]
+    [maybe : Maybe (Some (init))]
+    (begin
+      (array-set! fixed 0 (init))
+      (array-push! items (init))
+      (+ zero
+        (+ n
+          (+ (return-init)
+            (+ (take (init))
+              (+ (point-x (init))
+                (+ (struct-get point x)
+                  (+ (array-ref fixed 0)
+                    (match maybe [(Some v) v] [(None) 0])))))))))))")
+
 (define (compiler-typecheck-init-function-source) : String
   "(define (main) : (-> i64) (init : (-> i64)))")
+
+(define (compiler-typecheck-contextual-init-function-source) : String
+  "(define (main) : (-> i64) (init))")
+
+(define (compiler-typecheck-contextual-init-ambiguous-source) : String
+  "(define (main) : i64 (let [n (init)] n))")
 
 (define (compiler-typecheck-init-repr-c-source) : String
   "(defstruct Raw (:repr c) (x i64))
@@ -2134,20 +2166,30 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-init-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-init-function-source)
-        "typecheck: init unsupported type (->  i64)")
+      (compiler-typecheck-ok? (compiler-typecheck-contextual-init-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-init-repr-c-source)
-          "typecheck: init supports only default-layout structs")
+          (compiler-typecheck-init-function-source)
+          "typecheck: init unsupported type (->  i64)")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-init-reference-source)
-            "typecheck: init unsupported type (& n i64)")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-init-cleanup-owning-source)
-            "typecheck: init does not support cleanup-owning aggregate FileHandle"))))))
+            (compiler-typecheck-contextual-init-function-source)
+            "typecheck: init unsupported type (->  i64)")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-contextual-init-ambiguous-source)
+              "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-init-repr-c-source)
+                "typecheck: init supports only default-layout structs")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-init-reference-source)
+                  "typecheck: init unsupported type (& n i64)")
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-init-cleanup-owning-source)
+                  "typecheck: init does not support cleanup-owning aggregate FileHandle")))))))))
 
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and

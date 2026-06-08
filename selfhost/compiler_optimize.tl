@@ -11368,7 +11368,9 @@
         (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
     [table : OptGvnMap
       (opt-gvn-map-empty (opt-gvn-record-count-blocks sources blocks))]
-    (opt-gvn-rewrite-dom context table sources blocks)))
+    [gvn : CompilerIrBlockList
+      (opt-gvn-rewrite-dom context table sources blocks)]
+    (opt-load-gvn-blocks-with-context context sources gvn)))
 
 (define (opt-gvn-blocks
   [params : CompilerIrParamList]
@@ -18470,6 +18472,11 @@
 (define (opt-gvn-pointer-params) : CompilerIrParamList
   (compiler-ir-param-cons (IrParam "ptr" (AstTyI64) 1) (IrParamNil)))
 
+(define (opt-gvn-pointer-cond-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "cond" (AstTyBool) 0)
+    (compiler-ir-param-cons (IrParam "ptr" (AstTyI64) 1) (IrParamNil))))
+
 (define (opt-gvn-function
   [name : String]
   [params : CompilerIrParamList]
@@ -18589,6 +18596,127 @@
         "use"
         (compiler-ir-instr-cons
           (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (opt-gvn-load-join-safe-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+(define (opt-gvn-load-store-path-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 1) (IrValueI64 9) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+(define (opt-gvn-load-call-path-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+(define (opt-gvn-load-address-redef-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 7) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+              (IrInstrNil)))))
+      (IrBlockNil))))
+
+(define (opt-gvn-load-type-mismatch-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (IrInstrLoad 4 (IrValueVar 1) (AstTyBool))
           (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil))))
@@ -18747,14 +18875,28 @@
             (opt-gvn-scalar-params)
             (AstTyI64)
             (opt-gvn-phi-loop-blocks))))]
-    [loads : CompilerIrBlockList
-      (opt-function-blocks
-        (optimize-function
-          (opt-gvn-function
-            "gvn_loads"
-            (opt-gvn-pointer-params)
-            (AstTyI64)
-            (opt-gvn-load-barrier-blocks))))]
+    [load-safe : CompilerIrBlockList
+      (opt-gvn-blocks (opt-gvn-pointer-params) (opt-gvn-load-barrier-blocks))]
+    [load-join-safe : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-pointer-cond-params)
+        (opt-gvn-load-join-safe-blocks))]
+    [load-store-path : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-pointer-cond-params)
+        (opt-gvn-load-store-path-blocks))]
+    [load-call-path : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-pointer-cond-params)
+        (opt-gvn-load-call-path-blocks))]
+    [load-address-redef : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-pointer-params)
+        (opt-gvn-load-address-redef-blocks))]
+    [load-type-mismatch : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-pointer-params)
+        (opt-gvn-load-type-mismatch-blocks))]
     [copy : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
@@ -18792,26 +18934,46 @@
       5
       (not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) 3))
       6
-      (not (= (opt-count-load-blocks loads) 2))
+      (not (= (opt-count-load-blocks load-safe) 1))
       7
-      (not (= (opt-blocks-binop-lhs-var copy 4 (- 0 1)) 1))
+      (not (= (opt-blocks-mov-src-var load-safe 4 (- 0 1)) 3))
       8
-      (not (= (opt-count-mov-dst-blocks copy 3) 0))
+      (not (= (opt-count-load-blocks load-join-safe) 1))
       9
-      (not (= (opt-count-cast-blocks cast) 1))
+      (not (= (opt-blocks-mov-src-var load-join-safe 4 (- 0 1)) 3))
       10
-      (not (= (opt-count-mov-dst-blocks cast 4) 0))
+      (not (= (opt-count-load-blocks load-store-path) 2))
       11
-      (not (= (opt-count-gep-blocks gep) 1))
+      (not (= (opt-blocks-mov-src-var load-store-path 4 (- 0 1)) (- 0 1)))
       12
-      (not (= (opt-count-mov-dst-blocks gep 4) 0))
+      (not (= (opt-count-load-blocks load-call-path) 2))
       13
-      (not (opt-global-expr-hash-collision-guard-ok?))
+      (not (= (opt-blocks-mov-src-var load-call-path 4 (- 0 1)) (- 0 1)))
       14
-      (not (opt-gvn-hash-collision-guard-ok?))
+      (not (= (opt-count-load-blocks load-address-redef) 2))
       15
-      (not (opt-gvn-scoped-nearest-dominator-ok?))
+      (not (= (opt-blocks-mov-src-var load-address-redef 4 (- 0 1)) (- 0 1)))
       16
+      (not (= (opt-count-load-blocks load-type-mismatch) 2))
+      17
+      (not (= (opt-blocks-binop-lhs-var copy 4 (- 0 1)) 1))
+      18
+      (not (= (opt-count-mov-dst-blocks copy 3) 0))
+      19
+      (not (= (opt-count-cast-blocks cast) 1))
+      20
+      (not (= (opt-count-mov-dst-blocks cast 4) 0))
+      21
+      (not (= (opt-count-gep-blocks gep) 1))
+      22
+      (not (= (opt-count-mov-dst-blocks gep 4) 0))
+      23
+      (not (opt-global-expr-hash-collision-guard-ok?))
+      24
+      (not (opt-gvn-hash-collision-guard-ok?))
+      25
+      (not (opt-gvn-scoped-nearest-dominator-ok?))
+      26
       42)))
 
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList
@@ -20962,11 +21124,23 @@
         (OptSomeI64 (opt-load-entry-var entry))
         (opt-load-table-lookup (box-get rest) key))]))
 
+(define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
+  (match table
+    [(OptLoadNil) (OptLoadNil)]
+    [(OptLoadCons entry rest)
+      (let
+        [tail : OptLoadTable (opt-load-table-remove-key (box-get rest) key)]
+        (if (opt-load-key-eq (opt-load-entry-key entry) key)
+          tail
+          (OptLoadCons entry (box tail))))]))
+
 (define (opt-load-table-bind
   [table : OptLoadTable]
   [key : OptLoadKey]
   [var : i64]) : OptLoadTable
-  (OptLoadCons (OptLoadEntry key var) (box table)))
+  (OptLoadCons
+    (OptLoadEntry key var)
+    (box (opt-load-table-remove-key table key))))
 
 ;; Drop entries whose address expression references `var`, or whose cached load
 ;; result was `var`. The IR is not globally SSA, so any reused var id must make
@@ -21071,6 +21245,288 @@
           (compiler-ir-instr-cons
             new-instr
             (opt-load-cse-instrs next-state (box-get rest)))])]))
+
+;; --- cross-block redundant-load GVN (#2343) ---------------------------------
+(defenum OptMaybeLoadCseState
+  (OptNoLoadCseState)
+  (OptSomeLoadCseState OptLoadCseState))
+
+(defenum OptLoadGvnBlockRewrite
+  (OptLoadGvnBlockRewrite OptLoadCseState CompilerIrInstrList))
+
+(define (opt-load-cse-empty-state) : OptLoadCseState
+  (OptLoadCseState (OptAliasNil) (OptLoadNil)))
+
+(define (opt-load-table-contains-entry?
+  [table : OptLoadTable]
+  [entry : OptLoadEntry]) : bool
+  (match entry
+    [(OptLoadEntry key var)
+      (match (opt-load-table-lookup table key)
+        [(OptSomeI64 found) (= found var)]
+        [(OptNoI64) false])]))
+
+(define (opt-load-table-intersect [a : OptLoadTable] [b : OptLoadTable]) : OptLoadTable
+  (match a
+    [(OptLoadNil) (OptLoadNil)]
+    [(OptLoadCons entry rest)
+      (let
+        [tail : OptLoadTable (opt-load-table-intersect (box-get rest) b)]
+        (if (opt-load-table-contains-entry? b entry)
+          (OptLoadCons entry (box tail))
+          tail))]))
+
+(define (opt-load-cse-state-intersect
+  [a : OptLoadCseState]
+  [b : OptLoadCseState]) : OptLoadCseState
+  (match a
+    [(OptLoadCseState afacts atable)
+      (match b
+        [(OptLoadCseState bfacts btable)
+          (OptLoadCseState
+            (opt-alias-intersect afacts bfacts)
+            (opt-load-table-intersect atable btable))])]))
+
+(define (opt-load-state-array-fill-empty!
+  [states : (Array OptMaybeLoadCseState)]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! states i (OptNoLoadCseState))
+          (set! i (+ i 1))))
+      unit)))
+
+(define (opt-load-gvn-entry-from-preds
+  [index : OptCfgIndex]
+  [exit-states : (Array OptMaybeLoadCseState)]
+  [processed : (Array bool)]
+  [edge : i64]
+  [end : i64]
+  [has-state : bool]
+  [acc : OptLoadCseState]) : OptLoadCseState
+  (if (>= edge end)
+    acc
+    (let
+      [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]
+      (if (not (array-ref (struct-get index reachable) pred))
+        (opt-load-gvn-entry-from-preds
+          index
+          exit-states
+          processed
+          (+ edge 1)
+          end
+          has-state
+          acc)
+        (if (not (array-ref processed pred))
+          (opt-load-cse-empty-state)
+          (match (array-ref exit-states pred)
+            [(OptSomeLoadCseState pred-state)
+              (opt-load-gvn-entry-from-preds
+                index
+                exit-states
+                processed
+                (+ edge 1)
+                end
+                true
+                (if has-state
+                  (opt-load-cse-state-intersect acc pred-state)
+                  pred-state))]
+            [(OptNoLoadCseState) (opt-load-cse-empty-state)]))))))
+
+(define (opt-load-gvn-entry-state
+  [context : OptCfgContext]
+  [exit-states : (Array OptMaybeLoadCseState)]
+  [processed : (Array bool)]
+  [id : i64]) : OptLoadCseState
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [preds : OptCfgCsr (struct-get index preds)]
+    [entry-label : String (struct-get context entry-label)]
+    (match (opt-cfg-index-id index entry-label)
+      [(OptSomeI64 entry-id)
+        (if (= id entry-id)
+          (opt-load-cse-empty-state)
+          (opt-load-gvn-entry-from-preds
+            index
+            exit-states
+            processed
+            (array-ref (struct-get preds offsets) id)
+            (array-ref (struct-get preds offsets) (+ id 1))
+            false
+            (opt-load-cse-empty-state)))]
+      [(OptNoI64) (opt-load-cse-empty-state)])))
+
+(define (opt-load-gvn-load
+  [state : OptLoadCseState]
+  [sources : I64I64Map]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]
+  [instr : CompilerIrInstr]) : OptLoadCseResult
+  (let
+    [invalidated : OptLoadCseState
+      (opt-load-cse-state-invalidate-def state instr)]
+    [key : OptLoadKey (OptLoadKey src ty)]
+    (if (and
+      (opt-gvn-stable-var? sources dst)
+      (opt-gvn-value-stable? sources src))
+      (match invalidated
+        [(OptLoadCseState _ table)
+          (match (opt-load-table-lookup table key)
+            [(OptSomeI64 earlier)
+              (let
+                [new-instr : CompilerIrInstr
+                  (IrInstrMov dst (IrValueVar earlier) ty)]
+                [updated : OptLoadCseState
+                  (opt-load-cse-state-update-facts invalidated new-instr)]
+                (OptLoadCseResult
+                  (opt-load-cse-record-load updated key dst)
+                  new-instr))]
+            [(OptNoI64)
+              (let
+                [updated : OptLoadCseState
+                  (opt-load-cse-state-update-facts invalidated instr)]
+                (OptLoadCseResult
+                  (opt-load-cse-record-load updated key dst)
+                  instr))])])
+      (OptLoadCseResult
+        (opt-load-cse-state-update-facts invalidated instr)
+        instr))))
+
+(define (opt-load-gvn-instr
+  [state : OptLoadCseState]
+  [sources : I64I64Map]
+  [instr : CompilerIrInstr]) : OptLoadCseResult
+  (if (opt-alias-instr-clears-all? instr)
+    (OptLoadCseResult (opt-load-cse-state-clear-for-memory state instr) instr)
+    (match instr
+      [(IrInstrLoad dst src ty)
+        (opt-load-gvn-load state sources dst src ty instr)]
+      [_
+        (OptLoadCseResult
+          (opt-load-cse-state-update-facts
+            (opt-load-cse-state-invalidate-def state instr)
+            instr)
+          instr)])))
+
+(define (opt-load-gvn-instr-seq-from
+  [state : OptLoadCseState]
+  [sources : I64I64Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [out-rev : CompilerIrInstrList]) : OptLoadGvnBlockRewrite
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptLoadGvnBlockRewrite
+      state
+      (compiler-ir-instr-list-reverse-onto out-rev IrInstrNil))
+    (match (opt-load-gvn-instr
+      state
+      sources
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptLoadCseResult next-state new-instr)
+        (opt-load-gvn-instr-seq-from
+          next-state
+          sources
+          instrs
+          (+ index 1)
+          (compiler-ir-instr-cons new-instr out-rev))])))
+
+(define (opt-load-gvn-rewrite-block
+  [entry-state : OptLoadCseState]
+  [sources : I64I64Map]
+  [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
+  (match block
+    [(IrBlock _ instrs)
+      (opt-load-gvn-instr-seq-from entry-state sources instrs 0 IrInstrNil)]))
+
+(define (opt-load-gvn-process-id
+  [context : OptCfgContext]
+  [sources : I64I64Map]
+  [blocks : CompilerIrBlockList]
+  [exit-states : (Array OptMaybeLoadCseState)]
+  [processed : (Array bool)]
+  [out : (Array OptGvnBlockResult)]
+  [id : i64]) : unit
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [label : String (opt-cfg-index-label index id)]
+    [entry-state : OptLoadCseState
+      (opt-load-gvn-entry-state context exit-states processed id)]
+    (match (opt-cfg-find-block blocks label)
+      [(OptNoBlock) unit]
+      [(OptSomeBlock block)
+        (match block
+          [(IrBlock block-label _)
+            (match (opt-load-gvn-rewrite-block entry-state sources block)
+              [(OptLoadGvnBlockRewrite exit-state instrs)
+                (begin
+                  (array-set!
+                    out
+                    id
+                    (OptGvnSomeBlock (compiler-ir-block block-label instrs)))
+                  (array-set! exit-states id (OptSomeLoadCseState exit-state))
+                  (array-set! processed id true))])])])))
+
+(define (opt-load-gvn-process-rpo
+  [context : OptCfgContext]
+  [sources : I64I64Map]
+  [blocks : CompilerIrBlockList]
+  [exit-states : (Array OptMaybeLoadCseState)]
+  [processed : (Array bool)]
+  [out : (Array OptGvnBlockResult)]
+  [slot : i64]) : unit
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [reach-count : i64 (struct-get index reach-count)]
+    (if (>= slot reach-count)
+      unit
+      (let
+        [id : i64 (opt-cfg-index-rpo-id index slot)]
+        (begin
+          (opt-load-gvn-process-id
+            context
+            sources
+            blocks
+            exit-states
+            processed
+            out
+            id)
+          (opt-load-gvn-process-rpo
+            context
+            sources
+            blocks
+            exit-states
+            processed
+            out
+            (+ slot 1)))))))
+
+(define (opt-load-gvn-blocks-with-context
+  [context : OptCfgContext]
+  [sources : I64I64Map]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [exit-states : (Array OptMaybeLoadCseState)
+      (make-array OptMaybeLoadCseState count)]
+    [processed : (Array bool) (make-array bool count)]
+    [out : (Array OptGvnBlockResult) (make-array OptGvnBlockResult count)]
+    (begin
+      (opt-load-state-array-fill-empty! exit-states count)
+      (opt-cfg-fill-bool! processed count false)
+      (opt-gvn-block-results-fill-empty! out 0)
+      (opt-load-gvn-process-rpo
+        context
+        sources
+        blocks
+        exit-states
+        processed
+        out
+        0)
+      (opt-gvn-materialize-blocks (struct-get context doms) out blocks))))
 
 ;; --- noalias fact model self-test (#1510) -----------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList

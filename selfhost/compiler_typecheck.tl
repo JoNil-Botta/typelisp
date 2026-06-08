@@ -4401,7 +4401,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-flat-exhaustiveness-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for variant SCons")))
       (set!
         ok
         (and
@@ -4450,7 +4450,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-bool-exhaustive-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for false")))
       (set!
         ok
         (and
@@ -4504,14 +4504,14 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-maybe-exhaustive-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for variant NoneI64")))
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-result-exhaustive-source)
-            "typecheck: non-exhaustive match")))
+            "typecheck: match missing arm for variant ErrI64")))
       (set!
         ok
         (and

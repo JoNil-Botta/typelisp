@@ -12708,25 +12708,64 @@
               true
               (tc-match-arms-cover-variant? ctx rest enum-name variant-name))]))]))
 
-(define (tc-enum-variants-covered?
+(define (tc-match-missing-variant-message [variant-name : String]) : String
+  (string-append "typecheck: match missing arm for variant " variant-name))
+
+(define (tc-pattern-mentions-variant?
+  [ctx : TcContext]
+  [pattern : AstPattern]
+  [enum-name : String]
+  [variant-name : String]) : bool
+  (match pattern
+    [(AstPatBinding name)
+      (tc-variant-name-matches? ctx enum-name (intern-str name) variant-name)]
+    [(AstPatVariant name _)
+      (tc-variant-name-matches? ctx enum-name (intern-str name) variant-name)]
+    [_ false]))
+
+(define (tc-match-arms-mention-variant?
+  [ctx : TcContext]
+  [arms : AstMatchArmList]
+  [enum-name : String]
+  [variant-name : String]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern _)
+            (if (tc-pattern-mentions-variant?
+              ctx
+              pattern
+              enum-name
+              variant-name)
+              true
+              (tc-match-arms-mention-variant? ctx rest enum-name variant-name))]))]))
+
+(define (tc-enum-variants-exhaustive-ok
   [ctx : TcContext]
   [enum-name : String]
   [variants : AstVariantDefList]
-  [arms : AstMatchArmList]) : bool
+  [arms : AstMatchArmList]) : ResultTcUnit
   (match variants
-    [(AstVariantDefNil) true]
+    [(AstVariantDefNil) OkTcUnit]
     [(AstVariantDefCons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef name _ _)
-            (and
-              (tc-match-arms-cover-variant?
-                ctx
-                arms
-                enum-name
-                (intern-str name))
-              (tc-enum-variants-covered? ctx enum-name rest arms))]))]))
+            (let
+              [variant-name : String (intern-str name)]
+              (if (tc-match-arms-cover-variant? ctx arms enum-name variant-name)
+                (tc-enum-variants-exhaustive-ok ctx enum-name rest arms)
+                (if (tc-match-arms-mention-variant?
+                  ctx
+                  arms
+                  enum-name
+                  variant-name)
+                  (ErrTcUnit "typecheck: non-exhaustive match")
+                  (ErrTcUnit (tc-match-missing-variant-message variant-name)))))]))]))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
   (match arms
@@ -12814,28 +12853,35 @@
           [_ scrut-ty]))]
     [_ scrut-ty]))
 
-(define (tc-match-exhaustive?
+(define (tc-match-bool-exhaustive-ok [arms : AstMatchArmList]) : ResultTcUnit
+  (if (tc-match-arms-have-catchall? arms)
+    OkTcUnit
+    (if (tc-match-arms-cover-bool? arms true)
+      (if (tc-match-arms-cover-bool? arms false)
+        OkTcUnit
+        (ErrTcUnit "typecheck: match missing arm for false"))
+      (ErrTcUnit "typecheck: match missing arm for true"))))
+
+(define (tc-match-exhaustiveness-ok
   [ctx : TcContext]
   [scrut-ty : AstType]
-  [arms : AstMatchArmList]) : bool
+  [arms : AstMatchArmList]) : ResultTcUnit
   (match (tc-type-strip-region scrut-ty)
     [(AstTyEnum enum-name)
       (match (tc-context-enum-variants ctx enum-name)
         [(OkAstVariantDefList variants)
-          (tc-enum-variants-covered? ctx enum-name variants arms)]
-        [(ErrAstVariantDefList _) false])]
+          (tc-enum-variants-exhaustive-ok ctx enum-name variants arms)]
+        [(ErrAstVariantDefList _) (ErrTcUnit "typecheck: non-exhaustive match")])]
     [(AstTyEnumArgs enum-name _)
       (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
         [(OkAstVariantDefList variants)
-          (tc-enum-variants-covered? ctx enum-name variants arms)]
-        [(ErrAstVariantDefList _) false])]
-    [(AstTyBool)
-      (or
-        (tc-match-arms-have-catchall? arms)
-        (and
-          (tc-match-arms-cover-bool? arms true)
-          (tc-match-arms-cover-bool? arms false)))]
-    [_ (tc-match-arms-have-catchall? arms)]))
+          (tc-enum-variants-exhaustive-ok ctx enum-name variants arms)]
+        [(ErrAstVariantDefList _) (ErrTcUnit "typecheck: non-exhaustive match")])]
+    [(AstTyBool) (tc-match-bool-exhaustive-ok arms)]
+    [_
+      (if (tc-match-arms-have-catchall? arms)
+        OkTcUnit
+        (ErrTcUnit "typecheck: non-exhaustive match"))]))
 
 (define (tc-match-expr
   [ctx : TcContext]
@@ -12848,9 +12894,9 @@
       [(OkTcUnit)
         (match (tc-check-match-arm-types ctx env scrut-ty arms)
           [(OkTcType result-ty)
-            (if (tc-match-exhaustive? ctx coverage-ty arms)
-              (OkTcType result-ty)
-              (ErrTcType "typecheck: non-exhaustive match"))]
+            (match (tc-match-exhaustiveness-ok ctx coverage-ty arms)
+              [(OkTcUnit) (OkTcType result-ty)]
+              [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)])]
       [(ErrTcUnit message) (ErrTcType message)])))
 

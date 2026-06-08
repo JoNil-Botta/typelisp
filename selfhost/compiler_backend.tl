@@ -7,6 +7,8 @@
 
 (import "compiler_lower.tl")
 
+(import "compiler_builtin_ids.tl")
+
 (import "compiler_diagnostic.tl")
 
 (import "compiler_optimize.tl")
@@ -16429,16 +16431,19 @@ tl_string_concat5:
 (define (compiler-backend-lower-source-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerLower
-  (match (parse-ast-source-diagnostic-with-cfg
-    "<source>"
-    src
-    (compiler-backend-target-cfgs target))
-    [(OkAstProgramDiagnostic program)
-      (lower-compiler-program-with-path-mode
-        "<source>"
-        program
-        (compiler-backend-lower-mode-for-target target (BackendModeScalar)))]
-    [(ErrAstProgramDiagnostic diag) (ErrCompilerLower diag)]))
+  (begin
+    (intern-reset!)
+    (compiler-builtin-reset!)
+    (match (parse-ast-source-diagnostic-with-cfg
+      "<source>"
+      src
+      (compiler-backend-target-cfgs target))
+      [(OkAstProgramDiagnostic program)
+        (lower-compiler-program-with-path-mode
+          "<source>"
+          program
+          (compiler-backend-lower-mode-for-target target (BackendModeScalar)))]
+      [(ErrAstProgramDiagnostic diag) (ErrCompilerLower diag)])))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)

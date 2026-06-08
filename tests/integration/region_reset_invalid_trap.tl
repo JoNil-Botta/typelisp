@@ -1,4 +1,4 @@
-(extern tl_region_reset : (-> u64 unit))
+(extern (tl_region_reset [arg0 : u64]) : unit)
 
 (define (main) : i64
   (begin

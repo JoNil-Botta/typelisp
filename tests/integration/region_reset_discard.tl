@@ -1,10 +1,10 @@
 (import "stdlib/string.tl")
 
-(extern tl_alloc : (-> u64 u64))
+(extern (tl_alloc [arg0 : u64]) : u64)
 
-(extern tl_region_mark : (-> u64))
+(extern (tl_region_mark) : u64)
 
-(extern tl_region_reset : (-> u64 unit))
+(extern (tl_region_reset [arg0 : u64]) : unit)
 
 (define (main) : i64
   (let

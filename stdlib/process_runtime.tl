@@ -36,53 +36,41 @@
 ;: GetStdHandle bindings for the remaining handle operations.
 (cfg
   windows
-  (extern process-win-get-environment-strings (:symbol "GetEnvironmentStringsA") : (->
-    (Ptr u8))))
+  (extern (process-win-get-environment-strings) : (Ptr u8) (:symbol "GetEnvironmentStringsA")))
 
 (cfg
   windows
-  (extern process-win-get-temp-path (:symbol "GetTempPathA") : (->
-    i32
-    (MutPtr u8)
-    i32)))
+  (extern (process-win-get-temp-path [arg0 : i32] [arg1 : (MutPtr u8)]) : i32 (:symbol "GetTempPathA")))
 
 (cfg
   windows
-  (extern process-win-get-temp-file-name (:symbol "GetTempFileNameA") : (->
-    (Ptr u8)
-    (Ptr u8)
-    i32
-    (MutPtr u8)
-    i32)))
+  (extern (process-win-get-temp-file-name
+    [arg0 : (Ptr u8)]
+    [arg1 : (Ptr u8)]
+    [arg2 : i32]
+    [arg3 : (MutPtr u8)]) : i32 (:symbol "GetTempFileNameA")))
 
 (cfg
   windows
-  (extern process-win-create-process (:symbol "CreateProcessA") : (->
-    i64
-    i64
-    i64
-    i64
-    i32
-    i64
-    i64
-    i64
-    i64
-    i64
-    i32)))
+  (extern (process-win-create-process
+    [arg0 : i64]
+    [arg1 : i64]
+    [arg2 : i64]
+    [arg3 : i64]
+    [arg4 : i32]
+    [arg5 : i64]
+    [arg6 : i64]
+    [arg7 : i64]
+    [arg8 : i64]
+    [arg9 : i64]) : i32 (:symbol "CreateProcessA")))
 
 (cfg
   windows
-  (extern process-win-wait-single (:symbol "WaitForSingleObject") : (->
-    i64
-    i32
-    i32)))
+  (extern (process-win-wait-single [arg0 : i64] [arg1 : i32]) : i32 (:symbol "WaitForSingleObject")))
 
 (cfg
   windows
-  (extern process-win-get-exit-code (:symbol "GetExitCodeProcess") : (->
-    i64
-    (MutPtr i32)
-    i32)))
+  (extern (process-win-get-exit-code [arg0 : i64] [arg1 : (MutPtr i32)]) : i32 (:symbol "GetExitCodeProcess")))
 
 ;: Shared spawn-failure result for the captured-output path.
 (define (process-spawn-error) : ResultProcessOutput

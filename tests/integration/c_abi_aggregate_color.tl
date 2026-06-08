@@ -4,9 +4,9 @@
   (b u8)
   (a u8))
 
-(extern color-make (:symbol "tl_cabi_color_make") : (-> u8 u8 u8 u8 Color))
+(extern (color-make [arg0 : u8] [arg1 : u8] [arg2 : u8] [arg3 : u8]) : Color (:symbol "tl_cabi_color_make"))
 
-(extern color-use (:symbol "tl_cabi_color_use") : (-> Color i64))
+(extern (color-use [arg0 : Color]) : i64 (:symbol "tl_cabi_color_use"))
 
 (define (main) : i64
   (let

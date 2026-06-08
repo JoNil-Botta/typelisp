@@ -434,6 +434,23 @@
         [_ false])]
     [(ErrCompilerLoad _) false]))
 
+(define (compiler-check-pool-reset-ok?) : bool
+  (let
+    [source : String "(define (main) : i64 0)"]
+    (begin
+      (ty-node-pool-reset!)
+      (match (compiler-check-source "tests/pool_reset_a.tl" source)
+        [(OkCompilerCheck _)
+          (let
+            [first-len : i64 (ty-node-pool-len)]
+            (match (compiler-check-source "tests/pool_reset_b.tl" source)
+              [(OkCompilerCheck _)
+                (let
+                  [second-len : i64 (ty-node-pool-len)]
+                  (and (> first-len 0) (= first-len second-len)))]
+              [(ErrCompilerCheck _) false]))]
+        [(ErrCompilerCheck _) false]))))
+
 (define (compiler-check-self-test) : i64
   (begin
     (unless
@@ -483,5 +500,11 @@
       (return
         (begin
           (panic "compiler-check: seen root smoke mismatch")
+          0)))
+    (unless
+      (compiler-check-pool-reset-ok?)
+      (return
+        (begin
+          (panic "compiler-check: pool reset smoke mismatch")
           0)))
     42))

@@ -98,46 +98,36 @@
 ;: slice 1), replacing the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
 (cfg
   windows
-  (extern fs-win-create-directory (:symbol "CreateDirectoryA") : (->
-    (Ptr u8)
-    i64
-    i32)))
+  (extern (fs-win-create-directory [arg0 : (Ptr u8)] [arg1 : i64]) : i32 (:symbol "CreateDirectoryA")))
 
 (cfg
   windows
-  (extern fs-win-remove-directory (:symbol "RemoveDirectoryA") : (->
-    (Ptr u8)
-    i32)))
+  (extern (fs-win-remove-directory [arg0 : (Ptr u8)]) : i32 (:symbol "RemoveDirectoryA")))
 
 (cfg
   windows
-  (extern fs-win-delete-file (:symbol "DeleteFileA") : (-> (Ptr u8) i32)))
+  (extern (fs-win-delete-file [arg0 : (Ptr u8)]) : i32 (:symbol "DeleteFileA")))
 
-(cfg windows (extern fs-win-get-last-error (:symbol "GetLastError") : (-> i32)))
-
-(cfg
-  windows
-  (extern fs-win-get-file-attributes-ex (:symbol "GetFileAttributesExA") : (->
-    (Ptr u8)
-    i32
-    (MutPtr u8)
-    i32)))
+(cfg windows (extern (fs-win-get-last-error) : i32 (:symbol "GetLastError")))
 
 (cfg
   windows
-  (extern fs-win-find-first-file (:symbol "FindFirstFileA") : (->
-    (Ptr u8)
-    (MutPtr u8)
-    i64)))
+  (extern (fs-win-get-file-attributes-ex
+    [arg0 : (Ptr u8)]
+    [arg1 : i32]
+    [arg2 : (MutPtr u8)]) : i32 (:symbol "GetFileAttributesExA")))
 
 (cfg
   windows
-  (extern fs-win-find-next-file (:symbol "FindNextFileA") : (->
-    i64
-    (MutPtr u8)
-    i32)))
+  (extern (fs-win-find-first-file [arg0 : (Ptr u8)] [arg1 : (MutPtr u8)]) : i64 (:symbol "FindFirstFileA")))
 
-(cfg windows (extern fs-win-find-close (:symbol "FindClose") : (-> i64 i32)))
+(cfg
+  windows
+  (extern (fs-win-find-next-file [arg0 : i64] [arg1 : (MutPtr u8)]) : i32 (:symbol "FindNextFileA")))
+
+(cfg
+  windows
+  (extern (fs-win-find-close [arg0 : i64]) : i32 (:symbol "FindClose")))
 
 ;: Windows `_mkdir` replacement via CreateDirectoryA; ERROR_ALREADY_EXISTS
 ;: (183) maps to EEXIST (17) so building over an existing directory keeps the
@@ -175,24 +165,16 @@
       (cast 0 : i32))))
 
 ;: Windows `GetCurrentProcessId` binding for process ids.
-(extern fs-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (->
-  u32))
+(extern (fs-windows-get-current-process-id) : u32 (:symbol "GetCurrentProcessId"))
 
 ;: Windows `GetCurrentDirectoryA` binding for current-directory lookup.
-(extern fs-windows-get-current-directory (:symbol "GetCurrentDirectoryA") : (->
-  u32
-  (MutPtr u8)
-  u32))
+(extern (fs-windows-get-current-directory [arg0 : u32] [arg1 : (MutPtr u8)]) : u32 (:symbol "GetCurrentDirectoryA"))
 
 ;: Windows kernel32 binding for path moves (#2142 slice 1), replacing the
 ;: former `rename` CRT-ABI shim.
 (cfg
   windows
-  (extern fs-win-move-file-ex (:symbol "MoveFileExA") : (->
-    (Ptr u8)
-    (Ptr u8)
-    i32
-    i32)))
+  (extern (fs-win-move-file-ex [arg0 : (Ptr u8)] [arg1 : (Ptr u8)] [arg2 : i32]) : i32 (:symbol "MoveFileExA")))
 
 ;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING.
 (cfg

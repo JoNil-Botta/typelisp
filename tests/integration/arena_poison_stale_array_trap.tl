@@ -2,7 +2,7 @@
 
 (import "stdlib/string.tl")
 
-(extern tl_arena_poison_enable : (-> unit))
+(extern (tl_arena_poison_enable) : unit)
 
 (define (main) : i64
   (begin

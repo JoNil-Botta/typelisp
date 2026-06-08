@@ -2811,7 +2811,7 @@
   "(import \"stdlib/test.tl\")
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
-(extern print-string : (-> String unit))
+(extern (print-string [arg0 : String]) : unit)
 (define answer : i64 42)
 (define (main [argc : i64] [name : String]) : i64
   (let
@@ -2962,7 +2962,7 @@
 
 (define (compiler-symbols-variant-extern-collision-source) : String
   "(defenum A (Foo))
-(extern Foo : (-> i64 i64))")
+(extern (Foo [arg0 : i64]) : i64)")
 
 (define (compiler-symbols-variant-struct-collision-source) : String
   "(defenum A (Foo))
@@ -2978,7 +2978,7 @@
 
 (define (compiler-symbols-struct-extern-collision-source) : String
   "(defstruct Point (x i64))
-(extern Point : (-> i64 i64))")
+(extern (Point [arg0 : i64]) : i64)")
 
 (define (compiler-symbols-duplicate-value-ok?) : bool
   (match (build-compiler-symbols-from-source
@@ -3096,7 +3096,7 @@
   "(module data)
 (define answer : i64 1)
 (define (get) : i64 answer)
-(extern raw : (-> i64))
+(extern (raw) : i64)
 (defmacro (all [first : bool]) : bool first)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64) (y i64))

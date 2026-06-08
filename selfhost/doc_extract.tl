@@ -374,6 +374,13 @@
       (doc-info-after-name (DocKindFunction) stream (+ next 1))
       (doc-info-after-name (DocKindDefine) stream next))))
 
+(define (doc-info-after-extern [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+  (let
+    [next : i64 (doc-next-code-token-index stream idx)]
+    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
+      (doc-info-after-name (DocKindExtern) stream (+ next 1))
+      (doc-info-after-name (DocKindExtern) stream next))))
+
 (define (doc-info-after-defmacro [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
@@ -393,7 +400,7 @@
             [(string-eq head "define")
               (doc-info-after-define stream after-head)]
             [(string-eq head "extern")
-              (doc-info-after-name (DocKindExtern) stream after-head)]
+              (doc-info-after-extern stream after-head)]
             [(string-eq head "defenum")
               (doc-info-after-name (DocKindDefEnum) stream after-head)]
             [(string-eq head "defstruct")
@@ -527,7 +534,7 @@
 
 ;# later module
 ;: external doc
-(extern print : (-> String unit))
+(extern (print [arg0 : String]) : unit)
 ;: struct doc
 (defstruct Point (x i64) (y i64))
 ;: macro doc
@@ -611,7 +618,7 @@
                                     3
                                     "print"
                                     "external doc"
-                                    "(extern print")
+                                    "(extern (print")
                                   (return false))
                                 (unless
                                   (doc-item-ok?

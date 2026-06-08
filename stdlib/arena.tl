@@ -62,25 +62,25 @@
 ;# runtime externs so this module stays formatter-stable until extern metadata
 ;# formatting is fixed (#1827).
 ;: Runtime hook backing `arena-make`.
-(extern tl_arena_make : (-> i64))
+(extern (tl_arena_make) : i64)
 
 ;: Runtime hook backing `arena-current`.
-(extern tl_arena_current : (-> i64))
+(extern (tl_arena_current) : i64)
 
 ;: Runtime hook backing `arena-mark`.
-(extern tl_region_mark : (-> i64))
+(extern (tl_region_mark) : i64)
 
 ;: Runtime hook backing `arena-set!`.
 (unsafe
-  (extern tl_arena_set : (-> i64 unit)))
+  (extern (tl_arena_set [arg0 : i64]) : unit))
 
 ;: Runtime hook backing `arena-destroy`.
 (unsafe
-  (extern tl_arena_destroy : (-> i64 unit)))
+  (extern (tl_arena_destroy [arg0 : i64]) : unit))
 
 ;: Runtime hook backing `arena-rewind`.
 (unsafe
-  (extern tl_region_reset : (-> i64 unit)))
+  (extern (tl_region_reset [arg0 : i64]) : unit))
 
 ;: Create a fresh independent arena and return its handle without switching to it.
 ;:

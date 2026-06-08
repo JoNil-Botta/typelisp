@@ -2,7 +2,7 @@
 
 (import "stdlib/test.tl")
 
-(extern tl_alloc : (-> i64 (MutPtr u8)))
+(extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
 
 (define (ffi-test-read-u8 [ptr : (MutPtr u8)] [index : i64]) : u8
   (unsafe

@@ -1,6 +1,6 @@
 (import "std.tl")
 
-(extern print-string : (-> String unit))
+(extern (print-string [arg0 : String]) : unit)
 
 (defenum Maybe
   (Some i64)

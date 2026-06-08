@@ -2,7 +2,7 @@
 
 (import "stdlib/string.tl")
 
-(extern tl_region_mark : (-> u64))
+(extern (tl_region_mark) : u64)
 
 (define (scoped-once [n : i64]) : i64
   (with-arena

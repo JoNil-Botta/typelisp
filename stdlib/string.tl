@@ -16,10 +16,10 @@
 ;#     (string-contains (& haystack) (& needle))))
 ;# ```
 ;: Runtime bounds-check trap shared with array/string indexing.
-(extern tl_oob_abort : (-> never))
+(extern (tl_oob_abort) : never)
 
 ;: Runtime active-arena allocator used by integer rendering.
-(extern string-runtime-alloc (:symbol "tl_alloc") : (-> i64 (MutPtr u8)))
+(extern (string-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
 ;: Write one ASCII byte into an active-arena buffer.
 (define (int->string-write-byte!

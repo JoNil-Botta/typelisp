@@ -82,36 +82,36 @@
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string-append
-    "(extern print : (-> i64 unit))
-(extern print-bool : (-> bool unit))
-(extern print-float : (-> f64 unit))
-(extern print-char : (-> char unit))
-(extern print-newline : (-> unit))
-(extern print-string : (-> String unit))
-(extern print-str : (-> String unit))
-(extern print-error : (-> String unit))
-(extern panic : (-> String never))
-(extern error : (-> String never))
-(extern arg-count : (-> i64))
-(extern arg : (-> i64 String))
-(extern read-file : (-> String String))
-(extern read-file-status : (-> String i64))
-(extern write-file : (-> String String unit))
-(extern write-file-status : (-> String String i64))
-(extern append-file-status : (-> String String i64))
-(extern file-exists? : (-> String bool))
-(extern file-exists-status : (-> String i64))
-(extern file-open-status : (-> String i64 i64))
-(extern file-close-status : (-> i64 i64))
-(extern file-read-chunk-status : (-> i64 i64 i64))
-(extern file-write-status : (-> i64 String i64))
-(extern file-flush-status : (-> i64 i64))
-(extern file-read-chunk-bytes : (-> i64 String))
-(extern file-read-chunk-eof? : (-> i64 bool))
-(extern read-stdin-line : (-> String))
-(extern read-stdin-bytes : (-> i64 String))
-(extern stdin-eof? : (-> bool))
-(extern flush-stdout : (-> unit))
+    "(extern (print [arg0 : i64]) : unit)
+(extern (print-bool [arg0 : bool]) : unit)
+(extern (print-float [arg0 : f64]) : unit)
+(extern (print-char [arg0 : char]) : unit)
+(extern (print-newline) : unit)
+(extern (print-string [arg0 : String]) : unit)
+(extern (print-str [arg0 : String]) : unit)
+(extern (print-error [arg0 : String]) : unit)
+(extern (panic [arg0 : String]) : never)
+(extern (error [arg0 : String]) : never)
+(extern (arg-count) : i64)
+(extern (arg [arg0 : i64]) : String)
+(extern (read-file [arg0 : String]) : String)
+(extern (read-file-status [arg0 : String]) : i64)
+(extern (write-file [arg0 : String] [arg1 : String]) : unit)
+(extern (write-file-status [arg0 : String] [arg1 : String]) : i64)
+(extern (append-file-status [arg0 : String] [arg1 : String]) : i64)
+(extern (file-exists? [arg0 : String]) : bool)
+(extern (file-exists-status [arg0 : String]) : i64)
+(extern (file-open-status [arg0 : String] [arg1 : i64]) : i64)
+(extern (file-close-status [arg0 : i64]) : i64)
+(extern (file-read-chunk-status [arg0 : i64] [arg1 : i64]) : i64)
+(extern (file-write-status [arg0 : i64] [arg1 : String]) : i64)
+(extern (file-flush-status [arg0 : i64]) : i64)
+(extern (file-read-chunk-bytes [arg0 : i64]) : String)
+(extern (file-read-chunk-eof? [arg0 : i64]) : bool)
+(extern (read-stdin-line) : String)
+(extern (read-stdin-bytes [arg0 : i64]) : String)
+(extern (stdin-eof?) : bool)
+(extern (flush-stdout) : unit)
 "
     src))
 
@@ -134,18 +134,18 @@
   (compiler-typecheck-with-io-source
     (compiler-typecheck-with-alloc-string-helper-source
       (string-append
-        "(extern fs-mkdir-status : (-> String i64))
-(extern fs-remove-file-status : (-> String i64))
-(extern fs-remove-dir-status : (-> String i64))
-(extern fs-rename-status : (-> String String i64))
-(extern fs-read-dir-status : (-> String i64))
-(extern fs-read-dir : (-> String String))
-(extern fs-file-kind-status : (-> String i64))
-(extern fs-file-size-status : (-> String i64))
-(extern fs-file-size : (-> String i64))
-(extern fs-process-id : (-> i64))
-(extern fs-current-dir-status : (-> i64))
-(extern fs-current-dir : (-> String))
+        "(extern (fs-mkdir-status [arg0 : String]) : i64)
+(extern (fs-remove-file-status [arg0 : String]) : i64)
+(extern (fs-remove-dir-status [arg0 : String]) : i64)
+(extern (fs-rename-status [arg0 : String] [arg1 : String]) : i64)
+(extern (fs-read-dir-status [arg0 : String]) : i64)
+(extern (fs-read-dir [arg0 : String]) : String)
+(extern (fs-file-kind-status [arg0 : String]) : i64)
+(extern (fs-file-size-status [arg0 : String]) : i64)
+(extern (fs-file-size [arg0 : String]) : i64)
+(extern (fs-process-id) : i64)
+(extern (fs-current-dir-status) : i64)
+(extern (fs-current-dir) : String)
 "
         src))))
 
@@ -162,12 +162,12 @@
 
 (define (compiler-typecheck-with-arena-source [src : String]) : String
   (string-append
-    "(extern tl_arena_make : (-> i64))
-(extern tl_arena_current : (-> i64))
-(extern tl_region_mark : (-> i64))
-(unsafe (extern tl_arena_set : (-> i64 unit)))
-(unsafe (extern tl_arena_destroy : (-> i64 unit)))
-(unsafe (extern tl_region_reset : (-> i64 unit)))
+    "(extern (tl_arena_make) : i64)
+(extern (tl_arena_current) : i64)
+(extern (tl_region_mark) : i64)
+(unsafe (extern (tl_arena_set [arg0 : i64]) : unit))
+(unsafe (extern (tl_arena_destroy [arg0 : i64]) : unit))
+(unsafe (extern (tl_region_reset [arg0 : i64]) : unit))
 (define (arena-make) : i64 (tl_arena_make))
 (define (arena-current) : i64 (tl_arena_current))
 (define (arena-mark) : i64 (tl_region_mark))
@@ -178,7 +178,7 @@
     (compiler-typecheck-with-alloc-string-helper-source src)))
 
 (define (compiler-typecheck-smoke-source) : String
-  "(extern print-i64 : (-> i64 unit))
+  "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (main [flag : bool]) : i64
@@ -410,7 +410,7 @@
   (clone inc))")
 
 (define (compiler-typecheck-clone-pointer-source) : String
-  "(extern raw-make : (-> (MutPtr i64)))
+  "(extern (raw-make) : (MutPtr i64))
 (define (main) : (MutPtr i64)
   (unsafe (clone (raw-make))))")
 
@@ -831,7 +831,7 @@
 
 (define (compiler-typecheck-variant-extern-collision-source) : String
   "(defenum A (Foo))
-(extern Foo : (-> i64 i64))")
+(extern (Foo [arg0 : i64]) : i64)")
 
 (define (compiler-typecheck-variant-struct-collision-source) : String
   "(defenum A (Foo))
@@ -847,7 +847,7 @@
 
 (define (compiler-typecheck-struct-extern-collision-source) : String
   "(defstruct Point (x i64))
-(extern Point : (-> i64 i64))")
+(extern (Point [arg0 : i64]) : i64)")
 
 (define (compiler-typecheck-builtin-shadow-source) : String
   "(define (string-length [n : i64]) : i64 n)
@@ -2733,8 +2733,8 @@
       (compiler-typecheck-move-kind-region-tests-ok?))))
 
 (define (compiler-typecheck-raw-pointer-source) : String
-  "(extern raw-sink : (-> (Ptr i64) unit))
-(extern raw-make : (-> (MutPtr (Ptr u8))))
+  "(extern (raw-sink [arg0 : (Ptr i64)]) : unit)
+(extern (raw-make) : (MutPtr (Ptr u8)))
 (define (main [p : (Ptr i64)]) : unit
   (raw-sink p))")
 
@@ -2754,7 +2754,7 @@
             (ast-ty-ptr (AstTyI64))))))))
 
 (define (compiler-typecheck-raw-pointer-ops-source) : String
-  "(extern raw-make : (-> (MutPtr i64)))
+  "(extern (raw-make) : (MutPtr i64))
 (define (main [n : u64]) : u64
   (unsafe
     (let
@@ -2856,33 +2856,33 @@
 
 (define (compiler-typecheck-extern-abi-source) : String
   "(defstruct Box (value i64))
-(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\") : (-> (Ptr i64) (-> i64 i64) i64))
-(extern foreign-box (:abi c) (:symbol \"foreign_box\") : (-> Box unit))")
+(extern (foreign-callback [arg0 : (Ptr i64)] [arg1 : (-> i64 i64)]) : i64 (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\"))
+(extern (foreign-box [arg0 : Box]) : unit (:abi c) (:symbol \"foreign_box\"))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String
-  "(extern bad (:abi c) (:symbol \"bad_tuple\") : (-> (Tuple i64 i64) i64))")
+  "(extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c) (:symbol \"bad_tuple\"))")
 
 (define (compiler-typecheck-extern-abi-array-source) : String
-  "(extern bad (:abi c) (:symbol \"bad_array\") : (-> (Array i64 2) i64))")
+  "(extern (bad [arg0 : (Array i64 2)]) : i64 (:abi c) (:symbol \"bad_array\"))")
 
 (define (compiler-typecheck-extern-abi-f32-source) : String
-  "(extern bad (:abi c) (:symbol \"bad_f32\") : (-> f32 i64))")
+  "(extern (bad [arg0 : f32]) : i64 (:abi c) (:symbol \"bad_f32\"))")
 
 (define (compiler-typecheck-extern-abi-enum-param-source) : String
   "(defenum ResultI64 (OkI64 i64))
-(extern bad (:abi c) (:symbol \"bad_enum_param\") : (-> ResultI64 i64))")
+(extern (bad [arg0 : ResultI64]) : i64 (:abi c) (:symbol \"bad_enum_param\"))")
 
 (define (compiler-typecheck-extern-abi-enum-return-source) : String
   "(defenum ResultI64 (OkI64 i64))
-(extern bad (:abi c) (:symbol \"bad_enum_return\") : (-> i64 ResultI64))")
+(extern (bad [arg0 : i64]) : ResultI64 (:abi c) (:symbol \"bad_enum_return\"))")
 
 (define (compiler-typecheck-extern-abi-enum-args-param-source) : String
   "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
-(extern bad (:abi c) (:symbol \"bad_enum_args_param\") : (-> (RefOption n) i64))")
+(extern (bad [arg0 : (RefOption n)]) : i64 (:abi c) (:symbol \"bad_enum_args_param\"))")
 
 (define (compiler-typecheck-extern-abi-enum-args-return-source) : String
   "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
-(extern bad (:abi c) (:symbol \"bad_enum_args_return\") : (-> i64 (RefOption n)))")
+(extern (bad [arg0 : i64]) : (RefOption n) (:abi c) (:symbol \"bad_enum_args_return\"))")
 
 (define (compiler-typecheck-extern-head-varargs-open-source) : String
   "(extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol \"printf\"))
@@ -5219,11 +5219,11 @@
     (danger 42)))")
 
 (define (compiler-typecheck-unsafe-extern-safe-call-source) : String
-  "(unsafe (extern raw-call : (-> i64 i64)))
+  "(unsafe (extern (raw-call [arg0 : i64]) : i64))
 (define (main) : i64 (raw-call 42))")
 
 (define (compiler-typecheck-unsafe-extern-unsafe-call-source) : String
-  "(unsafe (extern raw-call : (-> i64 i64)))
+  "(unsafe (extern (raw-call [arg0 : i64]) : i64))
 (define (main) : i64 (unsafe (raw-call 42)))")
 
 (define (compiler-typecheck-unsafe-import-safe-call-source) : String
@@ -7464,8 +7464,8 @@
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-dup-extern-source) : String
-  "(extern f : (-> i64 i64))
-(extern f : (-> i64 i64))
+  "(extern (f [arg0 : i64]) : i64)
+(extern (f [arg0 : i64]) : i64)
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-cross-module-mismatch-source) : String

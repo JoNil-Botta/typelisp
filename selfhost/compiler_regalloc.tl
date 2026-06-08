@@ -2233,6 +2233,7 @@
             (match (array-ref slots index)
               [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrCallIndirectC _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
               [_ out]))
           (set! p (+ p 2))

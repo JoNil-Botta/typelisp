@@ -4927,7 +4927,7 @@
         false
         param-types)
         [(OkAstExternParts metadata ty)
-          (OkAstDecl (AstDeclExtern name metadata ty))]
+          (OkAstDecl (AstDeclExtern name (AstExternFunction) metadata ty))]
         [(ErrAstExternParts message) (ErrAstDecl message)])]
     [(ErrAstExternHeader message) (ErrAstDecl message)]))
 
@@ -4945,7 +4945,8 @@
             false
             false)
             [(OkAstExternParts metadata parsed-ty)
-              (OkAstDecl (AstDeclExtern name metadata parsed-ty))]
+              (OkAstDecl
+                (AstDeclExtern name (AstExternValue) metadata parsed-ty))]
             [(ErrAstExternParts message) (ErrAstDecl message)])]
         [_
           (parse-ast-extern-function-head
@@ -5510,7 +5511,7 @@
             [(OkAstDecl decl)
               (match decl
                 [(AstDeclDefFn _ _ _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
-                [(AstDeclExtern _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
+                [(AstDeclExtern _ _ _ _) (OkAstDecl (ast-decl-unsafe decl))]
                 [_
                   (ErrAstDecl
                     "parse: unsafe declaration accepts only function define or extern")])]
@@ -6416,7 +6417,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclExtern name _ ty) rest)
+          [(AstDeclCons (AstDeclExtern name _ _ ty) rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match rest
@@ -6475,7 +6476,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclExtern name metadata ty) rest)
+          [(AstDeclCons (AstDeclExtern name _ metadata ty) rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match rest
@@ -6520,7 +6521,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons (AstDeclExtern name metadata ty) rest)
+          [(AstDeclCons (AstDeclExtern name _ metadata ty) rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match rest
@@ -6596,7 +6597,7 @@
 
 (define (compiler-parse-extern-head-typed-varargs-decl-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclExtern name metadata ty)
+    [(AstDeclExtern name _ metadata ty)
       (and
         (string-eq name "snprintf")
         (and
@@ -6650,7 +6651,7 @@
 
 (define (compiler-parse-extern-head-open-varargs-decl-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclExtern name metadata ty)
+    [(AstDeclExtern name _ metadata ty)
       (and
         (string-eq name "printf")
         (and
@@ -6707,7 +6708,7 @@
 
 (define (compiler-parse-extern-head-fixed-decl-ok? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclExtern name metadata ty)
+    [(AstDeclExtern name _ metadata ty)
       (and
         (string-eq name "local-add")
         (and
@@ -7433,7 +7434,7 @@
                                   [second-inner : AstDecl
                                     (box-get second-inner-box)]
                                   (match second-inner
-                                    [(AstDeclExtern extern-name _ extern-ty)
+                                    [(AstDeclExtern extern-name _ _ extern-ty)
                                       (and
                                         (string-eq name "danger")
                                         (and

@@ -147,6 +147,10 @@
   (AstExternAbiCVarargsOpen i64)
   (AstExternAbiCVarargsTyped i64 AstType))
 
+(defenum AstExternKind
+  (AstExternValue)
+  (AstExternFunction))
+
 (defenum AstExternLinkInput
   (AstExternLinkLib String)
   (AstExternLinkSearch String)
@@ -508,7 +512,7 @@
   (AstDeclDef String AstMaybeType i64)
   (AstDeclDefFn String AstParamList AstType i64 AstFnExport)
   (AstDeclDefMacro String AstMacroParamList AstType i64)
-  (AstDeclExtern String AstExternMetadata AstType)
+  (AstDeclExtern String AstExternKind AstExternMetadata AstType)
   (AstDeclDefEnum String AstEnumCleanup AstVariantDefList)
   (AstDeclDefEnumLifetimes
     String
@@ -975,7 +979,7 @@
     [(AstDeclDef _ _ _) 1]
     [(AstDeclDefFn _ _ _ _ _) 2]
     [(AstDeclDefMacro _ _ _ _) 10]
-    [(AstDeclExtern _ _ _) 3]
+    [(AstDeclExtern _ _ _ _) 3]
     [(AstDeclDefEnum _ _ _) 4]
     [(AstDeclDefStruct _ _ _ _) 5]
     [(AstDeclImport _) 6]

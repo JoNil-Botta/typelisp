@@ -1463,14 +1463,16 @@ Defines a named function.
 
 ### 4.3 `extern` - external symbol
 
-Declares an external function to link against. The function-head form writes
-fixed parameters directly on the extern head and uses the return type after
-`:`.
+Declares an external symbol to link against. The function-head form writes fixed
+parameters directly on the extern head and uses the return type after `:`; it is
+a direct external function declaration. The bare-name form declares an external
+data symbol whose value is loaded when the name is used. If that bare-name type
+is a function type, the loaded value is a raw C function pointer and calling the
+name emits an indirect C ABI call through the loaded pointer.
+
 The name is a TypeLisp identifier used for source lookup; it defaults to the
 target C ABI and uses the local name as the external linker symbol unless
-metadata overrides it. The legacy bare-name type form remains accepted
-temporarily for compatibility, but in-tree direct-call extern declarations use
-the function-head form.
+metadata overrides it.
 
 ```lisp test=ignore name=extern-function-head-varargs reason="requires current selfhost parser"
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
@@ -1496,6 +1498,17 @@ Metadata appears outside the function head after the return type:
 - `(:link-search "dir")` adds a native library search directory for source
   `build`/`run`.
 - `(:link-arg "arg")` adds a raw linker argument for source `build`/`run`.
+
+For bare-name external data declarations, metadata appears before the `:`:
+
+```lisp test=ignore name=extern-value-and-function-pointer reason="requires native symbols"
+(extern foreign-counter (:symbol "foreign_counter") : i64)
+(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
+(define (main) : i64 (+ foreign-counter (foreign-add-ptr 35)))
+```
+
+`c-varargs` is valid only for direct function extern declarations, not for bare
+external data values or raw function-pointer data symbols.
 
 Extern link metadata strings must be non-empty. Link metadata may be repeated.
 Source `build`/`run` collects extern-owned link inputs from the source and its

@@ -924,7 +924,7 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (compiler-symbols-add-value-in-module
         symbols
         module
@@ -1166,7 +1166,7 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (compiler-symbols-add-local-value-in-module
         symbols
         module
@@ -1357,7 +1357,7 @@
         symbols
         (compiler-symbol-module-key alias name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
-    [(AstDeclExtern name _ _)
+    [(AstDeclExtern name _ _ _)
       (compiler-symbols-add-value-alias
         symbols
         (compiler-symbol-module-key alias name)

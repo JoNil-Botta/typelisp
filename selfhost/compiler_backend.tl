@@ -3285,11 +3285,24 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
-    (compiler-backend-emit-load-float-value-with-plan
-      assignments
-      value
-      ty
-      "%xmm0")
+    (match value
+      [(IrValueGlobal name)
+        (OkCompilerBackend
+          (backend-cat5
+            "    "
+            (compiler-backend-float-move ty)
+            (backend-cat3
+              " "
+              (compiler-backend-global-symbol-index program-index name)
+              "(%rip), ")
+            "%xmm0"
+            "\n"))]
+      [_
+        (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          value
+          ty
+          "%xmm0")])
     (match value
       [(IrValueVar id)
         (match (compiler-reg-assignment-lookup assignments id)
@@ -3309,7 +3322,10 @@
       [(IrValueGlobal name)
         (OkCompilerBackend
           (compiler-backend-emit-load-memory
-            (backend-cat3 (compiler-backend-user-symbol name) "(%rip)" "")
+            (backend-cat3
+              (compiler-backend-global-symbol-index program-index name)
+              "(%rip)"
+              "")
             ty))]
       [(IrValueGlobalAddr name)
         (OkCompilerBackend
@@ -3335,6 +3351,13 @@
   [name : String]) : String
   (if (compiler-backend-index-function-defines? program-index name)
     (compiler-backend-function-symbol-index program-index name)
+    (compiler-backend-user-symbol name)))
+
+(define (compiler-backend-global-symbol-index
+  [program-index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-index-extern-references? program-index name)
+    (compiler-backend-index-extern-link-symbol program-index name)
     (compiler-backend-user-symbol name)))
 
 (define (compiler-backend-unsigned-rel-ty? [ty : AstType]) : bool
@@ -6081,6 +6104,7 @@
   (match instr
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrCallIndirectC _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
     [_ false]))
@@ -6118,6 +6142,8 @@
     [(IrInstrCall _ _ args _) (compiler-backend-windows-stack-arg-space args)]
     [(IrInstrCallIndirect _ _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
+    [(IrInstrCallIndirectC _ _ args _)
+      (compiler-backend-windows-stack-arg-space args)]
     [(IrInstrTailCall _ args _) (compiler-backend-windows-stack-arg-space args)]
     [_ 0]))
 
@@ -7532,6 +7558,19 @@
           externs
           program-index
           instr-diag)]
+      [(IrInstrCallIndirectC dst func args ty)
+        (compiler-backend-emit-indirect-c-call
+          target
+          dst
+          func
+          args
+          ty
+          assignments
+          types
+          functions
+          externs
+          program-index
+          instr-diag)]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
@@ -8531,6 +8570,70 @@
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
+(define (compiler-backend-emit-indirect-c-call
+  [target : CompilerBackendTarget]
+  [dst : i64]
+  [func : CompilerIrValue]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-indirect-call-param-types
+        types
+        func
+        functions
+        externs
+        program-index)]
+    [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      0
+      0
+      0
+      0
+      0
+      instr-diag)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          func
+          "%rax")
+          [(OkCompilerBackend func-asm)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-emit-call-space-sub call-space)
+                (string-append
+                  args-asm
+                  (string-append
+                    func-asm
+                    (backend-cat5
+                      "    call *%rax\n"
+                      (compiler-backend-emit-call-space-add call-space)
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        (if (compiler-backend-float-type? ty)
+                          "%xmm0"
+                          "%rax")
+                        ty)
+                      ""
+                      "")))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -10864,6 +10967,10 @@
     [(IrInstrCall _ _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
     [(IrInstrCallIndirect _ func args _)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections collections func)
+        args)]
+    [(IrInstrCallIndirectC _ func args _)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
@@ -15464,6 +15571,12 @@ tl_string_concat5:
             target)
           (ObjectX64Call target)))]
     [(IrInstrCallIndirect _ callee args _)
+      (compiler-backend-object-call-args
+        (compiler-backend-object-value-ref parts function callee)
+        function
+        args
+        0)]
+    [(IrInstrCallIndirectC _ callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
         function

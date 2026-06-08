@@ -1043,7 +1043,7 @@ EOF
     LINK_SOURCE="$SELFHOST_PLANNER_DIR/with space/link file.tl"
     LINK_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link program"
     cat > "$LINK_SOURCE" <<'EOF'
-(extern ffi_add7 : (-> i64 i64))
+(extern (ffi_add7 [x : i64]) : i64)
 (define (main) : i64 (ffi_add7 35))
 EOF
     run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
@@ -1095,7 +1095,7 @@ EOF
     cat > "$CTOR_SOURCE" <<'EOF'
 (import "stdlib/string.tl")
 
-(extern ffi_ctor_value : (-> i64))
+(extern (ffi_ctor_value) : i64)
 (define (main) : i64
   (if (string-eq (int->string (ffi_ctor_value)) "42")
     (ffi_ctor_value)

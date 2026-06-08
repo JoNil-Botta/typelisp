@@ -883,6 +883,7 @@
     [(IrInstrSyscall dst _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrCallIndirectC dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -964,6 +965,7 @@
     [(IrInstrSyscall dst _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrCallIndirectC dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -1049,6 +1051,8 @@
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
     [(IrInstrCall _ _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrCallIndirect _ func args _)
+      (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
+    [(IrInstrCallIndirectC _ func args _)
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
@@ -1326,6 +1330,10 @@
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses-array items src)]
     [(IrInstrCall _ _ args _) (opt-collect-call-args-uses-array items args)]
     [(IrInstrCallIndirect _ func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrCallIndirectC _ func args _)
       (begin
         (opt-collect-value-uses-array items func)
         (opt-collect-call-args-uses-array items args))]
@@ -2356,6 +2364,8 @@
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrCallIndirect dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrCallIndirectC dst _ _ _)
+      (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrPhi dst _ _) (opt-aggregate-field-facts-invalidate-var facts dst)]
     [_ facts]))
 
@@ -3276,6 +3286,15 @@
               (opt-value-eq afunc bfunc)
               (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
+    [(IrInstrCallIndirectC ad afunc aargs aty)
+      (match b
+        [(IrInstrCallIndirectC bd bfunc bargs bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq afunc bfunc)
+              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
+        [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
@@ -3596,6 +3615,7 @@
     [(IrInstrSyscall _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCallIndirect _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCallIndirectC _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -3778,6 +3798,12 @@
         (opt-copy-resolve env func)
         (opt-copy-subst-call-args env args)
         ty)]
+    [(IrInstrCallIndirectC dst func args ty)
+      (IrInstrCallIndirectC
+        dst
+        (opt-copy-resolve env func)
+        (opt-copy-subst-call-args env args)
+        ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -3842,6 +3868,7 @@
     [(IrInstrSyscall dst _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrCallIndirectC dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
 
@@ -3970,6 +3997,7 @@
     [(IrInstrSyscall _ _) (OptBoundsNil)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
     [(IrInstrCallIndirect _ _ _ _) (OptBoundsNil)]
+    [(IrInstrCallIndirectC _ _ _ _) (OptBoundsNil)]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
@@ -5938,6 +5966,10 @@
       (opt-verify-two
         (opt-verify-value-use defs doms func block-label pos)
         (opt-verify-call-args-uses defs doms args block-label pos))]
+    [(IrInstrCallIndirectC _ func args _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms func block-label pos)
+        (opt-verify-call-args-uses defs doms args block-label pos))]
     [(IrInstrTailCall _ args _)
       (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
@@ -6316,6 +6348,7 @@
     [(IrInstrUnOp dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrCall dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrCallIndirect dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrCallIndirectC dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrPhi dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrEntryArgc dst) (opt-ssa-facts-add-def-ty facts dst (AstTyI64))]
     [(IrInstrAddrOf dst src)
@@ -6801,6 +6834,17 @@
         [(OptSsaDstResult out-dst next-env out-next)
           (OptSsaInstrResult
             (IrInstrCallIndirect
+              out-dst
+              (opt-ssa-rewrite-value env func)
+              (opt-ssa-rewrite-call-args env args)
+              ty)
+            next-env
+            out-next)])]
+    [(IrInstrCallIndirectC dst func args ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrCallIndirectC
               out-dst
               (opt-ssa-rewrite-value env func)
               (opt-ssa-rewrite-call-args env args)
@@ -7860,6 +7904,12 @@
         ty)]
     [(IrInstrCallIndirect dst func args ty)
       (IrInstrCallIndirect
+        dst
+        (opt-global-copy-resolve facts doms block-id pos func)
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
+        ty)]
+    [(IrInstrCallIndirectC dst func args ty)
+      (IrInstrCallIndirectC
         dst
         (opt-global-copy-resolve facts doms block-id pos func)
         (opt-global-copy-subst-call-args facts doms block-id pos args)
@@ -9473,6 +9523,7 @@
     [(IrInstrSyscall _ _) true]
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrCallIndirectC _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrStore _ _ _) true]
     [_ false]))
@@ -10336,6 +10387,8 @@
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrCallIndirect dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrCallIndirectC dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [_ state]))
 
 (define (opt-sccp-process-instrs
@@ -10554,6 +10607,12 @@
       (IrInstrCall dst name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrCallIndirect dst callee args ty)
       (IrInstrCallIndirect
+        dst
+        (opt-sccp-rewrite-value env callee)
+        (opt-sccp-rewrite-call-args env args)
+        ty)]
+    [(IrInstrCallIndirectC dst callee args ty)
+      (IrInstrCallIndirectC
         dst
         (opt-sccp-rewrite-value env callee)
         (opt-sccp-rewrite-call-args env args)
@@ -10851,6 +10910,7 @@
     [(IrInstrSyscall dst _) dst]
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
+    [(IrInstrCallIndirectC dst _ _ _) dst]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrStorePtr _ _ _) (- 0 1)]
     [(IrInstrBoundsCheck _ _ _) (- 0 1)]
@@ -12290,6 +12350,11 @@
         index
         (opt-inline-census-value index census func)
         args)]
+    [(IrInstrCallIndirectC _ func args _)
+      (opt-inline-census-args
+        index
+        (opt-inline-census-value index census func)
+        args)]
     [(IrInstrTailCall name args _)
       (opt-inline-census-add-ref
         index
@@ -12752,6 +12817,7 @@
     [(IrInstrUnOp dst _ _ _) (>= dst np)]
     [(IrInstrCall dst _ _ _) (>= dst np)]
     [(IrInstrCallIndirect dst _ _ _) (>= dst np)]
+    [(IrInstrCallIndirectC dst _ _ _) (>= dst np)]
     ;; IrInstrBoundsCheck carries a backend label in its String field; copying it
     ;; into a call site duplicates that label (assembler "symbol already defined"),
     ;; so callees containing one are not inlinable.
@@ -13038,6 +13104,12 @@
         (clone ty))]
     [(IrInstrCallIndirect dst callee a ty)
       (IrInstrCallIndirect
+        (opt-inline-rebase-var dst np base)
+        (opt-inline-remap-value callee sa np base)
+        (opt-inline-remap-args a sa np base)
+        (clone ty))]
+    [(IrInstrCallIndirectC dst callee a ty)
+      (IrInstrCallIndirectC
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value callee sa np base)
         (opt-inline-remap-args a sa np base)
@@ -13916,6 +13988,8 @@
     [(IrInstrCall _ name args _)
       (opt-reach-add-function index (opt-reach-call-args index state args) name)]
     [(IrInstrCallIndirect _ func args _)
+      (opt-reach-call-args index (opt-reach-value index state func) args)]
+    [(IrInstrCallIndirectC _ func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
     [(IrInstrTailCall name args _)
       (opt-reach-add-function index (opt-reach-call-args index state args) name)]
@@ -17366,6 +17440,7 @@
       (+
         (match instr
           [(IrInstrCallIndirect _ _ _ _) 1]
+          [(IrInstrCallIndirectC _ _ _ _) 1]
           [_ 0])
         (opt-count-indirect-call-instrs (box-get rest)))]))
 
@@ -20490,6 +20565,7 @@
     [(IrInstrAlloc _ _) false]
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrCallIndirectC _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
 

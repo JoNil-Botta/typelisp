@@ -466,6 +466,7 @@
 (define (tltest-windows-get-std-handle-decl) : AstDecl
   (AstDeclExtern
     "__tl_test_get_std_handle"
+    (AstExternFunction)
     (AstExternMetadata
       (AstExternAbiC)
       "GetStdHandle"
@@ -476,6 +477,7 @@
 (define (tltest-windows-write-file-decl) : AstDecl
   (AstDeclExtern
     "__tl_test_write_file"
+    (AstExternFunction)
     (AstExternMetadata (AstExternAbiC) "WriteFile" AstExternLinkInputNil true)
     (ast-ty-func
       (ast-type-cons
@@ -1099,7 +1101,7 @@
       (match export
         [(AstFnExport _) true]
         [(AstFnNoExport) (string-i64-map-contains? names name)])]
-    [(AstDeclExtern name _ _) (string-i64-map-contains? names name)]
+    [(AstDeclExtern name _ _ _) (string-i64-map-contains? names name)]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
       (let
@@ -1190,7 +1192,7 @@
   (match decl
     [(AstDeclDef name _ _) name]
     [(AstDeclDefFn name _ _ _ _) name]
-    [(AstDeclExtern name _ _) name]
+    [(AstDeclExtern name _ _ _) name]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]

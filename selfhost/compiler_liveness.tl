@@ -609,6 +609,8 @@
     [(IrInstrCall _ _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrCallIndirect _ func args _)
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
+    [(IrInstrCallIndirectC _ func args _)
+      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
@@ -646,6 +648,7 @@
     [(IrInstrSyscall dst _) (compiler-live-set1 dst)]
     [(IrInstrCall dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirect dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrCallIndirectC dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]
     [_ (compiler-live-set-empty)]))
 

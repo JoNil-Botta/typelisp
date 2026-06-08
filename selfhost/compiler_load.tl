@@ -1324,6 +1324,7 @@
       (compiler-load-package-decl-logical-name "" logical-path module name)]
     (AstDeclExtern
       name
+      (AstExternFunction)
       (AstExternMetadata
         (AstExternAbiC)
         (compiler-load-package-user-symbol logical)
@@ -2302,7 +2303,7 @@
                           [_ false])))]
                   [_ false])
                 (match template
-                  [(AstDeclExtern name _ _) (string-eq name "generated-fn")]
+                  [(AstDeclExtern name _ _ _) (string-eq name "generated-fn")]
                   [_ false])))]
           [_ false])]
       [(CompilerLoadNoDecl) false])))
@@ -4275,7 +4276,7 @@
         AstParamNil
         (AstTyI64))]
     (match decl
-      [(AstDeclExtern _ metadata _)
+      [(AstDeclExtern _ _ metadata _)
         (string-eq
           (ast-extern-metadata-symbol metadata)
           "_tl_dep_src_lib_helper")]

@@ -11219,13 +11219,15 @@
           (OptBoundsNil)
           (opt-copy-instrs
             (OptCopyNil)
-            (opt-cse-instrs
-              (OptExprNil)
-              (opt-strength-instrs
-                (OptConstNil)
-                (opt-fold-instrs
+            (opt-load-cse-instrs
+              (OptLoadCseState (OptAliasNil) (OptLoadNil))
+              (opt-cse-instrs
+                (OptExprNil)
+                (opt-strength-instrs
                   (OptConstNil)
-                  (opt-fold-instr-seq (OptConstNil) instrs)))))))]))
+                  (opt-fold-instrs
+                    (OptConstNil)
+                    (opt-fold-instr-seq (OptConstNil) instrs))))))))]))
 
 (define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -20213,10 +20215,10 @@
 
 ;; --- noalias / alias fact model (#1510) -------------------------------------
 ;;
-;; Optimizer-internal alias facts for IR temporaries. INFRASTRUCTURE ONLY: this
-;; slice models facts and conservative invalidation and proves the conservatism
-;; with self-tests, but no optimization pass produces or consumes these facts
-;; yet, so optimizer output is unchanged. Later issues derive facts from
+;; Optimizer-internal alias facts for IR temporaries. This section models facts
+;; and conservative invalidation, proves the conservatism with self-tests, and
+;; feeds the first local redundant-load CSE consumer (#2342). Later issues derive
+;; richer facts from
 ;; borrow/move analysis (#1048/#1049/#1050/#806) and consume them in load/store,
 ;; bounds-check, scalar-replacement, and loop passes.
 ;;
@@ -20438,6 +20440,159 @@
     [(IrInstrCons instr rest)
       (opt-alias-run (opt-alias-update-facts facts instr) (box-get rest))]))
 
+;; --- block-local redundant-load CSE (#2342) ---------------------------------
+(defenum OptLoadKey
+  (OptLoadKey CompilerIrValue AstType))
+
+(defenum OptLoadEntry
+  (OptLoadEntry OptLoadKey i64))
+
+(defenum OptLoadTable
+  (OptLoadNil)
+  (OptLoadCons OptLoadEntry (Box OptLoadTable)))
+
+(defenum OptLoadCseState
+  (OptLoadCseState OptAliasFacts OptLoadTable))
+
+(defenum OptLoadCseResult
+  (OptLoadCseResult OptLoadCseState CompilerIrInstr))
+
+(define (opt-load-key-eq [a : OptLoadKey] [b : OptLoadKey]) : bool
+  (match a
+    [(OptLoadKey av aty)
+      (match b
+        [(OptLoadKey bv bty) (and (opt-value-eq av bv) (opt-type-eq aty bty))])]))
+
+(define (opt-load-key-uses-var? [key : OptLoadKey] [var : i64]) : bool
+  (match key
+    [(OptLoadKey value _) (opt-value-is-var? value var)]))
+
+(define (opt-load-entry-key [entry : OptLoadEntry]) : OptLoadKey
+  (match entry
+    [(OptLoadEntry key _) key]))
+
+(define (opt-load-entry-var [entry : OptLoadEntry]) : i64
+  (match entry
+    [(OptLoadEntry _ var) var]))
+
+(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : OptMaybeI64
+  (match table
+    [(OptLoadNil) (OptNoI64)]
+    [(OptLoadCons entry rest)
+      (if (opt-load-key-eq (opt-load-entry-key entry) key)
+        (OptSomeI64 (opt-load-entry-var entry))
+        (opt-load-table-lookup (box-get rest) key))]))
+
+(define (opt-load-table-bind
+  [table : OptLoadTable]
+  [key : OptLoadKey]
+  [var : i64]) : OptLoadTable
+  (OptLoadCons (OptLoadEntry key var) (box table)))
+
+;; Drop entries whose address expression references `var`, or whose cached load
+;; result was `var`. The IR is not globally SSA, so any reused var id must make
+;; old load facts disappear before the new instruction is processed.
+(define (opt-load-table-invalidate-var [table : OptLoadTable] [var : i64]) : OptLoadTable
+  (match table
+    [(OptLoadNil) (OptLoadNil)]
+    [(OptLoadCons entry rest)
+      (let
+        [rest2 : OptLoadTable
+          (opt-load-table-invalidate-var (box-get rest) var)]
+        (if (or
+          (= (opt-load-entry-var entry) var)
+          (opt-load-key-uses-var? (opt-load-entry-key entry) var))
+          rest2
+          (OptLoadCons entry (box rest2))))]))
+
+(define (opt-load-cse-state-invalidate-def
+  [state : OptLoadCseState]
+  [instr : CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState facts table)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 dst)
+          (OptLoadCseState facts (opt-load-table-invalidate-var table dst))]
+        [(OptNoI64) state])]))
+
+(define (opt-load-cse-state-update-facts
+  [state : OptLoadCseState]
+  [instr : CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState facts table)
+      (OptLoadCseState (opt-alias-update-facts facts instr) table)]))
+
+(define (opt-load-cse-state-clear-for-memory
+  [state : OptLoadCseState]
+  [instr : CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState facts _)
+      (OptLoadCseState (opt-alias-update-facts facts instr) (OptLoadNil))]))
+
+(define (opt-load-cse-record-load
+  [state : OptLoadCseState]
+  [key : OptLoadKey]
+  [dst : i64]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState facts table)
+      (if (opt-load-key-uses-var? key dst)
+        state
+        (OptLoadCseState facts (opt-load-table-bind table key dst)))]))
+
+(define (opt-load-cse-load
+  [state : OptLoadCseState]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]
+  [instr : CompilerIrInstr]) : OptLoadCseResult
+  (let
+    [invalidated : OptLoadCseState
+      (opt-load-cse-state-invalidate-def state instr)]
+    [key : OptLoadKey (OptLoadKey src ty)]
+    (match invalidated
+      [(OptLoadCseState _ table)
+        (match (opt-load-table-lookup table key)
+          [(OptSomeI64 earlier)
+            (let
+              [new-instr : CompilerIrInstr
+                (IrInstrMov dst (IrValueVar earlier) ty)]
+              [updated : OptLoadCseState
+                (opt-load-cse-state-update-facts invalidated new-instr)]
+              (OptLoadCseResult
+                (opt-load-cse-record-load updated key dst)
+                new-instr))]
+          [(OptNoI64)
+            (let
+              [updated : OptLoadCseState
+                (opt-load-cse-state-update-facts invalidated instr)]
+              (OptLoadCseResult
+                (opt-load-cse-record-load updated key dst)
+                instr))])])))
+
+(define (opt-load-cse-instr [state : OptLoadCseState] [instr : CompilerIrInstr]) : OptLoadCseResult
+  (if (opt-alias-instr-clears-all? instr)
+    (OptLoadCseResult (opt-load-cse-state-clear-for-memory state instr) instr)
+    (match instr
+      [(IrInstrLoad dst src ty) (opt-load-cse-load state dst src ty instr)]
+      [_
+        (OptLoadCseResult
+          (opt-load-cse-state-update-facts
+            (opt-load-cse-state-invalidate-def state instr)
+            instr)
+          instr)])))
+
+(define (opt-load-cse-instrs
+  [state : OptLoadCseState]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match (opt-load-cse-instr state instr)
+        [(OptLoadCseResult next-state new-instr)
+          (compiler-ir-instr-cons
+            new-instr
+            (opt-load-cse-instrs next-state (box-get rest)))])]))
+
 ;; --- noalias fact model self-test (#1510) -----------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -20560,4 +20715,168 @@
       [(opt-alias-instr-clears-all? (opt-alias-sample-binop)) 17]
       ;; explicit invalidation tombstones a prior fact
       [(not (opt-alias-contains? invalidated 0 (OptAliasInvalidated))) 18]
+      [else 42])))
+
+(define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-load-cse-instrs (OptLoadCseState (OptAliasNil) (OptLoadNil)) instrs))
+
+(define (opt-load-cse-positive-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 4 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+            (IrInstrNil)))))))
+
+(define (opt-load-cse-barrier-instrs [barrier : CompilerIrInstr]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          barrier
+          (compiler-ir-instr-cons
+            (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+            (IrInstrNil)))))))
+
+(define (opt-load-cse-address-redef-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 7) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+            (IrInstrNil)))))))
+
+(define (opt-load-cse-result-redef-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+            (IrInstrNil)))))))
+
+(define (opt-load-cse-type-mismatch-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 3 (IrValueVar 1) (AstTyBool))
+          (IrInstrNil))))))
+
+(define (opt-load-cse-different-address-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrAlloc 0 (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 0) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrGep 4 (IrValueVar 0) (IrValueI64 8) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 2 (IrValueVar 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 3 (IrValueVar 4) (AstTyI64))
+            (IrInstrNil)))))))
+
+(define (opt-load-cse-barrier-blocked? [barrier : CompilerIrInstr]) : bool
+  (let
+    [optimized : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-barrier-instrs barrier))]
+    (and
+      (= (opt-count-load-instrs optimized) 2)
+      (= (opt-count-mov-dst-instrs optimized 3) 0))))
+
+(define (compiler-optimize-load-cse-self-test) : i64
+  (let
+    [positive : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-positive-instrs))]
+    [store : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrStorePtr (IrValueVar 1) (IrValueI64 9) (AstTyI64)))]
+    [global-store : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrStore "g" (IrValueI64 9) (AstTyI64)))]
+    [vector-store : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrVectorStore
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrValueI64 9)
+          4
+          (AstTyI64)))]
+    [pred-store : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrPredicatedStore
+          (IrValueVar 1)
+          (IrValueI64 0)
+          (IrValueI64 9)
+          (IrValueBool true)
+          4
+          (AstTyI64)))]
+    [direct-call : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyI64)))]
+    [indirect-call : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrCallIndirect
+          9
+          (IrValueFunction "touch")
+          (IrCallArgsNil)
+          (AstTyI64)))]
+    [tail-call : bool
+      (opt-load-cse-barrier-blocked?
+        (IrInstrTailCall "touch" (IrCallArgsNil) (AstTyI64)))]
+    [syscall : bool
+      (opt-load-cse-barrier-blocked? (IrInstrSyscall 9 (IrCallArgsNil)))]
+    [address-redef : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-address-redef-instrs))]
+    [result-redef : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-result-redef-instrs))]
+    [type-mismatch : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-type-mismatch-instrs))]
+    [different-address : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-different-address-instrs))]
+    [pipeline : CompilerIrBlock
+      (optimize-block
+        (compiler-ir-block "entry" (opt-load-cse-positive-instrs)))]
+    [pipeline-instrs : CompilerIrInstrList
+      (match pipeline
+        [(IrBlock _ instrs) (compiler-ir-instr-seq-to-list instrs)])]
+    (cond
+      [(not (= (opt-count-load-instrs positive) 1)) 1]
+      [(not (= (opt-count-mov-dst-instrs positive 3) 1)) 2]
+      [(not store) 3]
+      [(not global-store) 4]
+      [(not vector-store) 5]
+      [(not pred-store) 6]
+      [(not direct-call) 7]
+      [(not indirect-call) 8]
+      [(not tail-call) 9]
+      [(not syscall) 10]
+      [(not (= (opt-count-load-instrs address-redef) 2)) 11]
+      [(not (= (opt-count-mov-dst-instrs address-redef 3) 0)) 12]
+      [(not (= (opt-count-load-instrs result-redef) 2)) 13]
+      [(not (= (opt-count-mov-dst-instrs result-redef 3) 0)) 14]
+      [(not (= (opt-count-load-instrs type-mismatch) 2)) 15]
+      [(not (= (opt-count-load-instrs different-address) 2)) 16]
+      [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 17]
+      [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 18]
       [else 42])))

@@ -28829,10 +28829,22 @@
 ;; of two boolean params must emit at least one branch and NO eager binop (the
 ;; old `IrBinAnd`/`IrBinOr` path would have produced one binop and no branch).
 (define (compiler-lower-and-short-circuit-source) : String
-  "(define (f [a : bool] [b : bool]) : bool (and a b))")
+  "(defmacro (and [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (and ,@(expr-list-tail args))
+       false)))
+(define (f [a : bool] [b : bool]) : bool (and a b))")
 
 (define (compiler-lower-or-short-circuit-source) : String
-  "(define (f [a : bool] [b : bool]) : bool (or a b))")
+  "(defmacro (or [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool false)
+    `(if ,(expr-list-head args)
+       true
+       (or ,@(expr-list-tail args)))))
+(define (f [a : bool] [b : bool]) : bool (or a b))")
 
 (define (compiler-lower-short-circuit-branch? [src : String]) : bool
   (match (lower-compiler-source src)

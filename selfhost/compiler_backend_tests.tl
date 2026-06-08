@@ -112,7 +112,11 @@
   [i : f64]
   [j : f64]) : i64
   (if
-    (and (and (< 8.5 i) (< i 9.5)) (and (< 9.5 j) (< j 10.5)))
+    (if (< 8.5 i)
+      (if (< i 9.5)
+        (if (< 9.5 j) (< j 10.5) false)
+        false)
+      false)
     1
     0))
 (define (mixcheck
@@ -132,7 +136,7 @@
   [f6 : f64]
   [f7 : f64]
   [f8 : f64]) : i64
-  (if (and (< 8.5 f8) (< f8 9.5)) i6 0))
+  (if (if (< 8.5 f8) (< f8 9.5) false) i6 0))
 (define (main) : i64
   (+
     (add8 1 2 3 4 5 6 7 8)
@@ -724,7 +728,7 @@
         [i : i64 0]
         [same : bool true]
         (begin
-          (while (and same (< i left-len))
+          (while (if same (< i left-len) false)
             (if (char-eq (string-ref left i) (string-ref right i))
               (set! i (+ i 1))
               (set! same false)))
@@ -740,7 +744,7 @@
     [negative : bool false]
     [value : i64 0]
     (begin
-      (if (and (> n 0) (char-eq (string-ref text 0) #-'))
+      (if (if (> n 0) (char-eq (string-ref text 0) #-') false)
         (begin
           (set! negative true)
           (set! i 1))
@@ -753,11 +757,13 @@
         (- 0 value)
         value))))
 (define (main) : i64
-  (if (and
+  (if (if
     (string-eq \"same\" (string-append \"sa\" \"me\"))
-    (and
+    (if
       (not (string=? \"same\" \"different\"))
-      (= (string->int \"-42\") -42)))
+      (= (string->int \"-42\") -42)
+      false)
+    false)
     42
     0))")
 
@@ -2244,7 +2250,7 @@
     [addr : i64 (ptr-i64 (unsafe (string-data message)))]
     [wrote : i64 (syscall 1 1 addr (string-length message))]
     [bad-read : i64 (syscall 0 -1 addr 1)]
-    (if (and (= wrote (string-length message)) (= bad-read -9))
+    (if (if (= wrote (string-length message)) (= bad-read -9) false)
       (begin
         (syscall 231 42)
         1)
@@ -4216,10 +4222,22 @@
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
 (define (compiler-backend-bool-and-source) : String
-  "(define (f [a : bool] [b : bool]) : bool (and a b))")
+  "(defmacro (and [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool true)
+    `(if ,(expr-list-head args)
+       (and ,@(expr-list-tail args))
+       false)))
+(define (f [a : bool] [b : bool]) : bool (and a b))")
 
 (define (compiler-backend-bool-or-source) : String
-  "(define (f [a : bool] [b : bool]) : bool (or a b))")
+  "(defmacro (or [args : bool ...]) : bool
+  (if (expr-list-empty? args)
+    (expr-bool false)
+    `(if ,(expr-list-head args)
+       true
+       (or ,@(expr-list-tail args)))))
+(define (f [a : bool] [b : bool]) : bool (or a b))")
 
 (define (compiler-backend-bool-eq-source) : String
   "(define (f [a : bool] [b : bool]) : bool (= a b))")

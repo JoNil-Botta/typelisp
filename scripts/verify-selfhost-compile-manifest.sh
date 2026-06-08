@@ -84,6 +84,31 @@ fail() {
     exit 1
 }
 
+run_with_heartbeat_capture() {
+    heartbeat_label=$1
+    heartbeat_stdout=$2
+    heartbeat_stderr=$3
+    shift 3
+
+    "$@" > "$heartbeat_stdout" 2> "$heartbeat_stderr" &
+    heartbeat_cmd_pid=$!
+    (
+        while kill -0 "$heartbeat_cmd_pid" 2>/dev/null; do
+            sleep "${TYPELISP_COMPILE_MANIFEST_HEARTBEAT_SECONDS:-30}"
+            if kill -0 "$heartbeat_cmd_pid" 2>/dev/null; then
+                echo "[selfhost-compile] ${heartbeat_label} still running"
+            fi
+        done
+    ) &
+    heartbeat_pid=$!
+
+    heartbeat_status=0
+    wait "$heartbeat_cmd_pid" || heartbeat_status=$?
+    kill "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+    return "$heartbeat_status"
+}
+
 compiler_batch_path() {
     path=$1
     if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
@@ -404,7 +429,11 @@ run_compile_batch() {
     batch_err="$WORKDIR/compile-batch.err"
     echo "[selfhost-compile] batch compile manifest"
     set +e
-    "$COMPILER" compile --batch "$BATCH_INPUT" --stdlib-root "$ROOT/stdlib" > "$batch_out" 2> "$batch_err"
+    run_with_heartbeat_capture \
+        "batch compile manifest" \
+        "$batch_out" \
+        "$batch_err" \
+        "$COMPILER" compile --batch "$BATCH_INPUT" --stdlib-root "$ROOT/stdlib"
     code=$?
     set -e
     if [ "$code" -ne 0 ]; then

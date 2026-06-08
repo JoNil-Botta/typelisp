@@ -1457,16 +1457,11 @@
         (string-append "typecheck: unbound name " (intern-str name-id)))]
     [(TcTypeCache ids values _ _ rest)
       (match (i64-i64-map-get ids name-id)
-        ;; `index` is the map's stored slot for `name`, always in `[0, len)` of the
-        ;; parallel `values` array, so the bounds check is dead weight on this hot
-        ;; name-resolution read.
+        ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
+        ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
+        ;; element stride, reading garbage.
         [(I64I64MapFound index)
-          (OkTcType
-            (unsafe
-              (ptr-read
-                (ptr-offset
-                  (ptr-cast (array-data values) : (Ptr AstType))
-                  index))))]
+          (OkTcType (array-ref values index))]
         [(I64I64MapMissing)
           (ErrTcType
             (string-append "typecheck: unbound name " (intern-str name-id)))])]
@@ -1485,14 +1480,12 @@
         (string-append "typecheck: unbound name " (intern-str name-id)))]
     [(TcTypeCache ids values unsafe-flags _ rest)
       (match (i64-i64-map-get ids name-id)
-        ;; `index` is map-validated into the parallel arrays; skip the bounds check.
+        ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
+        ;; value); the `unsafe-flags` i64 read below is scalar so the raw ptr path
+        ;; is still sound there.
         [(I64I64MapFound index)
           (OkTcTypeUnsafe
-            (unsafe
-              (ptr-read
-                (ptr-offset
-                  (ptr-cast (array-data values) : (Ptr AstType))
-                  index)))
+            (array-ref values index)
             (=
               (unsafe
                 (ptr-read

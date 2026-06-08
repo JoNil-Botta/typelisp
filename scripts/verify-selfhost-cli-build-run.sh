@@ -375,7 +375,7 @@ assert_active_cli_surface_command() {
             run_cli_capture "$label" "$COMPILER" build "$CLI_SURFACE_SRC" -o "$exe"
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
-            assert_contains "$label" "$WORKDIR/$label.out" "Generated:"
+            assert_contains "$label" "$WORKDIR/$label.out" "Built "
             assert_file_exists "$label" "$exe"
             ;;
         run)
@@ -452,7 +452,7 @@ assert_active_cli_surface_command() {
             run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" -o "$package_doc_out"
             assert_status "$package_label" "$status" 0
             assert_empty "$package_label" "$WORKDIR/$package_label.err"
-            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Generated:"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Wrote "
             assert_contains "$package_label" "$package_doc_out" "Package entry docs."
             if [ "$HOST_OS" = linux ]; then
                 assert_contains "$package_label" "$package_doc_out" "Package extra docs."
@@ -490,7 +490,7 @@ assert_active_cli_surface_command() {
             run_cli_capture "$label" "$COMPILER" compile "$CLI_SURFACE_SRC" -o "$asm"
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
-            assert_contains "$label" "$WORKDIR/$label.out" "Generated:"
+            assert_contains "$label" "$WORKDIR/$label.out" "Wrote "
             assert_contains "$label" "$asm" "main:"
             ;;
         clean)
@@ -624,7 +624,7 @@ status=$?
 set -e
 assert_status compile "$status" 0
 assert_empty compile "$WORKDIR/compile.err"
-assert_contains compile "$WORKDIR/compile.out" "Generated:"
+assert_contains compile "$WORKDIR/compile.out" "Wrote "
 assert_contains compile "$COMPILE_ASM" "main:"
 
 BUILD_SRC="$WORKDIR/build-main.tl"
@@ -644,7 +644,7 @@ status=$?
 set -e
 assert_status build "$status" 0
 assert_empty build "$WORKDIR/build.err"
-assert_contains build "$WORKDIR/build.out" "Generated:"
+assert_contains build "$WORKDIR/build.out" "Built "
 [ -f "$BUILD_EXE" ] || fail "build did not write executable $BUILD_EXE"
 
 set +e
@@ -684,7 +684,7 @@ status=$?
 set -e
 assert_status package-build "$status" 0
 assert_empty package-build "$WORKDIR/package-build.err"
-assert_contains package-build "$WORKDIR/package-build.out" "Generated:"
+assert_contains package-build "$WORKDIR/package-build.out" "Built "
 [ -f "$PKG_EXE" ] || fail "package build did not write executable $PKG_EXE"
 
 set +e
@@ -705,7 +705,7 @@ status=$?
 set -e
 assert_status package-build-dev "$status" 0
 assert_empty package-build-dev "$WORKDIR/package-build-dev.err"
-assert_contains package-build-dev "$WORKDIR/package-build-dev.out" "Generated:"
+assert_contains package-build-dev "$WORKDIR/package-build-dev.out" "Built "
 [ -f "$PKG_DEV_EXE" ] || fail "package dev profile build did not write executable $PKG_DEV_EXE"
 
 ROOT_PKG_OUT_DIR="$ROOT/target/typelisp/release/typelisp"
@@ -724,7 +724,7 @@ status=$?
 set -e
 assert_status root-package-build "$status" 0
 assert_empty root-package-build "$WORKDIR/root-package-build.err"
-assert_contains root-package-build "$WORKDIR/root-package-build.out" "Generated:"
+assert_contains root-package-build "$WORKDIR/root-package-build.out" "Built "
 [ -f "$ROOT_PKG_EXE" ] || fail "root package build did not write executable $ROOT_PKG_EXE"
 
 set +e
@@ -789,9 +789,9 @@ status=$?
 set -e
 assert_status package-graph-chain "$status" 0
 assert_empty package-graph-chain "$WORKDIR/package-graph-chain.err"
-assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Generated: $(generated_path "$CHAIN_LEAF_ARCHIVE")"
-assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Generated: $(generated_path "$CHAIN_MID_ARCHIVE")"
-assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Generated: $(generated_path "$CHAIN_EXE")"
+assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Built $(generated_path "$CHAIN_LEAF_ARCHIVE")"
+assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Built $(generated_path "$CHAIN_MID_ARCHIVE")"
+assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Built $(generated_path "$CHAIN_EXE")"
 
 set +e
 "$CHAIN_EXE" > "$WORKDIR/package-graph-chain-program.out" 2> "$WORKDIR/package-graph-chain-program.err"
@@ -839,8 +839,8 @@ status=$?
 set -e
 assert_status package-graph-github-prefetch "$status" 0
 assert_empty package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.err"
-assert_contains package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.out" "Generated: $(generated_path "$GITHUB_REMOTE_ARCHIVE")"
-assert_contains package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.out" "Generated: $(generated_path "$GITHUB_EXE")"
+assert_contains package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.out" "Built $(generated_path "$GITHUB_REMOTE_ARCHIVE")"
+assert_contains package-graph-github-prefetch "$WORKDIR/package-graph-github-prefetch.out" "Built $(generated_path "$GITHUB_EXE")"
 
 set +e
 "$GITHUB_EXE" > "$WORKDIR/package-graph-github-prefetch-program.out" 2> "$WORKDIR/package-graph-github-prefetch-program.err"
@@ -900,7 +900,7 @@ status=$?
 set -e
 assert_status package-graph-github-cache-first "$status" 0
 assert_empty package-graph-github-cache-first "$WORKDIR/package-graph-github-cache-first.err"
-assert_contains package-graph-github-cache-first "$WORKDIR/package-graph-github-cache-first.out" "Generated: $(generated_path "$GITHUB_CACHE_EXE")"
+assert_contains package-graph-github-cache-first "$WORKDIR/package-graph-github-cache-first.out" "Built $(generated_path "$GITHUB_CACHE_EXE")"
 GITHUB_CACHE_ENTRY_MANIFEST=$(find "$GITHUB_CACHE_ROOT/target/typelisp/cache/packages/v1/git" -name typelisp.pkg -print | head -n 1)
 [ -n "$GITHUB_CACHE_ENTRY_MANIFEST" ] || fail "package-graph-github-cache-first did not create a package cache entry"
 GITHUB_CACHE_ENTRY=${GITHUB_CACHE_ENTRY_MANIFEST%/typelisp.pkg}
@@ -922,7 +922,7 @@ status=$?
 set -e
 assert_status package-graph-github-cache-hit "$status" 0
 assert_empty package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.err"
-assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.out" "Generated: $(generated_path "$GITHUB_CACHE_EXE")"
+assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.out" "Built $(generated_path "$GITHUB_CACHE_EXE")"
 
 mv "$GITHUB_CACHE_REMOTE_OFFLINE" "$GITHUB_CACHE_REMOTE"
 printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' "$GITHUB_CACHE_URL" > "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt"
@@ -932,7 +932,7 @@ status=$?
 set -e
 assert_status package-graph-github-cache-refetch "$status" 0
 assert_empty package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.err"
-assert_contains package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.out" "Generated: $(generated_path "$GITHUB_CACHE_EXE")"
+assert_contains package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.out" "Built $(generated_path "$GITHUB_CACHE_EXE")"
 [ -d "$GITHUB_CACHE_ENTRY.corrupt.1" ] || fail "package-graph-github-cache-refetch did not preserve corrupt cache entry"
 assert_contains package-graph-github-cache-refetch "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "commit=$GITHUB_CACHE_REV"
 
@@ -1125,10 +1125,10 @@ status=$?
 set -e
 assert_status package-graph-diamond "$status" 0
 assert_empty package-graph-diamond "$WORKDIR/package-graph-diamond.err"
-assert_occurrences package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_SHARED_ARCHIVE")" 1
-assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_LEFT_ARCHIVE")"
-assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_RIGHT_ARCHIVE")"
-assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Generated: $(generated_path "$DIAMOND_EXE")"
+assert_occurrences package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_SHARED_ARCHIVE")" 1
+assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_LEFT_ARCHIVE")"
+assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_RIGHT_ARCHIVE")"
+assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_EXE")"
 
 set +e
 "$DIAMOND_EXE" > "$WORKDIR/package-graph-diamond-program.out" 2> "$WORKDIR/package-graph-diamond-program.err"
@@ -1292,7 +1292,7 @@ status=$?
 set -e
 assert_status staticlib-package-build "$status" 0
 assert_empty staticlib-package-build "$WORKDIR/staticlib-package-build.err"
-assert_contains staticlib-package-build "$WORKDIR/staticlib-package-build.out" "Generated:"
+assert_contains staticlib-package-build "$WORKDIR/staticlib-package-build.out" "Built "
 [ -s "$STATICLIB_ARCHIVE" ] || fail "staticlib package build did not write archive $STATICLIB_ARCHIVE"
 
 STATICLIB_OVERRIDE="$WORKDIR/staticlib-entry-override"
@@ -1321,7 +1321,7 @@ status=$?
 set -e
 assert_status staticlib-entry-override "$status" 0
 assert_empty staticlib-entry-override "$WORKDIR/staticlib-entry-override.err"
-assert_contains staticlib-entry-override "$WORKDIR/staticlib-entry-override.out" "Generated:"
+assert_contains staticlib-entry-override "$WORKDIR/staticlib-entry-override.out" "Built "
 [ -s "$STATICLIB_OVERRIDE_ARCHIVE" ] || fail "staticlib package build did not honor explicit entry"
 
 SCAFFOLD_ROOT="$WORKDIR/scaffold"
@@ -1356,7 +1356,7 @@ status=$?
 set -e
 assert_status scaffold-new-bin-build "$status" 0
 assert_empty scaffold-new-bin-build "$WORKDIR/scaffold-new-bin-build.err"
-assert_contains scaffold-new-bin-build "$WORKDIR/scaffold-new-bin-build.out" "Generated:"
+assert_contains scaffold-new-bin-build "$WORKDIR/scaffold-new-bin-build.out" "Built "
 [ -f "$NEW_BIN_EXE" ] || fail "new bin package build did not write executable"
 
 set +e
@@ -1396,7 +1396,7 @@ status=$?
 set -e
 assert_status scaffold-new-lib-build "$status" 0
 assert_empty scaffold-new-lib-build "$WORKDIR/scaffold-new-lib-build.err"
-assert_contains scaffold-new-lib-build "$WORKDIR/scaffold-new-lib-build.out" "Generated:"
+assert_contains scaffold-new-lib-build "$WORKDIR/scaffold-new-lib-build.out" "Built "
 [ -s "$NEW_LIB_ARCHIVE" ] || fail "new --lib package build did not write archive"
 
 INIT_BIN_DIR="$SCAFFOLD_ROOT/init-bin"

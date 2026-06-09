@@ -10978,7 +10978,9 @@
         [(IrBlock _ instrs)
           (opt-sccp-max-var-blocks
             (box-get rest)
-            (opt-sccp-max-var-instr-seq instrs 0 acc))])]))
+            (opt-sccp-max-var-instr-seq instrs 0 acc))])]
+    [(IrBlockArray seq)
+      (opt-sccp-max-var-blocks (compiler-ir-block-seq-to-list seq) acc)]))
 
 (define (opt-sccp-max-var-params
   [params : CompilerIrParamList]

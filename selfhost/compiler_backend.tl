@@ -6243,7 +6243,11 @@
             (compiler-backend-collect-group-counts-instrs
               map
               (compiler-ir-instr-seq-to-list instrs))
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrBlockArray seq)
+      (compiler-backend-collect-group-counts-blocks
+        map
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-collect-group-counts-functions
   [map : StringI64Map]

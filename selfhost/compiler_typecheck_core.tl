@@ -25,6 +25,13 @@
   (OkTcType AstType)
   (ErrTcType String))
 
+(defenum TcBinOpTypes
+  (TcBinOpTypes AstType AstType AstType))
+
+(defenum ResultTcBinOpTypes
+  (OkTcBinOpTypes TcBinOpTypes)
+  (ErrTcBinOpTypes String))
+
 (defenum ResultTcTypeUnsafe
   (OkTcTypeUnsafe AstType bool)
   (ErrTcTypeUnsafe String))
@@ -5724,6 +5731,46 @@
         [(AstLitFloat _) true]
         [_ false])]
     [_ false]))
+
+(define (tc-binop-types-from-left
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [op : AstBinOp]
+  [left-ty : AstType]
+  [right : AstExpr]) : ResultTcBinOpTypes
+  (match (tc-expr-with-expected-or-actual ctx env right left-ty)
+    [(OkTcType right-ty)
+      (match (tc-binop-type op left-ty right-ty)
+        [(OkTcType result-ty)
+          (OkTcBinOpTypes (TcBinOpTypes left-ty right-ty result-ty))]
+        [(ErrTcType message) (ErrTcBinOpTypes message)])]
+    [(ErrTcType message) (ErrTcBinOpTypes message)]))
+
+(define (tc-binop-types-with-same-operands
+  [op : AstBinOp]
+  [operand-ty : AstType]) : ResultTcBinOpTypes
+  (match (tc-binop-type op operand-ty operand-ty)
+    [(OkTcType result-ty)
+      (OkTcBinOpTypes (TcBinOpTypes operand-ty operand-ty result-ty))]
+    [(ErrTcType message) (ErrTcBinOpTypes message)]))
+
+(define (tc-binop-expr-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [op : AstBinOp]
+  [left : AstExpr]
+  [right : AstExpr]) : ResultTcBinOpTypes
+  (match (tc-expr ctx env left)
+    [(OkTcType left-ty)
+      (if (tc-float-literal-expr? left)
+        (match (tc-expr ctx env right)
+          [(OkTcType right-actual)
+            (if (tc-type-eq (tc-type-strip-region right-actual) (AstTyF32))
+              (tc-binop-types-with-same-operands op (AstTyF32))
+              (tc-binop-types-from-left ctx env op left-ty right))]
+          [(ErrTcType message) (ErrTcBinOpTypes message)])
+        (tc-binop-types-from-left ctx env op left-ty right))]
+    [(ErrTcType message) (ErrTcBinOpTypes message)]))
 
 (define (tc-expr-list-with-expected-elements
   [ctx : TcContext]
@@ -14465,12 +14512,11 @@
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
-        (match (tc-expr ctx env left)
-          [(OkTcType left-ty)
-            (match (tc-expr-with-expected-or-actual ctx env right left-ty)
-              [(OkTcType right-ty) (tc-binop-type op left-ty right-ty)]
-              [(ErrTcType message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+        (match (tc-binop-expr-types ctx env op left right)
+          [(OkTcBinOpTypes binop-types)
+            (match binop-types
+              [(TcBinOpTypes _ _ result-ty) (OkTcType result-ty)])]
+          [(ErrTcBinOpTypes message) (ErrTcType message)]))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]

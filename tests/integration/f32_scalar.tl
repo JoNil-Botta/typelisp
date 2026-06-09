@@ -87,4 +87,14 @@
       (if (ltf half (ninthf 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 3.0))
         0
         100)]
-    (+ stack (+ rt (+ a (+ b c))))))
+    ;; Bare float literals in f32 binary ops must adopt the f32 sibling type
+    ;; regardless of operand order (#2335).
+    [literal-binops : i64
+      (if (< 1.0 two)
+        (if (< two 3.0)
+          (if (< (+ 1.0 two) 4.0)
+            0
+            100)
+          100)
+        100)]
+    (+ literal-binops (+ stack (+ rt (+ a (+ b c)))))))

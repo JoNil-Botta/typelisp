@@ -4378,6 +4378,30 @@
                   (compiler-backend-string-contains? asm "    setb %al\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-f32-literal-binop-source) : String
+  "(define (main) : i64
+  (let
+    [b : f32 12.0]
+    [x : i64 (if (< 11.0 b) 1 0)]
+    [y : i64 (if (< b 13.0) 2 0)]
+    [z : i64 (if (< (+ 1.0 b) 13.5) 4 0)]
+    (+ x (+ y z))))")
+
+(define (compiler-backend-f32-literal-binop-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-f32-literal-binop-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    ucomiss %xmm1, %xmm0\n")
+        (and
+          (compiler-backend-string-contains? asm "    addss %xmm1, %xmm0\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    cvtsd2ss %xmm0, %xmm0\n")
+            (not (compiler-backend-string-contains? asm "    ucomisd")))))]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
@@ -5684,7 +5708,9 @@
         (compiler-backend-regalloc-ok?)
         (compiler-backend-peephole-ok?)
         (compiler-backend-phi-parallel-copy-ok?)
-        (compiler-backend-f64-ok?)
+        (and
+          (compiler-backend-f64-ok?)
+          (compiler-backend-f32-literal-binop-ok?))
         (compiler-backend-bool-control-flow-ok?)
         (and
           (compiler-backend-stack-args-ok?)

@@ -47,6 +47,56 @@ Most of the language-direction bullets above are now implemented; the bullets
 say where the remaining work is tracked. The rest of this README describes
 current behavior unless it explicitly says a feature is planned.
 
+## Decided direction (read this before writing new code)
+
+The issue tracker is the source of truth for direction; issue #8 is the live
+roadmap index, and design decisions are recorded as comments on their issues.
+The following decisions are **made**; new code should anticipate them instead
+of imitating transitional patterns still present in the tree:
+
+- **Imports**: dotted module imports with aliases replace path imports
+  (#2452, #2453, #2454, #2492). The legacy `(import "path/file.tl")` spelling
+  is being removed.
+- **Stdlib names**: module-name prefixes on stdlib functions
+  (`string-append`, `fs-read-dir`, ...) are flat-namespace fossils; the
+  end-state is qualified short names such as `str/append` (#2582, #2583).
+- **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
+  `cond`) are canonical; qualified `core/` calls are transitional (#2581).
+  `cond` returns to bracket arms `(cond [test expr] ... [else fallback])`
+  once macros gain bracket operands; the flat call shape is transitional
+  (#2578, #2579). Macros become order-independent within a module (#2584).
+- **Strings**: `str-cat` (single-allocation variadic concat, #2576) and
+  `text_buf` are the blessed forms; user-facing `string-append`/
+  `string-concat` chains are deprecated (#2573).
+- **Mutation**: in-place mutation is the direction — `struct-set!` (#1521)
+  and mutable box access (#2553); copy-on-update is transitional and hot
+  paths migrate once those land (#2575).
+- **Memory + threads**: per-thread default arenas plus a shared atomic arena
+  for concurrent allocation (#2591, #2593). Thread safety follows the Rust
+  model via structural checker classification — no traits (#2590): values
+  cross threads only when owned by an arena whose lifetime spans both; safe
+  spawn/join/mutex/channels build on that (#2592).
+- **Testing**: inline `(test ...)` items and doctests are typechecked on
+  every build of the owning package and never generate code outside the test
+  runner (#2587, #2594); stdlib adopts inline tests (#2586). The typechecked
+  test surface is exactly the package's own sources — never stdlib or
+  dependencies.
+- **Performance**: the codegen target is `clang -O2` quality (#2559).
+  Optimizations are proven, not asserted: every claimed win must show an
+  executed-instruction delta against the committed baselines, and compile
+  speed is gated the same way (#2532).
+- **Compilation model**: one whole program per executable with import-graph
+  dedup (each module typechecked once per program); package dependencies are
+  codegen'd once into archives but re-typechecked per consumer until
+  signature metadata exists; in-process session caching is the accepted
+  compile-speed direction (#2596).
+
+Transitional states in the current tree — do **not** imitate them in new
+code: path imports, `core/`-qualified macro calls, module-name-prefixed
+stdlib calls, flat `cond`, `string-append` chains, copy-on-update for record
+mutation, and the in-flight aggregate-inline representation work
+(#1867/#2296/#2357).
+
 ## Quick Start
 
 ```bash

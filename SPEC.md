@@ -42,6 +42,34 @@ contracts for each.
   deterministically through paired C baselines and instruction-count CI gates;
   the codegen-quality roadmap is #2559.
 
+### Decided directions (specified intent ahead of implementation)
+
+Design decisions are recorded on their tracking issues; roadmap issue #8 is
+the live index. The decisions below are settled direction for this
+specification even where the corresponding sections still describe the
+transitional surface:
+
+- **Imports and names.** Dotted module-identity imports replace path imports
+  (#2452-#2454); stdlib source names drop module prefixes in favor of
+  qualified short names once that migration lands (#2582/#2583). Linker
+  symbols already carry module-qualified names.
+- **Core macro surface.** Bare prelude macros are canonical (#2581); `cond`
+  regains bracket arms `(cond [test expr] ... [else fallback])` as a
+  macro-owned surface and the flat call shape is removed in the same change
+  (#2578/#2579, reversing the #2490 retirement). Macros become
+  order-independent within a module (#2584).
+- **Mutation.** In-place mutation arrives via `struct-set!` (#1521) and
+  mutable box access (#2553); the move/borrow rules in sections 3.10 and
+  4.6.2 are the contract it must satisfy.
+- **Memory and threads.** Each thread gets its own default arena; a shared
+  atomic arena supports concurrent allocation (#2591/#2593). Thread safety
+  extends the section 1.1 no-UB contract through structural checker
+  classification, not traits (#2590): a value may cross threads only when
+  owned by an arena whose lifetime spans both threads.
+- **Tests.** Inline tests and doctests are typechecked on every build of the
+  owning package and generate no code outside the test runner (#2587/#2594);
+  the checked test surface is exactly the package's own sources.
+
 ### Safe code: no undefined behavior
 
 Safe TypeLisp programs do not have undefined behavior. A conforming compiler

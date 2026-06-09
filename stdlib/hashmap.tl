@@ -105,12 +105,12 @@
       0
       next)))
 
-;: Slot read.
-;;
 ;; #2357: MUST stay `array-ref`. `StringI64MapSlot` is an inline-by-value enum
 ;; (#1867), so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
 ;; (Ptr StringI64MapSlot)) index))` form mis-scales the element stride and reads
 ;; garbage; `array-ref` lowers with the correct element size.
+;: Read the slot at `index`. Probe/iteration indices are always in
+;: `[0, capacity)`, so the bounds check never fires.
 (define (string-i64-map-slot-at
   [slots : (Array StringI64MapSlot)]
   [index : i64]) : StringI64MapSlot

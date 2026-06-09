@@ -21,7 +21,15 @@ esac
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
-BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-16}
+# #2357: 4 (was 16) -- the batch process accumulates per-program memory and
+# never settles back. Measured peak working set for the first manifest chunk
+# (which ends with the eight whole-compiler drivers ast..compile_smoke):
+# 8.6GB on main and 9.7GB on the aggregate-inline branch at size 16, which
+# SIGSEGV'd the Windows CI runner (freestanding runtime: a failed commit
+# surfaces as an access violation, exit 139). Size 8 does not help (the heavy
+# drivers stay in one process, 9.75GB); size 4 splits them and peaks at
+# 4.7-5.2GB. The extra process restarts cost seconds across the manifest.
+BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-4}
 
 case "$EXPECTATION_MODE" in
     stage0 | stage1) ;;

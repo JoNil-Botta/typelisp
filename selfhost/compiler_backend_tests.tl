@@ -3,6 +3,8 @@
 
 (import "compiler_backend.tl")
 
+(import "compiler_builtin_ids.tl")
+
 (import "compiler_intern.tl")
 
 (import "compiler_object_coff.tl")
@@ -3406,6 +3408,33 @@
                 (not
                   (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))))))))
 
+(define (compiler-backend-intern-missing? [name : String]) : bool
+  (match (intern-lookup name)
+    [(InternLookupMissing) true]
+    [(InternLookupFound _) false]))
+
+(define (compiler-backend-runtime-plan-id-lookup-only-ok?) : bool
+  (let
+    [plan : CompilerBackendRuntimePlan
+      (compiler-backend-runtime-helper-full-plan)]
+    (begin
+      (compiler-builtin-refresh!)
+      (let
+        [generation : i64 (intern-generation)]
+        [unknown : String "tl_issue_2464_unknown_runtime_probe"]
+        (and
+          (compiler-backend-intern-missing? unknown)
+          (compiler-backend-plan-provides? plan "tl_alloc")
+          (and
+            (compiler-backend-plan-provides? plan "tl_profile_alloc_total")
+            (and
+              (compiler-backend-plan-provides? plan "env-path-separator")
+              (and
+                (not (compiler-backend-plan-provides? plan unknown))
+                (and
+                  (= (intern-generation) generation)
+                  (compiler-backend-intern-missing? unknown))))))))))
+
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
   (let
     [plan : CompilerBackendRuntimePlan
@@ -3423,7 +3452,9 @@
         (and
           (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok?
             plan)
-          (compiler-backend-runtime-helper-inventory-negative-ok? plan))))))
+          (and
+            (compiler-backend-runtime-helper-inventory-negative-ok? plan)
+            (compiler-backend-runtime-plan-id-lookup-only-ok?)))))))
 
 (define (compiler-backend-runtime-page-call-inventory-linux-ok?) : bool
   (let

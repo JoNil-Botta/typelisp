@@ -6194,10 +6194,10 @@
 ;; type-name -> word-count map). Empty for non-aggregate types.
 (define (compiler-backend-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstTyStruct name) name]
-    [(AstTyStructArgs name _) name]
-    [(AstTyEnum name) name]
-    [(AstTyEnumArgs name _) name]
+    [(AstTyStruct name) (intern-str name)]
+    [(AstTyStructArgs name _) (intern-str name)]
+    [(AstTyEnum name) (intern-str name)]
+    [(AstTyEnumArgs name _) (intern-str name)]
     [(AstTyRegion _ inner)
       (compiler-backend-aggregate-type-name (ty-node-get inner))]
     [_ ""]))

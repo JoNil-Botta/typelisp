@@ -4152,8 +4152,10 @@
   ;; (its size is stable; this is the hot type-size query in lowering). Generic
   ;; ...Args / tuples / arrays depend on type arguments, so keep the uncached path.
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyStruct name) (tc-inline-aggregate-size-cached ctx name fallback)]
-    [(AstTyEnum name) (tc-inline-aggregate-size-cached ctx name fallback)]
+    [(AstTyStruct name)
+      (tc-inline-aggregate-size-cached ctx (intern-str name) fallback)]
+    [(AstTyEnum name)
+      (tc-inline-aggregate-size-cached ctx (intern-str name) fallback)]
     [_
       (match (tc-inline-aggregate-type-layout ctx ty)
         [(OkTcLayoutInfo info) (tc-layout-info-size info)]
@@ -4589,8 +4591,8 @@
 ;; instantiation), so only the bare struct/enum forms qualify here.
 (define (lower-type-register-resident? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyStruct name) (tc-name-register-resident? ctx name)]
-    [(AstTyEnum name) (tc-name-register-resident? ctx name)]
+    [(AstTyStruct name) (tc-name-register-resident? ctx (intern-str name))]
+    [(AstTyEnum name) (tc-name-register-resident? ctx (intern-str name))]
     [_ false]))
 
 ;; #2386: number of machine words a register-resident aggregate occupies
@@ -4620,8 +4622,8 @@
 
 (define (lower-type-register-words [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyStruct name) (lower-name-register-words ctx name)]
-    [(AstTyEnum name) (lower-name-register-words ctx name)]
+    [(AstTyStruct name) (lower-name-register-words ctx (intern-str name))]
+    [(AstTyEnum name) (lower-name-register-words ctx (intern-str name))]
     [_ 0]))
 
 (define (lower-type-signed? [ty : AstType]) : bool
@@ -5721,7 +5723,7 @@
               ctx
               state
               receiver-value
-              (AstTyStruct struct-name)
+              (AstTyStruct (intern struct-name))
               result-ty)
               [(LowerExpr mat-state mat-ptr _)
                 (match (lower-gep-byte mat-state mat-ptr offset)
@@ -12075,7 +12077,9 @@
           ;; the packed word itself; extract the field with shift/mask instead of
           ;; computing an address and loading from memory.
           (if (tc-name-register-resident? ctx struct-name)
-            (if (lower-type-register-group? ctx (AstTyStruct struct-name))
+            (if (lower-type-register-group?
+              ctx
+              (AstTyStruct (intern struct-name)))
               ;; 2-word register-group receiver: select the field's word with
               ;; IrInstrWord, then shift/mask within that word at its relative
               ;; offset.

@@ -11707,7 +11707,7 @@
                   ;; cycle back through this struct is still detected.
                   (tc-inline-aggregate-type-layout-with-stack
                     ctx
-                    (AstTyStruct nested-str)
+                    (AstTyStruct nested)
                     seen))])]
           [(ErrTcStructDecl message) (ErrTcLayoutInfo message)]))]
     [(AstTyStructArgs nested lifetimes)
@@ -11729,21 +11729,18 @@
                   ;; using its default inline C-rule layout.
                   (tc-inline-aggregate-type-layout-with-stack
                     ctx
-                    (AstTyStructArgs nested-str lifetimes)
+                    (AstTyStructArgs nested lifetimes)
                     seen))])]
           [(ErrTcStructDecl message) (ErrTcLayoutInfo message)]))]
     ;; #2296: embed an enum by value using its default inline layout (tag +
     ;; payload). Enums have no separate repr-c layout; the inline engine threads
     ;; `seen` for cycle detection.
     [(AstTyEnum name)
-      (tc-inline-aggregate-type-layout-with-stack
-        ctx
-        (AstTyEnum (intern-str name))
-        seen)]
+      (tc-inline-aggregate-type-layout-with-stack ctx (AstTyEnum name) seen)]
     [(AstTyEnumArgs name lifetimes)
       (tc-inline-aggregate-type-layout-with-stack
         ctx
-        (AstTyEnumArgs (intern-str name) lifetimes)
+        (AstTyEnumArgs name lifetimes)
         seen)]
     [_ (ErrTcLayoutInfo (tc-repr-c-unsupported-field-message owner field ty))]))
 

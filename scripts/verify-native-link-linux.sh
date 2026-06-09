@@ -655,9 +655,13 @@ EOF
 
     echo "[selfhost-native] compiler_driver recursive Box list"
     run_compiler_driver "$_driver" compiler-driver-recursive-box-list "$_src" "$_asm"
+    # #2357: the Box recursive edge still heap-allocates, but the cell now
+    # holds the 24-byte Cons inline (tag+i64+box) instead of an 8-byte handle,
+    # so the allocator fast-path is the size-24 specialization.
     assert_contains_any "$_asm" compiler-driver-recursive-box-list \
         "call tl_alloc" \
-        "call .L_tl_alloc8"
+        "call .L_tl_alloc8" \
+        "call .L_tl_alloc24"
     assemble_link_run_asm compiler-driver-recursive-box-list "$_asm" 42 - - 1
 }
 

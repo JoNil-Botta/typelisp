@@ -11495,11 +11495,20 @@
 (define tc-agg-size-cache : (Array i64)
   (make-array i64 400000))
 
-(define tc-agg-size-cache-filled : bool
-  false)
+;; #2386: the cache is keyed by symbol-handle INDEX, which is only meaningful
+;; within one program's symbol table. Batch compilation (compile/test --batch)
+;; reuses handle indices across files, so the cache MUST be cleared per program
+;; or a later file reads a prior file's stale struct size at the same index --
+;; mis-classifying its register-residency (observed: a register-group struct
+;; const-folded to a scalar, tripping the IrInstrWord assertion when compiling
+;; cli.tl after other sources). intern-reset! bumps intern-generation once per
+;; program, so gating the fill on the generation auto-invalidates across files
+;; while leaving single-file compiles (and the bootstrap fixpoint) unchanged.
+(define tc-agg-size-cache-generation : i64
+  -1)
 
 (define (tc-agg-size-cache-ensure!) : unit
-  (if tc-agg-size-cache-filled
+  (if (= tc-agg-size-cache-generation (intern-generation))
     unit
     (let
       [i : i64 0]
@@ -11508,7 +11517,7 @@
           (begin
             (array-set! tc-agg-size-cache i 0)
             (set! i (+ i 1))))
-        (set! tc-agg-size-cache-filled true)))))
+        (set! tc-agg-size-cache-generation (intern-generation))))))
 
 (define (tc-agg-size-cache-key [handle : i64]) : i64
   (let
@@ -11560,11 +11569,13 @@
 (define tc-agg-regwords-cache : (Array i64)
   (make-array i64 400000))
 
-(define tc-agg-regwords-cache-filled : bool
-  false)
+;; #2386: same per-program handle-index keying as tc-agg-size-cache, so it is
+;; gated on intern-generation and cleared per program (see that cache above).
+(define tc-agg-regwords-cache-generation : i64
+  -1)
 
 (define (tc-agg-regwords-cache-ensure!) : unit
-  (if tc-agg-regwords-cache-filled
+  (if (= tc-agg-regwords-cache-generation (intern-generation))
     unit
     (let
       [i : i64 0]
@@ -11573,7 +11584,7 @@
           (begin
             (array-set! tc-agg-regwords-cache i 0)
             (set! i (+ i 1))))
-        (set! tc-agg-regwords-cache-filled true)))))
+        (set! tc-agg-regwords-cache-generation (intern-generation))))))
 
 (define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name : String]) : i64
   (match (tc-inline-aggregate-layout-for ctx name)

@@ -33,6 +33,8 @@
 ;; is a transitive import: the reader imports this module, which imports
 ;; `token.tl`; the loader's post-order DFS loads `token.tl` first, then this
 ;; module, then the reader.
+(import "compiler_intern.tl")
+
 (import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
 
 (import "../stdlib/io.tl")
@@ -768,7 +770,7 @@
               [end : i64 (scan-symbol-end src i n)]
               (begin
                 (array-set! starts count i)
-                (array-set! toks count (TSym (substring src i (- end i))))
+                (array-set! toks count (TSym (intern-slice src i (- end i))))
                 (set! count (+ count 1))
                 (set! i end)))
             (begin
@@ -991,7 +993,7 @@
                 (array-set!
                   stoks
                   count
-                  (SpannedToken (TSym (substring src i (- end i))) line col))
+                  (SpannedToken (TSym (intern-slice src i (- end i))) line col))
                 (set! count (+ count 1))
                 (set! col (+ col (- end i)))
                 (set! i end)))

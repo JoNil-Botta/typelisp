@@ -103,6 +103,28 @@
               "arrow-type tokens should lex as single tokens")))]
       [(ErrTokens e) (lexer-assert-true false e)])))
 
+(test
+  lexer-duplicate-symbols-share-intern-id
+  (let
+    [r : ResultTokens (lex-result "(x x y)")]
+    (match r
+      [(OkTokens toks)
+        (lexer-assert-true
+          (and
+            (=
+              (token-sym-id (array-ref toks 1))
+              (token-sym-id (array-ref toks 2)))
+            (and
+              (not
+                (=
+                  (token-sym-id (array-ref toks 1))
+                  (token-sym-id (array-ref toks 3))))
+              (and
+                (string-eq (token-sym (array-ref toks 1)) "x")
+                (string-eq (token-sym (array-ref toks 3)) "y"))))
+          "duplicate symbols should reuse the same intern id")]
+      [(ErrTokens e) (lexer-assert-true false e)])))
+
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------
 (test
   lexer-single-char-literal-a

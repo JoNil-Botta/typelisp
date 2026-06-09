@@ -420,6 +420,7 @@ end
 
 case|selfhost_compiler_intern|selfhost/compiler_intern.tl|assembly|skip|direct
 contains|_tl_compiler_intern_intern_str:
+contains|_tl_compiler_intern_intern_slice:
 end
 
 decision|selfhost/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only selfhost/compiler_intern.tl; used by selfhost/compiler_lower.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets

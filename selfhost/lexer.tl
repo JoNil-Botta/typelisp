@@ -18,8 +18,9 @@
 ;;
 ;; The scan loop is the shape of a real lexer: a cursor over the input, a
 ;; whitespace skip, single-char paren tokens, a digit run sliced into a
-;; `(TInt (string->int ...))` or text-carried `(TFloat ...)`, and a symbol run sliced into a `(TSym ...)` with
-;; `substring`, string literals, char literals, and line comments. The reusable
+;; `(TInt (string->int ...))` or text-carried `(TFloat ...)`, and a symbol run
+;; interned into a `(TSym ...)`, string literals, char literals, and line
+;; comments. The reusable
 ;; entrypoint returns malformed input as a recoverable `ResultTokens` value; the
 ;; legacy `lex` wrapper still panics for older callers.
 ;;

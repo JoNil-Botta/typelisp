@@ -1567,6 +1567,13 @@
         "typelisp test: test executable exited with exit status: "
         (string-append (int->string (process-output-status output)) "\n")))))
 
+(define (tltest-diagnostic-with-source-fallback
+  [source : String]
+  [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (if (= (string-length (compiler-diagnostic-path diag)) 0)
+    (compiler-diagnostic-with-path diag source)
+    diag))
+
 (define (tltest-run-harness-in-temp
   [source : String]
   [entry-path : String]
@@ -1660,7 +1667,9 @@
               1)])]
       [(ErrCompilerLower diag)
         (begin
-          (print-error (compiler-diagnostic-render diag))
+          (print-error
+            (compiler-diagnostic-render
+              (tltest-diagnostic-with-source-fallback source diag)))
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)])))
 

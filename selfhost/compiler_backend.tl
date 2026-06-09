@@ -14387,6 +14387,33 @@ tl_region_reset:
 
 ")))))))
 
+(define (compiler-backend-runtime-windows-thread-functions) : String
+  "    .data
+    .globl tl_thread_entry_ptr
+    .balign 8
+tl_thread_entry_ptr:
+    .quad .L_tl_thread_entry
+
+    .text
+.L_tl_thread_entry:
+    pushq %r12
+    pushq %r13
+    subq $40, %rsp
+    movq (%rcx), %r11
+    movq 8(%rcx), %rdx
+    movq 16(%rcx), %r12
+    movq 24(%rcx), %r13
+    movl $1, (%r13)
+    movq 8(%r11), %rcx
+    call *(%r11)
+    movq %rax, (%r12)
+    addq $40, %rsp
+    popq %r13
+    popq %r12
+    ret
+
+")
+
 (define (compiler-backend-runtime-profile-functions) : String
   "    .globl tl_profile_alloc_total
 tl_profile_alloc_total:
@@ -15424,11 +15451,15 @@ tl_string_concat5:
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-libc-shim-functions)
             (compiler-backend-runtime-linux-libc-shim-functions))]
+        [thread-asm : String
+          (if (compiler-backend-target-windows? target)
+            (compiler-backend-runtime-windows-thread-functions)
+            "")]
         (backend-cat5
           runtime-front-asm
           runtime-string-asm
           fs-asm
-          ""
+          thread-asm
           (backend-cat5
             env-var-exists-asm
             env-var-value-asm

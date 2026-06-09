@@ -45,6 +45,8 @@
 
 (include-str compiler-embedded-stdlib-test "stdlib/test.tl")
 
+(include-str compiler-embedded-stdlib-thread "stdlib/thread.tl")
+
 (include-str compiler-embedded-stdlib-tests-arena-api "stdlib/tests/arena_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-arena-patterns "stdlib/tests/arena_patterns.tl")
@@ -167,6 +169,8 @@
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)
     (string-eq suffix "test.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)
+    (string-eq suffix "thread.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-thread)
     (string-eq suffix "tests/arena_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-arena-api)
     (string-eq suffix "tests/arena_patterns.tl")

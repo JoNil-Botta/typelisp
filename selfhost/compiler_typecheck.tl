@@ -4988,9 +4988,18 @@
                 (and
                   (compiler-typecheck-ok?
                     "(define (f [x : f32]) : f64 (cast x : f64))")
-                  (compiler-typecheck-error-ok?
-                    "(define (f [b : bool]) : i64 (cast b : i64))"
-                    "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))))))))
+                  (and
+                    (compiler-typecheck-ok?
+                      "(define (inc [x : i64]) : i64 (+ x 1))
+(define (f) : u64 (unsafe (cast inc : u64)))")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        "(define (inc [x : i64]) : i64 (+ x 1))
+(define (f) : u64 (cast inc : u64))"
+                        "typecheck: function-to-integer cast requires unsafe context")
+                      (compiler-typecheck-error-ok?
+                        "(define (f [b : bool]) : i64 (cast b : i64))"
+                        "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))))))))))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value

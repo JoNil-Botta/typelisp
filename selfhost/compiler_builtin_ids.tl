@@ -28,6 +28,9 @@
 (define compiler-builtin-id-tl-arena-poison-enable : i64
   -1)
 
+(define compiler-builtin-id-tl-thread-entry-ptr : i64
+  -1)
+
 (define compiler-builtin-id-tl-profile-alloc-total : i64
   -1)
 
@@ -169,6 +172,9 @@
         compiler-builtin-id-tl-arena-poison-enable
         (intern "tl_arena_poison_enable"))
       (set!
+        compiler-builtin-id-tl-thread-entry-ptr
+        (intern "tl_thread_entry_ptr"))
+      (set!
         compiler-builtin-id-tl-profile-alloc-total
         (intern "tl_profile_alloc_total"))
       (set!
@@ -254,7 +260,8 @@
         compiler-builtin-id-tl-arena-current
         compiler-builtin-id-tl-arena-set
         compiler-builtin-id-tl-arena-destroy
-        compiler-builtin-id-tl-arena-poison-enable))))
+        compiler-builtin-id-tl-arena-poison-enable)
+      (= name-id compiler-builtin-id-tl-thread-entry-ptr))))
 
 (define (compiler-builtin-backend-runtime-stdlib-ffi-id? [name-id : i64]) : bool
   (begin
@@ -320,12 +327,14 @@
 (define (compiler-builtin-backend-runtime-always-provided-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (compiler-builtin-id-any4?
-      name-id
-      compiler-builtin-id-tl-arena-poison-enable
-      compiler-builtin-id-tl-arena-make
-      compiler-builtin-id-tl-arena-current
-      compiler-builtin-id-tl-arena-set)))
+    (or
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-arena-poison-enable
+        compiler-builtin-id-tl-arena-make
+        compiler-builtin-id-tl-arena-current
+        compiler-builtin-id-tl-arena-set)
+      (= name-id compiler-builtin-id-tl-thread-entry-ptr))))
 
 (define (compiler-builtin-backend-runtime-always-provided-tail-id?
   [name-id : i64]) : bool

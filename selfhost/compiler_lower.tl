@@ -4810,6 +4810,67 @@
         (IrValueVar var-id)
         word-ty)]))
 
+;; #2386: `=` / `!=` on a 2-word register-group aggregate must compare BOTH
+;; words; the scalar IrInstrBinOp compared only word0, so two enum values with
+;; equal tags but different payloads compared equal.
+(define (lower-binop-group-eq? [op : AstBinOp]) : bool
+  (match op
+    [(AstBinEq) true]
+    [(AstBinNe) true]
+    [_ false]))
+
+(define (lower-group-equality
+  [state : LowerState]
+  [op : AstBinOp]
+  [left : CompilerIrValue]
+  [right : CompilerIrValue]
+  [expr-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-emit-word state left 0 (AstTyI64))
+    [(LowerExpr ls0 l0 _)
+      (match (lower-emit-word ls0 left 1 (AstTyI64))
+        [(LowerExpr ls1 l1 _)
+          (match (lower-emit-word ls1 right 0 (AstTyI64))
+            [(LowerExpr rs0 r0 _)
+              (match (lower-emit-word rs0 right 1 (AstTyI64))
+                [(LowerExpr rs1 r1 _)
+                  (match (lower-state-alloc-var rs1)
+                    [(LowerAlloc alloc0 word0-cmp)
+                      (match (lower-state-alloc-var alloc0)
+                        [(LowerAlloc alloc1 word1-cmp)
+                          (match (lower-state-alloc-var alloc1)
+                            [(LowerAlloc alloc2 combined)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    (lower-state-emit
+                                      (lower-state-emit
+                                        alloc2
+                                        (IrInstrBinOp
+                                          word0-cmp
+                                          (lower-binop op)
+                                          l0
+                                          r0
+                                          expr-ty))
+                                      (IrInstrBinOp
+                                        word1-cmp
+                                        (lower-binop op)
+                                        l1
+                                        r1
+                                        expr-ty))
+                                    (IrInstrBinOp
+                                      combined
+                                      ;; eq: both words equal; ne: either differs.
+                                      (match op
+                                        [(AstBinNe) IrBinBitOr]
+                                        [_ IrBinBitAnd])
+                                      (IrValueVar word0-cmp)
+                                      (IrValueVar word1-cmp)
+                                      expr-ty)
+                                    origin)
+                                  (IrValueVar combined)
+                                  expr-ty))])])])])])])]))
+
 ;; #2386: read a payload field of a register-group enum scrutinee. `base` is the
 ;; enum group var; the field at enum byte `offset` lives in word `offset/8` (the
 ;; payload word for a 16-byte enum), extracted with IrInstrWord then shift/mask at
@@ -5107,10 +5168,18 @@
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
-              ;; #2386: a register-resident source is a word, so materialize it
-              ;; with a scalar store rather than a pointer-to-pointer byte copy.
+              ;; #2386: a register-resident source is carried as word(s), so
+              ;; materialize via the group-aware store -- a 2-word group must
+              ;; write BOTH words (a bare scalar store dropped word1).
               (if (lower-type-register-resident? ctx ty)
-                (lower-store-at-offset copy-state copy-value 0 value ty)
+                (lower-store-inline-value-at-offset
+                  ctx
+                  copy-state
+                  copy-value
+                  0
+                  value
+                  ty
+                  size)
                 (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
               ty))])]
@@ -5127,8 +5196,18 @@
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
+              ;; #2386: group-aware store here too -- the Win64 C-ABI byref
+              ;; path spills register-resident aggregates through this copy,
+              ;; and a 2-word group must write BOTH words.
               (if (lower-type-register-resident? ctx ty)
-                (lower-store-at-offset copy-state copy-value 0 value ty)
+                (lower-store-inline-value-at-offset
+                  ctx
+                  copy-state
+                  copy-value
+                  0
+                  value
+                  ty
+                  size)
                 (lower-copy-bytes-compact copy-state copy-value 0 value 0 size))
               copy-value
               ty))])]
@@ -8780,15 +8859,53 @@
                           payload
                           err-ty
                           (lower-type-size ctx err-ty))])]
-                  (OkLowerState
-                    (lower-state-emit
+                  [ret-ty : AstType (AstTyEnum (intern enum-name))]
+                  ;; #2386: when the function's result enum is register-resident
+                  ;; the caller reads the return value from registers, so load
+                  ;; the constructed enum back out of the buffer (word or
+                  ;; 2-word group) instead of returning the buffer pointer.
+                  (if (lower-type-register-resident? ctx ret-ty)
+                    (match (lower-load-inline-value-at-offset
+                      ctx
                       payload-state
-                      (IrInstrReturn
-                        (lower-return-maybe base (AstTyEnum (intern enum-name)))))))])]
+                      base
+                      0
+                      ret-ty
+                      (lower-state-mode payload-state))
+                      [(LowerExpr loaded-state loaded _)
+                        (OkLowerState
+                          (lower-state-emit
+                            loaded-state
+                            (IrInstrReturn (lower-return-maybe loaded ret-ty))))])
+                    (OkLowerState
+                      (lower-state-emit
+                        payload-state
+                        (IrInstrReturn (lower-return-maybe base ret-ty))))))])]
           [(NoneI64)
             (ErrLowerState
               (lower-diagnostic
                 (string-append "lower: unknown variant " err-name)))]))]))
+
+;; #2386: the try tag/payload reads below address the operand as MEMORY. A
+;; register-resident Result/Option (e.g. 16-byte (Ok i64)/(Err i64)) is carried
+;; as word(s), so spill it to a temp inline slot first and continue with the
+;; slot address; otherwise the tag load dereferences the packed value.
+(define (lower-try-spill-resident-operand
+  [ctx : TcContext]
+  [lowered : ResultLowerExpr]) : ResultLowerExpr
+  (match lowered
+    [(OkLowerExpr expr)
+      (match expr
+        [(LowerExpr state value ty)
+          (if (lower-type-register-resident? ctx ty)
+            (match (lower-copy-inline-aggregate-to-inline ctx state value ty)
+              [(OkLowerExpr spilled)
+                (match spilled
+                  [(LowerExpr spill-state slot _)
+                    (OkLowerExpr (LowerExpr spill-state slot ty))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (OkLowerExpr expr))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-try-finish
   [ctx : TcContext]
@@ -8895,7 +9012,9 @@
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env inner)
+  (match (lower-try-spill-resident-operand
+    ctx
+    (lower-expr ctx state env type-env inner))
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr result-state result-value result-ty)
@@ -11362,21 +11481,31 @@
                               [(OkLowerExpr right-lowered)
                                 (match right-lowered
                                   [(LowerExpr right-state right-value _)
-                                    (match (lower-state-alloc-var right-state)
-                                      [(LowerAlloc allocated var-id)
-                                        (OkLowerExpr
-                                          (LowerExpr
-                                            (lower-state-emit-at-expr
-                                              allocated
-                                              (IrInstrBinOp
-                                                var-id
-                                                (lower-binop op)
-                                                left-value
-                                                right-value
-                                                expr-ty)
-                                              origin)
-                                            (IrValueVar var-id)
-                                            expr-ty))])])]
+                                    (if (and
+                                      (lower-binop-group-eq? op)
+                                      (lower-type-register-group? ctx left-ty))
+                                      (lower-group-equality
+                                        right-state
+                                        op
+                                        left-value
+                                        right-value
+                                        expr-ty
+                                        origin)
+                                      (match (lower-state-alloc-var right-state)
+                                        [(LowerAlloc allocated var-id)
+                                          (OkLowerExpr
+                                            (LowerExpr
+                                              (lower-state-emit-at-expr
+                                                allocated
+                                                (IrInstrBinOp
+                                                  var-id
+                                                  (lower-binop op)
+                                                  left-value
+                                                  right-value
+                                                  expr-ty)
+                                                origin)
+                                              (IrValueVar var-id)
+                                              expr-ty))]))])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                       [(ErrLowerExpr message) (ErrLowerExpr message)])])]
               [(ErrTcBinOpTypes message)
@@ -20740,7 +20869,8 @@
                         arms
                         merge-label
                         expr-ty
-                        (TcNoString))]
+                        (TcNoString)
+                        false)]
                     [(AstTyEnumArgs _ _)
                       (lower-match-enum
                         ctx
@@ -20752,7 +20882,8 @@
                         arms
                         merge-label
                         expr-ty
-                        (TcNoString))]
+                        (TcNoString)
+                        false)]
                     [(AstTyVarArgs _ _)
                       (lower-match-enum
                         ctx
@@ -20764,7 +20895,8 @@
                         arms
                         merge-label
                         expr-ty
-                        (TcNoString))]
+                        (TcNoString)
+                        false)]
                     [_
                       (lower-match-arms
                         ctx
@@ -20789,30 +20921,55 @@
   [enum-ty : AstType]
   [arms : AstMatchArmList]
   [expr-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env place)
-    [(OkLowerExpr place-lowered)
-      (match place-lowered
-        [(LowerExpr place-state place-value _)
-          (match (lower-state-alloc-var place-state)
-            [(LowerAlloc scrut-alloc scrut-var)
-              (match (lower-state-fresh-label
-                (lower-state-emit
-                  scrut-alloc
-                  (IrInstrMov scrut-var place-value enum-ty))
-                "match_merge")
-                [(LowerLabel merge-state merge-label)
-                  (lower-match-enum
-                    ctx
-                    merge-state
-                    env
-                    type-env
-                    scrut-var
-                    enum-ty
-                    arms
-                    merge-label
-                    expr-ty
-                    (TcSomeString borrow-lifetime))])])])]
-    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+  (let
+    [resident : bool (lower-type-register-resident? ctx enum-ty)]
+    (match (lower-expr ctx state env type-env place)
+      [(OkLowerExpr place-lowered)
+        (match place-lowered
+          [(LowerExpr place-state place-value _)
+            ;; #2386: the borrowed payload bindings and literal compares below
+            ;; address the scrutinee as MEMORY (gep off the pointer). A
+            ;; register-resident enum place lowers to its packed word(s), so
+            ;; spill it to a temp inline slot and run the whole match on the
+            ;; slot address (force-memory). The Mov is typed U64 in that case:
+            ;; the var holds an address, not a register group.
+            (match (if resident
+              (lower-copy-inline-aggregate-to-inline
+                ctx
+                place-state
+                place-value
+                enum-ty)
+              (OkLowerExpr (LowerExpr place-state place-value enum-ty)))
+              [(OkLowerExpr scrut-expr)
+                (match scrut-expr
+                  [(LowerExpr scrut-state scrut-value _)
+                    (match (lower-state-alloc-var scrut-state)
+                      [(LowerAlloc scrut-alloc scrut-var)
+                        (match (lower-state-fresh-label
+                          (lower-state-emit
+                            scrut-alloc
+                            (IrInstrMov
+                              scrut-var
+                              scrut-value
+                              (if resident
+                                (AstTyU64)
+                                enum-ty)))
+                          "match_merge")
+                          [(LowerLabel merge-state merge-label)
+                            (lower-match-enum
+                              ctx
+                              merge-state
+                              env
+                              type-env
+                              scrut-var
+                              enum-ty
+                              arms
+                              merge-label
+                              expr-ty
+                              (TcSomeString borrow-lifetime)
+                              resident)])])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+      [(ErrLowerExpr message) (ErrLowerExpr message)])))
 
 (define (lower-match
   [ctx : TcContext]
@@ -20891,16 +21048,20 @@
   [arms : AstMatchArmList]
   [merge-label : String]
   [expr-ty : AstType]
-  [borrow-lifetime : TcMaybeString])
+  [borrow-lifetime : TcMaybeString]
+  [force-memory : bool])
   :
   ResultLowerExpr
   ;; #2386: a 1-word register-resident enum value IS the tag word (nullary, no
   ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
   ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
   ;; layout build (lower-type-register-words) decides all three cases.
+  ;; `force-memory` (borrowed match of a spilled register-resident scrutinee)
+  ;; overrides the value paths: scrut-var then holds the ADDRESS of the enum
+  ;; bytes and tag/payloads are read through it like any memory enum.
   (let
     [scrut-words : i64 (lower-type-register-words ctx scrut-ty)]
-    (if (> scrut-words 0)
+    (if (and (> scrut-words 0) (not force-memory))
       (if (= scrut-words 2)
         (match (lower-emit-word state (IrValueVar scrut-var) 0 (AstTyI64))
           [(LowerExpr tag-state tag-value _)
@@ -22388,6 +22549,14 @@
       (lower-type-contains-inline-aggregate? ctx (ty-node-get elem))]
     [(AstTyRegion _ inner)
       (lower-type-contains-inline-aggregate? ctx (ty-node-get inner))]
+    ;; #1867: a reference can point INTO the current frame (memory-aggregate
+    ;; locals live in frame slots now), so a ref arg whose referent is or
+    ;; contains an inline aggregate makes a tail call unsafe -- the callee
+    ;; would read through a pointer into the reused/abandoned frame.
+    [(AstTyRef _ referent)
+      (lower-type-contains-inline-aggregate? ctx (ty-node-get referent))]
+    [(AstTyMutRef _ referent)
+      (lower-type-contains-inline-aggregate? ctx (ty-node-get referent))]
     [_ false]))
 
 (define (lower-type-list-contains-inline-aggregate?

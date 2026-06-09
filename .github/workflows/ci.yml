@@ -12,56 +12,71 @@ permissions:
   contents: read
 
 jobs:
-  # TEMPORARY DEBUG WORKFLOW (debug-2357-ci) v2: solo compiles pass on the
-  # runner, so reproduce the SIGSEGV through the real manifest gate with WER
-  # crash dumps enabled, and upload the dump + binary for offline analysis.
+  # TEMPORARY DEBUG WORKFLOW (debug-2357-ci) v3: the manifest gate passes in
+  # isolation but dies ~2 min in during the real pipeline, at times that
+  # correlate with wall-clock rather than chunk contents. Run the real
+  # ci-verify pipeline with a background process/memory sampler to catch a
+  # runaway process leaked by an earlier gate.
   debug:
-    name: Debug manifest gate crash (windows-latest)
+    name: Debug pipeline memory (windows-latest)
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
-      - name: Enable WER local crash dumps
+      - name: Start process sampler
         shell: powershell
         run: |
-          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Force | Out-Null
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name DumpFolder -Value "C:\dumps" -PropertyType ExpandString -Force | Out-Null
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name DumpCount -Value 5 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
-          New-Item -ItemType Directory -Force C:\dumps | Out-Null
+          $script = @'
+          while ($true) {
+            $ts = Get-Date -Format o
+            $os = Get-CimInstance Win32_OperatingSystem
+            "=== $ts freeMB=$([math]::Round($os.FreePhysicalMemory/1024)) commitMB=$([math]::Round((Get-Counter '\Memory\Committed Bytes').CounterSamples[0].CookedValue/1MB))" | Out-File -Append -Encoding ascii C:\sampler.log
+            Get-Process | Where-Object { $_.PrivateMemorySize64 -gt 200MB } | Sort-Object PrivateMemorySize64 -Descending | Select-Object -First 8 Name,Id,@{n='privMB';e={[math]::Round($_.PrivateMemorySize64/1MB)}},@{n='cpu';e={$_.CPU}} | Format-Table | Out-String | Out-File -Append -Encoding ascii C:\sampler.log
+            Start-Sleep -Seconds 15
+          }
+          '@
+          Set-Content -Path C:\sampler.ps1 -Value $script -Encoding ascii
+          Start-Process powershell -ArgumentList @("-ExecutionPolicy","Bypass","-File","C:\sampler.ps1") -WindowStyle Hidden
 
-      - name: Fetch stage0
+      - name: Check implementation language allowlist
         shell: bash
-        run: scripts/fetch-stage0.sh
+        run: scripts/check-implementation-languages.sh
 
-      - name: Build stage1 via build-stage0.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tools/vs-code-extension/package-lock.json
+
+      - name: VS Code extension smoke
+        shell: bash
+        working-directory: tools/vs-code-extension
+        run: |
+          npm ci
+          npm run check
+          npm run package
+
+      - name: Check native toolchain
         shell: bash
         run: |
-          scripts/build-stage0.sh target/stage0/typelisp.exe target/debug-stage1.exe
-          sha256sum target/debug-stage1.exe
+          command -v clang
+          command -v lld-link || command -v lld-link.exe
 
-      - name: Run manifest gate (per-file chunks)
+      - name: CI verification
         shell: bash
-        run: |
-          set +e
-          TYPELISP_BIN="$PWD/target/debug-stage1.exe" \
-          TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 \
-          TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=1 \
-            scripts/verify-selfhost-compile-manifest.sh
-          code=$?
-          echo "gate exit=$code"
-          ls -la C:/dumps 2>/dev/null || true
-          exit 0
+        run: scripts/ci-verify.sh
+
+      - name: Upload sampler log
+        if: always()
+        shell: bash
+        run: cp /c/sampler.log sampler.log 2>/dev/null || true
 
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-2357-windows-v2
+          name: debug-2357-windows-v3
           path: |
-            target/debug-stage1.exe
-            C:\dumps\*.dmp
-            target/selfhost-compile-manifest/compile-batch-chunks/*.err
-            target/selfhost-compile-manifest/compile-batch-chunks/*.out
+            sampler.log
           if-no-files-found: warn

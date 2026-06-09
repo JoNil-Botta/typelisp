@@ -151,4 +151,7 @@ nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
 lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|-
 register_resident_enum|tests/integration/register_resident_enum.tl|42|-|-|-
 register_pair_struct|tests/integration/register_pair_struct.tl|42|-|-|-
+register_group_phi_return|tests/integration/register_group_phi_return.tl|42|-|-|-
+register_group_borrowed_match|tests/integration/register_group_borrowed_match.tl|42|-|-|-
+register_group_try|tests/integration/register_group_try.tl|42|-|-|-
 register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-

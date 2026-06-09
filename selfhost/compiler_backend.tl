@@ -12561,6 +12561,11 @@
         (string-eq name "tl_profile_alloc_peak")
         (string-eq name "tl_profile_alloc_reset_peak")))))
 
+(define (compiler-backend-runtime-name-id [name : String]) : i64
+  (match (intern-lookup name)
+    [(InternLookupFound name-id) name-id]
+    [(InternLookupMissing) -1]))
+
 (define (compiler-backend-plan-provides-tail?
   [name : String]
   [read-bytes : bool]
@@ -12590,10 +12595,41 @@
           "env-path-separator"
           env-path-separator)))))
 
+(define (compiler-backend-plan-provides-tail-id?
+  [name-id : i64]
+  [read-bytes : bool]
+  [stdin-eof : bool]
+  [flush-stdout : bool]
+  [random-system-seed : bool]
+  [env-var-exists : bool]
+  [env-var-value : bool]
+  [env-path-separator : bool]) : bool
+  (let
+    [_read-bytes : bool read-bytes]
+    [_stdin-eof : bool stdin-eof]
+    [_flush-stdout : bool flush-stdout]
+    [_random-system-seed : bool random-system-seed]
+    (or
+      (and env-var-exists (compiler-builtin-backend-env-var-exists-id? name-id))
+      (or
+        (and env-var-value (compiler-builtin-backend-env-var-value-id? name-id))
+        (and
+          env-path-separator
+          (compiler-builtin-backend-env-path-separator-id? name-id))))))
+
 ;; The first-class arena runtime helpers (#1633) and arena poison debug toggle
 ;; (#1690) are always emitted, so they are provided runtime symbols (resolve to
 ;; their raw names, not the mangled `_tl_tl_arena_*`).
 (define (compiler-backend-plan-provides?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (let
+    [name-id : i64 (compiler-backend-runtime-name-id name)]
+    (if (>= name-id 0)
+      (compiler-backend-plan-provides-id? plan name-id)
+      (compiler-backend-plan-provides-by-name? plan name))))
+
+(define (compiler-backend-plan-provides-by-name?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (or
@@ -12607,6 +12643,15 @@
           (string-eq name "tl_arena_set")
           (string-eq name "tl_arena_destroy"))))
     (compiler-backend-plan-provides-rest? plan name)))
+
+(define (compiler-backend-plan-provides-id?
+  [plan : CompilerBackendRuntimePlan]
+  [name-id : i64]) : bool
+  (or
+    (compiler-builtin-backend-runtime-always-provided-id? name-id)
+    (or
+      (compiler-builtin-backend-runtime-always-provided-tail-id? name-id)
+      (compiler-backend-plan-provides-rest-id? plan name-id))))
 
 (define (compiler-backend-plan-provides-rest?
   [plan : CompilerBackendRuntimePlan]
@@ -12714,6 +12759,101 @@
                 name
                 "tl_hash_string"
                 (compiler-backend-runtime-tail-hash-string? provides-tail))))))]))
+
+(define (compiler-backend-plan-provides-rest-id?
+  [plan : CompilerBackendRuntimePlan]
+  [name-id : i64]) : bool
+  (match plan
+    [(BackendRuntimePlan
+        alloc
+        oob
+        substring
+        concat
+        provides-string-eq
+        provides-string-to-int
+        provides-int-to-string
+        provides-abort
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        provides-fs
+        _
+        _
+        _
+        _
+        _
+        region-mark
+        region-reset
+        _
+        provides-env-var-exists
+        provides-env-var-value
+        provides-env-path-separator
+        provides-div-abort
+        provides-shift-abort
+        provides-tail)
+      (let
+        [_oob : bool oob]
+        [_provides-abort : bool provides-abort]
+        [_provides-fs : bool provides-fs]
+        [_provides-div-abort : bool provides-div-abort]
+        [_provides-shift-abort : bool provides-shift-abort]
+        (or
+          (backend-or8
+            (and alloc (compiler-builtin-backend-tl-alloc-id? name-id))
+            (and
+              region-mark
+              (compiler-builtin-backend-tl-region-mark-id? name-id))
+            (and
+              region-reset
+              (compiler-builtin-backend-tl-region-reset-id? name-id))
+            false
+            (and substring (compiler-builtin-backend-tl-substring-id? name-id))
+            (and concat (compiler-builtin-backend-runtime-concat-id? name-id))
+            (and
+              provides-string-eq
+              (compiler-builtin-backend-tl-string-eq-id? name-id))
+            (and
+              provides-string-to-int
+              (compiler-builtin-backend-tl-string-to-int-id? name-id)))
+          (or
+            (backend-or8
+              (and
+                provides-int-to-string
+                (compiler-builtin-backend-tl-int-to-string-id? name-id))
+              false
+              false
+              false
+              false
+              false
+              false
+              false)
+            (or
+              (compiler-backend-plan-provides-tail-id?
+                name-id
+                false
+                false
+                false
+                false
+                provides-env-var-exists
+                provides-env-var-value
+                provides-env-path-separator)
+              (backend-or4
+                false
+                false
+                (and
+                  (compiler-backend-runtime-tail-profile? provides-tail)
+                  (compiler-builtin-backend-runtime-profile-id? name-id))
+                (and
+                  (compiler-backend-runtime-tail-hash-string? provides-tail)
+                  (compiler-builtin-backend-tl-hash-string-id? name-id)))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -13143,9 +13283,13 @@
         (CompilerBackendRuntimeTailPlan needs-profile needs-hash-string)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
-  (match program
-    [(IrProgram _ functions externs)
-      (compiler-backend-runtime-plan-for functions externs)]))
+  (begin
+    ;; Seed builtin/runtime ids before scratch-backed per-function emission. The
+    ;; runtime-plan id predicates are then lookup-only in scratch arenas.
+    (compiler-builtin-refresh!)
+    (match program
+      [(IrProgram _ functions externs)
+        (compiler-backend-runtime-plan-for functions externs)])))
 
 (define (compiler-backend-emit-externs
   [externs : CompilerIrExternList]

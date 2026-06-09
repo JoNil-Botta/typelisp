@@ -16397,6 +16397,13 @@ tl_string_concat5:
 ;; copies. Always emitted. Linux SysV args rdi=dst, rsi=src, rdx=len; rep movsb
 ;; consumes rdi/rsi/rcx (all caller-saved). Windows x64 args rcx=dst, rdx=src,
 ;; r8=len; rdi/rsi are NONvolatile there, so save/restore them around the copy.
+;;
+;; #2357: memmove semantics. The lowerer threads by-value aggregates through
+;; sret buffers and back into operands they may alias (e.g. a cache value
+;; rebuilt from itself across a recursion), so dst can overlap src from above;
+;; a forward rep movsb then reads bytes it already overwrote and corrupts the
+;; value. Copy backward (std) for the overlapping dst>src case; DF is restored
+;; before returning per the ABI.
 (define (compiler-backend-runtime-memcpy-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -16407,6 +16414,21 @@ tl_memcpy:
     movq %rcx, %rdi
     movq %rdx, %rsi
     movq %r8, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
+    movq %rsi, %r9
+    addq %rcx, %r9
+    cmpq %r9, %rdi
+    jae .Ltl_memcpy_fwd
+    leaq -1(%rdi,%rcx), %rdi
+    leaq -1(%rsi,%rcx), %rsi
+    std
+    rep movsb
+    cld
+    movq %rax, %rdi
+    movq %r10, %rsi
+    ret
+.Ltl_memcpy_fwd:
     rep movsb
     movq %rax, %rdi
     movq %r10, %rsi
@@ -16415,6 +16437,19 @@ tl_memcpy:
     "    .globl tl_memcpy
 tl_memcpy:
     movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
+    movq %rsi, %rax
+    addq %rcx, %rax
+    cmpq %rax, %rdi
+    jae .Ltl_memcpy_fwd
+    leaq -1(%rdi,%rcx), %rdi
+    leaq -1(%rsi,%rcx), %rsi
+    std
+    rep movsb
+    cld
+    ret
+.Ltl_memcpy_fwd:
     rep movsb
     ret
 "))

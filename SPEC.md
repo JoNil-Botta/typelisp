@@ -1,7 +1,7 @@
 # TypeLisp Language Specification
 
 > **Version:** 0.1.0-dev  
-> **Target:** x86_64 Linux (System V AMD64 ABI)  
+> **Targets:** x86_64 Linux (System V AMD64 ABI) and x86_64 Windows (Win64 ABI). macOS and ARM are not supported yet and are not near-term goals.  
 > **Constraint:** self-hosted TypeLisp implementation; zero third-party dependencies.
 
 This document specifies the TypeLisp language as implemented today. It is the ground truth for what compiles, what types mean, and what the backend promises.
@@ -11,6 +11,36 @@ This document specifies the TypeLisp language as implemented today. It is the gr
 ## 1. Overview
 
 TypeLisp is a statically typed Lisp/Scheme dialect that compiles to native x86_64 assembly. Every expression has a known type at compile time. There is no runtime type tagging, no garbage collector, and no interpreter.
+
+### Design goals
+
+The language is built around these pillars; later sections give the binding
+contracts for each.
+
+- **Typed.** Every expression has a known type at compile time; no runtime
+  type tagging.
+- **Native.** Programs compile straight to x86_64 machine code for
+  `linux-x86_64` and `windows-x86_64`. No bytecode VM, no interpreter, no
+  garbage collector.
+- **Self-hosted, zero dependencies.** Compiler, stdlib, tooling, and tests are
+  written in TypeLisp; each published stage0 builds its own successor. The only
+  build inputs are the native assembler/linker toolchain, and direct object
+  emission is staged to remove the assembler dependency.
+- **Safe.** Safe code has no undefined behavior (see the table below).
+  Ownership, moves, lexical borrows, lifetimes, and arena regions are checked
+  statically, in the spirit of Rust but with arenas instead of general `free`
+  or garbage collection.
+- **Comptime as the abstraction mechanism.** No source-level generics, traits,
+  interfaces, or `impl`; Zig-style compile-time generation and typed macros
+  produce concrete declarations (section 3.7).
+- **SPMD data parallelism.** ISPC-style `foreach`/`spmd-reduce` with
+  uniform/varying semantics and scalar-equivalent SIMD lowering (section 5.15).
+- **Module identity.** C3-style modules where module identity participates in
+  name resolution and symbol naming (section 4.4).
+- **Fast.** Generated code quality should approach LLVM (`clang -O2`) on the
+  benchmark corpus while compilation itself stays fast. Performance is tracked
+  deterministically through paired C baselines and instruction-count CI gates;
+  the codegen-quality roadmap is #2559.
 
 ### Safe code: no undefined behavior
 
@@ -41,9 +71,9 @@ table.
 | Scalar numeric casts | Defined result | Integer/integer, integer/`char`, `f64` ↔ `f32`, and integer/`char` ↔ float casts use defined truncation, sign/zero-extension, and round-to-nearest/truncate-toward-zero rules. See section 3.8 and #1101. |
 | Non-numeric casts | Static reject | Casts touching non-numeric types are rejected before lowering. See section 3.8 and #1101. |
 | Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative dynamic-array lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
-| Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is tracked by #1048 and #805. |
-| Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are owned by #1033/#1034/#1035. |
-| Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker work is owned by #806. Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
+| Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is implemented by the selfhost checker (#805, #1048, #1049, #1050). |
+| Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are implemented (#1033/#1034/#1035); non-lexical lifetimes remain deferred (#810). |
+| Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker is implemented (#806). Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
 | Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value aggregate states are rejected. See sections 3.5, 4.6, and 5.13. |
 | Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
@@ -1100,13 +1130,12 @@ possible:
 - Attempts to use type parameters, type expressions, or generic type
   constructors where only lifetime names are allowed.
 
-V1 exclusions: mutable-reference creation and exclusivity (#806), non-lexical
-lifetimes (#810), type-level closure lifetime markers and escaping
-reference-capturing closures (#808), runtime generics/type parameters,
+V1 exclusions: non-lexical lifetimes (#810), runtime generics/type parameters,
 trait-like bounds, lifetime elision syntax, lifetime subtyping/coercion, and
 Rust compiler product-surface changes are out of scope. The selfhost parser,
-AST, typechecker, and lowerer implementation for this specified syntax is
-tracked by #1722/#804.
+AST, typechecker, and lowerer support for this specified syntax is implemented
+(#1722/#804), as are mutable-reference creation and exclusivity (#806) and
+non-escaping reference-capturing closures (#808/#2280).
 
 **Lexical v1 lifetime rule.** A borrow created in v1 lives until the end of the
 innermost lexical scope that contains the borrow expression. Lexical scopes are
@@ -1134,12 +1163,13 @@ their owner or arena:
   body. Outer-arena references may be used inside inner arenas without gaining
   the inner lifetime.
 
-Mutable reference creation and exclusivity are #806. Nominal returned/stored
-lifetime parameter syntax is specified in section 3.10.1 and implemented by
-#1722/#804. Reference-capturing closure implementation is #808. Non-lexical
-lifetime shortening is #810.
+Mutable reference creation and exclusivity are implemented (#806). Nominal
+returned/stored lifetime parameter syntax is specified in section 3.10.1 and
+implemented by #1722/#804. Non-escaping reference-capturing closures are
+implemented (#808/#2280); mutation of captured names remains rejected (#2552).
+Non-lexical lifetime shortening is deferred (#810).
 
-```lisp test=ignore name=borrow-local-param-ok reason="borrow expressions are specified before selfhost implementation"
+```lisp test=ignore name=borrow-local-param-ok reason="illustrative borrow-expression example; not a standalone program"
 (define (takes-i64 [x : (& n i64)]) : i64
   0)
 
@@ -1148,7 +1178,7 @@ lifetime shortening is #810.
     (takes-i64 r)))
 ```
 
-```lisp test=ignore name=borrow-field-element-ok reason="borrow expressions are specified before selfhost implementation"
+```lisp test=ignore name=borrow-field-element-ok reason="illustrative borrow-expression example; not a standalone program"
 (defstruct Pair (left i64) (right i64))
 
 (define (takes-two [x : (& p i64)] [y : (& items i64)]) : i64
@@ -1160,7 +1190,7 @@ lifetime shortening is #810.
       (takes-two left first))))
 ```
 
-```lisp test=ignore name=borrow-arena-owned-ok reason="borrow expressions are specified before selfhost implementation"
+```lisp test=ignore name=borrow-arena-owned-ok reason="illustrative borrow-expression example; not a standalone program"
 (define (takes-string [s : (& phase str)]) : i64
   0)
 
@@ -1201,9 +1231,10 @@ lifetime shortening is #810.
 #### 3.10.2 Closure reference captures (v1 design)
 
 This section specifies the first safe rule for closures that capture immutable
-references. It does not relax the current checker yet: implementation remains
-tracked by #808, and the current selfhost checker conservatively rejects any
-lambda that captures a binding whose type contains a reference.
+references. The non-escaping classification is implemented (#808/#2280): a
+lambda may capture a binding whose type contains an immutable reference when
+the checker proves the closure value does not escape the reference's lifetime.
+Closures that would escape still reject reference captures.
 
 A closure is **reference-capturing** when any captured binding has a type that
 contains `(& lifetime T)`. Capturing `(&mut lifetime T)` is rejected in v1; the
@@ -1324,11 +1355,11 @@ remaining outer-scope uses are still proven non-escaping. A closure that capture
 ### 3.11 Owned `String` and borrowed `str` (v1 design)
 
 This section defines the source contract for the owned `String` / borrowed
-`str` split. The syntax and API migration are staged: `String` exists today,
-reference syntax exists in the selfhost checker, and `str` frontend/API support
-lands through #1453 and #1454. Until those implementation slices land, current
-compiler and stdlib signatures still use the compatibility `String` forms in
-section 6.1.
+`str` split. The `str` frontend and stdlib API migration are implemented
+(#1453, #1454): borrowing a `String` place produces a `(& lifetime str)` view,
+and stdlib string helpers expose borrowed-`str` signatures (for example
+`string-eq-borrowed` and `substring-borrowed` in `stdlib/string.tl`). Several
+compiler builtins keep the compatibility `String` forms listed in section 6.1.
 
 #### Source model
 
@@ -1347,7 +1378,7 @@ section 6.1.
 
 Borrowing a `String` place produces a borrowed `str` reference:
 
-```lisp test=ignore name=string-borrow-produces-str reason="borrowed str is specified before selfhost implementation"
+```lisp test=ignore name=string-borrow-produces-str reason="illustrative borrowed str example; not a standalone program"
 (define (text-len [text : (& input str)]) : i64
   (string-length text))
 
@@ -1359,7 +1390,7 @@ Borrowing a `String` place produces a borrowed `str` reference:
 Borrow expressions stay explicit. A call that expects `(& lifetime str)` does
 not implicitly borrow a `String` argument:
 
-```lisp test=ignore name=string-borrow-reject-implicit reason="negative example for future borrowed str checker"
+```lisp test=ignore name=string-borrow-reject-implicit reason="negative example for the borrowed str checker"
 (define (text-len [text : (& input str)]) : i64
   (string-length text))
 
@@ -1369,17 +1400,18 @@ not implicitly borrow a `String` argument:
 
 Bare `str` is rejected even when it appears to be used read-only:
 
-```lisp test=ignore name=string-borrow-reject-bare-str reason="negative example for future borrowed str checker"
+```lisp test=ignore name=string-borrow-reject-bare-str reason="negative example for the borrowed str checker"
 (define (bad-by-value-str [text : str]) : i64
   0)
 ```
 
 Returned and stored borrowed string lifetimes use the lifetime-parameter rules
-specified in section 3.10.1. Until the #1722/#804 implementation lands,
-returning or storing a borrowed `str` is rejected unless the checker can prove
-the reference is purely local to the current lexical scope:
+specified in section 3.10.1 (implemented by #1722/#804). Without a declared
+lifetime relationship, returning or storing a borrowed `str` is rejected unless
+the checker can prove the reference is purely local to the current lexical
+scope:
 
-```lisp test=ignore name=string-borrow-reject-stored-returned reason="returned/stored borrowed lifetime implementation is tracked by #1722/#804"
+```lisp test=ignore name=string-borrow-reject-stored-returned reason="negative example: storing/returning a borrow without a proven lifetime relationship"
 (defstruct SavedText
   (text (& input str)))
 
@@ -1391,7 +1423,7 @@ Arena escape checks apply to borrowed string views exactly like other
 references. A borrowed view of a scoped-arena `String` cannot escape the scoped
 arena:
 
-```lisp test=ignore name=string-borrow-reject-arena-escape reason="negative example for future borrowed str checker"
+```lisp test=ignore name=string-borrow-reject-arena-escape reason="negative example for the borrowed str checker"
 (define (bad-scoped-text) : (& phase str)
   (with-arena phase
     (let [text : String (int->string 42)]
@@ -1401,7 +1433,7 @@ arena:
 Borrowing a `String` is non-consuming. Moving the owner while a borrowed view is
 live is rejected by the move/borrow checker:
 
-```lisp test=ignore name=string-borrow-reject-move-while-borrowed reason="negative example for future move and borrowed str checker"
+```lisp test=ignore name=string-borrow-reject-move-while-borrowed reason="negative example for the move and borrowed str checker"
 (define (bad-move-while-borrowed [input : String]) : i64
   (let [view : (& input str) (& input)]
     (let [moved : String input]
@@ -1410,10 +1442,10 @@ live is rejected by the move/borrow checker:
 
 #### API classification
 
-The current implementation still exposes `String` parameters for these
-builtins and stdlib helpers. After #1453/#1454, signatures should use
-borrowed `str` for non-consuming text inputs while preserving owned `String`
-results for allocation sites.
+The #1453/#1454 migration gave the stdlib surface borrowed-`str` signatures for
+non-consuming text inputs; several compiler builtins still expose compatibility
+`String` parameters. New APIs should use borrowed `str` for non-consuming text
+inputs while preserving owned `String` results for allocation sites.
 
 | Category | Members | v1 ownership contract |
 |----------|---------|-----------------------|
@@ -2290,8 +2322,8 @@ move-only values and as copies for copyable values:
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
-  3.10.2 and remain implementation work under #808; mutable reference captures
-  remain deferred to #806.
+  3.10.2 and are implemented for non-escaping closures (#808/#2280); mutable
+  reference captures remain rejected in v1.
 
 Repeated loop bodies are conservative move contexts. Moving a move-only owner
 binding that is visible before a `while` or `foreach` body is rejected because a
@@ -2773,17 +2805,16 @@ specified.
   re-snapshots any nested aggregate fields/payloads so they cannot dangle
   (#584). A scalar fixed-array capture shallow-copies its inline element storage
   and reconstructs the array view on capture-load (#571).
-- Lambda literals can return scalar values and pointer-backed aggregate
-  values supported by named function returns, including `String`, enums,
-  structs, and dynamic arrays. Tuple and fixed-array by-value returns remain
-  unsupported by the backend.
-- `set!` to captured names is rejected. A fixed array of aggregate elements, and
-  a fixed array reached through an aggregate field, are also rejected: array
-  elements live inline (not as pointer-sized handles), so their per-element
-  deep-copy is not yet wired (tracked under #571/#435).
-- Immutable reference captures are specified separately in section 3.10.2. Until
-  #808 implements the checker-only non-escaping classification, the selfhost
-  checker rejects lambdas that capture reference-typed bindings.
+- Lambda literals can return the same value categories as named function
+  returns, including `String`, enums, structs, dynamic arrays, tuples, and
+  fixed arrays.
+- `set!` to captured names is rejected (#2552). A fixed array of aggregate
+  elements, and a fixed array reached through an aggregate field, are also
+  rejected: array elements live inline (not as pointer-sized handles), so their
+  per-element deep-copy is not yet wired (tracked under #571/#435).
+- Immutable reference captures are specified in section 3.10.2 and implemented
+  for non-escaping closures (#808/#2280); escaping closures still reject
+  reference-typed captures.
 
 ```lisp test=ignore name=lambda-lift-immediate reason="integration tests cover executable lambda lifting"
 ((lambda ([x : i64]) : i64 (+ x 1)) 41)
@@ -3481,9 +3512,9 @@ a compile-time-required context.
 
 ### 5.19 `(with ([name init cleanup] ...) body ...)` - scoped resource cleanup
 
-The `(with ...)` form is reserved for explicit scoped cleanup of non-memory
-resources such as file descriptors, process handles, temporary files, locks,
-and mapped files. It is separate from `(with-arena ...)`: `with` calls cleanup
+The `(with ...)` form (implemented; #907) provides explicit scoped cleanup of
+non-memory resources such as file descriptors, process handles, temporary
+files, locks, and mapped files. It is separate from `(with-arena ...)`: `with` calls cleanup
 functions for resource values, while `with-arena` resets arena allocation for
 memory owned by a lexical region.
 
@@ -3499,7 +3530,7 @@ Each binding has the form `[name init-expr cleanup-fn]`.
 - The body is a non-empty expression sequence; the last expression is the
   result of the `with` form.
 
-```lisp test=ignore name=with-resource-normal reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+```lisp test=ignore name=with-resource-normal reason="illustrative resource-cleanup example; not a standalone program"
 (defstruct Handle (id i64))
 
 (define (open-handle) : Handle
@@ -3518,7 +3549,7 @@ order. A binding whose initializer did not complete is not cleaned up. This
 makes a multi-binding form equivalent to nested `with` forms for lifetime
 purposes:
 
-```lisp test=ignore name=with-resource-lifo reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+```lisp test=ignore name=with-resource-lifo reason="illustrative resource-cleanup example; not a standalone program"
 (defstruct Handle (id i64))
 
 (define (open-handle [id : i64]) : Handle
@@ -3539,7 +3570,7 @@ In the example above `inner` is closed before `outer`.
 Nested `with` forms compose in the same way: the inner scope cleans up before
 execution continues in the outer scope.
 
-```lisp test=ignore name=with-resource-nested reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+```lisp test=ignore name=with-resource-nested reason="illustrative resource-cleanup example; not a standalone program"
 (defstruct Handle (id i64))
 
 (define (open-handle [id : i64]) : Handle
@@ -3561,7 +3592,7 @@ scope. Already-initialized earlier bindings are cleaned up when a later
 initializer propagates a recoverable failure. Panic/abort remains terminal and
 does not guarantee cleanup unless a future unwinding model explicitly says so.
 
-```lisp test=ignore name=with-resource-recoverable-propagation reason="reserved scoped cleanup and recoverable propagation syntax; compiler support tracked by #907/#903"
+```lisp test=ignore name=with-resource-recoverable-propagation reason="illustrative scoped cleanup with recoverable propagation; not a standalone program"
 (defstruct Handle (id i64))
 
 (defenum ResultI64
@@ -3591,7 +3622,7 @@ as the result of the `with` form, stored into an outer binding or global, or
 captured by a closure whose lifetime outlives the scope. The resource may be
 used to compute a non-resource result before cleanup runs.
 
-```lisp test=ignore name=with-resource-reject-escape reason="negative example for future scoped resource cleanup checks"
+```lisp test=ignore name=with-resource-reject-escape reason="negative example for scoped resource cleanup checks"
 (defstruct Handle (id i64))
 
 (define (open-handle) : Handle
@@ -3801,11 +3832,10 @@ read/write/close helpers, and never inspect its representation. Internally the
 handle carries an id into a stdlib-managed table that stores the host
 descriptor, open mode, and open/closed state; these fields are not part of the
 public contract and may change. A handle is an aggregate value and follows the
-move-only source contract in section 4.6.2 once that checker lands. Until then,
-implementations may represent it as a copyable numeric handle internally, but
-source code should treat each successful `FileHandle` as a single owner that is
-closed exactly once. There is no implicit close yet; scoped cleanup waits on
-#805.
+move-only source contract in section 4.6.2 (the move checker is implemented;
+#805). Source code should treat each successful `FileHandle` as a single owner
+that is closed exactly once. There is no implicit close; scoped `(with ...)`
+cleanup (section 5.19) is the supported pattern.
 
 **Open modes.** `file-open` takes a path and an `OpenMode`:
 
@@ -4058,9 +4088,9 @@ rewound, and the result leaves the form without the scratch region tag.
 
 #### Standard library and builtin allocation policy
 
-Written reference and arena lifetime syntax exists, but current stdlib
-signatures still use compatibility `String`/aggregate types until the borrowed
-`str` frontend and API migration land (#1453/#1454/#1082). The checker
+Written reference and arena lifetime syntax exists, and the borrowed `str`
+frontend plus stdlib API migration have landed (#1453/#1454/#1082). Some stdlib
+signatures still use compatibility `String`/aggregate types. The checker
 therefore conservatively treats aggregate results from calls inside a scoped
 arena as tagged with that arena. This is stricter than the future model for
 functions that may return caller-owned data, but it prevents active-arena
@@ -4122,9 +4152,9 @@ used before. The form is intended for first-class scratch arenas; it is not a
 lexical lifetime binder, and lexical region cleanup remains the job of
 `with-arena`.
 
-#### Scoped non-memory resources (reserved) - `with`
+#### Scoped non-memory resources - `with`
 
-The reserved `(with ([name init cleanup] ...) body ...)` form (§5.19) is the
+The `(with ([name init cleanup] ...) body ...)` form (§5.19) is the
 source surface for deterministic cleanup of non-memory resources. It does not
 select an allocation arena and does not reset heap storage. Cleanup is explicit
 in the binding and must return `unit`; TypeLisp still has no implicit
@@ -4135,8 +4165,8 @@ files, process handles, locks, mapped files, and temporary paths use `with`;
 heap allocation reclamation uses `with-arena` or explicit unsafe arena
 operations below. Cleanup-owning aggregates (section 4.6.1) use the same `with`
 owner scope plus a declared aggregate cleanup function for the field cleanup
-plan. Compiler support is tracked by #907, with move-only enforcement tracked
-separately.
+plan. Compiler support is implemented (#907); move-only enforcement comes from
+the section 4.6.2 checker.
 
 #### Manual arena helpers
 
@@ -4315,26 +4345,26 @@ not the future safe reference/borrow model (#182), not a replacement for
 
 | Feature | Status |
 |---------|--------|
-| Tuple by-value ABI | Function parameters/returns rejected by backend validation |
-| Fixed-array by-value return | Rejected by backend validation |
-| Tuple/Struct/Enum/String globals | Rejected by backend validation |
-| Reference captures in lambdas | Specified for local non-escaping immutable captures; implementation pending #808. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
-| Mutable captures (`set!` to captured names) in lambdas | Not implemented |
-| Tail call optimization | Not implemented |
-| `struct-set!` | Not implemented |
+| Tuple by-value ABI | Implemented: tuple parameters and returns compile by value |
+| Fixed-array by-value return | Implemented |
+| Tuple/Struct/Enum/String globals | Implemented, including runtime initializers (#331) |
+| Reference captures in lambdas | Implemented for local non-escaping immutable captures (#808/#2280); escaping closures still reject reference captures. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
+| Mutable captures (`set!` to captured names) in lambdas | Not implemented; implement-or-reject decision tracked by #2552 |
+| Tail call optimization | Direct/self tail jumps implemented (#2506); indirect and closure tail calls tracked by #2363 |
+| `struct-set!` | Not implemented (#1521) |
 | Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
 | Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
-| Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
-| `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
-| Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
-| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds; masked varying `if` is specified as the next slice and implementation is pending |
-| Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred |
+| Move-only aggregate handle checking | Implemented: the selfhost checker enforces move-only aggregates with use-after-move, path-move, and move-while-borrowed diagnostics (#805/#1048/#1049/#1050) |
+| `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
+| Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
+| SPMD / SIMD `foreach` and `spmd-reduce` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64`, plus eligible `spmd-reduce` folds; masked varying `if` is in flight (#2131/#2205/#2207) |
+| Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred; tracked by #2548 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
-| Package manager | Not implemented |
+| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, lockfile parse/emit, and a deterministic package cache; registry, version solving, and build-time lockfile replay remain future work (#2549) |
 | LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 
 ---

@@ -452,6 +452,13 @@
       (array-set! items 0 answer)
       (+ (foreign-call (inc (array-ref items 0))) (float-ok)))))")
 
+(define (compiler-backend-coff-real-text-source) : String
+  "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
+(define answer : i64 40)
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : i64
+  (+ (foreign-call (inc answer)) 1))")
+
 (define (compiler-backend-object-image-shape-ok?) : bool
   (match (compiler-backend-emit-source-object-image
     (compiler-backend-object-image-source))
@@ -563,13 +570,26 @@
                   (> (compiler-object-relocation-list-count relocs) 5)))))))]
     [(ErrCompilerBackendObject _) false]))
 
-(define (compiler-object-coff-rejects-real-text-ok?) : bool
-  (match (compiler-backend-emit-source-object-image
-    (compiler-backend-object-image-source))
+(define (compiler-backend-coff-renders-real-text-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-coff-real-text-source)
+    (BackendTargetWindows))
     [(OkCompilerBackendObject image)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff _) false]
-        [(ErrCompilerObjectCoff _) true])]
+        [(OkCompilerObjectCoff obj)
+          (let
+            [text-header : i64
+              (compiler-object-coff-section-header-offset (ObjectSectionText))]
+            [text-size : i64
+              (compiler-object-coff-u32-at obj (+ text-header 16))]
+            [reloc-count : i64
+              (compiler-object-coff-u16-at obj (+ text-header 32))]
+            (and
+              (> text-size 0)
+              (and
+                (> reloc-count 0)
+                (compiler-object-coff-contains? obj "foreign_exact"))))]
+        [(ErrCompilerObjectCoff _) false])]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-implicit-main-source) : String
@@ -5787,7 +5807,9 @@
           (and
             (compiler-object-coff-smoke-ok?)
             (and
-              (compiler-object-coff-rejects-real-text-ok?)
+              (and
+                (compiler-object-coff-text-smoke-ok?)
+                (compiler-backend-coff-renders-real-text-ok?))
               (compiler-object-elf-smoke-ok?))))
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))
       (compiler-backend-string-ok?)

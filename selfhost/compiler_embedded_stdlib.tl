@@ -75,6 +75,8 @@
 
 (include-str compiler-embedded-stdlib-tests-hashmap-api "stdlib/tests/hashmap_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live "stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl")
+
 (include-str compiler-embedded-stdlib-tests-io-edges "stdlib/tests/io_edges.tl")
 
 (include-str compiler-embedded-stdlib-tests-io-file-handle "stdlib/tests/io_file_handle.tl")
@@ -204,6 +206,9 @@
     (string-eq suffix "tests/hashmap_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-hashmap-api)
+    (string-eq suffix "tests/hashmap_mut_borrow_insert_or_update_live.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live)
     (string-eq suffix "tests/io_edges.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-io-edges)
     (string-eq suffix "tests/io_file_handle.tl")

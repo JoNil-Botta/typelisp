@@ -14040,13 +14040,22 @@
 (define (opt-inline-lookup-inlinable
   [index : OptFunctionIndex]
   [cname : String]
-  [caller-name : String]) : OptMaybeFunction
-  (match (opt-function-index-find index cname)
-    [(OptSomeFunction callee)
-      (if (opt-inline-callee-ok? callee caller-name)
-        (OptSomeFunction callee)
-        (OptNoFunction))]
-    [(OptNoFunction) (OptNoFunction)]))
+  [caller-name : String]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptMaybeFunction
+  (match (opt-function-index-slot index cname)
+    [(OptSomeI64 callee-slot)
+      (if (and
+        (>= caller-scc 0)
+        (= (array-ref (struct-get scc-result scc-of) callee-slot) caller-scc))
+        (OptNoFunction)
+        (let
+          [callee : CompilerIrFunction
+            (array-ref (struct-get index values) callee-slot)]
+          (if (opt-inline-callee-ok? callee caller-name)
+            (OptSomeFunction callee)
+            (OptNoFunction))))]
+    [(OptNoI64) (OptNoFunction)]))
 
 (define (opt-inline-try
   [instr : CompilerIrInstr]
@@ -14055,10 +14064,17 @@
   [func-name : String]
   [vars : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : OptInlineState
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineState
   (match instr
     [(IrInstrCall dst cname cargs cret)
-      (match (opt-inline-lookup-inlinable index cname func-name)
+      (match (opt-inline-lookup-inlinable
+        index
+        cname
+        func-name
+        scc-result
+        caller-scc)
         [(OptSomeFunction callee)
           (match callee
             [(IrFunction callee-name cparams _ cvars cblocks)
@@ -14120,11 +14136,18 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanState
   (match instr
     [(IrInstrCall dst cname cargs cret)
-      (match (opt-inline-lookup-inlinable index cname func-name)
+      (match (opt-inline-lookup-inlinable
+        index
+        cname
+        func-name
+        scc-result
+        caller-scc)
         [(OptSomeFunction callee)
           (match callee
             [(IrFunction callee-name cparams _ cvars cblocks)
@@ -14197,7 +14220,9 @@
   [func-name : String]
   [vars : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : OptInlineState
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineState
   (match instrs
     [(IrInstrNil) (OptInlineState IrInstrNil vars added-so-far)]
     [(IrInstrCons instr rest)
@@ -14208,7 +14233,9 @@
         func-name
         vars
         caller-blocks
-        added-so-far)
+        added-so-far
+        scc-result
+        caller-scc)
         [(OptInlineState expanded vars2 added2)
           (match (opt-inline-walk-instrs
             (box-get rest)
@@ -14217,7 +14244,9 @@
             func-name
             vars2
             caller-blocks
-            added2)
+            added2
+            scc-result
+            caller-scc)
             [(OptInlineState rest-list vars3 added3)
               (OptInlineState
                 (opt-inline-append expanded rest-list)
@@ -14232,7 +14261,9 @@
   [func-name : String]
   [vars : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : OptInlineState
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineState
   (if (>= pos (compiler-ir-instr-seq-count instrs))
     (OptInlineState IrInstrNil vars added-so-far)
     (match (opt-inline-try
@@ -14242,7 +14273,9 @@
       func-name
       vars
       caller-blocks
-      added-so-far)
+      added-so-far
+      scc-result
+      caller-scc)
       [(OptInlineState expanded vars2 added2)
         (match (opt-inline-walk-instr-seq-from
           instrs
@@ -14252,7 +14285,9 @@
           func-name
           vars2
           caller-blocks
-          added2)
+          added2
+          scc-result
+          caller-scc)
           [(OptInlineState rest-list vars3 added3)
             (OptInlineState (opt-inline-append expanded rest-list) vars3 added3)])])))
 
@@ -14263,7 +14298,9 @@
   [func-name : String]
   [vars : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : OptInlineState
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineState
   (opt-inline-walk-instr-seq-from
     instrs
     0
@@ -14272,7 +14309,9 @@
     func-name
     vars
     caller-blocks
-    added-so-far))
+    added-so-far
+    scc-result
+    caller-scc))
 
 (define (opt-inline-walk-instrs-with-spans
   [instrs : CompilerIrInstrList]
@@ -14282,6 +14321,8 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanState
   (match instrs
@@ -14295,6 +14336,8 @@
         vars
         caller-blocks
         added-so-far
+        scc-result
+        caller-scc
         source-spans
         out-spans)
         [(OptInlineSpanState expanded vars2 added2 spans2)
@@ -14306,6 +14349,8 @@
             vars2
             caller-blocks
             added2
+            scc-result
+            caller-scc
             source-spans
             spans2)
             [(OptInlineSpanState rest-list vars3 added3 spans3)
@@ -14324,6 +14369,8 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanState
   (if (>= pos (compiler-ir-instr-seq-count instrs))
@@ -14336,6 +14383,8 @@
       vars
       caller-blocks
       added-so-far
+      scc-result
+      caller-scc
       source-spans
       out-spans)
       [(OptInlineSpanState expanded vars2 added2 spans2)
@@ -14348,6 +14397,8 @@
           vars2
           caller-blocks
           added2
+          scc-result
+          caller-scc
           source-spans
           spans2)
           [(OptInlineSpanState rest-list vars3 added3 spans3)
@@ -14365,6 +14416,8 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanState
   (opt-inline-walk-instr-seq-with-spans-from
@@ -14376,6 +14429,8 @@
     vars
     caller-blocks
     added-so-far
+    scc-result
+    caller-scc
     source-spans
     out-spans))
 
@@ -14386,7 +14441,9 @@
   [func-name : String]
   [vars : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : OptInlineBlocks
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineBlocks
   (match blocks
     [(IrBlockNil) (OptInlineBlocks IrBlockNil vars added-so-far)]
     [(IrBlockCons block rest)
@@ -14399,7 +14456,9 @@
             func-name
             vars
             caller-blocks
-            added-so-far)
+            added-so-far
+            scc-result
+            caller-scc)
             [(OptInlineState new-instrs vars2 added2)
               (match (opt-inline-blocks
                 (box-get rest)
@@ -14408,7 +14467,9 @@
                 func-name
                 vars2
                 caller-blocks
-                added2)
+                added2
+                scc-result
+                caller-scc)
                 [(OptInlineBlocks rest-blocks vars3 added3)
                   (OptInlineBlocks
                     (compiler-ir-block-cons
@@ -14424,7 +14485,9 @@
         func-name
         vars
         caller-blocks
-        added-so-far)]))
+        added-so-far
+        scc-result
+        caller-scc)]))
 
 (define (opt-inline-blocks-with-spans
   [blocks : CompilerIrBlockList]
@@ -14434,6 +14497,8 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanBlocks
   (match blocks
@@ -14449,6 +14514,8 @@
             vars
             caller-blocks
             added-so-far
+            scc-result
+            caller-scc
             source-spans
             out-spans)
             [(OptInlineSpanState new-instrs vars2 added2 spans2)
@@ -14460,6 +14527,8 @@
                 vars2
                 caller-blocks
                 added2
+                scc-result
+                caller-scc
                 source-spans
                 spans2)
                 [(OptInlineSpanBlocks rest-blocks vars3 added3 spans3)
@@ -14479,6 +14548,8 @@
         vars
         caller-blocks
         added-so-far
+        scc-result
+        caller-scc
         source-spans
         out-spans)]))
 
@@ -14503,12 +14574,23 @@
 (define (opt-inline-function
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]) : CompilerIrFunction
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret vars blocks)
       (let
         [caller-blocks : i64 (compiler-ir-block-list-count blocks)]
-        (match (opt-inline-blocks blocks index census name vars caller-blocks 0)
+        (match (opt-inline-blocks
+          blocks
+          index
+          census
+          name
+          vars
+          caller-blocks
+          0
+          scc-result
+          caller-scc)
           [(OptInlineBlocks new-blocks new-vars _)
             (opt-inline-revert-or-keep
               func
@@ -14518,6 +14600,8 @@
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanProgram
   (match func
@@ -14532,6 +14616,8 @@
           vars
           caller-blocks
           0
+          scc-result
+          caller-scc
           source-spans
           out-spans)
           [(OptInlineSpanBlocks new-blocks new-vars _ next-spans)
@@ -14546,46 +14632,119 @@
                   (compiler-ir-function-cons func IrFunctionNil)
                   out-spans)))]))]))
 
-(define (opt-inline-function-list
-  [functions : CompilerIrFunctionList]
+(define (opt-function-index-to-list-from
   [index : OptFunctionIndex]
-  [census : OptInlineCensus]) : CompilerIrFunctionList
-  (match functions
-    [(IrFunctionNil) IrFunctionNil]
-    [(IrFunctionCons func rest)
-      (compiler-ir-function-cons
-        (opt-inline-function func index census)
-        (opt-inline-function-list (box-get rest) index census))]))
+  [slot : i64]
+  [count : i64]) : CompilerIrFunctionList
+  (if (>= slot count)
+    IrFunctionNil
+    (compiler-ir-function-cons
+      (array-ref (struct-get index values) slot)
+      (opt-function-index-to-list-from index (+ slot 1) count))))
 
-(define (opt-inline-function-list-with-spans
-  [functions : CompilerIrFunctionList]
+(define (opt-function-index-to-list [index : OptFunctionIndex]) : CompilerIrFunctionList
+  (opt-function-index-to-list-from index 0 (opt-function-index-count index)))
+
+(define (opt-inline-slot-order [scc-result : OptSccResult]) : (Array i64)
+  (let
+    [order : (Array i64) (struct-get scc-result order)]
+    [scc-of : (Array i64) (struct-get scc-result scc-of)]
+    [slot-count : i64 (array-length scc-of)]
+    [scc-count : i64 (array-length order)]
+    [counts : (Array i64) (make-array i64 scc-count)]
+    [starts : (Array i64) (make-array i64 scc-count)]
+    [next : (Array i64) (make-array i64 scc-count)]
+    [slots : (Array i64) (make-array i64 slot-count)]
+    [slot : i64 0]
+    [order-index : i64 0]
+    [offset : i64 0]
+    (begin
+      (opt-cfg-fill-i64! counts scc-count 0)
+      (while (< slot slot-count)
+        (let
+          [scc-id : i64 (array-ref scc-of slot)]
+          (begin
+            (array-set! counts scc-id (+ (array-ref counts scc-id) 1))
+            (set! slot (+ slot 1)))))
+      (while (< order-index scc-count)
+        (let
+          [scc-id : i64 (array-ref order order-index)]
+          (begin
+            (array-set! starts scc-id offset)
+            (array-set! next scc-id offset)
+            (set! offset (+ offset (array-ref counts scc-id)))
+            (set! order-index (+ order-index 1)))))
+      (set! slot 0)
+      (while (< slot slot-count)
+        (let
+          [scc-id : i64 (array-ref scc-of slot)]
+          [slot-index : i64 (array-ref next scc-id)]
+          (begin
+            (array-set! slots slot-index slot)
+            (array-set! next scc-id (+ slot-index 1))
+            (set! slot (+ slot 1)))))
+      slots)))
+
+(define (opt-inline-process-scc-order!
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
-  [source-spans : CompilerSourceSpans]
-  [out-spans : CompilerSourceSpans]) : OptInlineSpanProgram
-  (match functions
-    [(IrFunctionNil) (OptInlineSpanProgram IrFunctionNil out-spans)]
-    [(IrFunctionCons func rest)
-      (match (opt-inline-function-with-spans
-        func
-        index
-        census
-        source-spans
-        out-spans)
-        [(OptInlineSpanProgram one spans2)
-          (match (opt-inline-function-list-with-spans
-            (box-get rest)
-            index
-            census
-            source-spans
-            spans2)
-            [(OptInlineSpanProgram tail spans3)
-              (match one
-                [(IrFunctionCons head _)
-                  (OptInlineSpanProgram
-                    (compiler-ir-function-cons head tail)
-                    spans3)]
-                [(IrFunctionNil) (OptInlineSpanProgram tail spans3)])])])]))
+  [scc-result : OptSccResult]) : unit
+  (let
+    [scc-of : (Array i64) (struct-get scc-result scc-of)]
+    [values : (Array CompilerIrFunction) (struct-get index values)]
+    [slot-order : (Array i64) (opt-inline-slot-order scc-result)]
+    [index-pos : i64 0]
+    [slot-count : i64 (array-length slot-order)]
+    (while (< index-pos slot-count)
+      (begin
+        (let
+          [slot : i64 (array-ref slot-order index-pos)]
+          [caller-scc : i64 (array-ref scc-of slot)]
+          (array-set!
+            values
+            slot
+            (opt-inline-function
+              (array-ref values slot)
+              index
+              census
+              scc-result
+              caller-scc)))
+        (set! index-pos (+ index-pos 1))))))
+
+(define (opt-inline-process-scc-order-with-spans
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [spans : CompilerSourceSpans]) : CompilerSourceSpans
+  (let
+    [scc-of : (Array i64) (struct-get scc-result scc-of)]
+    [values : (Array CompilerIrFunction) (struct-get index values)]
+    [slot-order : (Array i64) (opt-inline-slot-order scc-result)]
+    [index-pos : i64 0]
+    [slot-count : i64 (array-length slot-order)]
+    [current-spans : CompilerSourceSpans spans]
+    (begin
+      (while (< index-pos slot-count)
+        (begin
+          (let
+            [slot : i64 (array-ref slot-order index-pos)]
+            [caller-scc : i64 (array-ref scc-of slot)]
+            (match (opt-inline-function-with-spans
+              (array-ref values slot)
+              index
+              census
+              scc-result
+              caller-scc
+              current-spans
+              current-spans)
+              [(OptInlineSpanProgram one next-spans)
+                (begin
+                  (match one
+                    [(IrFunctionCons head _) (array-set! values slot head)]
+                    [(IrFunctionNil) unit])
+                  (set! current-spans next-spans))]))
+          (set! index-pos (+ index-pos 1))))
+      current-spans)))
 
 ;; Inline small single-block leaf callees across the whole program. Only at opt
 ;; level 2 (the register-allocated quality build).
@@ -14598,8 +14757,12 @@
       [devirt : CompilerIrFunctionList
         (opt-devirt-known-function-list functions)]
       [index : OptFunctionIndex (opt-function-index-build devirt)]
+      [graph : OptCallGraph (opt-callgraph-build index)]
+      [scc-result : OptSccResult (opt-scc-compute graph)]
       [census : OptInlineCensus (opt-inline-census-build index devirt)]
-      (opt-inline-function-list devirt index census))))
+      (begin
+        (opt-inline-process-scc-order! index census scc-result)
+        (opt-function-index-to-list index)))))
 
 (define (opt-inline-program-functions-with-spans
   [functions : CompilerIrFunctionList]
@@ -14611,8 +14774,12 @@
       [devirt : CompilerIrFunctionList
         (opt-devirt-known-function-list functions)]
       [index : OptFunctionIndex (opt-function-index-build devirt)]
+      [graph : OptCallGraph (opt-callgraph-build index)]
+      [scc-result : OptSccResult (opt-scc-compute graph)]
       [census : OptInlineCensus (opt-inline-census-build index devirt)]
-      (opt-inline-function-list-with-spans devirt index census spans spans))))
+      [next-spans : CompilerSourceSpans
+        (opt-inline-process-scc-order-with-spans index census scc-result spans)]
+      (OptInlineSpanProgram (opt-function-index-to-list index) next-spans))))
 
 (define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
@@ -18278,6 +18445,94 @@
     (opt-inline-multi-call-caller)
     (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
 
+(define (opt-inline-cascade-mid) : CompilerIrFunction
+  (IrFunction
+    "inline_mid"
+    (opt-inline-frame-params)
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            2
+            "inline_add"
+            (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-cascade-main) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 22) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "inline_mid"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (opt-inline-cascade-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-cascade-main)
+    (compiler-ir-function-cons
+      (opt-inline-cascade-mid)
+      (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil))))
+
+(define (opt-inline-mutual-a) : CompilerIrFunction
+  (IrFunction
+    "inline_mut_a"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 0 "inline_mut_b" IrCallArgsNil (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-mutual-b) : CompilerIrFunction
+  (IrFunction
+    "inline_mut_b"
+    IrParamNil
+    (AstTyI64)
+    1
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall 0 "inline_mut_a" IrCallArgsNil (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-inline-mutual-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-mutual-a)
+    (compiler-ir-function-cons (opt-inline-mutual-b) IrFunctionNil)))
+
 (define (opt-devirt-dynamic-caller) : CompilerIrFunction
   (IrFunction
     "dynamic"
@@ -18478,6 +18733,40 @@
       false
       true)))
 
+(define (compiler-optimize-inline-bottom-up-writeback-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-cascade-functions) 2)]
+    [main-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs optimized "main")]
+    [mid-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs optimized "inline_mid")]
+    (and
+      (= (opt-count-direct-call-name main-instrs "inline_mid") 0)
+      (and
+        (= (opt-count-direct-call-name main-instrs "inline_add") 0)
+        (and
+          (= (opt-inline-count-binop-dst main-instrs 4) 1)
+          (and
+            (= (opt-count-direct-call-name mid-instrs "inline_add") 0)
+            (= (opt-inline-count-binop-dst mid-instrs 3) 1)))))))
+
+(define (compiler-optimize-inline-mutual-scc-refusal-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-mutual-functions) 2)]
+    [a-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs optimized "inline_mut_a")]
+    [b-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs optimized "inline_mut_b")]
+    (and
+      (= (opt-count-direct-call-name a-instrs "inline_mut_b") 1)
+      (and
+        (= (opt-count-direct-call-name a-instrs "inline_mut_a") 0)
+        (and
+          (= (opt-count-direct-call-name b-instrs "inline_mut_a") 1)
+          (= (opt-count-direct-call-name b-instrs "inline_mut_b") 0))))))
+
 (define (compiler-optimize-inline-census-direct-ok?) : bool
   (let
     [functions : CompilerIrFunctionList (opt-inline-frame-functions)]
@@ -18657,9 +18946,13 @@
                     32
                     (not (compiler-optimize-inline-cost-model-ok?))
                     33
+                    (not (compiler-optimize-inline-bottom-up-writeback-ok?))
+                    34
+                    (not (compiler-optimize-inline-mutual-scc-refusal-ok?))
+                    35
                     42))]
-              [(OptNoFunction) 34])))]
-      [(OptNoFunction) 35])))
+              [(OptNoFunction) 36])))]
+      [(OptNoFunction) 37])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

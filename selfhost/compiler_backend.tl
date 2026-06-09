@@ -5443,35 +5443,55 @@
   [remaining : i64]) : String
   (if (<= remaining 0)
     ""
-    (let
-      [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
-      [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
-      [reg : String (compiler-backend-sized-reg "%rax" chunk-ty)]
+    (if (>= remaining 16)
+      ;; 16-byte chunks through %xmm15 (the per-instruction float scratch, see
+      ;; the stack-passed-arg path): movups tolerates the 8-byte alignment of
+      ;; inline aggregates and halves the instruction count of large copies
+      ;; versus unrolled 8-byte mov pairs (#2371).
       (string-append
-        (backend-cat5
-          "    mov"
-          (compiler-backend-int-instruction-suffix chunk-ty)
-          " "
+        (backend-cat4
+          "    movups "
           (compiler-backend-copy-address offset "%r11")
-          ", ")
+          ", %xmm15\n"
+          "")
         (string-append
-          reg
-          (string-append
+          (backend-cat4
+            "    movups %xmm15, "
+            (compiler-backend-copy-address offset "%r10")
             "\n"
+            "")
+          (compiler-backend-emit-copy-bytes-chunks
+            (+ offset 16)
+            (- remaining 16))))
+      (let
+        [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
+        [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
+        [reg : String (compiler-backend-sized-reg "%rax" chunk-ty)]
+        (string-append
+          (backend-cat5
+            "    mov"
+            (compiler-backend-int-instruction-suffix chunk-ty)
+            " "
+            (compiler-backend-copy-address offset "%r11")
+            ", ")
+          (string-append
+            reg
             (string-append
-              (backend-cat5
-                "    mov"
-                (compiler-backend-int-instruction-suffix chunk-ty)
-                " "
-                reg
-                ", ")
+              "\n"
               (string-append
-                (compiler-backend-copy-address offset "%r10")
+                (backend-cat5
+                  "    mov"
+                  (compiler-backend-int-instruction-suffix chunk-ty)
+                  " "
+                  reg
+                  ", ")
                 (string-append
-                  "\n"
-                  (compiler-backend-emit-copy-bytes-chunks
-                    (+ offset chunk)
-                    (- remaining chunk)))))))))))
+                  (compiler-backend-copy-address offset "%r10")
+                  (string-append
+                    "\n"
+                    (compiler-backend-emit-copy-bytes-chunks
+                      (+ offset chunk)
+                      (- remaining chunk))))))))))))
 
 (define (compiler-backend-emit-copy-bytes
   [assignments : CompilerRegAssignmentList]

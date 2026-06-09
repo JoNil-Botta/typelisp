@@ -1871,6 +1871,7 @@
             [(AstDeclImport
                 (AstImportSpec
                   _
+                  _
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)))
               (compiler-symbols-add-module-aliases
@@ -2400,6 +2401,7 @@
           (match decl
             [(AstDeclImport
                 (AstImportSpec
+                  _
                   _
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)))

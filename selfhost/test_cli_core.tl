@@ -1414,7 +1414,11 @@
 (define (tltest-import-alias-preserved? [decl : AstDecl]) : bool
   (match decl
     [(AstDeclImport
-        (AstImportSpec _ (AstSomeModuleName module) (AstSomeImportAlias alias)))
+        (AstImportSpec
+          _
+          _
+          (AstSomeModuleName module)
+          (AstSomeImportAlias alias)))
       (and (string-eq module "stdlib.core-macros") (string-eq alias "core"))]
     [_ false]))
 
@@ -1423,6 +1427,7 @@
     [import-decl : AstDecl
       (AstDeclImport
         (AstImportSpec
+          (AstImportPath)
           "stdlib/core_macros.tl"
           (AstSomeModuleName "stdlib.core-macros")
           (AstSomeImportAlias "core")))]

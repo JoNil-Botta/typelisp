@@ -5361,6 +5361,7 @@
           [(AstDeclImport
               (AstImportSpec
                 _
+                _
                 (AstSomeModuleName target-module)
                 (AstSomeImportAlias alias)))
             (match (tc-bind-import-alias-module
@@ -18484,7 +18485,7 @@
               current-module
               alias
               (intern-str next-module))]
-          [(AstDeclImport (AstImportSpec _ expected maybe-alias))
+          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias))
             (match maybe-alias
               [(AstSomeImportAlias import-alias)
                 (if (and
@@ -18609,14 +18610,15 @@
 ;; explicit import (#2060). Local macros and explicit imports therefore take
 ;; precedence over the prelude. Returns MacroNoDecl (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
-(define (macro-prelude-resolve-with-exports
+(define (macro-prelude-resolve-module-with-exports
   [exports : CompilerExports]
   [decls : AstDeclList]
+  [module-name : String]
   [lookup-name : String]) : ResultMacroCallDecl
   (match (compiler-exports-lookup-id
     exports
     (intern (compiler-export-kind-macro))
-    (intern "stdlib.core-macros")
+    (intern module-name)
     (intern lookup-name))
     [(SomeI64 handle)
       (match (macro-find-decl-by-index
@@ -18625,12 +18627,32 @@
         [(MacroSomeDecl macro-name params ret body)
           (OkMacroCallDecl
             (MacroSomeDecl
-              (macro-canonical-name "stdlib.core-macros" lookup-name)
+              (macro-canonical-name module-name lookup-name)
               params
               ret
               body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
+
+(define (macro-prelude-resolve-with-exports
+  [exports : CompilerExports]
+  [decls : AstDeclList]
+  [lookup-name : String]) : ResultMacroCallDecl
+  (match (macro-prelude-resolve-module-with-exports
+    exports
+    decls
+    "stdlib.core-macros"
+    lookup-name)
+    [(OkMacroCallDecl maybe-decl)
+      (match maybe-decl
+        [(MacroNoDecl)
+          (macro-prelude-resolve-module-with-exports
+            exports
+            decls
+            "stdlib.core_macros"
+            lookup-name)]
+        [_ (OkMacroCallDecl maybe-decl)])]
+    [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))
 
 (define (macro-prelude-call-decl
   [ctx : TcContext]

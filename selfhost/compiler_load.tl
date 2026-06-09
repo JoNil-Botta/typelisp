@@ -246,6 +246,169 @@
             primary))]
       (OkPkgResolve resolved))))
 
+(define (compiler-load-dotted-module-path [module-name : String]) : String
+  (let
+    [n : i64 (string-length module-name)]
+    [i : i64 0]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref module-name i) #.')
+            (set! out (string-append out "/"))
+            (set! out (string-append out (substring module-name i 1))))
+          (set! i (+ i 1))))
+      (string-append out ".tl"))))
+
+(define (compiler-load-dotted-module-first-len [module-name : String]) : i64
+  (let
+    [n : i64 (string-length module-name)]
+    [i : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i n))
+        (if (char-eq (string-ref module-name i) #.')
+          (set! done true)
+          (set! i (+ i 1))))
+      i)))
+
+(define (compiler-load-dotted-module-first [module-name : String]) : String
+  (substring module-name 0 (compiler-load-dotted-module-first-len module-name)))
+
+(define (compiler-load-dotted-module-rest
+  [module-name : String]
+  [first-len : i64]) : String
+  (let
+    [n : i64 (string-length module-name)]
+    [rest-start : i64 (+ first-len 1)]
+    (if (>= rest-start n)
+      ""
+      (substring module-name rest-start (- n rest-start)))))
+
+(define (compiler-load-resolve-stdlib-module-path
+  [module-path : String]
+  [stdlib-roots : StringVec]) : String
+  (let
+    [suffix : String (compiler-load-stdlib-suffix module-path)]
+    (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
+      [(CompilerLoadSomePath root-path) root-path]
+      [(CompilerLoadNoPath)
+        (if (file-exists? module-path)
+          module-path
+          (match (compiler-load-embedded-stdlib-path suffix)
+            [(CompilerLoadSomePath embedded-path) embedded-path]
+            [(CompilerLoadNoPath) module-path]))])))
+
+(define (compiler-load-resolve-module-import-with-roots
+  [import-root : String]
+  [module-name : String]
+  [stdlib-roots : StringVec]) : ResultPkgResolve
+  (let
+    [module-path : String (compiler-load-dotted-module-path module-name)]
+    (if (compiler-load-stdlib-import? module-path)
+      (OkPkgResolve
+        (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
+      (OkPkgResolve
+        (compiler-load-normalize-path
+          (compiler-load-join-root-path import-root module-path))))))
+
+(define (compiler-load-resolve-import-spec-with-roots
+  [importer-path : String]
+  [import-root : String]
+  [kind : AstImportKind]
+  [import-path : String]
+  [stdlib-roots : StringVec]) : ResultPkgResolve
+  (match kind
+    [(AstImportPath)
+      (compiler-load-resolve-import-result-with-roots
+        importer-path
+        import-path
+        stdlib-roots)]
+    [(AstImportModule)
+      (compiler-load-resolve-module-import-with-roots
+        import-root
+        import-path
+        stdlib-roots)]))
+
+(define (compiler-load-resolve-package-module-import
+  [module-name : String]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [stdlib-roots : StringVec]) : ResultPkgResolve
+  (let
+    [first-len : i64 (compiler-load-dotted-module-first-len module-name)]
+    [first : String (substring module-name 0 first-len)]
+    [module-path : String (compiler-load-dotted-module-path module-name)]
+    (if (compiler-load-stdlib-import? module-path)
+      (OkPkgResolve
+        (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
+      (match (compiler-load-pkg-dep-lookup deps first)
+        [(CompilerLoadNoPath)
+          (OkPkgResolve
+            (compiler-load-normalize-path
+              (compiler-load-join-root-path manifest-dir module-path)))]
+        [(CompilerLoadSomePath dep-path)
+          (let
+            [rest : String
+              (compiler-load-dotted-module-rest module-name first-len)]
+            (if (= (string-length rest) 0)
+              (ErrPkgResolve
+                (string-append
+                  "compiler-load: dotted import missing module segment after package alias: "
+                  module-name))
+              (if (compiler-load-github-dependency-path? dep-path)
+                (ErrPkgResolve
+                  (string-append
+                    "compiler-load: GitHub dependency '"
+                    (string-append
+                      first
+                      (string-append
+                        "' requires fetch support (#1157): "
+                        module-name))))
+                (OkPkgResolve
+                  (compiler-load-normalize-path
+                    (compiler-load-join-root-path
+                      (compiler-load-join-root-path manifest-dir dep-path)
+                      (compiler-load-dotted-module-path rest)))))))]))))
+
+(define (compiler-load-resolve-package-import-spec
+  [importer-path : String]
+  [kind : AstImportKind]
+  [import-path : String]
+  [stdlib-roots : StringVec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultPkgResolve
+  (match kind
+    [(AstImportPath)
+      (if (compiler-load-pkg-import? import-path)
+        (compiler-load-resolve-pkg-import import-path manifest-dir deps)
+        (compiler-load-resolve-import-result-with-roots
+          importer-path
+          import-path
+          stdlib-roots))]
+    [(AstImportModule)
+      (compiler-load-resolve-package-module-import
+        import-path
+        manifest-dir
+        deps
+        stdlib-roots)]))
+
+(define (compiler-load-package-import-externs?
+  [kind : AstImportKind]
+  [import-path : String]
+  [deps : CompilerPkgDeps]) : bool
+  (match kind
+    [(AstImportPath) (compiler-load-pkg-import? import-path)]
+    [(AstImportModule)
+      (let
+        [module-path : String (compiler-load-dotted-module-path import-path)]
+        [first : String (compiler-load-dotted-module-first import-path)]
+        (if (compiler-load-stdlib-import? module-path)
+          false
+          (match (compiler-load-pkg-dep-lookup deps first)
+            [(CompilerLoadSomePath _) true]
+            [(CompilerLoadNoPath) false])))]))
+
 (define (compiler-load-include-str-def [name : String] [contents : String]) : AstDecl
   (ast-decl-def
     name
@@ -479,6 +642,7 @@
     (string-vec-new)))
 
 (define (compiler-load-alias-decl-list
+  [kind : AstImportKind]
   [import-path : String]
   [expected-module : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
@@ -486,7 +650,7 @@
   (match alias
     [(AstSomeImportAlias _)
       (ast-decl-cons
-        (AstDeclImport (AstImportSpec import-path expected-module alias))
+        (AstDeclImport (AstImportSpec kind import-path expected-module alias))
         rest)]
     [(AstNoImportAlias) rest]))
 
@@ -509,6 +673,7 @@
 ;; Imported module declarations switch the flattened declaration context; restore
 ;; the importer's source module before the alias marker and remaining decls.
 (define (compiler-load-decls-after-import
+  [kind : AstImportKind]
   [import-path : String]
   [expected-module : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
@@ -517,7 +682,12 @@
   [rest : AstDeclList]) : AstDeclList
   (let
     [after-alias : AstDeclList
-      (compiler-load-alias-decl-list import-path expected-module alias rest)]
+      (compiler-load-alias-decl-list
+        kind
+        import-path
+        expected-module
+        alias
+        rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
       (ast-decl-cons (ast-decl-module importer-source-module) after-alias)
       after-alias)))
@@ -570,6 +740,25 @@
   [seen : SymI64Env]
   [stdlib-roots : StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-decls-with-module-and-roots-cfg-root
+    decls
+    importer-path
+    importer-module
+    importer-source-module
+    seen
+    stdlib-roots
+    (compiler-load-dirname importer-path)
+    cfgs))
+
+(define (compiler-load-decls-with-module-and-roots-cfg-root
+  [decls : AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [importer-source-module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [import-root : String]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
@@ -577,30 +766,35 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclImport (AstImportSpec import-path expected-module alias))
-            (match (compiler-load-resolve-import-result-with-roots
+          [(AstDeclImport
+              (AstImportSpec kind import-path expected-module alias))
+            (match (compiler-load-resolve-import-spec-with-roots
               importer-path
+              import-root
+              kind
               import-path
               stdlib-roots)
               [(OkPkgResolve resolved)
-                (match (compiler-load-file-with-paths-and-roots-expect-cfg
+                (match (compiler-load-file-with-paths-and-roots-expect-cfg-root
                   resolved
                   seen
                   stdlib-roots
                   expected-module
+                  import-root
                   cfgs)
                   [(OkCompilerLoadWithPaths
                       imported-decls
                       imported-paths
                       imported-modules
                       import-seen)
-                    (match (compiler-load-decls-with-module-and-roots-cfg
+                    (match (compiler-load-decls-with-module-and-roots-cfg-root
                       rest
                       importer-path
                       importer-module
                       importer-source-module
                       import-seen
                       stdlib-roots
+                      import-root
                       cfgs)
                       [(OkCompilerLoadWithPaths
                           rest-decls
@@ -611,6 +805,7 @@
                           (compiler-load-decl-list-append
                             imported-decls
                             (compiler-load-decls-after-import
+                              kind
                               resolved
                               expected-module
                               alias
@@ -646,13 +841,14 @@
               name
               stdlib-roots)
               [(OkCompilerLoadInclude expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg
+                (match (compiler-load-decls-with-module-and-roots-cfg-root
                   rest
                   importer-path
                   importer-module
                   importer-source-module
                   seen
                   stdlib-roots
+                  import-root
                   cfgs)
                   [(OkCompilerLoadWithPaths
                       rest-decls
@@ -668,13 +864,14 @@
                     (ErrCompilerLoadWithPaths diag)])]
               [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
           [_
-            (match (compiler-load-decls-with-module-and-roots-cfg
+            (match (compiler-load-decls-with-module-and-roots-cfg-root
               rest
               importer-path
               importer-module
               importer-source-module
               seen
               stdlib-roots
+              import-root
               cfgs)
               [(OkCompilerLoadWithPaths
                   rest-decls
@@ -786,6 +983,23 @@
   [stdlib-roots : StringVec]
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-program-with-paths-and-roots-expect-cfg-root
+    path
+    program
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-load-dirname path)
+    cfgs))
+
+(define (compiler-load-program-with-paths-and-roots-expect-cfg-root
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match program
     [(AstProgram decls-box)
       (let
@@ -803,13 +1017,14 @@
                     AstDeclPathNil
                     AstDeclModuleNil
                     seen)
-                  (compiler-load-decls-with-module-and-roots-cfg
+                  (compiler-load-decls-with-module-and-roots-cfg-root
                     decls
                     path
                     module-id
                     (compiler-load-decls-source-module decls)
                     (sym-i64-bind seen module-id 1)
                     stdlib-roots
+                    import-root
                     cfgs))]
               [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
           [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
@@ -989,6 +1204,21 @@
   [stdlib-roots : StringVec]
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root
+    path
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-load-dirname path)
+    cfgs))
+
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
@@ -998,12 +1228,13 @@
         (match (compiler-load-parse-file-diagnostic-escaping path cfgs)
           [(OkAstProgramDiagnostic program)
             (compiler-load-bind-path-dedup
-              (compiler-load-program-with-paths-and-roots-expect-cfg
+              (compiler-load-program-with-paths-and-roots-expect-cfg-root
                 path
                 program
                 seen
                 stdlib-roots
                 expected-module
+                import-root
                 cfgs)
               path-dedup
               path-key)]
@@ -1016,12 +1247,13 @@
               cfgs)
               [(OkAstProgramDiagnostic program)
                 (compiler-load-bind-path-dedup
-                  (compiler-load-program-with-paths-and-roots-expect-cfg
+                  (compiler-load-program-with-paths-and-roots-expect-cfg-root
                     path
                     program
                     seen
                     stdlib-roots
                     expected-module
+                    import-root
                     cfgs)
                   path-dedup
                   path-key)]
@@ -1672,15 +1904,20 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclImport (AstImportSpec import-path expected-module alias))
-            (match (if (compiler-load-pkg-import? import-path)
-              (compiler-load-resolve-pkg-import import-path manifest-dir deps)
-              (compiler-load-resolve-import-result-with-roots
-                importer-path
-                import-path
-                stdlib-roots))
+          [(AstDeclImport
+              (AstImportSpec kind import-path expected-module alias))
+            (match (compiler-load-resolve-package-import-spec
+              importer-path
+              kind
+              import-path
+              stdlib-roots
+              manifest-dir
+              deps)
               [(OkPkgResolve resolved)
-                (match (if (compiler-load-pkg-import? import-path)
+                (match (if (compiler-load-package-import-externs?
+                  kind
+                  import-path
+                  deps)
                   (compiler-load-package-externs-from-import
                     resolved
                     seen
@@ -1719,6 +1956,7 @@
                           (compiler-load-decl-list-append
                             imported-decls
                             (compiler-load-decls-after-import
+                              kind
                               resolved
                               expected-module
                               alias
@@ -1963,6 +2201,7 @@
           [(AstDeclImport
               (AstImportSpec
                 _
+                _
                 (AstSomeModuleName module-name)
                 (AstSomeImportAlias alias)))
             (if (and
@@ -1996,6 +2235,7 @@
                       [(AstDeclCons
                           (AstDeclImport
                             (AstImportSpec
+                              _
                               _
                               (AstSomeModuleName alias-module)
                               (AstSomeImportAlias alias-name)))
@@ -2302,6 +2542,93 @@
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
       [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-dotted-import-resolution-ok?) : bool
+  (and
+    (string-eq
+      (compiler-load-dotted-module-path "stdlib.core_macros")
+      "stdlib/core_macros.tl")
+    (and
+      (match (compiler-load-resolve-module-import-with-roots
+        "src/"
+        "app.lib"
+        (string-vec-new))
+        [(OkPkgResolve path) (string-eq path "src/app/lib.tl")]
+        [(ErrPkgResolve _) false])
+      (match (compiler-load-resolve-module-import-with-roots
+        "src/"
+        "stdlib.core_macros"
+        (string-vec-new))
+        [(OkPkgResolve path) (string-eq path "stdlib/core_macros.tl")]
+        [(ErrPkgResolve _) false]))))
+
+(define (compiler-load-test-mkdir [path : String]) : bool
+  (match (try-mkdir-if-missing (& path))
+    [(OkIoUnit) true]
+    [(ErrIoUnit _) false]))
+
+(define (compiler-load-dotted-source-root-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_dotted_src")
+    (compiler-load-test-mkdir "target/cl_dotted_src/nested")
+    (write-file
+      "target/cl_dotted_src/root_leaf.tl"
+      "(module root_leaf)
+(define leaf-val : i64 1)")
+    (write-file
+      "target/cl_dotted_src/nested/dep.tl"
+      "(module nested.dep)
+(import root_leaf as leaf)
+(define dep-val : i64 leaf-val)")
+    (write-file
+      "target/cl_dotted_src/entry.tl"
+      "(module dotted.entry)
+(import nested.dep as dep)
+(define (main) : i64 dep-val)")
+    (match (compiler-load-file-with-paths
+      "target/cl_dotted_src/entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths _ _ _ seen)
+        (and
+          (sym-i64-contains seen "dotted.entry")
+          (and
+            (sym-i64-contains seen "nested.dep")
+            (sym-i64-contains seen "root_leaf")))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-package-dotted-import-resolution-ok?) : bool
+  (let
+    [deps : CompilerPkgDeps (compiler-load-pkg-resolve-deps)]
+    (and
+      (match (compiler-load-resolve-package-import-spec
+        "proj/src/main.tl"
+        (AstImportModule)
+        "app.lib"
+        (string-vec-new)
+        "proj"
+        deps)
+        [(OkPkgResolve path) (string-eq path "proj/app/lib.tl")]
+        [(ErrPkgResolve _) false])
+      (and
+        (match (compiler-load-resolve-package-import-spec
+          "proj/src/main.tl"
+          (AstImportModule)
+          "math.src.add"
+          (string-vec-new)
+          "proj"
+          deps)
+          [(OkPkgResolve path) (string-eq path "math/src/add.tl")]
+          [(ErrPkgResolve _) false])
+        (and
+          (compiler-load-package-import-externs?
+            (AstImportModule)
+            "math.src.add"
+            deps)
+          (not
+            (compiler-load-package-import-externs?
+              (AstImportModule)
+              "stdlib.core_macros"
+              deps)))))))
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
@@ -4391,6 +4718,25 @@
       (return
         (begin
           (panic "compiler-load: import alias preservation smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-dotted-import-resolution-ok?)
+      (return
+        (begin
+          (panic "compiler-load: dotted import resolution smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-dotted-source-root-ok?)
+      (return
+        (begin
+          (panic "compiler-load: dotted source root smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-package-dotted-import-resolution-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: package dotted import resolution smoke mismatch")
           0)))
     (unless
       (compiler-load-generated-meta-preserved-ok?)

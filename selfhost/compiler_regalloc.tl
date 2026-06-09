@@ -578,7 +578,12 @@
         [(IrBlock _ instrs)
           (begin
             (compiler-reg-instr-seq-types-array! instrs present types)
-            (compiler-reg-block-list-types-array! (box-get rest) present types))])]))
+            (compiler-reg-block-list-types-array! (box-get rest) present types))])]
+    [(IrBlockArray seq)
+      (compiler-reg-block-list-types-array!
+        (compiler-ir-block-seq-to-list seq)
+        present
+        types)]))
 
 (define (compiler-reg-var-type-arrays-to-list
   [present : (Array i64)]
@@ -688,7 +693,9 @@
         [(IrBlock _ instrs)
           (compiler-reg-block-list-moves
             (box-get rest)
-            (compiler-reg-instr-seq-moves instrs moves))])]))
+            (compiler-reg-instr-seq-moves instrs moves))])]
+    [(IrBlockArray seq)
+      (compiler-reg-block-list-moves (compiler-ir-block-seq-to-list seq) moves)]))
 
 (define (compiler-reg-function-moves [func : CompilerIrFunction]) : CompilerRegMoveList
   (match func
@@ -915,7 +922,15 @@
                 starts
                 ends)
               starts
-              ends))])]))
+              ends))])]
+    [(IrBlockArray seq)
+      (compiler-reg-live-intervals-blocks-with-live
+        (compiler-ir-block-seq-to-list seq)
+        live-blocks
+        all-live-blocks
+        point
+        starts
+        ends)]))
 
 (define (compiler-reg-live-intervals-blocks
   [blocks : CompilerIrBlockList]
@@ -1327,7 +1342,17 @@
                   (+ b 1)
                   end-point
                   starts
-                  ends))))])]))
+                  ends))))])]
+    [(IrBlockArray seq)
+      (compiler-reg-bits-intervals-walk
+        (compiler-ir-block-seq-to-list seq)
+        live-in
+        live-out
+        words
+        b
+        point
+        starts
+        ends)]))
 
 (define (compiler-reg-bits-map-capacity [count : i64]) : i64
   (if (< count 4)
@@ -1462,7 +1487,9 @@
         [(IrBlock _ instrs)
           (compiler-reg-ineligible-memory
             (box-get rest)
-            (compiler-reg-ineligible-instr-seq instrs set))])]))
+            (compiler-reg-ineligible-instr-seq instrs set))])]
+    [(IrBlockArray seq)
+      (compiler-reg-ineligible-memory (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (compiler-reg-call-live-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -1507,7 +1534,12 @@
           (compiler-reg-call-live-blocks
             (box-get rest)
             liveness
-            (compiler-reg-call-live-instr-seq instrs liveness label 0 set))])]))
+            (compiler-reg-call-live-instr-seq instrs liveness label 0 set))])]
+    [(IrBlockArray seq)
+      (compiler-reg-call-live-blocks
+        (compiler-ir-block-seq-to-list seq)
+        liveness
+        set)]))
 
 (define (compiler-reg-call-arg-vars-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -1545,7 +1577,11 @@
         [(IrBlock _ instrs)
           (compiler-reg-call-arg-vars-blocks
             (box-get rest)
-            (compiler-reg-call-arg-vars-instr-seq instrs set))])]))
+            (compiler-reg-call-arg-vars-instr-seq instrs set))])]
+    [(IrBlockArray seq)
+      (compiler-reg-call-arg-vars-blocks
+        (compiler-ir-block-seq-to-list seq)
+        set)]))
 
 ;; Ineligible variables are computed purely structurally (non-scalar/non-handle
 ;; types, params, call-argument vars, address-taken/memory targets). A value live
@@ -1715,7 +1751,12 @@
               (compiler-reg-vector-mask-defs-blocks
                 (box-get rest)
                 next-vector
-                next-mask)])])]))
+                next-mask)])])]
+    [(IrBlockArray seq)
+      (compiler-reg-vector-mask-defs-blocks
+        (compiler-ir-block-seq-to-list seq)
+        vector-set
+        mask-set)]))
 
 (define (compiler-reg-function-vector-mask-defs [func : CompilerIrFunction]) : CompilerLiveUseDef
   (match func
@@ -2257,7 +2298,12 @@
         [(IrBlock _ instrs)
           (match (compiler-reg-call-points-seq instrs point set)
             [(CompilerRegCallScan p2 s2)
-              (compiler-reg-call-points-blocks (box-get rest) p2 s2)])])]))
+              (compiler-reg-call-points-blocks (box-get rest) p2 s2)])])]
+    [(IrBlockArray seq)
+      (compiler-reg-call-points-blocks
+        (compiler-ir-block-seq-to-list seq)
+        point
+        set)]))
 
 (define (compiler-reg-call-points [func : CompilerIrFunction]) : CompilerLiveI64Set
   (match func

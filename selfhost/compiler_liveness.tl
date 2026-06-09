@@ -750,7 +750,9 @@
     [(IrBlockCons block rest)
       (compiler-live-block-cons
         (compiler-live-build-block block)
-        (compiler-live-build-blocks (box-get rest)))]))
+        (compiler-live-build-blocks (box-get rest)))]
+    [(IrBlockArray seq)
+      (compiler-live-build-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-live-find-block
   [blocks : CompilerLiveBlockList]
@@ -1079,7 +1081,9 @@
         [(IrBlock block-label _)
           (if (string-eq block-label label)
             (CompilerLiveSomeIrBlock block)
-            (compiler-live-find-ir-block (box-get rest) label))])]))
+            (compiler-live-find-ir-block (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (compiler-live-find-ir-block (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (compiler-live-fill-instr-after-blocks
   [ir-blocks : CompilerIrBlockList]
@@ -1095,10 +1099,12 @@
   (match func
     [(IrFunction _ _ _ _ blocks)
       (let
+        [walk-blocks : CompilerIrBlockList
+          (compiler-ir-block-list-force-cons blocks)]
         [fixed : CompilerLiveBlockList
-          (compiler-live-fixpoint (compiler-live-build-blocks blocks))]
+          (compiler-live-fixpoint (compiler-live-build-blocks walk-blocks))]
         (CompilerFunctionLiveness
-          (compiler-live-fill-instr-after-blocks blocks fixed)))]))
+          (compiler-live-fill-instr-after-blocks walk-blocks fixed)))]))
 
 (define (compiler-live-function-blocks [liveness : CompilerFunctionLiveness]) : CompilerLiveBlockList
   (match liveness

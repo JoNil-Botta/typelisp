@@ -1101,6 +1101,25 @@
 (define (tc-hygiene-local-prefix) : String
   "__tl_macro_local$")
 
+(defenum TcHygieneGlobalName
+  (TcHygieneLegacyGlobal String)
+  (TcHygieneContextGlobal String String))
+
+(define tc-hygiene-active-top-env-ready : bool
+  false)
+
+(define (tc-empty-type-env) : TcTypeEnv
+  TcTypeNil)
+
+(define (tc-empty-module-local-env-cache) : TcModuleLocalEnvCache
+  TcModuleLocalEnvNil)
+
+(define tc-hygiene-active-top-env : TcTypeEnv
+  (tc-empty-type-env))
+
+(define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
+  (tc-empty-module-local-env-cache))
+
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
     [text-len : i64 (string-length text)]
@@ -1132,8 +1151,58 @@
 (define (tc-hygiene-global-name [name : String]) : String
   (string-append (tc-hygiene-global-prefix) name))
 
+(define (tc-hygiene-global-context-name [module : String] [name : String]) : String
+  (tc-hygiene-global-name (tc-cat3 module "|" name)))
+
+(define (tc-hygiene-context-separator-index [payload : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string-length payload)]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (< found 0))
+        (if (= (cast (string-ref payload i) : i64) 124)
+          (set! found i)
+          (set! i (+ i 1))))
+      found)))
+
+(define (tc-hygiene-global-decode [name : String]) : TcHygieneGlobalName
+  (let
+    [payload : String (tc-hygiene-global-base name)]
+    [sep : i64 (tc-hygiene-context-separator-index payload)]
+    (if (< sep 0)
+      (TcHygieneLegacyGlobal payload)
+      (let
+        [start : i64 (+ sep 1)]
+        (TcHygieneContextGlobal
+          (substring payload 0 sep)
+          (substring payload start (- (string-length payload) start)))))))
+
+(define (tc-hygiene-global-call-name [name : String]) : String
+  (if (tc-hygiene-global-name? name)
+    (match (tc-hygiene-global-decode name)
+      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
+      [(TcHygieneContextGlobal _ lookup-name) lookup-name])
+    name))
+
+(define (tc-hygiene-global-symbol-name [name : String]) : String
+  (if (tc-hygiene-global-name? name)
+    (match (tc-hygiene-global-decode name)
+      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
+      [(TcHygieneContextGlobal module lookup-name)
+        (if (tc-name-qualified? lookup-name)
+          lookup-name
+          (compiler-symbol-module-key module lookup-name))])
+    name))
+
 (define (tc-hygiene-global-env [top-env : TcTypeEnv]) : TcTypeEnv
   (tc-bind top-env (tc-hygiene-global-boundary-name) (AstTyUnit)))
+
+(define (tc-hygiene-reset-active-top-env! [top-env : TcTypeEnv]) : unit
+  (begin
+    (set! tc-hygiene-active-top-env top-env)
+    (set! tc-hygiene-active-top-env-ready true)
+    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))))
 
 (define (tc-unsafe-marker-name) : String
   " __tl_unsafe_context")
@@ -1483,6 +1552,47 @@
   [env : TcTypeEnv]
   [name : String]) : ResultTcType
   (tc-lookup-hygiene-global-visible-id ctx env (tc-name-id name)))
+
+(define (tc-hygiene-definition-env [ctx : TcContext] [module : String]) : ResultTcEnv
+  (if tc-hygiene-active-top-env-ready
+    (if (string-eq module "")
+      (OkTcEnv tc-hygiene-active-top-env)
+      (match (tc-module-local-env-cached
+        ctx
+        tc-hygiene-active-top-env
+        module
+        tc-hygiene-module-env-cache)
+        [(OkTcModuleLocalEnv def-env next-cache)
+          (begin
+            (set! tc-hygiene-module-env-cache next-cache)
+            (OkTcEnv def-env))]
+        [(ErrTcModuleLocalEnv message) (ErrTcEnv message)]))
+    (ErrTcEnv "typecheck: macro hygiene definition context unavailable")))
+
+(define (tc-lookup-hygiene-context-global-visible-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [name-id : i64]) : ResultTcType
+  (let
+    [name : String (intern-str name-id)]
+    [def-ctx : TcContext (tc-context-with-module ctx module)]
+    (match (tc-hygiene-definition-env ctx module)
+      [(OkTcEnv def-env)
+        (match (tc-lookup-unsafe-id def-env name-id)
+          [(OkTcTypeUnsafe ty unsafe)
+            (if unsafe
+              (match (tc-require-unsafe env name)
+                [(OkTcUnit)
+                  (match (tc-qualified-value-visible-ok def-ctx name)
+                    [(OkTcUnit) (OkTcType ty)]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)])
+              (match (tc-qualified-value-visible-ok def-ctx name)
+                [(OkTcUnit) (OkTcType ty)]
+                [(ErrTcUnit message) (ErrTcType message)]))]
+          [(ErrTcTypeUnsafe message) (ErrTcType message)])]
+      [(ErrTcEnv message) (ErrTcType message)])))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]
@@ -6487,10 +6597,7 @@
 
 (define (tc-call-extern-abi-for-name [ctx : TcContext] [name : String]) : TcMaybeExternAbi
   (let
-    [source-name : String
-      (if (tc-hygiene-global-name? name)
-        (tc-hygiene-global-base name)
-        name)]
+    [source-name : String (tc-hygiene-global-symbol-name name)]
     [module : String (tc-context-module ctx)]
     [lookup-name : String
       (if (and
@@ -7381,10 +7488,7 @@
       ;; exactly like hand-written ones; `func` keeps the original name for the
       ;; ordinary call/resolution paths.
       (let
-        [name : String
-          (if (tc-hygiene-global-name? (intern-str raw-name))
-            (tc-hygiene-global-base (intern-str raw-name))
-            (intern-str raw-name))]
+        [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
         (core/cond
           (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
           (tc-layout-query-runtime-call name args)
@@ -14060,15 +14164,22 @@
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
       (if (tc-hygiene-global-name? (intern-str name))
-        (let
-          [global-name : String (tc-hygiene-global-base (intern-str name))]
-          [global-id : i64 (tc-name-id global-name)]
-          (if (tc-hygiene-global-binding-unsafe? env global-name)
-            (match (tc-require-unsafe env global-name)
-              [(OkTcUnit)
-                (tc-lookup-hygiene-global-visible-id ctx env global-id)]
-              [(ErrTcUnit message) (ErrTcType message)])
-            (tc-lookup-hygiene-global-visible-id ctx env global-id)))
+        (match (tc-hygiene-global-decode (intern-str name))
+          [(TcHygieneLegacyGlobal global-name)
+            (let
+              [global-id : i64 (tc-name-id global-name)]
+              (if (tc-hygiene-global-binding-unsafe? env global-name)
+                (match (tc-require-unsafe env global-name)
+                  [(OkTcUnit)
+                    (tc-lookup-hygiene-global-visible-id ctx env global-id)]
+                  [(ErrTcUnit message) (ErrTcType message)])
+                (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
+          [(TcHygieneContextGlobal module global-name)
+            (tc-lookup-hygiene-context-global-visible-id
+              ctx
+              env
+              module
+              (tc-name-id global-name))])
         (match (tc-lookup-unsafe-id env name)
           [(OkTcTypeUnsafe ty unsafe)
             (if unsafe
@@ -17729,7 +17840,7 @@
 ;; so obvious operand type errors are reported at the macro call site.
 (defenum MacroMaybeDecl
   (MacroNoDecl)
-  (MacroSomeDecl String AstMacroParamList AstType AstExpr))
+  (MacroSomeDecl String String AstMacroParamList AstType AstExpr))
 
 (defenum ResultMacroCallDecl
   (OkMacroCallDecl MacroMaybeDecl)
@@ -17870,14 +17981,33 @@
 (define (macro-canonical-name [module : String] [name : String]) : String
   (compiler-symbol-module-key module name))
 
-(define (macro-hygiene-global-base-name [macro-name : String] [base : String]) : String
-  (if (and
-    (tc-name-qualified? macro-name)
-    (and
-      (not (tc-name-qualified? base))
-      (string-eq base (tc-qualified-name-base macro-name))))
-    (compiler-symbol-module-key (tc-qualified-name-module macro-name) base)
-    base))
+(define (macro-hygiene-definition-module [macro-name : String]) : String
+  (if (tc-name-qualified? macro-name)
+    (tc-qualified-name-module macro-name)
+    ""))
+
+(define (macro-hygiene-definition-base [macro-name : String]) : String
+  (if (tc-name-qualified? macro-name)
+    (tc-qualified-name-base macro-name)
+    macro-name))
+
+(define (macro-hygiene-context-macro-name
+  [macro-name : String]
+  [module : String]) : String
+  (if (tc-name-qualified? macro-name)
+    macro-name
+    (if (string-eq module "")
+      macro-name
+      (compiler-symbol-module-key module macro-name))))
+
+(define (macro-hygiene-global-name-for [macro-name : String] [base : String]) : String
+  (let
+    [definition-module : String (macro-hygiene-definition-module macro-name)]
+    [macro-base : String (macro-hygiene-definition-base macro-name)]
+    (if (and (not (tc-name-qualified? base)) (string-eq base macro-base))
+      (tc-hygiene-global-name
+        (compiler-symbol-module-key definition-module base))
+      (tc-hygiene-global-context-name definition-module base))))
 
 (define (macro-hygiene-fresh-local
   [macro-name : String]
@@ -17898,9 +18028,7 @@
       [base : String (tc-hygiene-template-base name)]
       (match (macro-hygiene-env-lookup env base)
         [(TcSomeString renamed) renamed]
-        [(TcNoString)
-          (tc-hygiene-global-name
-            (macro-hygiene-global-base-name macro-name base))]))
+        [(TcNoString) (macro-hygiene-global-name-for macro-name base)]))
     name))
 
 (define (macro-hygiene-bind-name
@@ -18410,35 +18538,55 @@
 (define (macro-expand-depth-limit) : i64
   64)
 
-(define (macro-find-decl [decls : AstDeclList] [name : String]) : MacroMaybeDecl
+(define (macro-find-decl-in-module
+  [decls : AstDeclList]
+  [name : String]
+  [module : String]) : MacroMaybeDecl
   (match decls
     [(AstDeclNil) (MacroNoDecl)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
+          [(AstDeclModule next-module)
+            (macro-find-decl-in-module rest name (intern-str next-module))]
           [(AstDeclDefMacro mname params ret body-box)
             (let
+              [mname-str : String (intern-str mname)]
               [body : AstExpr (ast-node-get body-box)]
-              (if (string-eq (intern-str mname) name)
-                (MacroSomeDecl (intern-str mname) params ret body)
-                (macro-find-decl rest name)))]
-          [_ (macro-find-decl rest name)]))]))
+              (if (string-eq mname-str name)
+                (MacroSomeDecl
+                  (compiler-symbol-module-key module mname-str)
+                  module
+                  params
+                  ret
+                  body)
+                (macro-find-decl-in-module rest name module)))]
+          [_ (macro-find-decl-in-module rest name module)]))]))
 
-(define (macro-decl-from-decl [decl : AstDecl]) : MacroMaybeDecl
+(define (macro-find-decl [decls : AstDeclList] [name : String]) : MacroMaybeDecl
+  (macro-find-decl-in-module decls name ""))
+
+(define (macro-decl-from-decl [decl : AstDecl] [module : String]) : MacroMaybeDecl
   (match decl
     [(AstDeclDefMacro name params ret body-box)
       (let
+        [name-str : String (intern-str name)]
         [body : AstExpr (ast-node-get body-box)]
-        (MacroSomeDecl (intern-str name) params ret body))]
+        (MacroSomeDecl
+          (compiler-symbol-module-key module name-str)
+          module
+          params
+          ret
+          body))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (macro-decl-from-decl inner))]
+        (macro-decl-from-decl inner module))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (macro-decl-from-decl template))]
+        (macro-decl-from-decl template module))]
     [_ (MacroNoDecl)]))
 
 (define (macro-decl-counts-for-symbol-index? [decl : AstDecl]) : bool
@@ -18453,20 +18601,29 @@
 (define (macro-find-decl-by-index-loop
   [decls : AstDeclList]
   [target : i64]
-  [index : i64]) : MacroMaybeDecl
+  [index : i64]
+  [module : String]) : MacroMaybeDecl
   (match decls
     [(AstDeclNil) (MacroNoDecl)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (if (macro-decl-counts-for-symbol-index? decl)
-          (if (= index target)
-            (macro-decl-from-decl decl)
-            (macro-find-decl-by-index-loop rest target (+ index 1)))
-          (macro-find-decl-by-index-loop rest target index)))]))
+        (match decl
+          [(AstDeclModule next-module)
+            (macro-find-decl-by-index-loop
+              rest
+              target
+              index
+              (intern-str next-module))]
+          [_
+            (if (macro-decl-counts-for-symbol-index? decl)
+              (if (= index target)
+                (macro-decl-from-decl decl module)
+                (macro-find-decl-by-index-loop rest target (+ index 1) module))
+              (macro-find-decl-by-index-loop rest target index module))]))]))
 
 (define (macro-find-decl-by-index [decls : AstDeclList] [target : i64]) : MacroMaybeDecl
-  (macro-find-decl-by-index-loop decls target 0))
+  (macro-find-decl-by-index-loop decls target 0 ""))
 
 (define (macro-import-alias-target-list
   [decls : AstDeclList]
@@ -18543,13 +18700,9 @@
       (match (macro-find-decl-by-index
         decls
         (compiler-symbol-handle-index handle))
-        [(MacroSomeDecl macro-name params ret body)
+        [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
-            (MacroSomeDecl
-              (macro-canonical-name target-module base)
-              params
-              ret
-              body))]
+            (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl)
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr
@@ -18624,13 +18777,9 @@
       (match (macro-find-decl-by-index
         decls
         (compiler-symbol-handle-index handle))
-        [(MacroSomeDecl macro-name params ret body)
+        [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
-            (MacroSomeDecl
-              (macro-canonical-name module-name lookup-name)
-              params
-              ret
-              body))]
+            (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
 
@@ -18673,6 +18822,55 @@
       [(ErrCompilerExports message)
         (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
+(define (macro-unqualified-call-decl-in-module
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match (compiler-symbols-lookup-macro-in-module-id
+    (tc-context-symbols ctx)
+    (intern module)
+    (intern lookup-name))
+    [(SomeI64 handle)
+      (if (< (compiler-symbol-handle-index handle) macro-expand-active-index)
+        (match (macro-find-decl-by-index
+          decls
+          (compiler-symbol-handle-index handle))
+          [(MacroSomeDecl macro-name def-module params ret body)
+            (OkMacroCallDecl
+              (MacroSomeDecl macro-name def-module params ret body))]
+          [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])
+        (ErrMacroCallDecl
+          (ctfe-diagnostic-at-expr
+            call-expr
+            (macro-late-local-message lookup-name))))]
+    [(NoneI64)
+      (macro-prelude-call-decl
+        (tc-context-with-module ctx module)
+        decls
+        lookup-name
+        call-expr)]))
+
+(define (macro-call-decl-from-name
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (if (tc-name-qualified? lookup-name)
+    (macro-qualified-call-decl
+      (tc-context-with-module ctx module)
+      decls
+      lookup-name
+      call-expr)
+    (macro-unqualified-call-decl-in-module
+      ctx
+      decls
+      module
+      lookup-name
+      call-expr)))
+
 ;; If `func` names a visible macro, return that macro's decl. Bare local macros
 ;; are source-order visible; qualified macro calls must pass the export table.
 ;; A bare name not bound locally falls back to the implicit core macro prelude.
@@ -18687,40 +18885,23 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (macro-call-decl ctx inner decls call-expr))]
     [(AstExprVar name)
-      (let
-        [lookup-name : String
-          (if (tc-hygiene-global-name? (intern-str name))
-            (tc-hygiene-global-base (intern-str name))
-            (intern-str name))]
-        (if (tc-name-qualified? lookup-name)
-          (macro-qualified-call-decl ctx decls lookup-name call-expr)
-          (match (compiler-symbols-lookup-macro-in-module-id
-            (tc-context-symbols ctx)
-            (intern (tc-context-module ctx))
-            (intern lookup-name))
-            [(SomeI64 handle)
-              (if (<
-                (compiler-symbol-handle-index handle)
-                macro-expand-active-index)
-                (match (macro-find-decl-by-index
-                  decls
-                  (compiler-symbol-handle-index handle))
-                  [(MacroSomeDecl macro-name params ret body)
-                    (OkMacroCallDecl
-                      (MacroSomeDecl
-                        (macro-canonical-name
-                          (tc-context-module ctx)
-                          lookup-name)
-                        params
-                        ret
-                        body))]
-                  [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])
-                (ErrMacroCallDecl
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    (macro-late-local-message lookup-name))))]
-            [(NoneI64)
-              (macro-prelude-call-decl ctx decls lookup-name call-expr)])))]
+      (if (tc-hygiene-global-name? (intern-str name))
+        (match (tc-hygiene-global-decode (intern-str name))
+          [(TcHygieneLegacyGlobal lookup-name)
+            (macro-call-decl-from-name
+              ctx
+              decls
+              (tc-context-module ctx)
+              lookup-name
+              call-expr)]
+          [(TcHygieneContextGlobal module lookup-name)
+            (macro-call-decl-from-name ctx decls module lookup-name call-expr)])
+        (macro-call-decl-from-name
+          ctx
+          decls
+          (tc-context-module ctx)
+          (intern-str name)
+          call-expr))]
     [_ (OkMacroCallDecl (MacroNoDecl))]))
 
 (define (macro-local-decl-index-step! [decl : AstDecl]) : unit
@@ -18844,6 +19025,7 @@
   [type-env : TcTypeEnv]
   [decls : AstDeclList]
   [macro-name : String]
+  [definition-module : String]
   [params : AstMacroParamList]
   [ret : AstType]
   [body : AstExpr]
@@ -18887,7 +19069,9 @@
                         (macro-hygiene-expr
                           (ast-node-get expanded)
                           MacroHygieneNil
-                          macro-name
+                          (macro-hygiene-context-macro-name
+                            macro-name
+                            definition-module)
                           (+ depth 1))))
                     (ErrMacroExpr
                       (ctfe-diagnostic-at-expr
@@ -19132,12 +19316,13 @@
           (match (macro-call-decl ctx func decls expr)
             [(OkMacroCallDecl maybe-decl)
               (match maybe-decl
-                [(MacroSomeDecl macro-name params ret body)
+                [(MacroSomeDecl macro-name definition-module params ret body)
                   (macro-expand-call
                     ctx
                     env
                     decls
                     macro-name
+                    definition-module
                     params
                     ret
                     body
@@ -19516,7 +19701,9 @@
     [(AstExprVar name)
       (TcSomeString
         (if (tc-hygiene-global-name? (intern-str name))
-          (tc-hygiene-global-base (intern-str name))
+          (match (tc-hygiene-global-decode (intern-str name))
+            [(TcHygieneLegacyGlobal lookup-name) lookup-name]
+            [(TcHygieneContextGlobal _ lookup-name) lookup-name])
           (intern-str name)))]
     [_ (TcNoString)]))
 
@@ -19539,7 +19726,7 @@
         (match (macro-call-decl ctx func decls call-expr)
           [(OkMacroCallDecl maybe)
             (match maybe
-              [(MacroSomeDecl _ _ _ _) true]
+              [(MacroSomeDecl _ _ _ _ _) true]
               [(MacroNoDecl)
                 (or (string-eq name "when") (string-eq name "unless"))])]
           [(ErrMacroCallDecl _) true])
@@ -20059,6 +20246,7 @@
                               (match (tc-build-top-env ctx program)
                                 [(OkTcEnv top-env)
                                   (begin
+                                    (tc-hygiene-reset-active-top-env! top-env)
                                     (cfg
                                       compile-profile
                                       (compiler-tc-profile-finish "macro_setup"))
@@ -20902,6 +21090,7 @@
                             (let
                               [decls : AstDeclList (box-get decls-box)]
                               (begin
+                                (tc-hygiene-reset-active-top-env! top-env)
                                 (tc-clone-able-cache-populate! ctx)
                                 (match (tc-check-decls-with-paths
                                   ctx

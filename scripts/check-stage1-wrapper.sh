@@ -299,8 +299,15 @@ echo "[host-action-cli] package build"
     (math "vendor/math")))
 EOF
     cat > "$PKG/src/main.tl" <<'EOF'
+(import "macros.tl" module stage1.macros as macros)
+(define (main) : i64 (macros/add-one-macro 41))
+EOF
+    cat > "$PKG/src/macros.tl" <<'EOF'
+(module stage1.macros)
 (import "pkg:math/src/lib.tl")
-(define (main) : i64 (add-one 41))
+(defmacro (add-one-macro [value : i64]) : i64
+  `(add-one ,value))
+(export (macro add-one-macro))
 EOF
     cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package

@@ -5995,6 +5995,30 @@
   (let ([macro-helper : bool true])
     (unless2 false unit)))")
 
+(define (compiler-typecheck-macro-hygiene-imported-definition-source) : String
+  "(module macros)
+(define (macro-helper [x : bool]) : bool (not x))
+(defmacro (choose-helper [condition : bool] [body : Expr]) : Expr
+  `(if (macro-helper ,condition)
+     ,body
+     0))
+(export (macro choose-helper))
+(module main)
+(import \"macros.tl\" module macros as m)
+(define (macro-helper [x : bool]) : i64 7)
+(define (main) : i64
+  (m/choose-helper false (macro-helper true)))")
+
+(define (compiler-typecheck-macro-hygiene-imported-builtin-source) : String
+  "(module macros)
+(defmacro (dyn-len [items : Expr]) : i64
+  `(array-length ,items))
+(export (macro dyn-len))
+(module main)
+(import \"macros.tl\" module macros as m)
+(define (main [items : (Array i64)]) : i64
+  (m/dyn-len items))")
+
 (define (compiler-typecheck-macro-hygiene-nested-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
   `(let ([tmp : i64 1])
@@ -6153,15 +6177,21 @@
             (compiler-typecheck-macro-hygiene-definition-source))
           (and
             (compiler-typecheck-ok?
-              (compiler-typecheck-macro-hygiene-nested-source))
+              (compiler-typecheck-macro-hygiene-imported-definition-source))
             (and
               (compiler-typecheck-ok?
-                (compiler-typecheck-macro-hygiene-splice-source))
+                (compiler-typecheck-macro-hygiene-imported-builtin-source))
               (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-macro-hygiene-unsafe-global-source)
-                  "typecheck: danger requires unsafe context")
-                (compiler-typecheck-macro-ownership-tests-ok?)))))))))
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-macro-hygiene-nested-source))
+                (and
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-macro-hygiene-splice-source))
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-macro-hygiene-unsafe-global-source)
+                      "typecheck: danger requires unsafe context")
+                    (compiler-typecheck-macro-ownership-tests-ok?)))))))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

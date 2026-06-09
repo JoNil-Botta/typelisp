@@ -5,18 +5,18 @@
 ;# which would shadow the parser's built-in `when`/`and`/`or`/`unless` forms in
 ;# files that use them.
 ;#
-;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The expansion
-;# references the fixed-arity concat helpers from `stdlib/string.tl`, so import
-;# that module at the call site too. Lifting that requirement (naming a
-;# fully-qualified path from this package's dependencies) is tracked by #2223.
+;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The macro owns
+;# its fixed-arity concat helper dependency, so callers do not need to import
+;# `stdlib/string.tl` unless they use string helpers directly.
 ;#
 ;# ```typelisp
 ;# (import "stdlib/str_cat.tl")
-;# (import "stdlib/string.tl")
 ;#
 ;# (define (greet [name : String]) : String
 ;#   (str-cat "hello, " name "!"))
 ;# ```
+(import "string.tl")
+
 (module stdlib.str-cat)
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.

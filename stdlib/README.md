@@ -122,8 +122,7 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `str_cat.tl`: the variadic `str-cat` concatenation macro, which expands to a
   single-allocation copy regardless of arity. Kept separate from
   `core_macros.tl` so importing it does not shadow core guard/boolean macro
-  forms. Import it with `(import "stdlib/str_cat.tl")` alongside
-  `stdlib/string.tl`.
+  forms. Import it with `(import "stdlib/str_cat.tl")`.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it

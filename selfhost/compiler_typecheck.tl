@@ -4025,10 +4025,13 @@
   "(define (compute [a : f32] [b : f32]) : bool
   (let
     [sum : f32 (+ a 1.0)]
+    [literal-first-sum : f32 (+ 1.0 a)]
     [diff : f32 (- a b)]
     [prod : f32 (* a b)]
     [quot : f32 (/ a b)]
-    (< (+ sum (+ diff (+ prod quot))) b)))")
+    (if (< 1.0 b)
+      (< (+ literal-first-sum (+ sum (+ diff (+ prod quot)))) b)
+      false)))")
 
 (define (compiler-typecheck-scalar-f64-to-f32-cast-source) : String
   "(define (main) : f32 (cast 3.5 : f32))")

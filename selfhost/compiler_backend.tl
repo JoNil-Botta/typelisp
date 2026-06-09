@@ -6299,17 +6299,70 @@
           (+ stack-count 1)
           stack-count)))))
 
-(define (compiler-backend-register-only-tail-call?
+(define (compiler-backend-type-list-stack-arg-count
   [target : CompilerBackendTarget]
+  [types : AstTypeList]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-count : i64]) : i64
+  (match types
+    [(AstTypeNil) stack-count]
+    [(AstTypeCons ty rest)
+      (let
+        [arg-ty : AstType (ty-node-get ty)]
+        [rest-types : AstTypeList (box-get rest)]
+        [is-float : bool (compiler-backend-float-type? arg-ty)]
+        [next-int : i64
+          (if is-float
+            int-idx
+            (+ int-idx 1))]
+        [next-float : i64
+          (if is-float
+            (+ float-idx 1)
+            float-idx)]
+        (compiler-backend-type-list-stack-arg-count
+          target
+          rest-types
+          next-int
+          next-float
+          (+ position 1)
+          (if (compiler-backend-stack-call-arg-for-banks?
+            target
+            is-float
+            int-idx
+            float-idx
+            position)
+            (+ stack-count 1)
+            stack-count)))]))
+
+(define (compiler-backend-incoming-stack-arg-count
+  [target : CompilerBackendTarget]
+  [source-function : String]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (compiler-backend-type-list-stack-arg-count
+    target
+    (compiler-backend-call-param-types-index source-function program-index)
+    0
+    0
+    0
+    0))
+
+(define (compiler-backend-direct-tail-call?
+  [target : CompilerBackendTarget]
+  [source-function : String]
   [name : String]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
   (and
     (compiler-backend-index-function-defines? program-index name)
-    (and
-      (<= (compiler-backend-call-args-count args) 4)
-      (= (compiler-backend-call-stack-arg-count target args types 0 0 0 0 0) 0))))
+    (<=
+      (compiler-backend-call-stack-arg-count target args types 0 0 0 0 0)
+      (compiler-backend-incoming-stack-arg-count
+        target
+        source-function
+        program-index))))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
@@ -6587,6 +6640,227 @@
           [(ErrBackendReg message)
             (ErrCompilerBackend
               (compiler-diagnostic-with-message func-diag message))])))))
+
+(define (compiler-backend-tail-stage-slot-offset
+  [arg-count : i64]
+  [arg-index : i64]) : i64
+  (* (- (- arg-count 1) arg-index) 8))
+
+(define (compiler-backend-tail-stage-slot [arg-count : i64] [arg-index : i64]) : String
+  (string-append
+    (int->string (compiler-backend-tail-stage-slot-offset arg-count arg-index))
+    "(%rsp)"))
+
+(define (compiler-backend-tail-final-stack-slot
+  [target : CompilerBackendTarget]
+  [stack-idx : i64]) : String
+  (string-append
+    (int->string (compiler-backend-incoming-stack-arg-offset target stack-idx))
+    "(%rbp)"))
+
+(define (compiler-backend-emit-tail-stage-args
+  [assignments : CompilerRegAssignmentList]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [arg-index : i64]) : ResultCompilerBackend
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    (OkCompilerBackend "")
+    (let
+      [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
+      [arg-ty : AstType
+        (match types
+          [(AstTypeCons ty _) (ty-node-get ty)]
+          [(AstTypeNil) (AstTyI64)])]
+      [rest-types : AstTypeList
+        (match types
+          [(AstTypeCons _ tail)
+            (let
+              [tail : AstTypeList (box-get tail)]
+              tail)]
+          [(AstTypeNil) AstTypeNil])]
+      [is-float : bool (compiler-backend-float-type? arg-ty)]
+      (match (if is-float
+        (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          value
+          arg-ty
+          "%xmm15")
+        (compiler-backend-emit-load-value-with-plan assignments value "%r11"))
+        [(OkCompilerBackend head)
+          (match (compiler-backend-emit-tail-stage-args
+            assignments
+            args
+            rest-types
+            (+ arg-index 1))
+            [(OkCompilerBackend tail)
+              (OkCompilerBackend
+                (string-append
+                  head
+                  (string-append
+                    (if is-float
+                      (backend-cat5
+                        "    subq $8, %rsp\n    "
+                        (compiler-backend-float-move arg-ty)
+                        " %xmm15, (%rsp)\n"
+                        ""
+                        "")
+                      "    pushq %r11\n")
+                    tail)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+
+(define (compiler-backend-tail-staged-stack-move
+  [arg-ty : AstType]
+  [src : String]
+  [dst : String]) : String
+  (if (compiler-backend-float-type? arg-ty)
+    (string-append
+      (backend-cat5
+        "    "
+        (compiler-backend-float-move arg-ty)
+        " "
+        src
+        ", %xmm15\n")
+      (backend-cat5
+        "    "
+        (compiler-backend-float-move arg-ty)
+        " %xmm15, "
+        dst
+        "\n"))
+    (backend-cat5 "    movq " src ", %r11\n    movq %r11, " dst "\n")))
+
+(define (compiler-backend-tail-staged-register-move
+  [arg-ty : AstType]
+  [src : String]
+  [dst : String]) : String
+  (if (compiler-backend-float-type? arg-ty)
+    (backend-cat5
+      "    "
+      (compiler-backend-float-move arg-ty)
+      " "
+      src
+      (string-append ", " (string-append dst "\n")))
+    (backend-cat5 "    movq " src ", " dst "\n")))
+
+(define (compiler-backend-emit-tail-staged-args
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [arg-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [arg-count : i64]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (>= arg-index arg-count)
+    (OkCompilerBackend "")
+    (let
+      [arg-ty : AstType
+        (match types
+          [(AstTypeCons ty _) (ty-node-get ty)]
+          [(AstTypeNil) (AstTyI64)])]
+      [rest-types : AstTypeList
+        (match types
+          [(AstTypeCons _ tail)
+            (let
+              [tail : AstTypeList (box-get tail)]
+              tail)]
+          [(AstTypeNil) AstTypeNil])]
+      [is-float : bool (compiler-backend-float-type? arg-ty)]
+      [src : String (compiler-backend-tail-stage-slot arg-count arg-index)]
+      [next-int : i64
+        (if is-float
+          int-idx
+          (+ int-idx 1))]
+      [next-float : i64
+        (if is-float
+          (+ float-idx 1)
+          float-idx)]
+      (if (compiler-backend-stack-call-arg-for-banks?
+        target
+        is-float
+        int-idx
+        float-idx
+        position)
+        (match (compiler-backend-emit-tail-staged-args
+          target
+          args
+          rest-types
+          (+ arg-index 1)
+          next-int
+          next-float
+          (+ position 1)
+          (+ stack-idx 1)
+          arg-count
+          func-diag)
+          [(OkCompilerBackend tail)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-tail-staged-stack-move
+                  arg-ty
+                  src
+                  (compiler-backend-tail-final-stack-slot target stack-idx))
+                tail))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (if is-float
+          (compiler-backend-target-float-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              float-idx))
+          (compiler-backend-target-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              int-idx)))
+          [(OkBackendReg reg)
+            (match (compiler-backend-emit-tail-staged-args
+              target
+              args
+              rest-types
+              (+ arg-index 1)
+              next-int
+              next-float
+              (+ position 1)
+              stack-idx
+              arg-count
+              func-diag)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend
+                  (string-append
+                    (compiler-backend-tail-staged-register-move arg-ty src reg)
+                    tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message func-diag message))])))))
+
+(define (compiler-backend-emit-direct-tail-call-args
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [arg-count : i64 (compiler-backend-call-args-count args)]
+    (match (compiler-backend-emit-tail-stage-args assignments args types 0)
+      [(OkCompilerBackend stage-asm)
+        (match (compiler-backend-emit-tail-staged-args
+          target
+          args
+          types
+          0
+          0
+          0
+          0
+          0
+          arg-count
+          func-diag)
+          [(OkCompilerBackend move-asm)
+            (OkCompilerBackend (string-append stage-asm move-asm))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -7051,30 +7325,53 @@
         externs
         program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
+    [tail-stack-count : i64
+      (compiler-backend-call-stack-arg-count target args param-types 0 0 0 0 0)]
     [target-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
-    (match (compiler-backend-emit-call-args
+    (if (compiler-backend-direct-tail-call?
       target
-      assignments
+      source-function
+      name
       args
       param-types
-      0
-      0
-      0
-      0
-      0
-      instr-diag)
-      [(OkCompilerBackend args-asm)
-        (if (compiler-backend-register-only-tail-call?
+      program-index)
+      (match (if (= tail-stack-count 0)
+        (compiler-backend-emit-call-args
           target
-          name
+          assignments
           args
           param-types
-          program-index)
+          0
+          0
+          0
+          0
+          0
+          instr-diag)
+        (compiler-backend-emit-direct-tail-call-args
+          target
+          assignments
+          args
+          param-types
+          instr-diag))
+        [(OkCompilerBackend args-asm)
           (OkCompilerBackend
             (string-append
               args-asm
-              (compiler-backend-tail-jump-tail assignments vars target-symbol)))
+              (compiler-backend-tail-jump-tail assignments vars target-symbol)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-emit-call-args
+        target
+        assignments
+        args
+        param-types
+        0
+        0
+        0
+        0
+        0
+        instr-diag)
+        [(OkCompilerBackend args-asm)
           (OkCompilerBackend
             (string-append
               (compiler-backend-emit-call-space-sub call-space)
@@ -7099,8 +7396,8 @@
                           assignments
                           vars
                           blocks)))
-                    ""))))))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                    "")))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]

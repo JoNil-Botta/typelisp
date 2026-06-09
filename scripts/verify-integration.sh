@@ -325,10 +325,12 @@ EOF
 # Integration cases that are Windows-only in this manifest
 # (kept covered on Windows via native-windows.manifest):
 #   c_abi_win64_sret_return  Win64 hidden-sret aggregate return ABI
+#   c_abi_win64_small_*      Win64 small aggregate register ABI
 linux_integration_non_applicable_cases() {
     cat <<'EOF'
 c_abi_win64_sret_return
 c_abi_win64_aggregate_args
+c_abi_win64_small_aggregate_float_mixed
 EOF
 }
 

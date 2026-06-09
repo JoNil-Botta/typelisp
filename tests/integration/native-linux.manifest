@@ -14,10 +14,10 @@ arena_poison_stale_array_trap|tests/integration/arena_poison_stale_array_trap.tl
 calc|tests/integration/calc.tl|14|-|-|token.tl
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:_tl_clone_u24Bundle
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl compiler_intern.tl stdlib/core_macros.tl stdlib/io.tl stdlib/string.tl
-tl_ast|selfhost/ast.tl|173|-|-|ast_types.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
-tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
-tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
-tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
+tl_ast|selfhost/ast.tl|173|-|-|ast_types.tl read.tl lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
+tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
+tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
+tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 generated_option_result_families|tests/integration/generated_option_result_families.tl|61|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-
@@ -132,7 +132,7 @@ compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_t
 compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|42|-|-|compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl
 compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl
 compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl compiler_intern.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/arena.tl
-lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
+lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl compiler_intern.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl
 compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend_tests.tl compiler_backend.tl compiler_object.tl compiler_object_coff.tl compiler_object_elf.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl stdlib/text_buf.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/arena.tl read.tl lex.tl token.tl compiler_clone.tl
 doc_extract_smoke|selfhost/doc_extract_smoke.tl|42|-|-|doc_extract.tl format_tokens.tl
 doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl build_run_core.tl compiler_object_coff.tl compiler_object_elf.tl compiler_driver_core.tl compiler_backend.tl compiler_object.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl compiler_intern.tl compiler_builtin_ids.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf.tl stdlib/vector.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/msvc.tl stdlib/arena.tl compiler_clone.tl

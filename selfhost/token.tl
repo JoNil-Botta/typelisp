@@ -27,15 +27,17 @@
 ;;     `main` (the importer's) - no duplicate-symbol clash.
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
-;; carries the sliced lexeme text), a string literal (`"..."`, carries the
+;; carries an interned lexeme id), a string literal (`"..."`, carries the
 ;; sliced inner text), a character literal (`#x'` / `#\x'`, carries the char),
 ;; and an end-of-stream sentinel. `TStr`, `TChar`, and `TFloat` are appended last so the
 ;; existing variants/tags keep their stable ordering for every importer.
+(import "compiler_intern.tl")
+
 (defenum Token
   (TLParen)
   (TRParen)
   (TInt i64)
-  (TSym String)
+  (TSym i64)
   (TEnd)
   (TStr String)
   (TChar char)
@@ -98,7 +100,7 @@
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
-;; String-payload `TSym` and the i64-payload `TInt`.
+;; i64-payload `TSym` and the i64-payload `TInt`.
 (define (token-tag [t : Token]) : i64
   (match t
     [(TLParen) 1]
@@ -135,14 +137,33 @@
     [(TComma) 0]
     [(TCommaAt) 0]))
 
-;; Symbol text of a TSym token (the empty string for any other kind): projects
-;; the sliced lexeme back out of the enum, the way a parser reads a symbol/name.
+;; Symbol intern id of a TSym token (-1 for any other kind): exposes the compact
+;; lexer representation to callers that can stay id-native.
+(define (token-sym-id [t : Token]) : i64
+  (match t
+    [(TLParen) -1]
+    [(TRParen) -1]
+    [(TInt _) -1]
+    [(TSym id) id]
+    [(TEnd) -1]
+    [(TStr _) -1]
+    [(TChar _) -1]
+    [(TFloat _) -1]
+    [(TLBracket) -1]
+    [(TRBracket) -1]
+    [(TQuote) -1]
+    [(TBacktick) -1]
+    [(TComma) -1]
+    [(TCommaAt) -1]))
+
+;; Symbol text of a TSym token (the empty string for any other kind): resolves
+;; the interned lexeme id back to text, the way a parser reads a symbol/name.
 (define (token-sym [t : Token]) : String
   (match t
     [(TLParen) ""]
     [(TRParen) ""]
     [(TInt _) ""]
-    [(TSym s) s]
+    [(TSym id) (intern-str id)]
     [(TEnd) ""]
     [(TStr _) ""]
     [(TChar _) ""]

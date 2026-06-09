@@ -271,6 +271,10 @@ stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot assign t
 stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot assign to borrowed place `m`
 stdlib/tests/hashmap_value_borrow_put_live.tl|fail|typecheck: cannot assign to borrowed place `m`
 stdlib/tests/hashmap_value_borrow_resize_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
+stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
 stdlib/tests/process_borrowed_check.tl|pass|-
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/string_caller_result_check.tl|pass|-

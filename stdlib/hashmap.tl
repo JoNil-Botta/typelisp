@@ -322,6 +322,27 @@
   (StringI64MapEntryOrInsertFound StringI64Map i64)
   (StringI64MapEntryOrInsertInserted StringI64Map i64))
 
+;: Probe metadata used to construct a live mutable entry after the caller takes
+;: the unique slot borrow. `present=false` means `index` is a sentinel and the
+;: entry setter is a no-op.
+(defstruct StringI64MapMutEntryInfo
+  (index i64)
+  (present bool)
+  (key String)
+  (hash i64))
+
+;: Live mutable entry handle for an existing bucket. The direct `slots` handle is
+;: used for reads/writes on current stage0; `borrow` carries the unique borrow so
+;: the checker rejects another mutable entry or table mutation while live.
+(defstruct StringI64MapMutEntry
+  (:lifetimes map)
+  (slots (Array StringI64MapSlot))
+  (borrow (&mut map (Array StringI64MapSlot)))
+  (index i64)
+  (present bool)
+  (key String)
+  (hash i64))
+
 ;: The map's backing slot array.
 (define (string-i64-map-slots [map : StringI64Map]) : (Array StringI64MapSlot)
   (struct-get map slots))
@@ -855,6 +876,104 @@
         (let
           [updated : StringI64Map (string-i64-map-put map key default-value)]
           (StringI64MapEntryOrInsertInserted updated default-value))])))
+
+;: Probe for a borrowed key and return the immutable information needed to
+;: construct a live mutable-entry handle. This helper does not borrow the map.
+(define (string-i64-map-mut-entry-info
+  [slots : (Array StringI64MapSlot)]
+  [capacity : i64]
+  [key : (& key str)]) : StringI64MapMutEntryInfo
+  (if (<= capacity 0)
+    (StringI64MapMutEntryInfo -1 false "" 0)
+    (let
+      [hash : i64 (hash-string key)]
+      [cursor : i64 (string-i64-map-bucket-index hash capacity)]
+      [walked : i64 0]
+      [found : i64 -1]
+      [present : bool false]
+      [entry-key : String ""]
+      [entry-hash : i64 0]
+      [done : bool false]
+      (begin
+        (while (and (< walked capacity) (not done))
+          (match (string-i64-map-slot-at slots cursor)
+            [(StringI64MapOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (hash-key-string-eq? (& slot-key) key)
+                false)
+                (begin
+                  (set! found cursor)
+                  (set! present true)
+                  (set! entry-key slot-key)
+                  (set! entry-hash slot-hash)
+                  (set! done true))
+                (begin
+                  (set! cursor (string-i64-map-next-index cursor capacity))
+                  (set! walked (+ walked 1))))]
+            [(StringI64MapEmpty) (set! done true)]
+            [(StringI64MapTombstone)
+              (begin
+                (set! cursor (string-i64-map-next-index cursor capacity))
+                (set! walked (+ walked 1)))]))
+        (StringI64MapMutEntryInfo found present entry-key entry-hash)))))
+
+;: Combine direct slot access, a live mutable slots borrow, and probe metadata
+;: into a mutable-entry handle tied to the map borrow lifetime.
+(define (string-i64-map-mut-entry-from-info
+  [slots : (Array StringI64MapSlot)]
+  [borrow : (&mut map (Array StringI64MapSlot))]
+  [info : StringI64MapMutEntryInfo]) : (StringI64MapMutEntry map)
+  (StringI64MapMutEntry
+    slots
+    borrow
+    (struct-get info index)
+    (struct-get info present)
+    (struct-get info key)
+    (struct-get info hash)))
+
+;: Borrow `map` mutably and return a live mutable entry for borrowed `key`.
+;: The handle can update an existing entry in place; missing entries are
+;: reported as absent and are not inserted by the handle API.
+(defmacro
+  (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr])
+  :
+  Expr
+  `(string-i64-map-mut-entry-from-info
+    (struct-get ,map slots)
+    (&mut (struct-get ,map slots))
+    (string-i64-map-mut-entry-info
+      (struct-get ,map slots)
+      (array-length (struct-get ,map slots))
+      ,key)))
+
+;: Return whether a mutable-entry handle currently points at an occupied slot.
+(define (string-i64-map-mut-entry-present? [entry : (StringI64MapMutEntry map)]) : bool
+  (struct-get entry present))
+
+;: Return the handle's current value when present, otherwise `fallback`.
+(define (string-i64-map-mut-entry-value-or
+  [entry : (StringI64MapMutEntry map)]
+  [fallback : i64]) : i64
+  (if (string-i64-map-mut-entry-present? entry)
+    (match (array-ref (struct-get entry slots) (struct-get entry index))
+      [(StringI64MapOccupied _ value _) value]
+      [(StringI64MapEmpty) fallback]
+      [(StringI64MapTombstone) fallback])
+    fallback))
+
+;: Update the handle's occupied slot in place. Missing-entry handles are a no-op.
+(define (string-i64-map-mut-entry-set!
+  [entry : (StringI64MapMutEntry map)]
+  [value : i64]) : unit
+  (if (string-i64-map-mut-entry-present? entry)
+    (array-set!
+      (struct-get entry slots)
+      (struct-get entry index)
+      (StringI64MapOccupied
+        (struct-get entry key)
+        value
+        (struct-get entry hash)))
+    unit))
 
 ;: A single iteration step: an occupied entry (its key and value) or none.
 ;: `string-i64-map-entry-at` returns `None` for an empty slot, a tombstone, or

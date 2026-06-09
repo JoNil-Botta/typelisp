@@ -567,8 +567,65 @@
 
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
-    (tc-hygiene-global-base name)
+    (match (tc-hygiene-global-decode name)
+      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
+      [(TcHygieneContextGlobal module lookup-name)
+        (if (tc-name-qualified? lookup-name)
+          lookup-name
+          (compiler-symbol-module-key module lookup-name))])
     name))
+
+(define (lower-hygiene-fallback-source-name [name : String]) : TcMaybeString
+  (if (tc-hygiene-global-name? name)
+    (match (tc-hygiene-global-decode name)
+      [(TcHygieneLegacyGlobal _) (TcNoString)]
+      [(TcHygieneContextGlobal module lookup-name)
+        (if (and
+          (> (string-length module) 0)
+          (not (tc-name-qualified? lookup-name)))
+          (TcSomeString lookup-name)
+          (TcNoString))])
+    (TcNoString)))
+
+(define (lower-type-cache-lookup-hygiene
+  [cache : LowerTypeCache]
+  [name : String]) : ResultTcType
+  (let
+    [source-name : String (lower-hygiene-source-name name)]
+    (match (lower-type-cache-lookup cache source-name)
+      [(OkTcType ty) (OkTcType ty)]
+      [(ErrTcType message)
+        (match (lower-hygiene-fallback-source-name name)
+          [(TcSomeString fallback)
+            (match (lower-type-cache-lookup cache fallback)
+              [(OkTcType ty) (OkTcType ty)]
+              [(ErrTcType _) (ErrTcType message)])]
+          [(TcNoString) (ErrTcType message)])])))
+
+(define (lower-name-cache-resolve-hygiene
+  [cache : LowerNameCache]
+  [source-name : String]) : String
+  (let
+    [primary : String (lower-hygiene-source-name source-name)]
+    [resolved : String (lower-name-cache-resolve cache primary)]
+    (if (string-eq resolved primary)
+      (match (lower-hygiene-fallback-source-name source-name)
+        [(TcSomeString fallback) (lower-name-cache-resolve cache fallback)]
+        [(TcNoString) resolved])
+      resolved)))
+
+(define (lower-symbols-lookup-value-hygiene
+  [symbols : CompilerSymbols]
+  [source-name : String]) : MaybeI64
+  (let
+    [primary : String (lower-hygiene-source-name source-name)]
+    (match (compiler-symbols-lookup-value symbols primary)
+      [(SomeI64 handle) (SomeI64 handle)]
+      [(NoneI64)
+        (match (lower-hygiene-fallback-source-name source-name)
+          [(TcSomeString fallback)
+            (compiler-symbols-lookup-value symbols fallback)]
+          [(TcNoString) NoneI64])])))
 
 (define (lower-lookup-type
   [type-cache : LowerTypeCache]
@@ -576,7 +633,7 @@
   [type-env : TcTypeEnv]
   [name : String]) : ResultTcType
   (if (tc-hygiene-global-name? name)
-    (lower-type-cache-lookup type-cache (tc-hygiene-global-base name))
+    (lower-type-cache-lookup-hygiene type-cache name)
     (match (sym-i64-lookup env name)
       [(SomeI64 _) (tc-lookup type-env name)]
       [(NoneI64)
@@ -592,7 +649,7 @@
   (let
     [name : String (intern-str name-id)]
     (if (tc-hygiene-global-name? name)
-      (lower-type-cache-lookup type-cache (tc-hygiene-global-base name))
+      (lower-type-cache-lookup-hygiene type-cache name)
       (match (sym-i64-lookup-id env name-id)
         [(SomeI64 _) (tc-lookup-id type-env name-id)]
         [(NoneI64) (lower-lookup-type type-cache env type-env name)]))))
@@ -687,9 +744,7 @@
     false))
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
-  (lower-name-cache-resolve
-    (lower-state-names state)
-    (lower-hygiene-source-name source-name)))
+  (lower-name-cache-resolve-hygiene (lower-state-names state) source-name))
 
 (define (lower-resolve-call-name
   [state : LowerState]
@@ -1808,7 +1863,7 @@
   (lower-reach-add-logical
     all-functions
     state
-    (lower-name-cache-resolve names (lower-hygiene-source-name source-name))))
+    (lower-name-cache-resolve-hygiene names source-name)))
 
 (define (lower-reach-expr-list
   [all-functions : StringI64Map]
@@ -6359,9 +6414,7 @@
 (define (lower-extern-function-decl? [ctx : TcContext] [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    (match (compiler-symbols-lookup-value
-      symbols
-      (lower-hygiene-source-name name))
+    (match (lower-symbols-lookup-value-hygiene symbols name)
       [(SomeI64 handle)
         (if (=
           (compiler-symbol-handle-kind handle)
@@ -6383,9 +6436,7 @@
 (define (lower-extern-value-decl? [ctx : TcContext] [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    (match (compiler-symbols-lookup-value
-      symbols
-      (lower-hygiene-source-name name))
+    (match (lower-symbols-lookup-value-hygiene symbols name)
       [(SomeI64 handle)
         (if (=
           (compiler-symbol-handle-kind handle)
@@ -6416,9 +6467,7 @@
   [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    (match (compiler-symbols-lookup-value
-      symbols
-      (lower-hygiene-source-name name))
+    (match (lower-symbols-lookup-value-hygiene symbols name)
       [(SomeI64 handle)
         (or
           (=
@@ -11639,9 +11688,9 @@
       [(NoneI64)
         (if (lower-c-abi-runtime-handle-extern? name)
           false
-          (match (compiler-symbols-lookup-value
+          (match (lower-symbols-lookup-value-hygiene
             (tc-context-symbols ctx)
-            (lower-hygiene-source-name name))
+            name)
             [(SomeI64 handle)
               (and
                 (=
@@ -13007,7 +13056,8 @@
       ;; does for hand-written calls. `raw-name` still keys the local-variable
       ;; lookup, and the generic call path strips the prefix itself.
       (let
-        [name : String (lower-hygiene-source-name (intern-str raw-name))]
+        [raw-text : String (intern-str raw-name)]
+        [name : String (tc-hygiene-global-call-name raw-text)]
         [name-id : i64 (intern name)]
         (match (sym-i64-lookup env (intern-str raw-name))
           [(SomeI64 local-id)
@@ -13136,7 +13186,7 @@
                   state
                   env
                   type-env
-                  name
+                  raw-text
                   args
                   result-ty
                   origin)))]))]
@@ -20055,9 +20105,7 @@
 (define (lower-symbol-function-define? [ctx : TcContext] [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    (match (compiler-symbols-lookup-value
-      symbols
-      (lower-hygiene-source-name name))
+    (match (lower-symbols-lookup-value-hygiene symbols name)
       [(SomeI64 handle)
         (=
           (compiler-symbol-handle-kind handle)

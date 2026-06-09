@@ -8,8 +8,6 @@
 
 (import "stdlib/str_cat.tl")
 
-(import "stdlib/string.tl")
-
 (import "stdlib/hashmap.tl")
 
 ;: 1 when the strings are byte-equal, else 0.

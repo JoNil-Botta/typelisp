@@ -4637,15 +4637,23 @@
 ;; callers (no mask needed for a full word).
 (define (lower-low-bits-mask [size : i64]) : i64
   (cond
-    [(>= size 8) -1]
-    [(= size 1) 255]
-    [(= size 2) 65535]
-    [(= size 3) 16777215]
-    [(= size 4) 4294967295]
-    [(= size 5) 1099511627775]
-    [(= size 6) 281474976710655]
-    [(= size 7) 72057594037927935]
-    [else -1]))
+    (>= size 8)
+    -1
+    (= size 1)
+    255
+    (= size 2)
+    65535
+    (= size 3)
+    16777215
+    (= size 4)
+    4294967295
+    (= size 5)
+    1099511627775
+    (= size 6)
+    281474976710655
+    (= size 7)
+    72057594037927935
+    -1))
 
 ;; Extract a word-class field from the packed word of a register-resident
 ;; aggregate. The field occupies bytes [byte-offset, byte-offset+size) of the

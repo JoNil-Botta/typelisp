@@ -9011,6 +9011,472 @@
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))
 
+;; --- safe loop preheader synthesis (#2457) ----------------------------------
+;;
+;; LICM and induction only operate on loops with a dedicated outside predecessor
+;; whose only successor is the loop header. This pass creates that block for
+;; conservative natural loops and falls back to the original function if the
+;; verifier rejects the result.
+(defenum OptLoopPreheadersResult
+  (OptLoopPreheadersResult CompilerIrBlockList bool))
+
+(defenum OptLoopPreheadersPhiRewriteResult
+  (OptLoopPreheadersPhiRewriteResult CompilerIrPhiInputList bool))
+
+(define (opt-loop-preheaders-outside-preds-scan
+  [reachable : OptLabelSet]
+  [doms : OptDomInfo]
+  [header : String]
+  [body : OptLabelSet]
+  [preds : OptLabelSet]) : OptLabelSet
+  (match preds
+    [(OptLabelNil) (OptLabelNil)]
+    [(OptLabelCons pred rest)
+      (let
+        [tail : OptLabelSet
+          (opt-loop-preheaders-outside-preds-scan
+            reachable
+            doms
+            header
+            body
+            (box-get rest))]
+        (if (and
+          (opt-label-contains reachable pred)
+          (and
+            (not (opt-label-contains body pred))
+            (not (opt-dom-dominates? doms header pred))))
+          (opt-label-add tail pred)
+          tail))]))
+
+(define (opt-loop-preheaders-outside-preds
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [doms : OptDomInfo]
+  [header : String]
+  [body : OptLabelSet]) : OptLabelSet
+  (opt-loop-preheaders-outside-preds-scan
+    reachable
+    doms
+    header
+    body
+    (opt-pred-map-lookup pred-map header)))
+
+(define (opt-loop-preheaders-candidate-label [header : String] [suffix : i64]) : String
+  (if (= suffix 0)
+    (string-append header "__preheader")
+    (string-append header (string-append "__preheader" (int->string suffix)))))
+
+(define (opt-loop-preheaders-fresh-label
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [suffix : i64]) : String
+  (let
+    [candidate : String (opt-loop-preheaders-candidate-label header suffix)]
+    (if (opt-cfg-block-exists? blocks candidate)
+      (opt-loop-preheaders-fresh-label blocks header (+ suffix 1))
+      candidate)))
+
+(define (opt-loop-preheaders-phi-outside-values-compatible?
+  [outside : OptLabelSet]
+  [inputs : CompilerIrPhiInputList]
+  [seen : CompilerIrMaybeValue]) : bool
+  (match inputs
+    [(IrPhiInputNil) true]
+    [(IrPhiInputCons value label rest)
+      (if (opt-label-contains outside label)
+        (match seen
+          [(IrNoValue)
+            (opt-loop-preheaders-phi-outside-values-compatible?
+              outside
+              (box-get rest)
+              (IrSomeValue value))]
+          [(IrSomeValue first)
+            (and
+              (opt-value-eq first value)
+              (opt-loop-preheaders-phi-outside-values-compatible?
+                outside
+                (box-get rest)
+                seen))])
+        (opt-loop-preheaders-phi-outside-values-compatible?
+          outside
+          (box-get rest)
+          seen))]))
+
+(define (opt-loop-preheaders-header-instr-compatible?
+  [outside : OptLabelSet]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrPhi _ inputs _)
+      (opt-loop-preheaders-phi-outside-values-compatible?
+        outside
+        inputs
+        (IrNoValue))]
+    [_ true]))
+
+(define (opt-loop-preheaders-header-instrs-compatible-from?
+  [outside : OptLabelSet]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (opt-loop-preheaders-header-instr-compatible?
+        outside
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-loop-preheaders-header-instrs-compatible-from?
+        outside
+        instrs
+        (+ index 1)))))
+
+(define (opt-loop-preheaders-header-compatible?
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [outside : OptLabelSet]) : bool
+  (match (opt-cfg-find-block blocks header)
+    [(OptNoBlock) false]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-loop-preheaders-header-instrs-compatible-from? outside instrs 0)])]))
+
+(define (opt-loop-preheaders-existing-candidate-scan
+  [pred-map : OptPredMap]
+  [header : String]
+  [outside : OptLabelSet]
+  [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
+  (match outside
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (opt-loop-preheaders-existing-candidate-scan
+        pred-map
+        header
+        (box-get rest)
+        (opt-natural-loop-preheader-candidate-add
+          pred-map
+          header
+          candidate
+          pred))]))
+
+(define (opt-loop-preheaders-existing-safe-preheader?
+  [pred-map : OptPredMap]
+  [header : String]
+  [outside : OptLabelSet]) : bool
+  (match (opt-natural-loop-preheader-from-candidate
+    (opt-loop-preheaders-existing-candidate-scan
+      pred-map
+      header
+      outside
+      (OptLoopPreheaderNone)))
+    [(OptSomeLoopPreheader _) true]
+    [(OptNoLoopPreheader) false]))
+
+(define (opt-loop-preheaders-rewrite-phi-inputs-acc
+  [inputs : CompilerIrPhiInputList]
+  [outside : OptLabelSet]
+  [preheader : String]
+  [emitted : bool]
+  [acc : CompilerIrPhiInputList]) : OptLoopPreheadersPhiRewriteResult
+  (match inputs
+    [(IrPhiInputNil)
+      (OptLoopPreheadersPhiRewriteResult
+        (compiler-ir-phi-input-list-reverse-onto acc (IrPhiInputNil))
+        emitted)]
+    [(IrPhiInputCons value label rest)
+      (if (opt-label-contains outside label)
+        (if emitted
+          (opt-loop-preheaders-rewrite-phi-inputs-acc
+            (box-get rest)
+            outside
+            preheader
+            true
+            acc)
+          (opt-loop-preheaders-rewrite-phi-inputs-acc
+            (box-get rest)
+            outside
+            preheader
+            true
+            (compiler-ir-phi-input-cons value preheader acc)))
+        (opt-loop-preheaders-rewrite-phi-inputs-acc
+          (box-get rest)
+          outside
+          preheader
+          emitted
+          (compiler-ir-phi-input-cons value label acc)))]))
+
+(define (opt-loop-preheaders-rewrite-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [outside : OptLabelSet]
+  [preheader : String]) : CompilerIrPhiInputList
+  (match (opt-loop-preheaders-rewrite-phi-inputs-acc
+    inputs
+    outside
+    preheader
+    false
+    (IrPhiInputNil))
+    [(OptLoopPreheadersPhiRewriteResult rewritten _) rewritten]))
+
+(define (opt-loop-preheaders-rewrite-header-instr
+  [outside : OptLabelSet]
+  [preheader : String]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrPhi dst inputs ty)
+      (IrInstrPhi
+        dst
+        (opt-loop-preheaders-rewrite-phi-inputs inputs outside preheader)
+        ty)]
+    [_ instr]))
+
+(define (opt-loop-preheaders-rewrite-header-instrs-from
+  [outside : OptLabelSet]
+  [preheader : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (IrInstrNil)
+    (compiler-ir-instr-cons
+      (opt-loop-preheaders-rewrite-header-instr
+        outside
+        preheader
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-loop-preheaders-rewrite-header-instrs-from
+        outside
+        preheader
+        instrs
+        (+ index 1)))))
+
+(define (opt-loop-preheaders-retarget-label
+  [label : String]
+  [header : String]
+  [preheader : String]) : String
+  (if (string-eq label header)
+    preheader
+    label))
+
+(define (opt-loop-preheaders-retarget-instr
+  [instr : CompilerIrInstr]
+  [header : String]
+  [preheader : String]) : CompilerIrInstr
+  (match instr
+    [(IrInstrJump label)
+      (IrInstrJump (opt-loop-preheaders-retarget-label label header preheader))]
+    [(IrInstrBranch cond true-label false-label)
+      (IrInstrBranch
+        cond
+        (opt-loop-preheaders-retarget-label true-label header preheader)
+        (opt-loop-preheaders-retarget-label false-label header preheader))]
+    [_ instr]))
+
+(define (opt-loop-preheaders-retarget-instrs-from
+  [instrs : CompilerIrInstrSeq]
+  [header : String]
+  [preheader : String]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (IrInstrNil)
+    (compiler-ir-instr-cons
+      (opt-loop-preheaders-retarget-instr
+        (compiler-ir-instr-seq-ref instrs index)
+        header
+        preheader)
+      (opt-loop-preheaders-retarget-instrs-from
+        instrs
+        header
+        preheader
+        (+ index 1)))))
+
+(define (opt-loop-preheaders-append-jump
+  [instrs : CompilerIrInstrList]
+  [target : String]) : CompilerIrInstrList
+  (opt-aggregate-instr-list-append
+    instrs
+    (compiler-ir-instr-cons (IrInstrJump target) (IrInstrNil))))
+
+(define (opt-loop-preheaders-rewrite-block
+  [block : CompilerIrBlock]
+  [next-label : String]
+  [header : String]
+  [outside : OptLabelSet]
+  [preheader : String]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (if (string-eq label header)
+        (compiler-ir-block
+          label
+          (opt-loop-preheaders-rewrite-header-instrs-from
+            outside
+            preheader
+            instrs
+            0))
+        (if (opt-label-contains outside label)
+          (let
+            [retargeted : CompilerIrInstrList
+              (opt-loop-preheaders-retarget-instrs-from
+                instrs
+                header
+                preheader
+                0)]
+            (compiler-ir-block
+              label
+              (if (and
+                (string-eq next-label header)
+                (opt-cfg-instr-seq-can-fallthrough? instrs))
+                (opt-loop-preheaders-append-jump retargeted preheader)
+                retargeted)))
+          block))]))
+
+(define (opt-loop-preheaders-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [outside : OptLabelSet]
+  [preheader : String]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-loop-preheaders-rewrite-block
+          block
+          (opt-cfg-entry-label (box-get rest))
+          header
+          outside
+          preheader)
+        (opt-loop-preheaders-rewrite-blocks
+          (box-get rest)
+          header
+          outside
+          preheader))]
+    [(IrBlockArray seq)
+      (opt-loop-preheaders-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        header
+        outside
+        preheader)]))
+
+(define (opt-loop-preheaders-new-block [preheader : String] [header : String]) : CompilerIrBlock
+  (compiler-ir-block
+    preheader
+    (compiler-ir-instr-cons (IrInstrJump header) (IrInstrNil))))
+
+(define (opt-loop-preheaders-insert-before-header
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [preheader : String]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (string-eq label header)
+            (compiler-ir-block-cons
+              (opt-loop-preheaders-new-block preheader header)
+              (compiler-ir-block-cons block (box-get rest)))
+            (compiler-ir-block-cons
+              block
+              (opt-loop-preheaders-insert-before-header
+                (box-get rest)
+                header
+                preheader)))])]
+    [(IrBlockArray seq)
+      (opt-loop-preheaders-insert-before-header
+        (compiler-ir-block-seq-to-list seq)
+        header
+        preheader)]))
+
+(define (opt-loop-preheaders-synthesize-loop
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loop : OptNaturalLoop]) : OptLoopPreheadersResult
+  (match (opt-natural-loop-preheader loop)
+    [(OptSomeLoopPreheader _) (OptLoopPreheadersResult blocks false)]
+    [(OptNoLoopPreheader)
+      (let
+        [header : String (opt-natural-loop-header loop)]
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        [outside : OptLabelSet
+          (opt-loop-preheaders-outside-preds
+            (struct-get context pred-map)
+            (struct-get context reachable)
+            (struct-get context doms)
+            header
+            body)]
+        (if (and
+          (> (opt-label-count outside) 0)
+          (and
+            (not
+              (opt-loop-preheaders-existing-safe-preheader?
+                (struct-get context pred-map)
+                header
+                outside))
+            (opt-loop-preheaders-header-compatible? blocks header outside)))
+          (let
+            [preheader : String
+              (opt-loop-preheaders-fresh-label blocks header 0)]
+            [rewritten : CompilerIrBlockList
+              (opt-loop-preheaders-rewrite-blocks
+                blocks
+                header
+                outside
+                preheader)]
+            (OptLoopPreheadersResult
+              (opt-loop-preheaders-insert-before-header
+                rewritten
+                header
+                preheader)
+              true))
+          (OptLoopPreheadersResult blocks false)))]))
+
+(define (opt-loop-preheaders-synthesize-loops
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]) : OptLoopPreheadersResult
+  (match loops
+    [(OptNaturalLoopNil) (OptLoopPreheadersResult blocks false)]
+    [(OptNaturalLoopCons loop rest)
+      (match (opt-loop-preheaders-synthesize-loop blocks context loop)
+        [(OptLoopPreheadersResult next changed)
+          (if changed
+            (OptLoopPreheadersResult next true)
+            (opt-loop-preheaders-synthesize-loops blocks context (box-get rest)))])]))
+
+(define (opt-loop-preheaders-blocks-once [blocks : CompilerIrBlockList]) : OptLoopPreheadersResult
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    (opt-loop-preheaders-synthesize-loops
+      blocks
+      context
+      (opt-cfg-natural-loops-with-context blocks context))))
+
+(define (opt-loop-preheaders-blocks-fixed
+  [blocks : CompilerIrBlockList]
+  [remaining : i64]) : CompilerIrBlockList
+  (if (<= remaining 0)
+    blocks
+    (match (opt-loop-preheaders-blocks-once blocks)
+      [(OptLoopPreheadersResult next changed)
+        (if changed
+          (opt-loop-preheaders-blocks-fixed next (- remaining 1))
+          next)])))
+
+(define (opt-loop-preheaders-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-loop-preheaders-blocks-fixed
+    blocks
+    (+ 1 (compiler-ir-block-list-count blocks))))
+
+(define (opt-loop-preheaders-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function func)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (let
+            [next-blocks : CompilerIrBlockList
+              (opt-loop-preheaders-blocks blocks)]
+            [next : CompilerIrFunction
+              (IrFunction name params ret-ty frame next-blocks)]
+            (match (opt-verify-function next)
+              [(OkCompilerOptimizeVerify) next]
+              [(ErrCompilerOptimizeVerify _) func]))])]
+    [(ErrCompilerOptimizeVerify _) func]))
+
 ;; --- conservative loop-invariant code motion (#1801) ------------------------
 ;;
 ;; LICM is deliberately scalar-only and verifier-gated. It moves only
@@ -11973,15 +12439,28 @@
                       ssa-blocks)]
                   [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
                   [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                  [preheaders : CompilerIrFunction
+                    (if run-heavy?
+                      (opt-loop-preheaders-function
+                        (IrFunction name params ret-ty ssa-frame cfg))
+                      (IrFunction name params ret-ty ssa-frame cfg))]
+                  [preheader-frame : i64 (opt-function-frame preheaders)]
+                  [preheader-blocks : CompilerIrBlockList
+                    (opt-function-blocks preheaders)]
                   [licm : CompilerIrFunction
                     (if run-heavy?
                       (let
                         [licm-context : OptCfgContext
-                          (opt-cfg-context-build cfg)]
+                          (opt-cfg-context-build preheader-blocks)]
                         (opt-licm-function-with-context
                           licm-context
-                          (IrFunction name params ret-ty ssa-frame cfg)))
-                      (IrFunction name params ret-ty ssa-frame cfg))]
+                          (IrFunction
+                            name
+                            params
+                            ret-ty
+                            preheader-frame
+                            preheader-blocks)))
+                      preheaders)]
                   [licm-blocks : CompilerIrBlockList (opt-function-blocks licm)]
                   [induction : CompilerIrFunction
                     (if run-heavy?
@@ -20819,6 +21298,27 @@
       (opt-natural-loop-find multi-loops "loop" "left")]
     [multi-right : OptMaybeNaturalLoop
       (opt-natural-loop-find multi-loops "loop" "right")]
+    [preheadered-single-blocks : CompilerIrBlockList
+      (opt-loop-preheaders-blocks (opt-ssa-loop-blocks))]
+    [preheadered-nested-blocks : CompilerIrBlockList
+      (opt-loop-preheaders-blocks (opt-natural-loop-nested-blocks))]
+    [preheadered-multi-blocks : CompilerIrBlockList
+      (opt-loop-preheaders-blocks (opt-natural-loop-multi-backedge-blocks))]
+    [synth-blocks : CompilerIrBlockList
+      (opt-loop-preheaders-blocks (opt-natural-loop-no-preheader-blocks))]
+    [synth-index : OptCfgIndex (opt-cfg-index-build synth-blocks)]
+    [synth-loops : OptNaturalLoopList (opt-cfg-natural-loops synth-blocks)]
+    [synth-loop : OptMaybeNaturalLoop
+      (opt-natural-loop-find synth-loops "loop" "body")]
+    [preheadered-induction : CompilerIrFunction
+      (opt-loop-preheaders-function
+        (opt-induction-test-function (opt-induction-no-preheader-blocks)))]
+    [preheadered-induction-blocks : CompilerIrBlockList
+      (opt-function-blocks preheadered-induction)]
+    [induction-after-preheader : CompilerIrFunction
+      (opt-induction-function preheadered-induction)]
+    [induction-after-preheader-blocks : CompilerIrBlockList
+      (opt-function-blocks induction-after-preheader)]
     (core/cond
       (not (= (opt-natural-loop-list-count single-loops) 1))
       1
@@ -20924,6 +21424,55 @@
           multi-right
           "right"))
       48
+      (not (opt-block-list-eq preheadered-single-blocks (opt-ssa-loop-blocks)))
+      49
+      (not
+        (opt-block-list-eq
+          preheadered-nested-blocks
+          (opt-natural-loop-nested-blocks)))
+      50
+      (not
+        (opt-block-list-eq
+          preheadered-multi-blocks
+          (opt-natural-loop-multi-backedge-blocks)))
+      51
+      (not (= (compiler-ir-block-list-count synth-blocks) 7))
+      52
+      (not (opt-block-list-has-label? synth-blocks "loop__preheader"))
+      53
+      (not
+        (opt-natural-loop-maybe-preheader-label? synth-loop "loop__preheader"))
+      54
+      (not
+        (opt-label-contains
+          (opt-cfg-index-successors synth-index "pre-one")
+          "loop__preheader"))
+      55
+      (opt-label-contains
+        (opt-cfg-index-successors synth-index "pre-one")
+        "loop")
+      56
+      (not
+        (opt-label-contains
+          (opt-cfg-index-successors synth-index "loop__preheader")
+          "loop"))
+      57
+      (not
+        (opt-verify-ok?
+          (opt-verify-function (opt-cfg-test-function synth-blocks))))
+      58
+      (not (opt-verify-ok? (opt-verify-function preheadered-induction)))
+      59
+      (not
+        (opt-block-list-has-label?
+          preheadered-induction-blocks
+          "loop__preheader"))
+      60
+      (not
+        (=
+          (opt-count-mul-label-blocks induction-after-preheader-blocks "body")
+          0))
+      61
       42)))
 
 (define (compiler-optimize-ssa-self-test) : i64

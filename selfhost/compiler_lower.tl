@@ -8551,125 +8551,90 @@
     [(LowerCleanupNil) 0]
     [(LowerCleanupCons _ rest) (+ 1 (lower-cleanup-list-count (box-get rest)))]))
 
+;; #2598: emit the cleanup/region-reset calls a binding env keeps active. This
+;; walks the whole TcTypeEnv chain once per scope exit; it used to be a
+;; tail-recursive walk, but the inline-aggregate TCO guard (#2597) declines
+;; frame reuse here, so deep envs stacked one ~12KB frame per binding (8,164
+;; frames = 100MB of the measured 502MB stack peak). Iterate instead.
 (define (lower-emit-active-exits-with
   [cleanup-marker-id : i64]
   [region-reset-marker-id : i64]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
-  (match type-env
-    [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ _ _ rest)
-      (lower-emit-active-exits-with
-        cleanup-marker-id
-        region-reset-marker-id
-        state
-        env
-        (box-get rest))]
-    [(TcTypeBind key ty rest)
-      (if (= key cleanup-marker-id)
-        (match ty
-          [(AstTyTuple types)
-            (match types
-              [(AstTypeCons hidden-ty type-rest)
-                (let
-                  [hidden-ty : AstType (ty-node-get hidden-ty)]
-                  [type-rest : AstTypeList (box-get type-rest)]
-                  (match hidden-ty
+  (let
+    [cur-env : TcTypeEnv type-env]
+    [cur-state : LowerState state]
+    [result : ResultLowerState
+      (ErrLowerState (lower-diagnostic "lower: internal active-exits walk"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-env
+          [(TcTypeNil)
+            (begin
+              (set! result (OkLowerState cur-state))
+              (set! done true))]
+          [(TcTypeCache _ _ _ _ rest) (set! cur-env (box-get rest))]
+          [(TcTypeBind key ty rest)
+            (begin
+              (if (= key cleanup-marker-id)
+                (match ty
+                  [(AstTyTuple types)
+                    (match types
+                      [(AstTypeCons hidden-ty type-rest)
+                        (let
+                          [hidden-ty : AstType (ty-node-get hidden-ty)]
+                          [type-rest : AstTypeList (box-get type-rest)]
+                          (match hidden-ty
+                            [(AstTyVar hidden-name)
+                              (match type-rest
+                                [(AstTypeCons cleanup-ty end)
+                                  (let
+                                    [cleanup-ty : AstType
+                                      (ty-node-get cleanup-ty)]
+                                    [end : AstTypeList (box-get end)]
+                                    (match cleanup-ty
+                                      [(AstTyVar cleanup-name)
+                                        (match end
+                                          [(AstTypeNil)
+                                            (match (lower-emit-cleanup-call
+                                              cur-state
+                                              env
+                                              (intern-str hidden-name)
+                                              (intern-str cleanup-name))
+                                              [(OkLowerState next-state)
+                                                (set! cur-state next-state)]
+                                              [(ErrLowerState message)
+                                                (begin
+                                                  (set!
+                                                    result
+                                                    (ErrLowerState message))
+                                                  (set! done true))])]
+                                          [_ unit])]
+                                      [_ unit]))]
+                                [_ unit])]
+                            [_ unit]))]
+                      [_ unit])]
+                  [_ unit])
+                (if (= key region-reset-marker-id)
+                  (match ty
                     [(AstTyVar hidden-name)
-                      (match type-rest
-                        [(AstTypeCons cleanup-ty end)
-                          (let
-                            [cleanup-ty : AstType (ty-node-get cleanup-ty)]
-                            [end : AstTypeList (box-get end)]
-                            (match cleanup-ty
-                              [(AstTyVar cleanup-name)
-                                (match end
-                                  [(AstTypeNil)
-                                    (match (lower-emit-cleanup-call
-                                      state
-                                      env
-                                      (intern-str hidden-name)
-                                      (intern-str cleanup-name))
-                                      [(OkLowerState next-state)
-                                        (lower-emit-active-exits-with
-                                          cleanup-marker-id
-                                          region-reset-marker-id
-                                          next-state
-                                          env
-                                          (box-get rest))]
-                                      [(ErrLowerState message)
-                                        (ErrLowerState message)])]
-                                  [_
-                                    (lower-emit-active-exits-with
-                                      cleanup-marker-id
-                                      region-reset-marker-id
-                                      state
-                                      env
-                                      (box-get rest))])]
-                              [_
-                                (lower-emit-active-exits-with
-                                  cleanup-marker-id
-                                  region-reset-marker-id
-                                  state
-                                  env
-                                  (box-get rest))]))]
-                        [_
-                          (lower-emit-active-exits-with
-                            cleanup-marker-id
-                            region-reset-marker-id
-                            state
-                            env
-                            (box-get rest))])]
-                    [_
-                      (lower-emit-active-exits-with
-                        cleanup-marker-id
-                        region-reset-marker-id
-                        state
+                      (match (lower-emit-region-reset
+                        cur-state
                         env
-                        (box-get rest))]))]
-              [_
-                (lower-emit-active-exits-with
-                  cleanup-marker-id
-                  region-reset-marker-id
-                  state
-                  env
-                  (box-get rest))])]
-          [_
-            (lower-emit-active-exits-with
-              cleanup-marker-id
-              region-reset-marker-id
-              state
-              env
-              (box-get rest))])
-        (if (= key region-reset-marker-id)
-          (match ty
-            [(AstTyVar hidden-name)
-              (match (lower-emit-region-reset
-                state
-                env
-                (intern-str hidden-name))
-                [(OkLowerState next-state)
-                  (lower-emit-active-exits-with
-                    cleanup-marker-id
-                    region-reset-marker-id
-                    next-state
-                    env
-                    (box-get rest))]
-                [(ErrLowerState message) (ErrLowerState message)])]
-            [_
-              (lower-emit-active-exits-with
-                cleanup-marker-id
-                region-reset-marker-id
-                state
-                env
-                (box-get rest))])
-          (lower-emit-active-exits-with
-            cleanup-marker-id
-            region-reset-marker-id
-            state
-            env
-            (box-get rest))))]))
+                        (intern-str hidden-name))
+                        [(OkLowerState next-state) (set! cur-state next-state)]
+                        [(ErrLowerState message)
+                          (begin
+                            (set! result (ErrLowerState message))
+                            (set! done true))])]
+                    [_ unit])
+                  unit))
+              (if done
+                unit
+                (set! cur-env (box-get rest))))]))
+      result)))
 
 (define (lower-emit-active-exits
   [state : LowerState]
@@ -23869,6 +23834,12 @@
       mode
       "")))
 
+;; #2598: lower every top-level decl of the expanded program. This used to be
+;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
+;; guard (#2597) declines frame reuse here, so a whole-compiler input stacked
+;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
+;; peak that forced the 1GB Windows reserves, #2599). Iterate instead; the
+;; threaded accumulators become loop state.
 (define (lower-decls-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -23884,507 +23855,389 @@
   [dispatch-variants : StringI64Map]
   [mode : CompilerLowerMode]
   [module : String]) : ResultLowerDecls
-  (match decls
-    [(AstDeclNil)
-      (OkLowerDecls
-        (lower-global-list-reverse globals)
-        (lower-function-list-reverse functions)
-        (lower-extern-list-reverse externs)
-        spans)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclUnsafe inner-box)
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-local-top-env : TcTypeEnv local-top-env]
+    [cur-globals : CompilerIrGlobalList globals]
+    [cur-functions : CompilerIrFunctionList functions]
+    [cur-externs : CompilerIrExternList externs]
+    [cur-spans : CompilerSourceSpans spans]
+    [cur-name-cache : LowerNameCache name-cache]
+    [cur-type-cache : LowerTypeCache type-cache]
+    [cur-module : String module]
+    [result : ResultLowerDecls
+      (ErrLowerDecls (lower-diagnostic "lower: internal decls walk"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set!
+                result
+                (OkLowerDecls
+                  (lower-global-list-reverse cur-globals)
+                  (lower-function-list-reverse cur-functions)
+                  (lower-extern-list-reverse cur-externs)
+                  cur-spans))
+              (set! done true))]
+          [(AstDeclCons decl rest)
             (let
-              [inner : AstDecl (box-get inner-box)]
-              (lower-decls-in-module
-                ctx
-                top-env
-                local-top-env
-                (ast-decl-cons inner rest)
-                globals
-                functions
-                externs
-                spans
-                names
-                name-cache
-                type-cache
-                dispatch-variants
-                mode
-                module))]
-          [(AstDeclDef name _ expr-box)
-            (let
-              [expr : AstExpr (ast-node-get expr-box)]
-              [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              (match (lower-top-decl-type-or-check decl-ctx local-top-env decl)
-                [(OkTcType ty)
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclUnsafe inner-box)
                   (let
-                    [global-ty : AstType (tc-type-without-regions ty)]
-                    [global-name : String
-                      (lower-current-decl-logical-name-cache
-                        name-cache
-                        module
-                        (intern-str name))]
-                    (match (lower-global-value name-cache expr)
-                      [(OkLowerValue value)
-                        (lower-decls-in-module
-                          ctx
-                          top-env
-                          local-top-env
-                          rest
-                          (compiler-ir-global-cons
-                            (IrGlobal global-name global-ty value)
-                            globals)
-                          functions
-                          externs
-                          spans
-                          names
-                          name-cache
-                          type-cache
-                          dispatch-variants
-                          mode
-                          module)]
-                      ;; A global whose initializer is not a compile-time
-                      ;; constant is evaluated at startup by a hidden
-                      ;; `__global_init_<name>` function whose return value the
-                      ;; backend stores into the global before `main`. This
-                      ;; applies to any non-unit type (scalars as well as
-                      ;; aggregates), mirroring the former Rust lowerer, which
-                      ;; emits an init function whenever `extract_const` yields
-                      ;; no constant.
-                      [(ErrLowerValue _)
-                        (match (lower-function-escaping
-                          decl-ctx
-                          local-top-env
-                          type-cache
-                          (lower-global-init-function-name global-name)
-                          AstParamNil
-                          global-ty
-                          expr
-                          spans
-                          name-cache
-                          mode)
-                          [(OkLowerFunction init-funcs init-spans)
-                            (lower-decls-in-module
-                              ctx
-                              top-env
-                              local-top-env
-                              rest
-                              (compiler-ir-global-cons
-                                (IrGlobal global-name global-ty IrValueUnit)
-                                globals)
-                              (lower-function-list-append init-funcs functions)
-                              externs
-                              init-spans
-                              names
-                              name-cache
-                              type-cache
-                              dispatch-variants
-                              mode
-                              module)]
-                          [(ErrLowerFunction init-message)
-                            (ErrLowerDecls init-message)])]))]
-                [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))]))]
-          [(AstDeclExtern name _ metadata ty)
-            (let
-              [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              (if (tc-type-contains-reference? (tc-resolve-type decl-ctx ty))
-                (ErrLowerDecls
-                  (lower-diagnostic (lower-reference-support-message)))
-                (lower-decls-in-module
-                  ctx
-                  top-env
-                  local-top-env
-                  rest
-                  globals
-                  functions
-                  (compiler-ir-extern-cons
-                    (IrExtern
-                      (intern-str name)
-                      (tc-type-without-regions (tc-resolve-type decl-ctx ty))
-                      (ast-extern-metadata-abi metadata)
-                      (ast-extern-metadata-symbol metadata)
-                      (ast-extern-metadata-link-inputs metadata)
-                      false)
-                    externs)
-                  spans
-                  names
-                  name-cache
-                  type-cache
-                  dispatch-variants
-                  mode
-                  module)))]
-          [(AstDeclDefFn name params ret body-box export)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              [logical-name : String
-                (lower-current-decl-logical-name-cache
-                  name-cache
-                  module
-                  (intern-str name))]
-              (if (string-i64-map-contains? dispatch-variants logical-name)
-                (lower-decls-in-module
-                  ctx
-                  top-env
-                  local-top-env
-                  rest
-                  globals
-                  functions
-                  externs
-                  spans
-                  names
-                  name-cache
-                  type-cache
-                  dispatch-variants
-                  mode
-                  module)
-                (begin
-                  (cfg compile-profile (compiler-lower-profile-detail-start))
-                  (match (lower-function-escaping
-                    decl-ctx
-                    local-top-env
-                    type-cache
-                    logical-name
-                    params
-                    ret
-                    body
-                    spans
-                    name-cache
-                    mode)
-                    [(OkLowerFunction lowered-functions function-spans)
-                      (let
-                        [next-externs : CompilerIrExternList
-                          (match export
-                            [(AstFnNoExport) externs]
-                            [(AstFnExport symbol)
-                              (compiler-ir-extern-cons
-                                (IrExtern
-                                  logical-name
-                                  (ast-ty-func
-                                    (tc-type-list-without-regions
-                                      (tc-param-type-list decl-ctx params))
-                                    (tc-type-without-regions
-                                      (tc-resolve-type decl-ctx ret)))
-                                  (AstExternAbiC)
-                                  (intern-str symbol)
-                                  AstExternLinkInputNil
-                                  true)
-                                externs)])]
+                    [inner : AstDecl (box-get inner-box)]
+                    (set! cur-decls (ast-decl-cons inner rest)))]
+                [(AstDeclDef name _ expr-box)
+                  (let
+                    [expr : AstExpr (ast-node-get expr-box)]
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    (match (lower-top-decl-type-or-check
+                      decl-ctx
+                      cur-local-top-env
+                      decl)
+                      [(OkTcType ty)
+                        (let
+                          [global-ty : AstType (tc-type-without-regions ty)]
+                          [global-name : String
+                            (lower-current-decl-logical-name-cache
+                              cur-name-cache
+                              cur-module
+                              (intern-str name))]
+                          (match (lower-global-value cur-name-cache expr)
+                            [(OkLowerValue value)
+                              (begin
+                                (set!
+                                  cur-globals
+                                  (compiler-ir-global-cons
+                                    (IrGlobal global-name global-ty value)
+                                    cur-globals))
+                                (set! cur-decls rest))]
+                            ;; A global whose initializer is not a compile-time
+                            ;; constant is evaluated at startup by a hidden
+                            ;; `__global_init_<name>` function whose return
+                            ;; value the backend stores into the global before
+                            ;; `main`. This applies to any non-unit type
+                            ;; (scalars as well as aggregates), mirroring the
+                            ;; former Rust lowerer, which emits an init function
+                            ;; whenever `extract_const` yields no constant.
+                            [(ErrLowerValue _)
+                              (match (lower-function-escaping
+                                decl-ctx
+                                cur-local-top-env
+                                cur-type-cache
+                                (lower-global-init-function-name global-name)
+                                AstParamNil
+                                global-ty
+                                expr
+                                cur-spans
+                                cur-name-cache
+                                mode)
+                                [(OkLowerFunction init-funcs init-spans)
+                                  (begin
+                                    (set!
+                                      cur-globals
+                                      (compiler-ir-global-cons
+                                        (IrGlobal
+                                          global-name
+                                          global-ty
+                                          IrValueUnit)
+                                        cur-globals))
+                                    (set!
+                                      cur-functions
+                                      (lower-function-list-append
+                                        init-funcs
+                                        cur-functions))
+                                    (set! cur-spans init-spans)
+                                    (set! cur-decls rest))]
+                                [(ErrLowerFunction init-message)
+                                  (begin
+                                    (set! result (ErrLowerDecls init-message))
+                                    (set! done true))])]))]
+                      [(ErrTcType message)
                         (begin
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-detail-finish
-                              "function"
-                              logical-name))
-                          (lower-decls-in-module
-                            ctx
-                            top-env
-                            local-top-env
-                            rest
-                            globals
-                            (lower-function-list-append
-                              lowered-functions
-                              functions)
-                            next-externs
-                            function-spans
-                            names
-                            name-cache
-                            type-cache
-                            dispatch-variants
-                            mode
-                            module)))]
-                    [(ErrLowerFunction message)
+                          (set!
+                            result
+                            (ErrLowerDecls (lower-diagnostic message)))
+                          (set! done true))]))]
+                [(AstDeclExtern name _ metadata ty)
+                  (let
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    (if (tc-type-contains-reference?
+                      (tc-resolve-type decl-ctx ty))
+                      (begin
+                        (set!
+                          result
+                          (ErrLowerDecls
+                            (lower-diagnostic (lower-reference-support-message))))
+                        (set! done true))
+                      (begin
+                        (set!
+                          cur-externs
+                          (compiler-ir-extern-cons
+                            (IrExtern
+                              (intern-str name)
+                              (tc-type-without-regions
+                                (tc-resolve-type decl-ctx ty))
+                              (ast-extern-metadata-abi metadata)
+                              (ast-extern-metadata-symbol metadata)
+                              (ast-extern-metadata-link-inputs metadata)
+                              false)
+                            cur-externs))
+                        (set! cur-decls rest))))]
+                [(AstDeclDefFn name params ret body-box export)
+                  (let
+                    [body : AstExpr (ast-node-get body-box)]
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [logical-name : String
+                      (lower-current-decl-logical-name-cache
+                        cur-name-cache
+                        cur-module
+                        (intern-str name))]
+                    (if (string-i64-map-contains?
+                      dispatch-variants
+                      logical-name)
+                      (set! cur-decls rest)
                       (begin
                         (cfg
                           compile-profile
-                          (compiler-lower-profile-detail-finish
-                            "function"
-                            logical-name))
-                        (ErrLowerDecls message))]))))]
-          [(AstDeclDefMacro _ _ _ _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclDefDispatch name variants)
-            (match (lower-dispatch-decl
-              ctx
-              top-env
-              local-top-env
-              type-cache
-              (intern-str name)
-              variants
-              spans
-              name-cache
-              mode
-              module)
-              [(OkLowerDispatchDecl lowered)
-                (match lowered
-                  [(LowerDispatchDecl
-                      cache-global
-                      lowered-functions
-                      function-spans)
-                    (lower-decls-in-module
+                          (compiler-lower-profile-detail-start))
+                        (match (lower-function-escaping
+                          decl-ctx
+                          cur-local-top-env
+                          cur-type-cache
+                          logical-name
+                          params
+                          ret
+                          body
+                          cur-spans
+                          cur-name-cache
+                          mode)
+                          [(OkLowerFunction lowered-functions function-spans)
+                            (let
+                              [next-externs : CompilerIrExternList
+                                (match export
+                                  [(AstFnNoExport) cur-externs]
+                                  [(AstFnExport symbol)
+                                    (compiler-ir-extern-cons
+                                      (IrExtern
+                                        logical-name
+                                        (ast-ty-func
+                                          (tc-type-list-without-regions
+                                            (tc-param-type-list decl-ctx params))
+                                          (tc-type-without-regions
+                                            (tc-resolve-type decl-ctx ret)))
+                                        (AstExternAbiC)
+                                        (intern-str symbol)
+                                        AstExternLinkInputNil
+                                        true)
+                                      cur-externs)])]
+                              (begin
+                                (cfg
+                                  compile-profile
+                                  (compiler-lower-profile-detail-finish
+                                    "function"
+                                    logical-name))
+                                (set!
+                                  cur-functions
+                                  (lower-function-list-append
+                                    lowered-functions
+                                    cur-functions))
+                                (set! cur-externs next-externs)
+                                (set! cur-spans function-spans)
+                                (set! cur-decls rest)))]
+                          [(ErrLowerFunction message)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-detail-finish
+                                  "function"
+                                  logical-name))
+                              (set! result (ErrLowerDecls message))
+                              (set! done true))]))))]
+                [(AstDeclDefMacro _ _ _ _) (set! cur-decls rest)]
+                [(AstDeclDefDispatch name variants)
+                  (match (lower-dispatch-decl
+                    ctx
+                    top-env
+                    cur-local-top-env
+                    cur-type-cache
+                    (intern-str name)
+                    variants
+                    cur-spans
+                    cur-name-cache
+                    mode
+                    cur-module)
+                    [(OkLowerDispatchDecl lowered)
+                      (match lowered
+                        [(LowerDispatchDecl
+                            cache-global
+                            lowered-functions
+                            function-spans)
+                          (begin
+                            (set!
+                              cur-globals
+                              (compiler-ir-global-cons cache-global cur-globals))
+                            (set!
+                              cur-functions
+                              (lower-function-list-append
+                                lowered-functions
+                                cur-functions))
+                            (set! cur-spans function-spans)
+                            (set! cur-decls rest))])]
+                    [(ErrLowerDispatchDecl message)
+                      (begin
+                        (set! result (ErrLowerDecls message))
+                        (set! done true))])]
+                [(AstDeclImport _) (set! cur-decls rest)]
+                [(AstDeclIncludeStr _ _) (set! cur-decls rest)]
+                [(AstDeclExport _) (set! cur-decls rest)]
+                [(AstDeclModule next-module)
+                  (let
+                    [next-module-str : String (intern-str next-module)]
+                    (match (lower-module-local-envs
                       ctx
                       top-env
-                      local-top-env
-                      rest
-                      (compiler-ir-global-cons cache-global globals)
-                      (lower-function-list-append lowered-functions functions)
-                      externs
-                      function-spans
                       names
-                      name-cache
-                      type-cache
-                      dispatch-variants
-                      mode
-                      module)])]
-              [(ErrLowerDispatchDecl message) (ErrLowerDecls message)])]
-          [(AstDeclImport _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclExport _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclModule next-module)
-            (let
-              [next-module-str : String (intern-str next-module)]
-              (match (lower-module-local-envs ctx top-env names next-module-str)
-                [(OkLowerModuleLocalEnv next-local-top-env local-names)
-                  (lower-decls-in-module
-                    ctx
-                    top-env
-                    next-local-top-env
-                    rest
-                    globals
-                    functions
-                    externs
-                    spans
-                    names
-                    (lower-name-cache-from-env local-names)
-                    (lower-type-cache-from-env next-local-top-env)
-                    dispatch-variants
-                    mode
-                    next-module-str)]
-                [(ErrLowerModuleLocalEnv message)
-                  (ErrLowerDecls (lower-diagnostic message))]))]
-          [(AstDeclTest _ _ _)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclDefEnum name _ variants)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              (lower-nullary-variant-globals
-                (lower-current-decl-logical-name-cache
-                  name-cache
-                  module
-                  (intern-str name))
-                variants
-                0
-                globals)
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclDefEnumLifetimes name _ _ variants)
-            (lower-decls-in-module
-              ctx
-              top-env
-              local-top-env
-              rest
-              (lower-nullary-variant-globals
-                (lower-current-decl-logical-name names module (intern-str name))
-                variants
-                0
-                globals)
-              functions
-              externs
-              spans
-              names
-              name-cache
-              type-cache
-              dispatch-variants
-              mode
-              module)]
-          [(AstDeclDefStruct name _ cleanup fields)
-            (let
-              [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              [logical-name : String
-                (match cleanup
-                  [(AstStructNoCleanup) ""]
-                  [(AstStructCleanupFn cleanup-name)
-                    (lower-current-decl-logical-name-cache
-                      name-cache
-                      module
-                      (intern-str cleanup-name))])]
-              [struct-ty : AstType
-                (AstTyStruct
-                  (intern (compiler-symbol-module-key module (intern-str name))))]
-              (match (lower-struct-cleanup-decl
-                decl-ctx
-                local-top-env
-                type-cache
-                logical-name
-                cleanup
-                struct-ty
-                fields
-                spans
-                name-cache
-                mode)
-                [(OkLowerFunction cleanup-functions cleanup-spans)
-                  (lower-decls-in-module
-                    ctx
-                    top-env
-                    local-top-env
-                    rest
-                    globals
-                    (lower-function-list-append cleanup-functions functions)
-                    externs
-                    cleanup-spans
-                    names
-                    name-cache
-                    type-cache
-                    dispatch-variants
-                    mode
-                    module)]
-                [(ErrLowerFunction message) (ErrLowerDecls message)]))]
-          [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
-            (let
-              [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              [logical-name : String
-                (match cleanup
-                  [(AstStructNoCleanup) ""]
-                  [(AstStructCleanupFn cleanup-name)
-                    (lower-current-decl-logical-name-cache
-                      name-cache
-                      module
-                      (intern-str cleanup-name))])]
-              [struct-ty : AstType
-                (AstTyStructArgs
-                  (intern (compiler-symbol-module-key module (intern-str name)))
-                  lifetimes)]
-              (match (lower-struct-cleanup-decl
-                decl-ctx
-                local-top-env
-                type-cache
-                logical-name
-                cleanup
-                struct-ty
-                fields
-                spans
-                name-cache
-                mode)
-                [(OkLowerFunction cleanup-functions cleanup-spans)
-                  (lower-decls-in-module
-                    ctx
-                    top-env
-                    local-top-env
-                    rest
-                    globals
-                    (lower-function-list-append cleanup-functions functions)
-                    externs
-                    cleanup-spans
-                    names
-                    name-cache
-                    type-cache
-                    dispatch-variants
-                    mode
-                    module)]
-                [(ErrLowerFunction message) (ErrLowerDecls message)]))]
-          [(AstDeclComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (lower-decls-in-module
-                ctx
-                top-env
-                local-top-env
-                (ast-decl-cons template rest)
-                globals
-                functions
-                externs
-                spans
-                names
-                name-cache
-                type-cache
-                dispatch-variants
-                mode
-                module))]))]))
+                      next-module-str)
+                      [(OkLowerModuleLocalEnv next-local-top-env local-names)
+                        (begin
+                          (set! cur-local-top-env next-local-top-env)
+                          (set!
+                            cur-name-cache
+                            (lower-name-cache-from-env local-names))
+                          (set!
+                            cur-type-cache
+                            (lower-type-cache-from-env cur-local-top-env))
+                          (set! cur-module next-module-str)
+                          (set! cur-decls rest))]
+                      [(ErrLowerModuleLocalEnv message)
+                        (begin
+                          (set!
+                            result
+                            (ErrLowerDecls (lower-diagnostic message)))
+                          (set! done true))]))]
+                [(AstDeclTest _ _ _) (set! cur-decls rest)]
+                [(AstDeclDefEnum name _ variants)
+                  (begin
+                    (set!
+                      cur-globals
+                      (lower-nullary-variant-globals
+                        (lower-current-decl-logical-name-cache
+                          cur-name-cache
+                          cur-module
+                          (intern-str name))
+                        variants
+                        0
+                        cur-globals))
+                    (set! cur-decls rest))]
+                [(AstDeclDefEnumLifetimes name _ _ variants)
+                  (begin
+                    (set!
+                      cur-globals
+                      (lower-nullary-variant-globals
+                        (lower-current-decl-logical-name
+                          names
+                          cur-module
+                          (intern-str name))
+                        variants
+                        0
+                        cur-globals))
+                    (set! cur-decls rest))]
+                [(AstDeclDefStruct name _ cleanup fields)
+                  (let
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [logical-name : String
+                      (match cleanup
+                        [(AstStructNoCleanup) ""]
+                        [(AstStructCleanupFn cleanup-name)
+                          (lower-current-decl-logical-name-cache
+                            cur-name-cache
+                            cur-module
+                            (intern-str cleanup-name))])]
+                    [struct-ty : AstType
+                      (AstTyStruct
+                        (intern
+                          (compiler-symbol-module-key
+                            cur-module
+                            (intern-str name))))]
+                    (match (lower-struct-cleanup-decl
+                      decl-ctx
+                      cur-local-top-env
+                      cur-type-cache
+                      logical-name
+                      cleanup
+                      struct-ty
+                      fields
+                      cur-spans
+                      cur-name-cache
+                      mode)
+                      [(OkLowerFunction cleanup-functions cleanup-spans)
+                        (begin
+                          (set!
+                            cur-functions
+                            (lower-function-list-append
+                              cleanup-functions
+                              cur-functions))
+                          (set! cur-spans cleanup-spans)
+                          (set! cur-decls rest))]
+                      [(ErrLowerFunction message)
+                        (begin
+                          (set! result (ErrLowerDecls message))
+                          (set! done true))]))]
+                [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+                  (let
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [logical-name : String
+                      (match cleanup
+                        [(AstStructNoCleanup) ""]
+                        [(AstStructCleanupFn cleanup-name)
+                          (lower-current-decl-logical-name-cache
+                            cur-name-cache
+                            cur-module
+                            (intern-str cleanup-name))])]
+                    [struct-ty : AstType
+                      (AstTyStructArgs
+                        (intern
+                          (compiler-symbol-module-key
+                            cur-module
+                            (intern-str name)))
+                        lifetimes)]
+                    (match (lower-struct-cleanup-decl
+                      decl-ctx
+                      cur-local-top-env
+                      cur-type-cache
+                      logical-name
+                      cleanup
+                      struct-ty
+                      fields
+                      cur-spans
+                      cur-name-cache
+                      mode)
+                      [(OkLowerFunction cleanup-functions cleanup-spans)
+                        (begin
+                          (set!
+                            cur-functions
+                            (lower-function-list-append
+                              cleanup-functions
+                              cur-functions))
+                          (set! cur-spans cleanup-spans)
+                          (set! cur-decls rest))]
+                      [(ErrLowerFunction message)
+                        (begin
+                          (set! result (ErrLowerDecls message))
+                          (set! done true))]))]
+                [(AstDeclComptimeDecl _ template-box)
+                  (let
+                    [template : AstDecl (box-get template-box)]
+                    (set! cur-decls (ast-decl-cons template rest)))]))]))
+      result)))
 
 (define (lower-compiler-program-checked-with-names-mode
   [ctx : TcContext]

@@ -1101,20 +1101,33 @@
       (if (= (wide-score via-ptr) 52) 42 2)
       1)))")
 
-;; #2357: the Win64 sret aggregate-RETURN path (#2481) is reverted to a
-;; compile-time rejection (see compiler_lower.tl: returning a 9-16B register
-;; group from a C function needs an sret-pointer -> group-value materialization
-;; that triggers a non-local lowering miscompile). Verify the >8B C-aggregate
-;; RETURN is rejected rather than emitted, instead of asserting sret codegen.
+;; #2357: the Win64 sret aggregate-RETURN path (#2481) is adopted. Returning a
+;; 9-16B register-group from a C function reserves a caller sret buffer (passed
+;; as a scalar-pointer hidden first arg) and materializes the result back into
+;; the 2-word register group (see lower-c-abi-finish-call-result). Assert the
+;; sret codegen IS emitted -- both the direct call and the indirect (`call
+;; *%rax`) call site -- and that nothing is rejected as unsupported.
 (define (compiler-backend-c-abi-sret-aggregate-windows-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-sret-aggregate-source)
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
-      (compiler-backend-string-contains?
-        asm
-        "unsupported windows-x86_64 C aggregate ABI")]
-    [(ErrCompilerBackend _) true]))
+      (backend-and4
+        (backend-and4
+          (compiler-backend-string-contains? asm ".extern tl_cabi_wide_make\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern tl_cabi_wide_make_ptr\n")
+          (compiler-backend-string-contains? asm "    call tl_cabi_wide_make\n")
+          (compiler-backend-string-contains? asm "    call *%rax\n"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "unsupported windows-x86_64 C aggregate ABI"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+        true)]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-c-abi-byref-aggregate-arg-source) : String
   "(defstruct WideArg

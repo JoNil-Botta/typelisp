@@ -13110,12 +13110,16 @@
                                 (compiler-ir-value-cons value rest-values))]
                             [(ErrLowerArgs message) (ErrLowerArgs message)])]
                         [(LowerCAbiIntegerAggregate scalar-ty size)
-                          ;; #2386: a size-8 integer struct is register-resident
-                          ;; -- `value` is already the word the C ABI wants in a
-                          ;; register, so pass it directly. A 1/2/4-byte integer
-                          ;; aggregate is still a memory value (a pointer), so
-                          ;; load the scalar out of it.
-                          (match (if (= size 8)
+                          ;; #2386: a register-resident aggregate is carried as a
+                          ;; single-word scalar -- `value` is already the word the C
+                          ;; ABI wants in a register, so pass it directly. Any other
+                          ;; aggregate (a memory-backed value, e.g. a float struct
+                          ;; like {f32,f32} or a sub-word integer struct) is a
+                          ;; pointer, so load the scalar out of it. Gate on the same
+                          ;; residency predicate that chose the value representation
+                          ;; -- not on `size`, since an 8-byte float struct is NOT
+                          ;; register-resident and arrives as a pointer.
+                          (match (if (lower-type-register-resident? ctx arg-ty)
                             (LowerExpr arg-state value scalar-ty)
                             (lower-load-at-offset arg-state value 0 scalar-ty))
                             [(LowerExpr scalar-state scalar-value _)
@@ -13173,6 +13177,7 @@
               (lower-diagnostic "lower: constructor arity mismatch"))]))]))
 
 (define (lower-c-abi-finish-call-result
+  [ctx : TcContext]
   [state : LowerState]
   [call-value : CompilerIrValue]
   [result-ty : AstType]
@@ -13182,12 +13187,15 @@
     [(LowerCAbiNoAggregate)
       (OkLowerExpr (LowerExpr state call-value result-ty))]
     [(LowerCAbiIntegerAggregate scalar-ty size)
-      ;; #2386: a size-8 integer struct is register-resident -- the C call
-      ;; returns the whole value in a register, which IS the selfhost word
-      ;; representation, so hand it back directly. A 1/2/4-byte integer aggregate
-      ;; is still a memory value, so spill the returned scalar into a fresh slot
-      ;; and return the pointer.
-      (if (= size 8)
+      ;; #2386: a register-resident aggregate is carried as a single-word scalar --
+      ;; the C call returns the whole value in a register, which IS that word
+      ;; representation, so hand it back directly. Any other aggregate (a
+      ;; memory-backed value, e.g. a float struct like {f32,f32} or a sub-word
+      ;; integer struct) is referenced by pointer, so spill the returned scalar
+      ;; into a fresh slot and return the pointer. Gate on the same residency
+      ;; predicate that chose the value representation -- not on `size`, since an
+      ;; 8-byte float struct is NOT register-resident.
+      (if (lower-type-register-resident? ctx result-ty)
         (OkLowerExpr (LowerExpr state call-value result-ty))
         (match (lower-reserve-heap-storage state size result-ty)
           [(LowerExpr base-state base _)
@@ -13202,7 +13210,16 @@
           origin
           (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
     [(LowerCAbiSretAggregate _)
-      (OkLowerExpr (LowerExpr state call-value result-ty))]
+      ;; #2386: the C callee wrote the >8B result into the caller-provided sret
+      ;; buffer, so `call-value` is the buffer pointer. A register-resident result
+      ;; (a 16B word-class struct: a 2-word register group in this backend) must
+      ;; be materialized back into that two-word group VALUE -- load both words
+      ;; and Pack -- or downstream consumers that expect a register pair (e.g. a
+      ;; by-value call argument) get the pointer in word0 and garbage in word1.
+      ;; A genuine memory aggregate (>16B, or float-containing) stays the pointer.
+      (if (lower-type-register-group? ctx result-ty)
+        (OkLowerExpr (lower-load-group-from-ptr state call-value result-ty))
+        (OkLowerExpr (LowerExpr state call-value result-ty)))]
     [(LowerCAbiUnsupportedAggregate message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
 
@@ -13235,6 +13252,7 @@
                     (compiler-ir-call-args-from-list values)
                     result-ty)]
                 (lower-c-abi-finish-call-result
+                  ctx
                   (lower-state-emit-at-expr allocated instr origin)
                   (IrValueVar var-id)
                   result-ty
@@ -13251,6 +13269,7 @@
                     (compiler-ir-call-args-from-list values)
                     scalar-ty)]
                 (lower-c-abi-finish-call-result
+                  ctx
                   (lower-state-emit-at-expr allocated instr origin)
                   (IrValueVar var-id)
                   result-ty
@@ -13264,7 +13283,15 @@
                 (lower-state-mode args-state)
                 result-ty)))]
         [(LowerCAbiSretAggregate size)
-          (match (lower-reserve-heap-storage args-state size result-ty)
+          ;; #2386: reserve the sret buffer typed as a scalar pointer (U64), NOT
+          ;; the aggregate result type. A register-resident result type would make
+          ;; the backend classify the hidden sret pointer as a 2-word register
+          ;; group, shifting every real argument by one slot (and reading an
+          ;; undefined second word). Typing it U64 keeps the hidden pointer in a
+          ;; single integer register, and it survives copy-propagation (there is
+          ;; no copy to fold). The result materialization below reads the 2 words
+          ;; back from the buffer using `result-ty` explicitly.
+          (match (lower-reserve-heap-storage args-state size (AstTyU64))
             [(LowerExpr base-state base _)
               (match (lower-state-alloc-var base-state)
                 [(LowerAlloc allocated var-id)
@@ -13277,6 +13304,7 @@
                           (compiler-ir-value-cons base values))
                         (AstTyU64))]
                     (lower-c-abi-finish-call-result
+                      ctx
                       (lower-state-emit-at-expr allocated instr origin)
                       base
                       result-ty
@@ -13308,6 +13336,7 @@
                 (compiler-ir-call-args-from-list values)
                 result-ty)]
             (lower-c-abi-finish-call-result
+              ctx
               (lower-state-emit-at-expr allocated instr origin)
               (IrValueVar var-id)
               result-ty
@@ -13324,6 +13353,7 @@
                 (compiler-ir-call-args-from-list values)
                 scalar-ty)]
             (lower-c-abi-finish-call-result
+              ctx
               (lower-state-emit-at-expr allocated instr origin)
               (IrValueVar var-id)
               result-ty
@@ -13335,7 +13365,10 @@
           origin
           (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
     [(LowerCAbiSretAggregate size)
-      (match (lower-reserve-heap-storage state size result-ty)
+      ;; #2386: reserve the sret buffer typed as a scalar pointer (U64) — see
+      ;; lower-direct-c-abi-call — so a register-resident result type does not make
+      ;; the backend classify the hidden sret pointer as a 2-register group arg.
+      (match (lower-reserve-heap-storage state size (AstTyU64))
         [(LowerExpr base-state base _)
           (match (lower-state-alloc-var base-state)
             [(LowerAlloc allocated var-id)
@@ -13348,6 +13381,7 @@
                       (compiler-ir-value-cons base values))
                     (AstTyU64))]
                 (lower-c-abi-finish-call-result
+                  ctx
                   (lower-state-emit-at-expr allocated instr origin)
                   base
                   result-ty

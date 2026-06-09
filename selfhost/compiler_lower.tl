@@ -20140,14 +20140,10 @@
           [(OkTcType fn-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
               [(AstTyFunc param-types callee-ret)
-                (and
-                  (<=
-                    (tc-type-list-len (tc-resolve-type-list ctx param-types))
-                    4)
-                  (lower-tail-call-compatible-return?
-                    ctx
-                    (ty-node-get callee-ret)
-                    ret-ty))]
+                (lower-tail-call-compatible-return?
+                  ctx
+                  (ty-node-get callee-ret)
+                  ret-ty)]
               [_ false])]
           [(ErrTcType _) false])
         false))))
@@ -27041,8 +27037,8 @@
           (and
             (=
               (lower-test-function-tail-call-count functions "step5" "finish5")
-              0)
-            (> (lower-test-function-call-count functions "step5" "finish5") 0))])]
+              1)
+            (= (lower-test-function-call-count functions "step5" "finish5") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-tail-cleanup-shape-ok?) : bool

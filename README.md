@@ -9,9 +9,10 @@ in TypeLisp and compiles itself, with **zero third-party dependencies**.
 Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
-- **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector.
+- **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector. Supported targets are `linux-x86_64` and `windows-x86_64`; macOS and ARM are not supported yet and are not near-term goals.
 - **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`selfhost/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; there is no Rust (or other-language) implementation in the toolchain.
 - **Zero dependencies**: No third-party packages. The only build inputs are the native assembler/linker toolchain.
+- **Fast**: Generated code quality should approach LLVM (`clang -O2`) on the benchmark corpus while compilation itself stays fast. Performance is tracked deterministically — paired C baselines under [`benchmarks/`](benchmarks) and a cachegrind instruction-count CI gate under [`perf/`](perf) — rather than by wall-clock noise. The codegen-quality roadmap is #2559.
 
 Language direction:
 
@@ -19,25 +20,32 @@ Language direction:
 - Be expressive enough for C-style systems programming: native layout,
   runtime/FFI escape hatches, deterministic builds, and direct linker interop.
 - Pursue Rust-style safety for ownership, borrowing, move semantics, and arena
-  lifetimes. Safe TypeLisp should not have undefined behavior; the arena and
-  borrow work is tracked by #801, #802, #803, #805, #814, and #182.
+  lifetimes. Safe TypeLisp should not have undefined behavior. Move-only
+  aggregates, lexical immutable/mutable borrow checking, lifetime-parameterized
+  aggregates, and scoped arenas are implemented; #182 remains the umbrella map,
+  with non-lexical lifetimes (#810) and `struct-set!` (#1521) as the main open
+  slices.
 - Treat ISPC-style SPMD as the data-parallel model. The current source surface
-  is in [SPEC.md section 5.15](SPEC.md); selfhost parity and optimization work
-  is tracked by #791 and #937.
+  is in [SPEC.md section 5.15](SPEC.md); masked varying `if` is in flight
+  (#2131, #2205, #2207) and the post-masked-if queue is tracked by #2548.
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
   source-level generics, traits, interfaces, or `impl` syntax; comptime code
-  should generate concrete types, functions, and implementation bundles instead.
-  See #893, #913, #970, and #902.
+  generates concrete types, functions, and implementation bundles instead.
+  Comptime-generated declarations, type reflection, and typed expression macros
+  are implemented; see SPEC.md sections 3.7 and 5.17.
 - Move toward C3-style modules where module identity participates in name
-  resolution and prefixes TypeLisp linker symbols; see #950, #952, and #953.
+  resolution and prefixes TypeLisp linker symbols. Module identities and
+  exports are implemented; the repository-wide migration to dotted module
+  imports is tracked by #2452, #2453, #2454, and #2492.
 - Use an arena-based memory model with a default program-lifetime arena and
-  scoped `(with-arena ...)` allocation regions (#801).
+  scoped `(with-arena ...)` allocation regions (implemented).
 - Land new language features in the self-hosted compiler ([`selfhost/`](selfhost)).
   The toolchain is fully self-hosted (#666, #795); each published stage0 binary
   builds its successor.
 
-The language-direction bullets above are future goals. The rest of this README
-describes current behavior unless it explicitly says a feature is planned.
+Most of the language-direction bullets above are now implemented; the bullets
+say where the remaining work is tracked. The rest of this README describes
+current behavior unless it explicitly says a feature is planned.
 
 ## Quick Start
 
@@ -91,7 +99,8 @@ TypeLisp uses S-expressions with explicit type annotations on parameters,
 struct/enum fields, and (optionally) `let` bindings.
 
 ```lisp
-;; Global variable (scalar literal initializer only)
+;; Global variable (scalar and aggregate initializers, including runtime
+;; initializers, are supported)
 (define answer : i64 42)
 
 ;; Function (parameters must be typed; return type defaults to unit)
@@ -130,8 +139,8 @@ initializes every live element under the same ZII rules.
 ```
 i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 (Array t)         ; dynamic, runtime-sized array
-(Array t n)       ; fixed-size array (literals/ref/set compile; returns rejected)
-(Tuple t1 t2 ...) ; local tuple literals/ref compile; params/returns rejected
+(Array t n)       ; fixed-size array (by-value returns supported)
+(Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
 (Box t)           ; specified arena-owned indirection for recursive aggregates
 (& r t)           ; specified immutable reference tied to lifetime/arena r
 (-> arg... ret)   ; function type
@@ -422,10 +431,9 @@ Capturing lambdas snapshot supported captures into heap environments: scalars,
 function values, `String`, dynamic arrays, tuples/structs/enums, and fixed
 arrays, including nested aggregate and fixed-array contents that are recursively
 deep-copied. The aggregate captures snapshot their storage onto the heap so the
-environment can outlive the creating frame. Capturing aggregate-element
-references and mutation of captured names are still rejected. `SPEC.md`
-specifies the future checker-only rule for local non-escaping immutable
-reference captures; relaxing the current rejection is tracked by #808.
+environment can outlive the creating frame. Local non-escaping closures may
+capture immutable references (#2280); escaping closures still reject reference
+captures, and mutation of captured names is rejected (#2552).
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2|avx512` supports a first contiguous
@@ -457,15 +465,12 @@ argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 
 ### Memory and aliasing
 
-TypeLisp does not currently implement full source-level borrow checking,
-destructors, `free`, or a garbage collector. `SPEC.md` now defines v1
-move-only aggregate handle semantics plus lexical immutable/mutable borrow
-expression forms for the selfhost checker:
-scalars, raw pointers, and non-capturing function values are copyable, while
+TypeLisp implements v1 move-only aggregate semantics and lexical
+immutable/mutable borrow checking; it does not implement destructors, `free`,
+or a garbage collector, and non-lexical lifetimes remain future work (#810).
+Scalars, raw pointers, and non-capturing function values are copyable, while
 `String`, arrays, tuples, structs, enums, and capturing closures move in
-by-value positions. Some legacy paths may still accept aggregate copies until
-all front-end entry points route through the selfhost checker. Aggregate values
-are implemented as
+by-value positions. Aggregate values are implemented as
 pointer-sized handles in the IR/ABI, but those handles are not checked language
 references. The v1 raw pointer design is now specified as explicit unsafe
 syntax:
@@ -487,14 +492,15 @@ specified model.
 `SPEC.md` also defines the v1 owned `String` / borrowed `str` direction:
 string literals remain owned `String` values, `str` is a borrowed-only referent
 used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
-`str` view. Implementation of the `str` frontend and stdlib API migration is
-still pending; current public builtins continue to use compatibility `String`
+`str` view. The `str` frontend and stdlib API migration are implemented
+(#1453, #1454); several compiler builtins keep compatibility `String`
 signatures.
 
 Lifetime-parameterized named aggregates are specified with declaration metadata
 such as `(:lifetimes r)` on `defstruct`/`defenum` and type uses such as
 `(RefBox r)`. Those arguments are lifetime names only, not source-level generic
-type parameters; selfhost parser/typechecker support is tracked by #1722.
+type parameters; selfhost parser/typechecker support is implemented (#1722) —
+see `stdlib/text_buf_borrowed.tl` and `stdlib/vector_slice.tl` for usage.
 
 `(Box T)` is specified as a safe, move-only, arena-owned indirection handle:
 `(box expr)` allocates `expr` in the active arena, and `(box-get b)` projects
@@ -502,7 +508,8 @@ the boxed value for read/pattern use under the move rules. A box allocated
 inside `(with-arena r ...)` is typed as `(in r (Box T))` and cannot escape that
 scope. It provides the explicit indirection required by the default inline
 aggregate layout contract for recursive structs/enums; complete enforcement is
-staged separately.
+staged separately (#2554). Destructive `box-take` and mutable access through
+boxes remain future work (#2553).
 
 The v1 reclamation direction keeps the program-lifetime arena as the default
 allocation target and does not add general per-object `free` or GC yet.
@@ -527,10 +534,11 @@ work that returns only scalars or outer-owned values; use `(with-escape scratch
 be cloned out; reserve manual `arena-set!` / `arena-rewind` / `arena-destroy`
 calls for unsafe internals that can prove every invalidated handle is dead.
 
-Scoped cleanup of non-memory resources is separate. The SPEC reserves
-`(with ([name init cleanup]) body ...)` for explicit cleanup of files, process
-handles, locks, mapped files, and similar resources; it is not implemented yet
-and does not imply destructors, `free`, or arena reset semantics.
+Scoped cleanup of non-memory resources is separate. The implemented
+`(with ([name init cleanup]) body ...)` form (SPEC.md §5.19) runs cleanup
+functions in reverse binding order on scope exit for files, process handles,
+locks, mapped files, and similar resources; it does not imply destructors,
+`free`, or arena reset semantics.
 
 Programs that need manual control import `stdlib/arena.tl` and use the
 first-class arena helpers. `arena-make`, `arena-current`, and `arena-mark` are
@@ -549,7 +557,9 @@ TypeLisp*:
 
 - `lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
 - `read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
-- `eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and interpreted first-class closures.
+- `eval.tl` — a historical tree-walking evaluator retained only as a large
+  compile fixture; the REPL and all tooling evaluate through the real compiler
+  (retirement tracked by #2551).
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
@@ -641,7 +651,7 @@ Source (.tl)
     ↓  Parser       → AST
     ↓  Type Checker → Typed AST
     ↓  Lowerer      → IR (3-address code, basic blocks)
-    ↓  Optimizer    → constant folding, basic-block CSE, DCE, strength reduction, copy propagation
+    ↓  Optimizer    → constant folding, GVN/CSE, copy propagation, DCE, LICM with loop preheaders, function inlining, strength reduction; opt-level 2 adds scalar register allocation
     ↓  Backend      → x86_64 assembly (.s)
     ↓  target tools → native executable
 ```
@@ -724,9 +734,9 @@ x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/
 `extern`, multi-file modules, scalar `foreach`, an initial SIMD `foreach`
 map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element
-reference captures, tail calls, tuple/fixed-array by-value returns,
-general GC/free, ownership/borrowing, masked varying SPMD control flow, and
+[SPEC.md §8](SPEC.md) for what is not yet supported (mutation of captured
+names, indirect/closure tail calls, `struct-set!`, general GC/free,
+non-lexical lifetimes, masked varying SPMD control flow, and
 later public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
 operations are implemented, including local scalar address-of scratch pointers
 for FFI out-params. Broader C-string and address-of ergonomics remain follow-up

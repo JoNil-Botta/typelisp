@@ -15,6 +15,10 @@ AVX2-only hosts, and scalar otherwise.
 
 The corpus emphasizes the cases where SIMD bugs hide:
 
+Masked varying `if` fixtures intentionally compile and run in `avx512`, while
+`avx2` compile is expected to fail with an explicit staged diagnostic instead of
+falling back to scalar code.
+
 - `tail_i64_add.tl` — `foreach` add over `n = 13` (not a multiple of the i64
   vector width 4/8): forces a masked/scalar tail. Exit 247.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32

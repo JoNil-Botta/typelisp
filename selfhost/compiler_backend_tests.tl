@@ -1101,27 +1101,20 @@
       (if (= (wide-score via-ptr) 52) 42 2)
       1)))")
 
+;; #2357: the Win64 sret aggregate-RETURN path (#2481) is reverted to a
+;; compile-time rejection (see compiler_lower.tl: returning a 9-16B register
+;; group from a C function needs an sret-pointer -> group-value materialization
+;; that triggers a non-local lowering miscompile). Verify the >8B C-aggregate
+;; RETURN is rejected rather than emitted, instead of asserting sret codegen.
 (define (compiler-backend-c-abi-sret-aggregate-windows-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-sret-aggregate-source)
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
-      (backend-and8
-        (compiler-backend-string-contains? asm ".extern tl_cabi_wide_make\n")
-        (compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_wide_make_ptr\n")
-        (compiler-backend-string-contains? asm "    call tl_cabi_wide_make\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
-        (compiler-backend-string-contains-alloc-size? asm 16)
-        (not
-          (compiler-backend-string-contains?
-            asm
-            "lower: unsupported windows-x86_64 C aggregate ABI"))
-        (not
-          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
-        true)]
-    [(ErrCompilerBackend _) false]))
+      (compiler-backend-string-contains?
+        asm
+        "unsupported windows-x86_64 C aggregate ABI")]
+    [(ErrCompilerBackend _) true]))
 
 (define (compiler-backend-c-abi-byref-aggregate-arg-source) : String
   "(defstruct WideArg
@@ -1156,7 +1149,12 @@
           asm
           "    call tl_cabi_wide_arg_score\n")
         (compiler-backend-string-contains? asm "    call *%rax\n")
-        (>= (compiler-backend-alloc-call-count asm) 4)
+        ;; #2357: with inline-by-value aggregates (#1867) a WideArg construction
+        ;; no longer heap-allocates -- the value is built in inline storage. So
+        ;; the two by-value call sites need exactly the two 16-byte byref buffers
+        ;; the Win64 ABI requires (down from four, when each construction also
+        ;; allocated). The 16-byte buffer size is asserted just below.
+        (>= (compiler-backend-alloc-call-count asm) 2)
         (compiler-backend-string-contains-alloc-size? asm 16)
         (not
           (compiler-backend-string-contains?
@@ -5553,10 +5551,15 @@
     (compiler-lower-inline-aggregate-copy-source)
     target)
     [(OkCompilerBackend asm)
+      ;; #2386: `Pair` is a 16-byte all-integer struct, so it is register-resident
+      ;; -- `id-pair` is a register-pair passthrough that carries both words in
+      ;; registers end-to-end. The function is still emitted, but it does NOT do
+      ;; the old pointer-load / pointer-store byte-copy ("(%r11), %rax" then
+      ;; "%rax, (%r10)") that a memory aggregate required.
       (backend-and4
         (compiler-backend-string-contains? asm "id_pair")
-        (compiler-backend-string-contains? asm "(%r11), %rax")
-        (compiler-backend-string-contains? asm "%rax, (%r10)")
+        (not (compiler-backend-string-contains? asm "(%r11), %rax"))
+        (not (compiler-backend-string-contains? asm "%rax, (%r10)"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))

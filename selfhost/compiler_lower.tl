@@ -13097,12 +13097,15 @@
                                 rest-state
                                 (compiler-ir-value-cons value rest-values))]
                             [(ErrLowerArgs message) (ErrLowerArgs message)])]
-                        [(LowerCAbiIntegerAggregate scalar-ty _)
-                          (match (lower-load-at-offset
-                            arg-state
-                            value
-                            0
-                            scalar-ty)
+                        [(LowerCAbiIntegerAggregate scalar-ty size)
+                          ;; #2386: a size-8 integer struct is register-resident
+                          ;; -- `value` is already the word the C ABI wants in a
+                          ;; register, so pass it directly. A 1/2/4-byte integer
+                          ;; aggregate is still a memory value (a pointer), so
+                          ;; load the scalar out of it.
+                          (match (if (= size 8)
+                            (LowerExpr arg-state value scalar-ty)
+                            (lower-load-at-offset arg-state value 0 scalar-ty))
                             [(LowerExpr scalar-state scalar-value _)
                               (match (lower-c-abi-args-as
                                 ctx
@@ -13167,13 +13170,20 @@
     [(LowerCAbiNoAggregate)
       (OkLowerExpr (LowerExpr state call-value result-ty))]
     [(LowerCAbiIntegerAggregate scalar-ty size)
-      (match (lower-reserve-heap-storage state size result-ty)
-        [(LowerExpr base-state base _)
-          (OkLowerExpr
-            (LowerExpr
-              (lower-store-at-offset base-state base 0 call-value scalar-ty)
-              base
-              result-ty))])]
+      ;; #2386: a size-8 integer struct is register-resident -- the C call
+      ;; returns the whole value in a register, which IS the selfhost word
+      ;; representation, so hand it back directly. A 1/2/4-byte integer aggregate
+      ;; is still a memory value, so spill the returned scalar into a fresh slot
+      ;; and return the pointer.
+      (if (= size 8)
+        (OkLowerExpr (LowerExpr state call-value result-ty))
+        (match (lower-reserve-heap-storage state size result-ty)
+          [(LowerExpr base-state base _)
+            (OkLowerExpr
+              (LowerExpr
+                (lower-store-at-offset base-state base 0 call-value scalar-ty)
+                base
+                result-ty))]))]
     [(LowerCAbiByRefAggregate _)
       (ErrLowerExpr
         (lower-diagnostic-at-expr
@@ -25581,6 +25591,12 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+;; #2386: `id-pair` is the identity on a 16-byte all-integer struct, which is now
+;; register-resident -- it is carried in a register pair end-to-end, so the
+;; passthrough needs NO memory traffic at all: zero byte-copies and zero stores
+;; (before register-residency this copied the 16 bytes through a slot). The
+;; non-register-resident memory copy path (byte-copies / stores for >16 B or
+;; float-containing aggregates) is covered by the C-ABI byref shape test below.
 (define (compiler-lower-inline-aggregate-copy-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-aggregate-copy-source)
@@ -25589,7 +25605,7 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-function-copy-bytes-count functions "id-pair") 2)
+            (= (lower-test-function-copy-bytes-count functions "id-pair") 0)
             (= (lower-test-function-store-ptr-count functions "id-pair") 0))])]
     [(ErrCompilerLower _) false]))
 
@@ -28464,7 +28480,13 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "big-use") 1)
-            (>= (lower-test-function-call-count functions "main" "tl_alloc") 2))])]
+            ;; #2386: `Big` is a 16-byte all-integer struct, now register-resident,
+            ;; so building `(Big 1 2)` no longer heap-allocates -- the value is
+            ;; constructed in a register pair. The Win64 C ABI still requires the
+            ;; >8 B aggregate to be passed BY REFERENCE, so exactly one tl_alloc
+            ;; remains: the byref buffer the register pair is spilled into before
+            ;; the call (down from two when construction also allocated).
+            (>= (lower-test-function-call-count functions "main" "tl_alloc") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?) : bool

@@ -18302,6 +18302,16 @@ tl_memcpy:
       (compiler-backend-emit-program-with-spans-for-target program spans target)]
     [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
+;; #2357: inline-by-value aggregates are the always-on default lowering, so
+;; emitting "in inline-aggregates mode" is just the ordinary target emit. The
+;; explicit name is retained for the #1867 backend self-tests (which the rebase
+;; onto main reintroduced); the definition was dropped resolving the backend
+;; merge conflict, so restore it as an alias.
+(define (compiler-backend-emit-source-inline-aggregates-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-emit-source-for-target src target))
+
 (define (compiler-backend-emit-source-object-image [src : String]) : ResultCompilerBackendObject
   (match (lower-compiler-source src)
     [(OkCompilerLower program spans)

@@ -2474,16 +2474,16 @@
   (string-append ".L_tl_fn_entry_" (compiler-backend-asm-safe-symbol name)))
 
 (define (compiler-backend-runtime-user-symbol? [name : String]) : bool
-  (string-eq name "env-path-separator"))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and
+      (>= name-id 0)
+      (compiler-builtin-backend-env-path-separator-id? name-id))))
 
 (define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
-  (or
-    (string-eq name "tl_oob_abort")
-    (or
-      (string-eq name "tl_div_abort")
-      (or
-        (string-eq name "tl_shift_abort")
-        (or (string-eq name "tl_array_fill8") (string-eq name "tl_array_zero"))))))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and (>= name-id 0) (compiler-builtin-backend-fixed-fault-id? name-id))))
 
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
@@ -6137,20 +6137,22 @@
       (compiler-backend-extern-signature externs name)]))
 
 (define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
-  (core/cond
-    (string-eq name "tl_print_char")
-    (ast-type-cons (AstTyChar) AstTypeNil)
-    (string-eq name "tl_print_f64")
-    (ast-type-cons (AstTyF64) AstTypeNil)
-    (string-eq name "tl_array_fill8")
-    (ast-type-cons
-      (ast-ty-mut-ptr (AstTyU8))
-      (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))
-    (string-eq name "tl_array_zero")
-    (ast-type-cons
-      (ast-ty-mut-ptr (AstTyU8))
-      (ast-type-cons (AstTyI64) AstTypeNil))
-    AstTypeNil))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (core/cond
+      (compiler-builtin-backend-tl-print-char-id? name-id)
+      (ast-type-cons (AstTyChar) AstTypeNil)
+      (compiler-builtin-backend-tl-print-f64-id? name-id)
+      (ast-type-cons (AstTyF64) AstTypeNil)
+      (compiler-builtin-backend-tl-array-fill8-id? name-id)
+      (ast-type-cons
+        (ast-ty-mut-ptr (AstTyU8))
+        (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))
+      (compiler-builtin-backend-tl-array-zero-id? name-id)
+      (ast-type-cons
+        (ast-ty-mut-ptr (AstTyU8))
+        (ast-type-cons (AstTyI64) AstTypeNil))
+      AstTypeNil)))
 
 (define (compiler-backend-call-param-types
   [name : String]
@@ -8226,10 +8228,12 @@
           (if (and
             (> fast-alloc-size 0)
             (and
-              (string-eq name "tl_alloc")
+              (compiler-builtin-backend-tl-alloc-id?
+                (compiler-backend-runtime-helper-name-id name))
               (and
                 (compiler-backend-plan-provides? plan "tl_alloc")
-                (string-eq call-symbol "tl_alloc"))))
+                (compiler-builtin-backend-tl-alloc-id?
+                  (compiler-backend-runtime-helper-name-id call-symbol)))))
             (OkCompilerBackend
               (string-append
                 (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
@@ -12454,7 +12458,14 @@
       [c : char (string-ref name 0)]
       (or (char-eq c #t') (or (char-eq c #.') (char-eq c #e'))))))
 
-(define (compiler-backend-runtime-helper-core? [name : String])
+(define (compiler-backend-runtime-helper-name-id [name : String]) : i64
+  (if (not (compiler-backend-runtime-helper-name-plausible? name))
+    -1
+    (begin
+      (compiler-builtin-refresh!)
+      (compiler-backend-runtime-name-id name))))
+
+(define (compiler-backend-runtime-helper-core-id? [name-id : i64])
   :
   bool
   ;; The allocator/arena substrate is irreducible backend core runtime (#2314).
@@ -12470,108 +12481,105 @@
   ;; (stdlib/runtime.tl) and are now provided by #2143 export-symbol, so they are
   ;; no longer backend-owned runtime helpers (keeping them here would make the
   ;; export collide with a "known runtime symbol").
-  (if (not (compiler-backend-runtime-helper-name-plausible? name))
-    false
-    (or
-      (backend-or8
-        (string-eq name "tl_alloc")
-        false
-        false
-        false
-        false
-        (string-eq name "tl_region_mark")
-        (string-eq name "tl_region_reset")
-        (string-eq name "tl_arena_make"))
-      (backend-or4
-        (string-eq name "tl_arena_current")
-        (string-eq name "tl_arena_set")
-        (string-eq name "tl_arena_destroy")
-        (string-eq name "tl_arena_poison_enable")))))
+  (compiler-builtin-backend-runtime-core-id? name-id))
+
+(define (compiler-backend-runtime-helper-core? [name : String]) : bool
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and (>= name-id 0) (compiler-backend-runtime-helper-core-id? name-id))))
 
 ;; Current stdlib modules still depend on these backend runtime shims for
 ;; unavoidable profile operations.
+(define (compiler-backend-runtime-helper-stdlib-ffi-id? [name-id : i64]) : bool
+  (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id))
+
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
-  (if (not (compiler-backend-runtime-helper-name-plausible? name))
-    false
-    (backend-or8
-      (string-eq name "tl_profile_alloc_total")
-      (string-eq name "tl_profile_alloc_live")
-      (string-eq name "tl_profile_alloc_peak")
-      (string-eq name "tl_profile_alloc_reset_peak")
-      false
-      false
-      false
-      false)))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and
+      (>= name-id 0)
+      (compiler-backend-runtime-helper-stdlib-ffi-id? name-id))))
 
 ;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
 ;; string equality/parsing moved in #2036 and allocating string helpers moved in
 ;; #2037. Migrated IO/stdin/file/argv/print/env helpers are deliberately absent
 ;; here: those names are stdlib-owned and must remain external from the backend
 ;; runtime plan for normal source builds.
+(define (compiler-backend-runtime-helper-stdlib-type-lisp-id? [name-id : i64]) : bool
+  (compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id))
+
 (define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
-  (if (not (compiler-backend-runtime-helper-name-plausible? name))
-    false
-    (or
-      (backend-or8
-        (string-eq name "tl_substring")
-        (string-eq name "tl_string_concat")
-        (string-eq name "tl_string_concat3")
-        (string-eq name "tl_string_concat4")
-        (string-eq name "tl_string_concat5")
-        (string-eq name "tl_string_eq")
-        (string-eq name "tl_string_to_int")
-        (string-eq name "tl_int_to_string"))
-      (string-eq name "tl_hash_string"))))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and
+      (>= name-id 0)
+      (compiler-backend-runtime-helper-stdlib-type-lisp-id? name-id))))
+
+(define (compiler-backend-runtime-helper-compatibility-alias-id?
+  [name-id : i64]) : bool
+  (compiler-builtin-backend-runtime-compatibility-alias-id? name-id))
 
 (define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
-  (if (not (compiler-backend-runtime-helper-name-plausible? name))
-    false
-    (backend-or4
-      (string-eq name "tl_env_var_exists")
-      (string-eq name "tl_env_var_value")
-      (string-eq name "env-path-separator")
-      false)))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and
+      (>= name-id 0)
+      (compiler-backend-runtime-helper-compatibility-alias-id? name-id))))
+
+(define (compiler-backend-runtime-helper-deprecated-id? [name-id : i64]) : bool
+  false)
 
 (define (compiler-backend-runtime-helper-deprecated? [name : String]) : bool
   false)
 
-(define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
+(define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
   (core/cond
-    (compiler-backend-runtime-helper-core? name)
+    (compiler-backend-runtime-helper-core-id? name-id)
     (BackendRuntimeOwnerCore)
-    (compiler-backend-runtime-helper-stdlib-ffi? name)
+    (compiler-backend-runtime-helper-stdlib-ffi-id? name-id)
     (BackendRuntimeOwnerStdlibFfi)
-    (compiler-backend-runtime-helper-stdlib-type-lisp? name)
+    (compiler-backend-runtime-helper-stdlib-type-lisp-id? name-id)
     (BackendRuntimeOwnerStdlibTypeLisp)
-    (compiler-backend-runtime-helper-compatibility-alias? name)
+    (compiler-backend-runtime-helper-compatibility-alias-id? name-id)
     (BackendRuntimeOwnerCompatibilityAlias)
-    (compiler-backend-runtime-helper-deprecated? name)
+    (compiler-backend-runtime-helper-deprecated-id? name-id)
     (BackendRuntimeOwnerDeprecated)
     (BackendRuntimeOwnerUnknown)))
 
-(define (compiler-backend-runtime-helper-known? [name : String]) : bool
-  (match (compiler-backend-runtime-helper-owner name)
+(define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (if (>= name-id 0)
+      (compiler-backend-runtime-helper-owner-id name-id)
+      (BackendRuntimeOwnerUnknown))))
+
+(define (compiler-backend-runtime-helper-known-id? [name-id : i64]) : bool
+  (match (compiler-backend-runtime-helper-owner-id name-id)
     [(BackendRuntimeOwnerUnknown) false]
     [_ true]))
+
+(define (compiler-backend-runtime-helper-known? [name : String]) : bool
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and (>= name-id 0) (compiler-backend-runtime-helper-known-id? name-id))))
 
 (define (compiler-backend-provides-runtime-name?
   [name : String]
   [candidate : String]
   [enabled : bool]) : bool
-  (and
-    (compiler-backend-runtime-helper-known? candidate)
-    (and (string-eq name candidate) enabled)))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    [candidate-id : i64 (compiler-backend-runtime-helper-name-id candidate)]
+    (and
+      enabled
+      (and
+        (compiler-backend-runtime-helper-known-id? candidate-id)
+        (= name-id candidate-id)))))
 
 (define (compiler-backend-runtime-concat-name? [name : String]) : bool
-  (and
-    (compiler-backend-runtime-helper-known? name)
-    (or
-      (backend-or4
-        (string-eq name "tl_string_concat")
-        (string-eq name "tl_string_concat3")
-        (string-eq name "tl_string_concat4")
-        (string-eq name "tl_string_concat5"))
-      false)))
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (and (>= name-id 0) (compiler-builtin-backend-runtime-concat-id? name-id))))
 
 (define (compiler-backend-runtime-index-defines-concat?
   [index : CompilerBackendRuntimeIndex]) : bool
@@ -12608,58 +12616,33 @@
   [canonical : String]
   [alias : String]
   [enabled : bool]) : bool
-  (and
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    [canonical-id : i64 (compiler-backend-runtime-helper-name-id canonical)]
+    [alias-id : i64 (compiler-backend-runtime-helper-name-id alias)]
     (and
-      (compiler-backend-runtime-helper-known? canonical)
-      (compiler-backend-runtime-helper-known? alias))
-    (and enabled (or (string-eq name canonical) (string-eq name alias)))))
+      enabled
+      (and
+        (and
+          (compiler-backend-runtime-helper-known-id? canonical-id)
+          (compiler-backend-runtime-helper-known-id? alias-id))
+        (or (= name-id canonical-id) (= name-id alias-id))))))
 
 (define (compiler-backend-provides-profile-runtime-name?
   [name : String]
   [enabled : bool]) : bool
-  (and
-    enabled
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (and
-      (compiler-backend-runtime-helper-known? name)
-      (backend-or4
-        (string-eq name "tl_profile_alloc_total")
-        (string-eq name "tl_profile_alloc_live")
-        (string-eq name "tl_profile_alloc_peak")
-        (string-eq name "tl_profile_alloc_reset_peak")))))
+      enabled
+      (and
+        (>= name-id 0)
+        (compiler-builtin-backend-runtime-profile-id? name-id)))))
 
 (define (compiler-backend-runtime-name-id [name : String]) : i64
   (match (intern-lookup name)
     [(InternLookupFound name-id) name-id]
     [(InternLookupMissing) -1]))
-
-(define (compiler-backend-plan-provides-tail?
-  [name : String]
-  [read-bytes : bool]
-  [stdin-eof : bool]
-  [flush-stdout : bool]
-  [random-system-seed : bool]
-  [env-var-exists : bool]
-  [env-var-value : bool]
-  [env-path-separator : bool]) : bool
-  (let
-    [_read-bytes : bool read-bytes]
-    [_stdin-eof : bool stdin-eof]
-    [_flush-stdout : bool flush-stdout]
-    [_random-system-seed : bool random-system-seed]
-    (or
-      (compiler-backend-provides-runtime-name?
-        name
-        "tl_env_var_exists"
-        env-var-exists)
-      (or
-        (compiler-backend-provides-runtime-name?
-          name
-          "tl_env_var_value"
-          env-var-value)
-        (compiler-backend-provides-runtime-name?
-          name
-          "env-path-separator"
-          env-path-separator)))))
 
 (define (compiler-backend-plan-provides-tail-id?
   [name-id : i64]
@@ -12689,26 +12672,13 @@
 (define (compiler-backend-plan-provides?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
-  (let
-    [name-id : i64 (compiler-backend-runtime-name-id name)]
-    (if (>= name-id 0)
-      (compiler-backend-plan-provides-id? plan name-id)
-      (compiler-backend-plan-provides-by-name? plan name))))
-
-(define (compiler-backend-plan-provides-by-name?
-  [plan : CompilerBackendRuntimePlan]
-  [name : String]) : bool
-  (or
-    (and
-      (compiler-backend-runtime-helper-known? name)
-      (or
-        (string-eq name "tl_arena_poison_enable")
-        (backend-or4
-          (string-eq name "tl_arena_make")
-          (string-eq name "tl_arena_current")
-          (string-eq name "tl_arena_set")
-          (string-eq name "tl_arena_destroy"))))
-    (compiler-backend-plan-provides-rest? plan name)))
+  (begin
+    (compiler-builtin-refresh!)
+    (let
+      [name-id : i64 (compiler-backend-runtime-name-id name)]
+      (if (>= name-id 0)
+        (compiler-backend-plan-provides-id? plan name-id)
+        false))))
 
 (define (compiler-backend-plan-provides-id?
   [plan : CompilerBackendRuntimePlan]
@@ -12718,113 +12688,6 @@
     (or
       (compiler-builtin-backend-runtime-always-provided-tail-id? name-id)
       (compiler-backend-plan-provides-rest-id? plan name-id))))
-
-(define (compiler-backend-plan-provides-rest?
-  [plan : CompilerBackendRuntimePlan]
-  [name : String]) : bool
-  (match plan
-    [(BackendRuntimePlan
-        alloc
-        oob
-        substring
-        concat
-        provides-string-eq
-        provides-string-to-int
-        provides-int-to-string
-        provides-abort
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        provides-fs
-        _
-        _
-        _
-        _
-        _
-        region-mark
-        region-reset
-        _
-        provides-env-var-exists
-        provides-env-var-value
-        provides-env-path-separator
-        provides-div-abort
-        provides-shift-abort
-        provides-tail)
-      (or
-        (backend-or8
-          (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_region_mark"
-            region-mark)
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_region_reset"
-            region-reset)
-          (compiler-backend-provides-runtime-name? name "tl_oob_abort" oob)
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_substring"
-            substring)
-          (and concat (compiler-backend-runtime-concat-name? name))
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_string_eq"
-            provides-string-eq)
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_string_to_int"
-            provides-string-to-int))
-        (or
-          (backend-or8
-            (compiler-backend-provides-runtime-name?
-              name
-              "tl_int_to_string"
-              provides-int-to-string)
-            (compiler-backend-provides-runtime-name?
-              name
-              ".L_tl_abort"
-              provides-abort)
-            false
-            false
-            false
-            false
-            false
-            false)
-          (or
-            (compiler-backend-plan-provides-tail?
-              name
-              false
-              false
-              false
-              false
-              provides-env-var-exists
-              provides-env-var-value
-              provides-env-path-separator)
-            (backend-or4
-              (compiler-backend-provides-runtime-name?
-                name
-                "tl_div_abort"
-                provides-div-abort)
-              (compiler-backend-provides-runtime-name?
-                name
-                "tl_shift_abort"
-                provides-shift-abort)
-              (compiler-backend-provides-profile-runtime-name?
-                name
-                (compiler-backend-runtime-tail-profile? provides-tail))
-              (compiler-backend-provides-runtime-name?
-                name
-                "tl_hash_string"
-                (compiler-backend-runtime-tail-hash-string? provides-tail))))))]))
 
 (define (compiler-backend-plan-provides-rest-id?
   [plan : CompilerBackendRuntimePlan]

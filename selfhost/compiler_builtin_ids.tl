@@ -88,6 +88,18 @@
 (define compiler-builtin-id-tl-shift-abort : i64
   -1)
 
+(define compiler-builtin-id-tl-array-fill8 : i64
+  -1)
+
+(define compiler-builtin-id-tl-array-zero : i64
+  -1)
+
+(define compiler-builtin-id-tl-print-char : i64
+  -1)
+
+(define compiler-builtin-id-tl-print-f64 : i64
+  -1)
+
 (define compiler-builtin-id-string-length : i64
   -1)
 
@@ -186,6 +198,10 @@
       (set! compiler-builtin-id-tl-abort-label (intern ".L_tl_abort"))
       (set! compiler-builtin-id-tl-div-abort (intern "tl_div_abort"))
       (set! compiler-builtin-id-tl-shift-abort (intern "tl_shift_abort"))
+      (set! compiler-builtin-id-tl-array-fill8 (intern "tl_array_fill8"))
+      (set! compiler-builtin-id-tl-array-zero (intern "tl_array_zero"))
+      (set! compiler-builtin-id-tl-print-char (intern "tl_print_char"))
+      (set! compiler-builtin-id-tl-print-f64 (intern "tl_print_f64"))
       (set! compiler-builtin-id-string-length (intern "string-length"))
       (set! compiler-builtin-id-length (intern "length"))
       (set! compiler-builtin-id-string-eq (intern "string-eq"))
@@ -372,6 +388,40 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-shift-abort)))
 
+(define (compiler-builtin-backend-fixed-fault-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (or
+      (compiler-builtin-id-any3?
+        name-id
+        compiler-builtin-id-tl-oob-abort
+        compiler-builtin-id-tl-div-abort
+        compiler-builtin-id-tl-shift-abort)
+      (compiler-builtin-id-any2?
+        name-id
+        compiler-builtin-id-tl-array-fill8
+        compiler-builtin-id-tl-array-zero))))
+
+(define (compiler-builtin-backend-tl-array-fill8-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-array-fill8)))
+
+(define (compiler-builtin-backend-tl-array-zero-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-array-zero)))
+
+(define (compiler-builtin-backend-tl-print-char-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-print-char)))
+
+(define (compiler-builtin-backend-tl-print-f64-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-print-f64)))
+
 (define (compiler-builtin-backend-tl-hash-string-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -487,6 +537,23 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-clone)))
 
+(define (compiler-builtin-typecheck-string-length-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-string-length)))
+
+(define (compiler-builtin-typecheck-array-length-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-array-length-id? name-id))
+
+(define (compiler-builtin-typecheck-length-call-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-length-call-id? name-id))
+
+(define (compiler-builtin-typecheck-string-ref-call-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-string-ref-call-id? name-id))
+
+(define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-clone-id? name-id))
+
 (define (compiler-builtin-typecheck-region-arg-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -498,3 +565,23 @@
         compiler-builtin-id-string-eq
         compiler-builtin-id-string-eq-question)
       (= name-id compiler-builtin-id-string-to-int))))
+
+(define (compiler-builtin-typecheck-string-eq-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-string-eq
+      compiler-builtin-id-string-eq-question)))
+
+(define (compiler-builtin-typecheck-string-to-int-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-string-to-int)))
+
+(define (compiler-builtin-typecheck-borrowed-string-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (or
+      (compiler-builtin-typecheck-string-eq-id? name-id)
+      (compiler-builtin-typecheck-string-to-int-id? name-id))))

@@ -3408,6 +3408,28 @@
                 (not
                   (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))))))))
 
+(define (compiler-backend-runtime-helper-owner-id-ok?) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (let
+      [core-id : i64 (compiler-backend-runtime-name-id "tl_alloc")]
+      [profile-id : i64
+        (compiler-backend-runtime-name-id "tl_profile_alloc_total")]
+      [stdlib-id : i64 (compiler-backend-runtime-name-id "tl_string_concat")]
+      [compat-id : i64 (compiler-backend-runtime-name-id "env-path-separator")]
+      [retired-id : i64 (compiler-backend-runtime-name-id "tl_oob_abort")]
+      (and
+        (backend-and4
+          (compiler-backend-runtime-helper-core-id? core-id)
+          (compiler-backend-runtime-helper-stdlib-ffi-id? profile-id)
+          (compiler-backend-runtime-helper-stdlib-type-lisp-id? stdlib-id)
+          (compiler-backend-runtime-helper-compatibility-alias-id? compat-id))
+        (and
+          (not (compiler-backend-runtime-helper-known-id? retired-id))
+          (and
+            (compiler-builtin-backend-runtime-concat-id? stdlib-id)
+            (compiler-builtin-backend-runtime-profile-id? profile-id)))))))
+
 (define (compiler-backend-intern-missing? [name : String]) : bool
   (match (intern-lookup name)
     [(InternLookupMissing) true]
@@ -3430,10 +3452,16 @@
             (and
               (compiler-backend-plan-provides? plan "env-path-separator")
               (and
-                (not (compiler-backend-plan-provides? plan unknown))
+                (not (compiler-backend-runtime-helper-known? unknown))
                 (and
-                  (= (intern-generation) generation)
-                  (compiler-backend-intern-missing? unknown))))))))))
+                  (match (compiler-backend-runtime-helper-owner unknown)
+                    [(BackendRuntimeOwnerUnknown) true]
+                    [_ false])
+                  (and
+                    (not (compiler-backend-plan-provides? plan unknown))
+                    (and
+                      (= (intern-generation) generation)
+                      (compiler-backend-intern-missing? unknown))))))))))))
 
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
   (let
@@ -3454,7 +3482,9 @@
             plan)
           (and
             (compiler-backend-runtime-helper-inventory-negative-ok? plan)
-            (compiler-backend-runtime-plan-id-lookup-only-ok?)))))))
+            (and
+              (compiler-backend-runtime-helper-owner-id-ok?)
+              (compiler-backend-runtime-plan-id-lookup-only-ok?))))))))
 
 (define (compiler-backend-runtime-page-call-inventory-linux-ok?) : bool
   (let

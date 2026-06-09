@@ -2436,6 +2436,12 @@ typecheck: return type mismatch"))]
           (panic "source-tool: windows stack reserve smoke regressed")
           0)))
     (unless
+      (source-tool-linux-direct-object-linkability-smoke-ok?)
+      (return
+        (begin
+          (panic "source-tool: linux direct object smoke regressed")
+          0)))
+    (unless
       (source-tool-windows-direct-object-linkability-smoke-ok?)
       (return
         (begin

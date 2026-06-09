@@ -86,12 +86,12 @@
   (AstTyRegion String i64)
   (AstTyRef String i64)
   (AstTyMutRef String i64)
-  (AstTyEnum String)
-  (AstTyEnumArgs String AstLifetimeList)
-  (AstTyStruct String)
-  (AstTyStructArgs String AstLifetimeList)
-  (AstTyVar String)
-  (AstTyVarArgs String AstLifetimeList)
+  (AstTyEnum i64)
+  (AstTyEnumArgs i64 AstLifetimeList)
+  (AstTyStruct i64)
+  (AstTyStructArgs i64 AstLifetimeList)
+  (AstTyVar i64)
+  (AstTyVarArgs i64 AstLifetimeList)
   (AstTyPtr i64)
   (AstTyMutPtr i64))
 
@@ -1421,35 +1421,35 @@
         [_ false])]
     [(AstTyEnum a-name)
       (match b
-        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [(AstTyEnum b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyEnumArgs a-name a-lifetimes)
       (match b
         [(AstTyEnumArgs b-name b-lifetimes)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
-        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [(AstTyStruct b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyStructArgs a-name a-lifetimes)
       (match b
         [(AstTyStructArgs b-name b-lifetimes)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
-        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [(AstTyVar b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyVarArgs a-name a-lifetimes)
       (match b
         [(AstTyVarArgs b-name b-lifetimes)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (ast-lifetime-list-eq? a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyPtr a-elem)

@@ -184,7 +184,7 @@
 
 (define (spec-type-kind? [ty : AstType]) : bool
   (match ty
-    [(AstTyVar name) (string-eq name "type")]
+    [(AstTyVar name) (= name (intern "type"))]
     [_ false]))
 
 (define (spec-param-list-has-comptime? [params : AstParamList]) : bool
@@ -433,26 +433,26 @@
         (string-append
           region
           (string-append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstTyEnum name) (string-append "enum_" name)]
+    [(AstTyEnum name) (string-append "enum_" (intern-str name))]
     [(AstTyEnumArgs name lifetimes)
       (string-append
         "enumargs_"
         (string-append
-          name
+          (intern-str name)
           (string-append "_" (spec-lifetime-list-key lifetimes))))]
-    [(AstTyStruct name) (string-append "struct_" name)]
+    [(AstTyStruct name) (string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
       (string-append
         "structargs_"
         (string-append
-          name
+          (intern-str name)
           (string-append "_" (spec-lifetime-list-key lifetimes))))]
-    [(AstTyVar name) (string-append "var_" name)]
+    [(AstTyVar name) (string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
       (string-append
         "varargs_"
         (string-append
-          name
+          (intern-str name)
           (string-append "_" (spec-lifetime-list-key lifetimes))))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
@@ -4122,7 +4122,7 @@
 
 (define (spec-type-subst-type [subs : SpecTypeSubst] [name : String]) : AstType
   (match subs
-    [(SpecTypeSubstNil) (AstTyVar name)]
+    [(SpecTypeSubstNil) (AstTyVar (intern name))]
     [(SpecTypeSubstCons key ty rest)
       (if (string-eq key name)
         ty
@@ -4304,12 +4304,12 @@
     [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
     [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
     [(AstTyVarArgs name lifetimes)
-      (match (spec-type-subst-lookup subs name)
-        [(SpecSomeString _) (spec-type-subst-type subs name)]
+      (match (spec-type-subst-lookup subs (intern-str name))
+        [(SpecSomeString _) (spec-type-subst-type subs (intern-str name))]
         [(SpecNoString) (AstTyVarArgs name lifetimes)])]
     [(AstTyVar name)
-      (match (spec-type-subst-lookup subs name)
-        [(SpecSomeString _) (spec-type-subst-type subs name)]
+      (match (spec-type-subst-lookup subs (intern-str name))
+        [(SpecSomeString _) (spec-type-subst-type subs (intern-str name))]
         [(SpecNoString) ty])]
     [_ ty]))
 
@@ -6721,7 +6721,7 @@
           (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
           "mutptr_ptr_u8")
         (ctfe-type-eq
-          (spec-substitute-type (ast-ty-mut-ptr (AstTyVar "T")) subs)
+          (spec-substitute-type (ast-ty-mut-ptr (AstTyVar (intern "T"))) subs)
           (ast-ty-mut-ptr (AstTyI64)))))))
 
 ;: Deterministic specialized name + stable specialization key (#1043, mirrors
@@ -6874,29 +6874,32 @@
       (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
       (string-eq
-        (spec-type-key (spec-substitute-type (AstTyVar "T") subs))
+        (spec-type-key (spec-substitute-type (AstTyVar (intern "T")) subs))
         "i64")
       (and
         (string-eq
           (spec-type-key
-            (spec-substitute-type (ast-ty-ptr (AstTyVar "T")) subs))
+            (spec-substitute-type (ast-ty-ptr (AstTyVar (intern "T"))) subs))
           "ptr_i64")
         (and
           (string-eq
             (spec-type-key
-              (spec-substitute-type (ast-ty-dyn-array (AstTyVar "T")) subs))
+              (spec-substitute-type
+                (ast-ty-dyn-array (AstTyVar (intern "T")))
+                subs))
             "dynarray_i64")
           (and
             (string-eq
               (spec-type-key
                 (spec-substitute-type
                   (ast-ty-func
-                    (ast-type-cons (AstTyVar "T") AstTypeNil)
-                    (AstTyVar "T"))
+                    (ast-type-cons (AstTyVar (intern "T")) AstTypeNil)
+                    (AstTyVar (intern "T")))
                   subs))
               "fn_i64_nil_to_i64")
             (string-eq
-              (spec-type-key (spec-substitute-type (AstTyVar "U") subs))
+              (spec-type-key
+                (spec-substitute-type (AstTyVar (intern "U")) subs))
               "var_U")))))))
 
 ;: Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs

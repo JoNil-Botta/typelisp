@@ -1829,10 +1829,12 @@
         (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
       [(AstTyBox elem)
         (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
-      [(AstTyEnum name) (lower-clone-root-add-named ctx decls able roots name)]
+      [(AstTyEnum name)
+        (lower-clone-root-add-named ctx decls able roots (intern-str name))]
       [(AstTyStruct name)
-        (lower-clone-root-add-named ctx decls able roots name)]
-      [(AstTyVar name) (lower-clone-root-add-named ctx decls able roots name)]
+        (lower-clone-root-add-named ctx decls able roots (intern-str name))]
+      [(AstTyVar name)
+        (lower-clone-root-add-named ctx decls able roots (intern-str name))]
       [_ roots])))
 
 (define (lower-reach-add-logical
@@ -4341,13 +4343,13 @@
 
 (define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool
   (match (tc-resolve-type ctx field-ty)
-    [(AstTyStruct nested) (lower-struct-repr-c? ctx nested)]
+    [(AstTyStruct nested) (lower-struct-repr-c? ctx (intern-str nested))]
     [_ false]))
 
 (define (lower-repr-c-field-size [ctx : TcContext] [field-ty : AstType]) : i64
   (match (tc-resolve-type ctx field-ty)
     [(AstTyStruct nested)
-      (match (tc-repr-c-struct-layout ctx nested)
+      (match (tc-repr-c-struct-layout ctx (intern-str nested))
         [(OkTcReprCLayout layout) (tc-repr-c-layout-size layout)]
         [(ErrTcReprCLayout _) 8])]
     [_ (lower-type-size ctx field-ty)]))
@@ -4764,25 +4766,25 @@
     [(AstTyStruct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
-        name
+        (intern-str name)
         AstLifetimeNil
         LowerStringNil)]
     [(AstTyStructArgs name lifetimes)
       (lower-supported-reference-struct-args-with-stack?
         ctx
-        name
+        (intern-str name)
         lifetimes
         LowerStringNil)]
     [(AstTyEnum name)
       (lower-supported-reference-enum-args-with-stack?
         ctx
-        name
+        (intern-str name)
         AstLifetimeNil
         LowerStringNil)]
     [(AstTyEnumArgs name lifetimes)
       (lower-supported-reference-enum-args-with-stack?
         ctx
-        name
+        (intern-str name)
         lifetimes
         LowerStringNil)]
     [_ false]))
@@ -4949,13 +4951,13 @@
         [(AstTyStructArgs name lifetimes)
           (lower-supported-reference-struct-args-with-stack?
             ctx
-            name
+            (intern-str name)
             lifetimes
             stack)]
         [(AstTyEnumArgs name lifetimes)
           (lower-supported-reference-enum-args-with-stack?
             ctx
-            name
+            (intern-str name)
             lifetimes
             stack)]
         [(AstTyRegion _ inner)
@@ -5118,7 +5120,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                struct-name
+                (intern-str struct-name)
                 field
                 origin
                 result-ty)]
@@ -5127,7 +5129,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                struct-name
+                (intern-str struct-name)
                 field
                 origin
                 result-ty)]
@@ -5139,7 +5141,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     origin
                     result-ty)]
@@ -5148,7 +5150,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     origin
                     result-ty)]
@@ -5165,7 +5167,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     origin
                     result-ty)]
@@ -5174,7 +5176,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     origin
                     result-ty)]
@@ -5629,20 +5631,21 @@
 
 (define (lower-enum-type-name-or-empty [ty : AstType]) : String
   (match (tc-type-strip-region ty)
-    [(AstTyEnum enum-name) enum-name]
-    [(AstTyEnumArgs enum-name _) enum-name]
-    [(AstTyVarArgs enum-name _) enum-name]
+    [(AstTyEnum enum-name) (intern-str enum-name)]
+    [(AstTyEnumArgs enum-name _) (intern-str enum-name)]
+    [(AstTyVarArgs enum-name _) (intern-str enum-name)]
     [_ ""]))
 
 (define (lower-variant-lookup-name-for-scrut
   [scrut-ty : AstType]
   [variant-name : String]) : String
   (match (tc-type-strip-region scrut-ty)
-    [(AstTyEnum enum-name) (tc-variant-name-for-enum enum-name variant-name)]
+    [(AstTyEnum enum-name)
+      (tc-variant-name-for-enum (intern-str enum-name) variant-name)]
     [(AstTyEnumArgs enum-name _)
-      (tc-variant-name-for-enum enum-name variant-name)]
+      (tc-variant-name-for-enum (intern-str enum-name) variant-name)]
     [(AstTyVarArgs enum-name _)
-      (tc-variant-name-for-enum enum-name variant-name)]
+      (tc-variant-name-for-enum (intern-str enum-name) variant-name)]
     [_ variant-name]))
 
 (define (lower-variant-payload-offset
@@ -6670,9 +6673,23 @@
         count
         ty)]
     [(AstTyStruct name)
-      (lower-capture-snapshot-struct-value ctx state env type-env value name ty)]
+      (lower-capture-snapshot-struct-value
+        ctx
+        state
+        env
+        type-env
+        value
+        (intern-str name)
+        ty)]
     [(AstTyEnum name)
-      (lower-capture-snapshot-enum-value ctx state env type-env value name ty)]
+      (lower-capture-snapshot-enum-value
+        ctx
+        state
+        env
+        type-env
+        value
+        (intern-str name)
+        ty)]
     [_ (OkLowerExpr (LowerExpr state value ty))]))
 
 (define (lower-capture-snapshot-string-value
@@ -7568,11 +7585,11 @@
   [cleanup-name : String]) : AstType
   (AstTyTuple
     (ast-type-cons
-      (AstTyVar hidden-name)
-      (ast-type-cons (AstTyVar cleanup-name) AstTypeNil))))
+      (AstTyVar (intern hidden-name))
+      (ast-type-cons (AstTyVar (intern cleanup-name)) AstTypeNil))))
 
 (define (lower-region-reset-metadata-type [hidden-name : String]) : AstType
-  (AstTyVar hidden-name))
+  (AstTyVar (intern hidden-name)))
 
 (define (lower-type-env-push-cleanup
   [type-env : TcTypeEnv]
@@ -7693,8 +7710,8 @@
                                     (match (lower-emit-cleanup-call
                                       state
                                       env
-                                      hidden-name
-                                      cleanup-name)
+                                      (intern-str hidden-name)
+                                      (intern-str cleanup-name))
                                       [(OkLowerState next-state)
                                         (lower-emit-active-exits-with
                                           cleanup-marker-id
@@ -7749,7 +7766,10 @@
         (if (= key region-reset-marker-id)
           (match ty
             [(AstTyVar hidden-name)
-              (match (lower-emit-region-reset state env hidden-name)
+              (match (lower-emit-region-reset
+                state
+                env
+                (intern-str hidden-name))
                 [(OkLowerState next-state)
                   (lower-emit-active-exits-with
                     cleanup-marker-id
@@ -7819,8 +7839,8 @@
                                     (match (lower-emit-cleanup-call
                                       state
                                       env
-                                      hidden-name
-                                      cleanup-name)
+                                      (intern-str hidden-name)
+                                      (intern-str cleanup-name))
                                       [(OkLowerState next-state)
                                         (lower-emit-active-cleanups-with
                                           cleanup-marker-id
@@ -7942,7 +7962,7 @@
             (match (lower-reserve-heap-storage
               state
               (lower-enum-storage-size ctx enum-name)
-              (AstTyEnum enum-name))
+              (AstTyEnum (intern enum-name)))
               [(LowerExpr base-state base _)
                 (let
                   [tag-state : LowerState
@@ -7961,7 +7981,7 @@
                     (lower-state-emit
                       payload-state
                       (IrInstrReturn
-                        (lower-return-maybe base (AstTyEnum enum-name))))))])]
+                        (lower-return-maybe base (AstTyEnum (intern enum-name)))))))])]
           [(NoneI64)
             (ErrLowerState
               (lower-diagnostic
@@ -8747,9 +8767,12 @@
           value
           (tc-type-without-regions (ty-node-get elem-ty))
           clone-ty)]
-      [(AstTyEnum name) (lower-clone-named state env name value clone-ty)]
-      [(AstTyStruct name) (lower-clone-named state env name value clone-ty)]
-      [(AstTyVar name) (lower-clone-named state env name value clone-ty)]
+      [(AstTyEnum name)
+        (lower-clone-named state env (intern-str name) value clone-ty)]
+      [(AstTyStruct name)
+        (lower-clone-named state env (intern-str name) value clone-ty)]
+      [(AstTyVar name)
+        (lower-clone-named state env (intern-str name) value clone-ty)]
       [_
         (if (lower-clone-scalar-type? clone-ty)
           (OkLowerExpr (LowerExpr state value clone-ty))
@@ -9020,7 +9043,7 @@
           variant-name
           handle
           args
-          enum-name
+          (intern-str enum-name)
           enum-ty)]
       [(AstTyEnumArgs enum-name _)
         (lower-construct-enum-with-name
@@ -9031,7 +9054,7 @@
           variant-name
           handle
           args
-          enum-name
+          (intern-str enum-name)
           enum-ty)]
       [_
         (ErrLowerExpr
@@ -9315,13 +9338,13 @@
               expr-ty
               origin))]
         [(AstTyStruct name)
-          (lower-init-struct ctx state env type-env name resolved)]
+          (lower-init-struct ctx state env type-env (intern-str name) resolved)]
         [(AstTyStructArgs name _)
-          (lower-init-struct ctx state env type-env name resolved)]
+          (lower-init-struct ctx state env type-env (intern-str name) resolved)]
         [(AstTyEnum name)
-          (lower-init-enum ctx state env type-env name resolved)]
+          (lower-init-enum ctx state env type-env (intern-str name) resolved)]
         [(AstTyEnumArgs name _)
-          (lower-init-enum ctx state env type-env name resolved)]
+          (lower-init-enum ctx state env type-env (intern-str name) resolved)]
         [_
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -9842,7 +9865,7 @@
     [(OkTcType receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstTyStruct struct-name)
-          (match (tc-struct-field-type ctx struct-name field)
+          (match (tc-struct-field-type ctx (intern-str struct-name) field)
             [(OkTcType field-ty)
               (OkTcType
                 (lower-projected-result-type-fast ctx receiver-ty field-ty))]
@@ -9850,7 +9873,7 @@
         [(AstTyStructArgs struct-name lifetimes)
           (match (tc-struct-field-type-with-args
             ctx
-            struct-name
+            (intern-str struct-name)
             lifetimes
             field)
             [(OkTcType field-ty)
@@ -11057,7 +11080,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                struct-name
+                (intern-str struct-name)
                 field
                 result-ty)]
             [(AstTyStructArgs struct-name _)
@@ -11065,7 +11088,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                struct-name
+                (intern-str struct-name)
                 field
                 result-ty)]
             [(AstTyRef _ referent-ty)
@@ -11076,7 +11099,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     result-ty)]
                 [(AstTyStructArgs struct-name _)
@@ -11084,7 +11107,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     result-ty)]
                 [_
@@ -11100,7 +11123,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     result-ty)]
                 [(AstTyStructArgs struct-name _)
@@ -11108,7 +11131,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    struct-name
+                    (intern-str struct-name)
                     field
                     result-ty)]
                 [_
@@ -11862,7 +11885,7 @@
         (lower-c-abi-aggregate-class-for-struct
           ctx
           mode
-          name
+          (intern-str name)
           resolved
           allow-sret?
           allow-byref?)]
@@ -11870,7 +11893,7 @@
         (lower-c-abi-aggregate-class-for-struct
           ctx
           mode
-          name
+          (intern-str name)
           resolved
           allow-sret?
           allow-byref?)]
@@ -12937,17 +12960,25 @@
   [result-ty : AstType]) : String
   (match (tc-type-strip-region result-ty)
     [(AstTyEnum enum-name)
-      (if (or
-        (tc-name-qualified? name)
-        (string-eq (tc-qualified-name-module enum-name) (tc-context-module ctx)))
-        (tc-variant-name-for-enum enum-name name)
-        (lower-module-lookup-name ctx name))]
+      (let
+        [enum-name-str : String (intern-str enum-name)]
+        (if (or
+          (tc-name-qualified? name)
+          (string-eq
+            (tc-qualified-name-module enum-name-str)
+            (tc-context-module ctx)))
+          (tc-variant-name-for-enum enum-name-str name)
+          (lower-module-lookup-name ctx name)))]
     [(AstTyEnumArgs enum-name _)
-      (if (or
-        (tc-name-qualified? name)
-        (string-eq (tc-qualified-name-module enum-name) (tc-context-module ctx)))
-        (tc-variant-name-for-enum enum-name name)
-        (lower-module-lookup-name ctx name))]
+      (let
+        [enum-name-str : String (intern-str enum-name)]
+        (if (or
+          (tc-name-qualified? name)
+          (string-eq
+            (tc-qualified-name-module enum-name-str)
+            (tc-context-module ctx)))
+          (tc-variant-name-for-enum enum-name-str name)
+          (lower-module-lookup-name ctx name)))]
     [_ (lower-module-lookup-name ctx name)]))
 
 (define (lower-call-non-builtin
@@ -12975,8 +13006,8 @@
               (if (lower-call-name-matches-nominal?
                 ctx
                 source-name
-                resolved-struct)
-                resolved-struct
+                (intern-str resolved-struct))
+                (intern-str resolved-struct)
                 (lower-module-lookup-name ctx source-name))]
             [_ (lower-module-lookup-name ctx source-name)])]
         (match (compiler-registries-lookup-variant registries variant-name)
@@ -13884,13 +13915,13 @@
         [(AstTyTuple elems)
           (lower-init-default-share-safe-type-list? ctx elems)]
         [(AstTyStruct name)
-          (lower-init-default-share-safe-struct? ctx name resolved)]
+          (lower-init-default-share-safe-struct? ctx (intern-str name) resolved)]
         [(AstTyStructArgs name _)
-          (lower-init-default-share-safe-struct? ctx name resolved)]
+          (lower-init-default-share-safe-struct? ctx (intern-str name) resolved)]
         [(AstTyEnum name)
-          (lower-init-default-share-safe-enum? ctx name resolved)]
+          (lower-init-default-share-safe-enum? ctx (intern-str name) resolved)]
         [(AstTyEnumArgs name _)
-          (lower-init-default-share-safe-enum? ctx name resolved)]
+          (lower-init-default-share-safe-enum? ctx (intern-str name) resolved)]
         [_ false]))))
 
 (define (lower-make-array-init-advance
@@ -21270,8 +21301,10 @@
   (let
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
     (match resolved
-      [(AstTyStruct name) (lower-struct-cleanup-name-for-struct ctx name)]
-      [(AstTyStructArgs name _) (lower-struct-cleanup-name-for-struct ctx name)]
+      [(AstTyStruct name)
+        (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
+      [(AstTyStructArgs name _)
+        (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
       [_
         (ErrTcString
           (string-append
@@ -22491,7 +22524,7 @@
                       (intern-str cleanup-name))])]
               [struct-ty : AstType
                 (AstTyStruct
-                  (compiler-symbol-module-key module (intern-str name)))]
+                  (intern (compiler-symbol-module-key module (intern-str name))))]
               (match (lower-struct-cleanup-decl
                 decl-ctx
                 local-top-env
@@ -22533,7 +22566,7 @@
                       (intern-str cleanup-name))])]
               [struct-ty : AstType
                 (AstTyStructArgs
-                  (compiler-symbol-module-key module (intern-str name))
+                  (intern (compiler-symbol-module-key module (intern-str name)))
                   lifetimes)]
               (match (lower-struct-cleanup-decl
                 decl-ctx
@@ -29210,7 +29243,7 @@
                     42))))))))))
 
 ;; `size-of`/`align-of` comptime layout queries (#989 slice 1): a scalar type
-;; folds to its byte size / alignment (equal for primitives) inside `(comptime â€¦)`.
+;; folds to its byte size / alignment (equal for primitives) inside `(comptime ...)`.
 (define (compiler-lower-layout-query-fold-tests-ok?) : bool
   (and
     (compiler-lower-comptime-fold-ok?

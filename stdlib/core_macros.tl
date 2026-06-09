@@ -90,17 +90,19 @@
   Expr
   (let
     [arity : i64 (expr-list-length args)]
-    (cond
-      [(< arity 3) (expr-var "core-cond-invalid-arity")]
-      [(= (* (/ arity 2) 2) arity) (expr-var "core-cond-invalid-arity")]
-      [(= arity 3)
+    [invalid-arity? : bool
+      (if (< arity 3)
+        true
+        (= (* (/ arity 2) 2) arity))]
+    (if invalid-arity?
+      (expr-var "core-cond-invalid-arity")
+      (if (= arity 3)
         `(if ,(expr-list-nth args 0)
           ,(expr-list-nth args 1)
-          ,(expr-list-nth args 2))]
-      [else
+          ,(expr-list-nth args 2))
         `(if ,(expr-list-nth args 0)
           ,(expr-list-nth args 1)
-          (cond ,@(expr-list-tail (expr-list-tail args))))])))
+          (cond ,@(expr-list-tail (expr-list-tail args))))))))
 
 (export (macro and))
 

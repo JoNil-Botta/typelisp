@@ -156,8 +156,8 @@ functions, and implementation bundles. V1 supports explicit
 when several generated items share one request key; write hand-authored
 monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums
 when a generated family has not been requested. Use `(return expr)` for
-function-local early exits, `(when cond body...)` /
-`(unless cond body...)` for unit-valued guards, and `(try expr)` for the
+function-local early exits, `(when cond body)` /
+`(unless cond body)` for unit-valued guards, and `(try expr)` for the
 Lisp-shaped propagation form over compatible concrete Result-like enums.
 
 The comptime implementation path is tracked by #893 and #902; v1 type
@@ -229,7 +229,7 @@ implicit prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped
 shadows them. The same module can still be imported explicitly as
 `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` for
 qualified calls such as `core/when`, `core/unless`, `core/and`, `core/or`, and
-`core/cond`. The legacy bracket-arm `cond` form remains compatibility parsed.
+`core/cond`.
 
 `typelisp compile` accepts `--cfg <name>` to enable source-level conditional
 compilation flags. Source may wrap a top-level declaration as

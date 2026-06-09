@@ -12134,8 +12134,10 @@
 ;; induction, global GVN). Functions with more basic blocks than this skip those
 ;; passes at opt-level 2 so a few huge self-host functions cannot blow up compile
 ;; time; the linear passes and register allocation still run on them.
+;; 1024 covers the current self-host max (806 blocks in opt-instr-eq) with
+;; headroom while still keeping a finite guard for pathological inputs.
 (define (opt-heavy-pass-block-limit) : i64
-  64)
+  1024)
 
 ;; --- self-tail-recursion -> loop (tail-rec-loop) ---------------------------
 ;;
@@ -18798,7 +18800,14 @@
             (and
               (opt-inline-cost-inline? 10 3 0 true 10 0)
               (and
-                (not (opt-inline-cost-inline? 1 1 0 true 64 0))
+                (not
+                  (opt-inline-cost-inline?
+                    1
+                    1
+                    0
+                    true
+                    (opt-heavy-pass-block-limit)
+                    0))
                 (and
                   (not (opt-inline-cost-inline? 1 1 0 true 80 32))
                   (opt-inline-cost-inline? 8 1 8 false 10 0))))))))))

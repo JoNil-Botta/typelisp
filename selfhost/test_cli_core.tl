@@ -28,9 +28,13 @@
   (TestModeRun)
   (TestModeCheck))
 
+(defenum TestBatchPathList
+  (TestBatchPathNil)
+  (TestBatchPathCons String (Box TestBatchPathList)))
+
 (defenum TestConfig
   (TestFileConfig String String String StringVec i64 TestMode)
-  (TestBatchConfig StringVec String String StringVec i64 TestMode)
+  (TestBatchConfig TestBatchPathList String String StringVec i64 TestMode)
   (TestPackageConfig String bool String String StringVec i64 TestMode))
 
 (defenum ResultTestConfig
@@ -42,8 +46,16 @@
   (TestSomeString String))
 
 (defenum ResultTestBatchPaths
-  (OkTestBatchPaths StringVec)
+  (OkTestBatchPaths TestBatchPathList)
   (ErrTestBatchPaths String))
+
+(define (tltest-batch-path-cons [path : String] [rest : TestBatchPathList]) : TestBatchPathList
+  (TestBatchPathCons path (box rest)))
+
+(define (tltest-batch-path-list-empty? [paths : TestBatchPathList]) : bool
+  (match paths
+    [(TestBatchPathNil) true]
+    [(TestBatchPathCons _ _) false]))
 
 (defenum InlineTest
   (InlineTest String String i64 i64 String))
@@ -107,22 +119,23 @@
           (+ line-end 2)
           (+ line-end 1))))))
 
-(define (tltest-batch-paths-from-text [text : String]) : StringVec
-  (let
-    [n : i64 (string-length text)]
-    [i : i64 0]
-    [paths : StringVec (string-vec-new)]
-    (begin
-      (while (< i n)
-        (let
-          [line-end : i64 (tltest-batch-line-end text i n)]
-          [line : String (substring text i (- line-end i))]
-          (begin
-            (if (> (string-length line) 0)
-              (set! paths (string-vec-push paths line))
-              unit)
-            (set! i (tltest-batch-next-line-start text line-end n)))))
-      paths)))
+(define (tltest-batch-paths-from-text-from
+  [text : String]
+  [start : i64]
+  [n : i64]) : TestBatchPathList
+  (if (>= start n)
+    TestBatchPathNil
+    (let
+      [line-end : i64 (tltest-batch-line-end text start n)]
+      [next-start : i64 (tltest-batch-next-line-start text line-end n)]
+      (if (= start line-end)
+        (tltest-batch-paths-from-text-from text next-start n)
+        (tltest-batch-path-cons
+          (substring text start (- line-end start))
+          (tltest-batch-paths-from-text-from text next-start n))))))
+
+(define (tltest-batch-paths-from-text [text : String]) : TestBatchPathList
+  (tltest-batch-paths-from-text-from text 0 (string-length text)))
 
 (define (tltest-batch-paths [list-path : String]) : ResultTestBatchPaths
   (match (try-read-file (& list-path))
@@ -155,7 +168,7 @@
             [(TestModeCheck)
               (match (tltest-batch-paths list-path)
                 [(OkTestBatchPaths paths)
-                  (if (string-vec-is-empty? paths)
+                  (if (tltest-batch-path-list-empty? paths)
                     (ErrTestConfig "test: --batch list is empty")
                     (OkTestConfig
                       (TestBatchConfig
@@ -2271,18 +2284,17 @@
         (string-append (int->string file-count) " file(s)\n")))))
 
 (define (tltest-run-batch-check-paths
-  [paths : StringVec]
-  [index : i64]
+  [paths : TestBatchPathList]
   [roots : StringVec]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
-  (if (>= index (string-vec-len paths))
-    (begin
-      (print-string (tltest-batch-summary-line file-count test-count))
-      0)
-    (let
-      [source : String (string-vec-get paths index "")]
+  (match paths
+    [(TestBatchPathNil)
+      (begin
+        (print-string (tltest-batch-summary-line file-count test-count))
+        0)]
+    [(TestBatchPathCons source rest)
       (match (tltest-check-file-source source roots backend-target)
         [(ErrTestFileCheck status)
           (begin
@@ -2291,15 +2303,14 @@
             status)]
         [(OkTestFileCheck count)
           (tltest-run-batch-check-paths
-            paths
-            (+ index 1)
+            (box-get rest)
             roots
             backend-target
             (+ file-count 1)
-            (+ test-count count))]))))
+            (+ test-count count))])]))
 
 (define (tltest-run-batch-check
-  [paths : StringVec]
+  [paths : TestBatchPathList]
   [target : String]
   [roots : StringVec]) : i64
   (match (source-tool-target target)
@@ -2308,7 +2319,7 @@
         (print-error (tltest-unknown-target target))
         1)]
     [(OkSourceToolTarget backend-target)
-      (tltest-run-batch-check-paths paths 0 roots backend-target 0 0)]))
+      (tltest-run-batch-check-paths paths roots backend-target 0 0)]))
 
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config

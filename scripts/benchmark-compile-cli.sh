@@ -6,8 +6,8 @@ set -eu
 # For each requested optimization level, the script builds stage1 and stage2
 # CLIs, measures the real stage2 CLI compiling selfhost/cli.tl into stage3.s,
 # and verifies that stage3.s is byte-identical to stage2.s. A profile-enabled
-# compile driver then records phase timing and allocator peak-live counters for
-# the same opt-level compile pipeline.
+# compile driver then records phase timing, allocator peak-live counters, and
+# per-function optimizer timing for the same opt-level compile pipeline.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -95,9 +95,13 @@ configure_toolchain
 
 TIMINGS="$WORKDIR/timings.tsv"
 PROFILE_TSV="$WORKDIR/profile.tsv"
+PROFILE_DETAIL_TSV="$WORKDIR/profile-detail.tsv"
+PROFILE_DETAIL_TOP_TSV="$WORKDIR/profile-detail-top.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
 printf 'opt_level\tphase\telapsed_ms\n' > "$TIMINGS"
 printf 'opt_level\tphase\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\n' > "$PROFILE_TSV"
+printf 'opt_level\tphase\telapsed_ms\tname\n' > "$PROFILE_DETAIL_TSV"
+printf 'opt_level\tphase\telapsed_ms\tname\n' > "$PROFILE_DETAIL_TOP_TSV"
 printf 'opt_level\tcompile_ms\tprofile_total_ms\tprofile_peak_live_delta_bytes\n' > "$SUMMARY_TSV"
 
 fail() {
@@ -244,6 +248,26 @@ append_profile_rows() {
         >> "$PROFILE_TSV"
 }
 
+append_profile_detail_rows() {
+    opt_level=$1
+    stderr=$2
+    grep '^compile-profile-detail|' "$stderr" \
+        | awk -F'|' -v opt_level="$opt_level" '{
+              printf "%s\t%s\t%s\t%s\n", opt_level, $2, $3, $4
+          }' \
+        >> "$PROFILE_DETAIL_TSV" || true
+}
+
+write_profile_detail_top_rows() {
+    tab=$(printf '\t')
+    {
+        printf 'opt_level\tphase\telapsed_ms\tname\n'
+        awk 'NR > 1 { print }' "$PROFILE_DETAIL_TSV" \
+            | sort -t "$tab" -k3,3nr \
+            | head -40
+    } > "$PROFILE_DETAIL_TOP_TSV"
+}
+
 profile_total_ms() {
     stderr=$1
     awk -F'|' '$1 == "compile-profile" && $2 == "total" { value = $3 }
@@ -337,6 +361,7 @@ run_opt_level() {
     end=$(now_ms)
     record_timing "$opt_level" "profile-run" "$((end - start))"
     append_profile_rows "$opt_level" "$profile_run_stderr"
+    append_profile_detail_rows "$opt_level" "$profile_run_stderr"
     compare_text "opt$opt_level profiled cli asm vs measured stage3.s" "$stage3_asm" "$profile_cli_asm"
 
     profile_total=$(profile_total_ms "$profile_run_stderr")
@@ -421,4 +446,8 @@ echo "[compile-bench] timings: $TIMINGS"
 cat "$TIMINGS"
 echo "[compile-bench] profile: $PROFILE_TSV"
 cat "$PROFILE_TSV"
+write_profile_detail_top_rows
+echo "[compile-bench] profile detail: $PROFILE_DETAIL_TSV"
+echo "[compile-bench] profile detail top rows: $PROFILE_DETAIL_TOP_TSV"
+cat "$PROFILE_DETAIL_TOP_TSV"
 echo "[compile-bench] artifacts: $WORKDIR"

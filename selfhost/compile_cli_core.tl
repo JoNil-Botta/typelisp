@@ -28,6 +28,32 @@
 
 (import "../stdlib/str_cat.tl")
 
+(defenum CompileCliCfgNameList
+  (CompileCliCfgNameNil)
+  (CompileCliCfgNameCons String (Box CompileCliCfgNameList)))
+
+(defenum CompileCliBatchEntryList
+  (CompileCliBatchEntryNil)
+  (CompileCliBatchEntryCons String String (Box CompileCliBatchEntryList)))
+
+(defenum ResultCompileCliBatchEntryList
+  (OkCompileCliBatchEntryList CompileCliBatchEntryList)
+  (ErrCompileCliBatchEntryList i64))
+
+(define (compile-cli-cfg-name-cons
+  [name : String]
+  [rest : CompileCliCfgNameList]) : CompileCliCfgNameList
+  (CompileCliCfgNameCons name (box rest)))
+
+(define (compile-cli-batch-entry-cons
+  [input-path : String]
+  [output-path : String]
+  [rest : CompileCliBatchEntryList]) : CompileCliBatchEntryList
+  (CompileCliBatchEntryCons input-path output-path (box rest)))
+
+(define (compile-cli-cfg-name-list-empty) : CompileCliCfgNameList
+  CompileCliCfgNameNil)
+
 (defenum CompileCliConfig
   (CompileCliConfig
     String
@@ -36,7 +62,7 @@
     bool
     CompilerBackendTarget
     StringVec
-    SymI64Env
+    CompileCliCfgNameList
     CompilerBackendMode
     i64))
 
@@ -46,7 +72,7 @@
     bool
     CompilerBackendTarget
     StringVec
-    SymI64Env
+    CompileCliCfgNameList
     CompilerBackendMode
     i64))
 
@@ -161,7 +187,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfgs : SymI64Env]
+  [cfg-names : CompileCliCfgNameList]
   [emit-ir : bool]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -177,7 +203,7 @@
         has-target
         target
         stdlib-roots
-        cfgs
+        cfg-names
         backend-mode
         opt-level))
     (let
@@ -197,7 +223,7 @@
               has-target
               target
               stdlib-roots
-              cfgs
+              cfg-names
               emit-ir
               has-opt-level
               opt-level
@@ -214,7 +240,7 @@
             has-target
             target
             (string-vec-push stdlib-roots (arg (+ idx 1)))
-            cfgs
+            cfg-names
             emit-ir
             has-opt-level
             opt-level
@@ -231,7 +257,7 @@
             has-target
             target
             stdlib-roots
-            (compiler-cfg-enable cfgs (arg (+ idx 1)))
+            (compile-cli-cfg-name-cons (arg (+ idx 1)) cfg-names)
             emit-ir
             has-opt-level
             opt-level
@@ -253,7 +279,7 @@
                   true
                   parsed-target
                   stdlib-roots
-                  cfgs
+                  cfg-names
                   emit-ir
                   has-opt-level
                   opt-level
@@ -278,7 +304,7 @@
                     has-target
                     target
                     stdlib-roots
-                    cfgs
+                    cfg-names
                     emit-ir
                     true
                     parsed-level
@@ -299,7 +325,7 @@
                 has-target
                 target
                 stdlib-roots
-                cfgs
+                cfg-names
                 emit-ir
                 has-opt-level
                 opt-level
@@ -315,7 +341,7 @@
           has-target
           target
           stdlib-roots
-          cfgs
+          cfg-names
           true
           has-opt-level
           opt-level
@@ -332,7 +358,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfgs : SymI64Env]
+  [cfg-names : CompileCliCfgNameList]
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]) : ResultCompileCliBatchConfig
@@ -343,7 +369,7 @@
         has-target
         target
         stdlib-roots
-        cfgs
+        cfg-names
         backend-mode
         opt-level))
     (let
@@ -364,7 +390,7 @@
             has-target
             target
             (string-vec-push stdlib-roots (arg (+ idx 1)))
-            cfgs
+            cfg-names
             has-opt-level
             opt-level
             backend-mode))
@@ -378,7 +404,7 @@
             has-target
             target
             stdlib-roots
-            (compiler-cfg-enable cfgs (arg (+ idx 1)))
+            (compile-cli-cfg-name-cons (arg (+ idx 1)) cfg-names)
             has-opt-level
             opt-level
             backend-mode))
@@ -397,7 +423,7 @@
                   true
                   parsed-target
                   stdlib-roots
-                  cfgs
+                  cfg-names
                   has-opt-level
                   opt-level
                   backend-mode)]
@@ -419,7 +445,7 @@
                     has-target
                     target
                     stdlib-roots
-                    cfgs
+                    cfg-names
                     true
                     parsed-level
                     backend-mode)]
@@ -438,7 +464,7 @@
                 has-target
                 target
                 stdlib-roots
-                cfgs
+                cfg-names
                 has-opt-level
                 opt-level
                 parsed-mode)]
@@ -466,7 +492,7 @@
           false
           (BackendTargetLinux)
           (string-vec-new)
-          (compiler-cfg-empty)
+          (compile-cli-cfg-name-list-empty)
           false
           false
           (compiler-optimize-default-level)
@@ -489,7 +515,7 @@
           false
           (BackendTargetLinux)
           (string-vec-new)
-          (compiler-cfg-empty)
+          (compile-cli-cfg-name-list-empty)
           false
           (compiler-optimize-default-level)
           (BackendModeScalar))))))
@@ -568,6 +594,12 @@
           (compile-cli-message-with-usage
             (string-append "Unknown command: " command)))))))
 
+(define (compile-cli-cfg-names-to-env [cfg-names : CompileCliCfgNameList]) : SymI64Env
+  (match cfg-names
+    [(CompileCliCfgNameNil) (compiler-cfg-empty)]
+    [(CompileCliCfgNameCons name rest)
+      (compiler-cfg-enable (compile-cli-cfg-names-to-env (box-get rest)) name)]))
+
 (define (compile-cli-run-compile-file
   [input-path : String]
   [output-path : String]
@@ -575,35 +607,37 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfgs : SymI64Env]
+  [cfg-names : CompileCliCfgNameList]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (begin
     (compiler-driver-reset-file-state!)
-    (if emit-ir
-      (compiler-driver-write-result
-        (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
-          input-path
-          stdlib-roots
-          opt-level
-          cfgs)
-        output-path)
-      (if has-target
-        (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-          input-path
-          output-path
-          target
-          stdlib-roots
-          opt-level
-          backend-mode
-          cfgs)
-        (compiler-driver-compile-file-with-roots-level-mode-and-cfg
-          input-path
-          output-path
-          stdlib-roots
-          opt-level
-          backend-mode
-          cfgs)))))
+    (let
+      [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
+      (if emit-ir
+        (compiler-driver-write-result
+          (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
+            input-path
+            stdlib-roots
+            opt-level
+            cfgs)
+          output-path)
+        (if has-target
+          (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
+            input-path
+            output-path
+            target
+            stdlib-roots
+            opt-level
+            backend-mode
+            cfgs)
+          (compiler-driver-compile-file-with-roots-level-mode-and-cfg
+            input-path
+            output-path
+            stdlib-roots
+            opt-level
+            backend-mode
+            cfgs))))))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -652,53 +686,85 @@
         "\n"))
     1))
 
-(define (compile-cli-run-batch-line
+(define (compile-cli-batch-parse-entries-from
   [text : String]
   [start : i64]
-  [end : i64]
   [line : i64]
+  [n : i64]) : ResultCompileCliBatchEntryList
+  (if (>= start n)
+    (OkCompileCliBatchEntryList CompileCliBatchEntryNil)
+    (let
+      [line-end : i64 (compile-cli-batch-line-end text start n)]
+      [next-start : i64 (compile-cli-batch-next-line text line-end n)]
+      (if (= start line-end)
+        (compile-cli-batch-parse-entries-from text next-start (+ line 1) n)
+        (let
+          [sep : i64 (compile-cli-batch-find-separator text start line-end)]
+          (if (< sep 0)
+            (ErrCompileCliBatchEntryList
+              (compile-cli-batch-line-error line "expected input|output"))
+            (let
+              [output-start : i64 (+ sep 1)]
+              (if (= start sep)
+                (ErrCompileCliBatchEntryList
+                  (compile-cli-batch-line-error line "missing input path"))
+                (if (= output-start line-end)
+                  (ErrCompileCliBatchEntryList
+                    (compile-cli-batch-line-error line "missing output path"))
+                  (let
+                    [input-path : String (substring text start (- sep start))]
+                    [output-path : String
+                      (substring text output-start (- line-end output-start))]
+                    (match (compile-cli-batch-parse-entries-from
+                      text
+                      next-start
+                      (+ line 1)
+                      n)
+                      [(OkCompileCliBatchEntryList rest)
+                        (OkCompileCliBatchEntryList
+                          (compile-cli-batch-entry-cons
+                            input-path
+                            output-path
+                            rest))]
+                      [(ErrCompileCliBatchEntryList status)
+                        (ErrCompileCliBatchEntryList status)])))))))))))
+
+(define (compile-cli-run-batch-entries
+  [entries : CompileCliBatchEntryList]
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfgs : SymI64Env]
+  [cfg-names : CompileCliCfgNameList]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (if (= start end)
-    0
-    (let
-      [sep : i64 (compile-cli-batch-find-separator text start end)]
-      (if (< sep 0)
-        (compile-cli-batch-line-error line "expected input|output")
-        (let
-          [output-start : i64 (+ sep 1)]
-          (if (= start sep)
-            (compile-cli-batch-line-error line "missing input path")
-            (if (= output-start end)
-              (compile-cli-batch-line-error line "missing output path")
-              (let
-                [input-path : String (substring text start (- sep start))]
-                [output-path : String
-                  (substring text output-start (- end output-start))]
-                [status : i64
-                  (compile-cli-run-compile-file
-                    input-path
-                    output-path
-                    false
-                    has-target
-                    target
-                    stdlib-roots
-                    cfgs
-                    backend-mode
-                    opt-level)]
-                (if (= status 0)
-                  0
-                  (begin
-                    (print-error
-                      (str-cat
-                        "\ncompile: batch source failed: "
-                        input-path
-                        "\n"))
-                    status))))))))))
+  (match entries
+    [(CompileCliBatchEntryNil) 0]
+    [(CompileCliBatchEntryCons input-path output-path rest)
+      (let
+        [status : i64
+          (compile-cli-run-compile-file
+            input-path
+            output-path
+            false
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            backend-mode
+            opt-level)]
+        (if (= status 0)
+          (compile-cli-run-batch-entries
+            (box-get rest)
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            backend-mode
+            opt-level)
+          (begin
+            (print-error
+              (str-cat "\ncompile: batch source failed: " input-path "\n"))
+            status)))]))
 
 (define (compile-cli-run-batch-from
   [text : String]
@@ -707,39 +773,24 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
-  [cfgs : SymI64Env]
+  [cfg-names : CompileCliCfgNameList]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (let
-    [n : i64 (string-length text)]
-    (if (>= start n)
-      0
-      (let
-        [line-end : i64 (compile-cli-batch-line-end text start n)]
-        [status : i64
-          (compile-cli-run-batch-line
-            text
-            start
-            line-end
-            line
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level)]
-        (if (= status 0)
-          (compile-cli-run-batch-from
-            text
-            (compile-cli-batch-next-line text line-end n)
-            (+ line 1)
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level)
-          status)))))
+  (match (compile-cli-batch-parse-entries-from
+    text
+    start
+    line
+    (string-length text))
+    [(OkCompileCliBatchEntryList entries)
+      (compile-cli-run-batch-entries
+        entries
+        has-target
+        target
+        stdlib-roots
+        cfg-names
+        backend-mode
+        opt-level)]
+    [(ErrCompileCliBatchEntryList status) status]))
 
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
   (match config
@@ -748,7 +799,7 @@
         has-target
         target
         stdlib-roots
-        cfgs
+        cfg-names
         backend-mode
         opt-level)
       (compile-cli-run-batch-from
@@ -758,7 +809,7 @@
         has-target
         target
         stdlib-roots
-        cfgs
+        cfg-names
         backend-mode
         opt-level)]))
 
@@ -773,7 +824,7 @@
             has-target
             target
             stdlib-roots
-            cfgs
+            cfg-names
             backend-mode
             opt-level)
           (compile-cli-run-compile-file
@@ -783,7 +834,7 @@
             has-target
             target
             stdlib-roots
-            cfgs
+            cfg-names
             backend-mode
             opt-level)])]
     [(CompileCliBatch config) (compile-cli-run-batch config)]

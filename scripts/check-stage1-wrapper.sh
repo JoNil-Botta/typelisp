@@ -244,6 +244,42 @@ run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
 }
 assert_contains "$WORKDIR/compile.stdout" "Wrote $ASM"
 
+CFG_SRC="$WORKDIR/cfg-feature.tl"
+CFG_ASM="$WORKDIR/cfg-feature.s"
+cat > "$CFG_SRC" <<'EOF'
+(cfg feature (define marker : String "enabled-cfg-feature"))
+(cfg (not feature) (define marker : String "disabled-cfg-feature"))
+(define (main) : i64 0)
+EOF
+run_capture compile-cfg "$COMPILER" compile "$CFG_SRC" -o "$CFG_ASM" --cfg feature
+assert_contains "$CFG_ASM" "enabled-cfg-feature"
+assert_not_contains "$CFG_ASM" "disabled-cfg-feature"
+
+CFG_BATCH_ONE="$WORKDIR/cfg-batch-one.tl"
+CFG_BATCH_TWO="$WORKDIR/cfg-batch-two.tl"
+CFG_BATCH_ONE_ASM="$WORKDIR/cfg-batch-one.s"
+CFG_BATCH_TWO_ASM="$WORKDIR/cfg-batch-two.s"
+CFG_BATCH_LIST="$WORKDIR/cfg-batch.txt"
+cat > "$CFG_BATCH_ONE" <<'EOF'
+(cfg feature (define marker : String "enabled-cfg-batch-one"))
+(cfg (not feature) (define marker : String "disabled-cfg-batch-one"))
+(define (main) : i64 0)
+EOF
+cat > "$CFG_BATCH_TWO" <<'EOF'
+(cfg feature (define marker : String "enabled-cfg-batch-two"))
+(cfg (not feature) (define marker : String "disabled-cfg-batch-two"))
+(define (main) : i64 0)
+EOF
+printf '%s|%s\n%s|%s\n' \
+    "$CFG_BATCH_ONE" "$CFG_BATCH_ONE_ASM" \
+    "$CFG_BATCH_TWO" "$CFG_BATCH_TWO_ASM" \
+    > "$CFG_BATCH_LIST"
+run_capture compile-cfg-batch "$COMPILER" compile --batch "$CFG_BATCH_LIST" --cfg feature
+assert_contains "$CFG_BATCH_ONE_ASM" "enabled-cfg-batch-one"
+assert_not_contains "$CFG_BATCH_ONE_ASM" "disabled-cfg-batch-one"
+assert_contains "$CFG_BATCH_TWO_ASM" "enabled-cfg-batch-two"
+assert_not_contains "$CFG_BATCH_TWO_ASM" "disabled-cfg-batch-two"
+
 echo "[host-action-cli] compile --emit-ir"
 run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
 [ -f "$IR" ] || {

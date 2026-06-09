@@ -1134,6 +1134,24 @@
 (define tc-hygiene-module-env-cache : TcModuleLocalEnvCache
   (tc-empty-module-local-env-cache))
 
+;; #2357: arena that owns the module-local env cache chain. The cache lives in
+;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
+;; whose allocations land in scratch arenas; the cache's (box ...) cells and
+;; the cached env internals allocated there dangle once the scratch arena is
+;; reclaimed, and a later tl_arena_make reuses the pages (observed: a fresh
+;; arena header written over a live cache node, then a garbage module String
+;; crashing string-eq). Build cache entries inside this dedicated persistent
+;; arena instead (same idiom as the node pools' base arena).
+(define tc-hygiene-module-env-cache-arena : i64
+  0)
+
+(define (tc-hygiene-module-env-cache-arena-handle) : i64
+  (begin
+    (if (= tc-hygiene-module-env-cache-arena 0)
+      (set! tc-hygiene-module-env-cache-arena (arena-make))
+      unit)
+    tc-hygiene-module-env-cache-arena))
+
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
     [text-len : i64 (string-length text)]
@@ -1216,7 +1234,16 @@
   (begin
     (set! tc-hygiene-active-top-env top-env)
     (set! tc-hygiene-active-top-env-ready true)
-    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))))
+    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+    ;; #2357: release the persistent cache arena with the chain it owns; the
+    ;; next cache miss creates a fresh one (keeps batch compiles from leaking
+    ;; one arena's worth of dead cache entries per program).
+    (if (= tc-hygiene-module-env-cache-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena-destroy tc-hygiene-module-env-cache-arena))
+        (set! tc-hygiene-module-env-cache-arena 0)))))
 
 (define (tc-unsafe-marker-name) : String
   " __tl_unsafe_context")
@@ -1563,16 +1590,30 @@
   (if tc-hygiene-active-top-env-ready
     (if (string-eq module "")
       (OkTcEnv tc-hygiene-active-top-env)
-      (match (tc-module-local-env-cached
-        ctx
-        tc-hygiene-active-top-env
-        module
-        tc-hygiene-module-env-cache)
-        [(OkTcModuleLocalEnv def-env next-cache)
-          (begin
-            (set! tc-hygiene-module-env-cache next-cache)
-            (OkTcEnv def-env))]
-        [(ErrTcModuleLocalEnv message) (ErrTcEnv message)]))
+      ;; #2357: build cache entries in the dedicated persistent arena (see
+      ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
+      ;; survives the scratch arenas active during per-decl typechecking.
+      (let
+        [prev-arena : i64 (arena-current)]
+        [switched : unit
+          (unsafe
+            (arena-set! (tc-hygiene-module-env-cache-arena-handle)))]
+        (match (tc-module-local-env-cached
+          ctx
+          tc-hygiene-active-top-env
+          module
+          tc-hygiene-module-env-cache)
+          [(OkTcModuleLocalEnv def-env next-cache)
+            (begin
+              (set! tc-hygiene-module-env-cache next-cache)
+              (unsafe
+                (arena-set! prev-arena))
+              (OkTcEnv def-env))]
+          [(ErrTcModuleLocalEnv message)
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              (ErrTcEnv message))])))
     (ErrTcEnv "typecheck: macro hygiene definition context unavailable")))
 
 (define (tc-lookup-hygiene-context-global-visible-id

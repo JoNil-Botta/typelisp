@@ -9268,6 +9268,46 @@
                 "lower: init unsupported type "
                 (tc-type-render resolved))))]))))
 
+(define (lower-nullary-variant-result-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ false]))
+
+(define (lower-nullary-variant-or-function-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (if (lower-nullary-variant-result-type? expr-ty)
+    (let
+      [lookup-name : String
+        (lower-variant-constructor-lookup-name ctx name expr-ty)]
+      [symbols : CompilerSymbols (tc-context-symbols ctx)]
+      [registries : CompilerRegistries (tc-context-registries ctx)]
+      (match (compiler-registries-lookup-variant registries lookup-name)
+        [(SomeI64 handle)
+          (match (compiler-registries-variant-fields-indexed symbols handle)
+            [(OkAstTypeList fields)
+              (match fields
+                [(AstTypeNil)
+                  (lower-construct-enum-with-handle
+                    ctx
+                    state
+                    env
+                    type-env
+                    lookup-name
+                    handle
+                    AstExprNil
+                    expr-ty)]
+                [_ (lower-function-value-or-var ctx state env name expr-ty)])]
+            [(ErrAstTypeList _)
+              (lower-function-value-or-var ctx state env name expr-ty)])]
+        [(NoneI64) (lower-function-value-or-var ctx state env name expr-ty)]))
+    (lower-function-value-or-var ctx state env name expr-ty)))
+
 (define (lower-var-or-nullary-variant
   [ctx : TcContext]
   [state : LowerState]
@@ -9278,37 +9318,13 @@
   (match (sym-i64-lookup env name)
     [(SomeI64 _) (lower-var state env name expr-ty)]
     [(NoneI64)
-      (match (tc-type-strip-region expr-ty)
-        [(AstTyEnum _)
-          (let
-            [lookup-name : String
-              (lower-variant-constructor-lookup-name ctx name expr-ty)]
-            [symbols : CompilerSymbols (tc-context-symbols ctx)]
-            [registries : CompilerRegistries (tc-context-registries ctx)]
-            (match (compiler-registries-lookup-variant registries lookup-name)
-              [(SomeI64 handle)
-                (match (compiler-registries-variant-fields-indexed
-                  symbols
-                  handle)
-                  [(OkAstTypeList fields)
-                    (match fields
-                      [(AstTypeNil)
-                        (lower-construct-enum-with-handle
-                          ctx
-                          state
-                          env
-                          type-env
-                          lookup-name
-                          handle
-                          AstExprNil
-                          expr-ty)]
-                      [_
-                        (lower-function-value-or-var ctx state env name expr-ty)])]
-                  [(ErrAstTypeList _)
-                    (lower-function-value-or-var ctx state env name expr-ty)])]
-              [(NoneI64)
-                (lower-function-value-or-var ctx state env name expr-ty)]))]
-        [_ (lower-function-value-or-var ctx state env name expr-ty)])]))
+      (lower-nullary-variant-or-function-value
+        ctx
+        state
+        env
+        type-env
+        name
+        expr-ty)]))
 
 (define (lower-var-or-nullary-variant-id
   [ctx : TcContext]
@@ -9322,42 +9338,13 @@
     [(NoneI64)
       (let
         [name : String (intern-str name-id)]
-        (match (tc-type-strip-region expr-ty)
-          [(AstTyEnum _)
-            (let
-              [lookup-name : String
-                (lower-variant-constructor-lookup-name ctx name expr-ty)]
-              [symbols : CompilerSymbols (tc-context-symbols ctx)]
-              [registries : CompilerRegistries (tc-context-registries ctx)]
-              (match (compiler-registries-lookup-variant registries lookup-name)
-                [(SomeI64 handle)
-                  (match (compiler-registries-variant-fields-indexed
-                    symbols
-                    handle)
-                    [(OkAstTypeList fields)
-                      (match fields
-                        [(AstTypeNil)
-                          (lower-construct-enum-with-handle
-                            ctx
-                            state
-                            env
-                            type-env
-                            lookup-name
-                            handle
-                            AstExprNil
-                            expr-ty)]
-                        [_
-                          (lower-function-value-or-var
-                            ctx
-                            state
-                            env
-                            name
-                            expr-ty)])]
-                    [(ErrAstTypeList _)
-                      (lower-function-value-or-var ctx state env name expr-ty)])]
-                [(NoneI64)
-                  (lower-function-value-or-var ctx state env name expr-ty)]))]
-          [_ (lower-function-value-or-var ctx state env name expr-ty)]))]))
+        (lower-nullary-variant-or-function-value
+          ctx
+          state
+          env
+          type-env
+          name
+          expr-ty))]))
 
 (define (lower-call-result-type-fast
   [ctx : TcContext]
@@ -12880,6 +12867,12 @@
   [result-ty : AstType]) : String
   (match (tc-type-strip-region result-ty)
     [(AstTyEnum enum-name)
+      (if (or
+        (tc-name-qualified? name)
+        (string-eq (tc-qualified-name-module enum-name) (tc-context-module ctx)))
+        (tc-variant-name-for-enum enum-name name)
+        (lower-module-lookup-name ctx name))]
+    [(AstTyEnumArgs enum-name _)
       (if (or
         (tc-name-qualified? name)
         (string-eq (tc-qualified-name-module enum-name) (tc-context-module ctx)))

@@ -58,6 +58,7 @@ lambda_capture_struct_enum|tests/integration/lambda_capture_struct_enum.tl|42|-|
 lambda_capture_tuple|tests/integration/lambda_capture_tuple.tl|42|-|-|-
 lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl
+lifetime_nullary_variant|tests/integration/lifetime_nullary_variant.tl|42|-|-|-
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n

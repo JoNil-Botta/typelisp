@@ -21,21 +21,13 @@ esac
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
-# #2357: the batch process accumulates per-program memory and never settles
-# back, and the manifest's whole-compiler driver sources (ast..compile_smoke)
-# are consecutive: a 16-case chunk commits 5.2GB measured with an
-# inline-aggregate-codegen compiler and substantially more with the published
-# pre-flip seed's heap-handle codegen, which SIGSEGV'd the Windows CI runner
-# (freestanding runtime: a failed memory commit surfaces as an access
-# violation, exit 139; reproduced at chunk sizes 16 and 4). Windows therefore
-# compiles one file per process -- the heaviest single compile stays ~2.5GB --
-# while Linux keeps multi-program chunks so batch-mode compile coverage (the
-# #2386 per-program cache-reset bug class) still runs in CI.
-if [ "$HOST_OS" = windows ]; then
-    BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-1}
-else
-    BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-16}
-fi
+# #2357: the batch driver scopes each entry's compile in its own arena region
+# (compile-cli-run-batch-entries), so a chunk's peak memory is the heaviest
+# single compile (~2.8GB for the whole-compiler drivers), not the sum of all
+# entries. Without that scoping a 16-case chunk accumulated 9.7GB and
+# SIGSEGV'd the Windows CI runner (freestanding runtime: a failed memory
+# commit surfaces as an access violation, exit 139).
+BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-16}
 
 case "$EXPECTATION_MODE" in
     stage0 | stage1) ;;

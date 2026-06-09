@@ -14,6 +14,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (import "compiler_diagnostic.tl")
 
 (import "compiler_load.tl")
@@ -31,9 +33,6 @@
 (defenum ResultPackageSourceList
   (OkPackageSourceList StringList)
   (ErrPackageSourceList String))
-
-(define (package-source-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -100,7 +99,7 @@
       (read-file path))
       [(ErrCompilerPkgManifestDiagnostic diag)
         (ErrPackageSourceSet
-          (package-source-cat3
+          (str-cat
             "invalid package manifest '"
             (compiler-diagnostic-path diag)
             (string-append "': " (compiler-diagnostic-message diag))))]
@@ -111,8 +110,7 @@
             (package-source-manifest-dir path)
             manifest
             (StringNil)))])
-    (ErrPackageSourceSet
-      (package-source-cat3 "cannot read package manifest '" path "'"))))
+    (ErrPackageSourceSet (str-cat "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
   [command : String]
@@ -166,7 +164,7 @@
   [path : String]
   [error : IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
-    (package-source-cat3
+    (str-cat
       (string-append command ": failed to inspect package path '")
       path
       (string-append "': " (io-error-message error)))))
@@ -176,7 +174,7 @@
   [path : String]
   [error : IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
-    (package-source-cat3
+    (str-cat
       (string-append command ": failed to read package directory '")
       path
       (string-append "': " (io-error-message error)))))
@@ -292,7 +290,7 @@
         [(OkPackageSourceList sources)
           (if (= (string-list-count sources) 0)
             (ErrPackageSourceSet
-              (package-source-cat3
+              (str-cat
                 (string-append
                   command
                   ": no TypeLisp source files found in package '")

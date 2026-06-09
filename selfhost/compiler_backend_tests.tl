@@ -5587,6 +5587,36 @@
         false)
       IrExternNil)))
 
+(define (compiler-backend-user-symbol-cache-ok?) : bool
+  (begin
+    (intern-reset!)
+    (compiler-backend-user-symbol-cache-reset!)
+    (let
+      [path-name : String "pkg/nested/module.tl::some-value"]
+      [path-id : i64 (intern path-name)]
+      [path-symbol-first : String (compiler-backend-user-symbol-id path-id)]
+      [count-after-path-first : i64 (compiler-backend-user-symbol-cache-count)]
+      [path-symbol-second : String (compiler-backend-user-symbol-id path-id)]
+      [count-after-path-second : i64 (compiler-backend-user-symbol-cache-count)]
+      [main-id : i64 (intern "main")]
+      [main-symbol-first : String (compiler-backend-user-symbol-id main-id)]
+      [count-after-main-first : i64 (compiler-backend-user-symbol-cache-count)]
+      [main-symbol-second : String (compiler-backend-user-symbol-id main-id)]
+      [count-after-main-second : i64 (compiler-backend-user-symbol-cache-count)]
+      [wrapper-symbol : String (compiler-backend-user-symbol path-name)]
+      [count-after-wrapper : i64 (compiler-backend-user-symbol-cache-count)]
+      (backend-and8
+        (string-eq path-symbol-first "_tl_pkg_nested_module_some_value")
+        (string-eq path-symbol-second path-symbol-first)
+        (= count-after-path-first 1)
+        (= count-after-path-second count-after-path-first)
+        (string-eq main-symbol-first "main")
+        (string-eq main-symbol-second "main")
+        (= count-after-main-second count-after-main-first)
+        (and
+          (string-eq wrapper-symbol path-symbol-first)
+          (= count-after-wrapper count-after-main-second))))))
+
 (define (compiler-backend-program-index-id-maps-ok?) : bool
   (let
     [fn-name : String "pkg/really-long-backend-index-function"]
@@ -5635,7 +5665,16 @@
           referenced-link)
         (string-eq
           (compiler-backend-index-extern-link-symbol-id index missing-id)
-          "missing_backend_index_name")))))
+          "missing_backend_index_name"))
+      (backend-and4
+        (string-eq
+          (compiler-backend-function-symbol-map-comment index fn-name)
+          "#t _tl_f0 _tl_really_long_backend_index_function\n")
+        (string-eq
+          (compiler-backend-function-symbol-index index provided-name)
+          "provided_link")
+        true
+        true))))
 
 (define (compiler-backend-profile-runtime-source) : String
   "(extern (tl_profile_alloc_total) : i64)
@@ -5813,7 +5852,9 @@
                                       (compiler-backend-simd-vector-ok?)
                                       (and
                                         (compiler-backend-dispatch-variant-mode-ok?)
-                                        (compiler-backend-program-index-id-maps-ok?))))))))))))))))))))
+                                        (and
+                                          (compiler-backend-user-symbol-cache-ok?)
+                                          (compiler-backend-program-index-id-maps-ok?)))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

@@ -306,6 +306,39 @@
 (define (compiler-backend-set-scalar-registers! [enabled : bool]) : unit
   (set! compiler-backend-scalar-registers-enabled enabled))
 
+;; Per-emission cache for interned user-symbol mangling. The generation guard
+;; keeps direct helper calls safe across intern-reset! reuse of numeric ids.
+(define compiler-backend-user-symbol-cache-values : (Array String)
+  (make-array String 262144))
+
+(define compiler-backend-user-symbol-cache-epochs : (Array i64)
+  (make-array i64 262144))
+
+(define compiler-backend-user-symbol-cache-epoch : i64
+  1)
+
+(define compiler-backend-user-symbol-cache-count-value : i64
+  0)
+
+(define compiler-backend-user-symbol-cache-generation : i64
+  -1)
+
+(define (compiler-backend-user-symbol-cache-reset!) : unit
+  (begin
+    (set! compiler-backend-user-symbol-cache-count-value 0)
+    (set!
+      compiler-backend-user-symbol-cache-epoch
+      (+ compiler-backend-user-symbol-cache-epoch 1))
+    (set! compiler-backend-user-symbol-cache-generation (intern-generation))))
+
+(define (compiler-backend-user-symbol-cache-ensure-current!) : unit
+  (if (= compiler-backend-user-symbol-cache-generation (intern-generation))
+    unit
+    (compiler-backend-user-symbol-cache-reset!)))
+
+(define (compiler-backend-user-symbol-cache-count) : i64
+  compiler-backend-user-symbol-cache-count-value)
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -2331,10 +2364,43 @@
                 (set! i (+ i 1)))))))
       (text-buf-render buf))))
 
-(define (compiler-backend-user-symbol [name : String]) : String
+(define (compiler-backend-user-symbol-uncached [name : String]) : String
   (if (string-eq name "main")
     "main"
     (string-append "_tl_" (compiler-backend-user-symbol-body name))))
+
+(define (compiler-backend-user-symbol-id [name-id : i64]) : String
+  (begin
+    (compiler-backend-user-symbol-cache-ensure-current!)
+    (if (and
+      (>= name-id 0)
+      (< name-id (array-length compiler-backend-user-symbol-cache-values)))
+      (if (=
+        (array-ref compiler-backend-user-symbol-cache-epochs name-id)
+        compiler-backend-user-symbol-cache-epoch)
+        (array-ref compiler-backend-user-symbol-cache-values name-id)
+        (let
+          [symbol : String
+            (compiler-backend-user-symbol-uncached (intern-str name-id))]
+          (begin
+            (array-set!
+              compiler-backend-user-symbol-cache-values
+              name-id
+              symbol)
+            (array-set!
+              compiler-backend-user-symbol-cache-epochs
+              name-id
+              compiler-backend-user-symbol-cache-epoch)
+            (set!
+              compiler-backend-user-symbol-cache-count-value
+              (+ compiler-backend-user-symbol-cache-count-value 1))
+            symbol)))
+      (compiler-backend-user-symbol-uncached (intern-str name-id)))))
+
+(define (compiler-backend-user-symbol [name : String]) : String
+  (match (intern-lookup name)
+    [(InternLookupFound name-id) (compiler-backend-user-symbol-id name-id)]
+    [(InternLookupMissing) (compiler-backend-user-symbol-uncached name)]))
 
 (define (compiler-backend-symbol-leaf [name : String]) : String
   (let
@@ -15962,6 +16028,7 @@ tl_string_concat5:
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (begin
+    (compiler-backend-user-symbol-cache-reset!)
     (cfg compile-profile (compiler-backend-profile-start))
     (match (compiler-backend-runtime-plan program)
       [(OkBackendRuntimePlan plan)
@@ -16942,45 +17009,47 @@ tl_string_concat5:
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendObject
-  (match (compiler-backend-runtime-plan program)
-    [(OkBackendRuntimePlan plan)
-      (if (compiler-backend-target-runtime-ok? target plan)
-        (match program
-          [(IrProgram globals functions externs)
-            (let
-              [entry-functions : CompilerIrFunctionList
-                (compiler-backend-functions-with-implicit-main
-                  functions
-                  emit-entry)]
-              [program-index : CompilerBackendProgramIndex
-                (compiler-backend-program-index-build entry-functions externs)]
-              (match (compiler-backend-validate-function-symbols
-                globals
-                entry-functions
-                externs
-                plan
-                program-index)
-                [(OkCompilerBackendSymbolValidation _)
-                  (OkCompilerBackendObject
-                    (compiler-backend-object-image-after-index
-                      program
-                      target
-                      mode
-                      entry-functions
-                      globals
-                      externs
-                      plan
-                      program-index
-                      emit-entry
-                      crt-entry))]
-                [(ErrCompilerBackendSymbolValidation message)
-                  (ErrCompilerBackendObject message)]))])
-        (ErrCompilerBackendObject
-          (compiler-diagnostic-at-start
-            ""
-            "backend: internal target runtime rejection")))]
-    [(ErrBackendRuntimePlan message)
-      (ErrCompilerBackendObject (compiler-diagnostic-at-start "" message))]))
+  (begin
+    (compiler-backend-user-symbol-cache-reset!)
+    (match (compiler-backend-runtime-plan program)
+      [(OkBackendRuntimePlan plan)
+        (if (compiler-backend-target-runtime-ok? target plan)
+          (match program
+            [(IrProgram globals functions externs)
+              (let
+                [entry-functions : CompilerIrFunctionList
+                  (compiler-backend-functions-with-implicit-main
+                    functions
+                    emit-entry)]
+                [program-index : CompilerBackendProgramIndex
+                  (compiler-backend-program-index-build entry-functions externs)]
+                (match (compiler-backend-validate-function-symbols
+                  globals
+                  entry-functions
+                  externs
+                  plan
+                  program-index)
+                  [(OkCompilerBackendSymbolValidation _)
+                    (OkCompilerBackendObject
+                      (compiler-backend-object-image-after-index
+                        program
+                        target
+                        mode
+                        entry-functions
+                        globals
+                        externs
+                        plan
+                        program-index
+                        emit-entry
+                        crt-entry))]
+                  [(ErrCompilerBackendSymbolValidation message)
+                    (ErrCompilerBackendObject message)]))])
+          (ErrCompilerBackendObject
+            (compiler-diagnostic-at-start
+              ""
+              "backend: internal target runtime rejection")))]
+      [(ErrBackendRuntimePlan message)
+        (ErrCompilerBackendObject (compiler-diagnostic-at-start "" message))])))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode
   [program : CompilerIrProgram]

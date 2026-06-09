@@ -1500,7 +1500,7 @@
           (OkAstType (AstTyNever))
           (= tag (compiler-parse-tag-ty-expr))
           (OkAstType (AstTyExpr))
-          (OkAstType (AstTyVar name))))]
+          (OkAstType (AstTyVar (intern name)))))]
     [(SCons head-node rest-box)
       (match (box-get head-node)
         [(SSym head)
@@ -1598,7 +1598,7 @@
                 rest
                 (compiler-parse-generic-type-policy-message head))
                 [(OkAstLifetimeList lifetimes)
-                  (OkAstType (AstTyVarArgs head lifetimes))]
+                  (OkAstType (AstTyVarArgs (intern head) lifetimes))]
                 [(ErrAstLifetimeList message) (ErrAstType message)])))]
         [_ (ErrAstType "parse: expected type")])]
     [_ (ErrAstType "parse: expected type")]))
@@ -8887,7 +8887,7 @@
                 [(AstDeclNil)
                   (and
                     (match ret-ty
-                      [(AstTyVar name) (string-eq name "Expr")]
+                      [(AstTyVar name) (string-eq (intern-str name) "Expr")]
                       [_ false])
                     (match (ast-expr-unspan body)
                       [(AstExprQuasiquote template-box)

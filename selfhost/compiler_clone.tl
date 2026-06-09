@@ -113,9 +113,9 @@
     [(AstTyDynArray elem) (clone-field-type-able? (ty-node-get elem) names)]
     [(AstTyBox elem) (clone-field-type-able? (ty-node-get elem) names)]
     [(AstTyRegion _ inner) (clone-field-type-able? (ty-node-get inner) names)]
-    [(AstTyVar name) (clone-name-set-contains? names name)]
-    [(AstTyEnum name) (clone-name-set-contains? names name)]
-    [(AstTyStruct name) (clone-name-set-contains? names name)]
+    [(AstTyVar name) (clone-name-set-contains? names (intern-str name))]
+    [(AstTyEnum name) (clone-name-set-contains? names (intern-str name))]
+    [(AstTyStruct name) (clone-name-set-contains? names (intern-str name))]
     [_ false]))
 
 (define (clone-field-type-list-able?
@@ -295,8 +295,10 @@
 (define (clone-make-helper-decl [type-name : String] [body : i64]) : AstDecl
   (ast-decl-def-fn
     (clone-helper-name type-name)
-    (ast-param-cons (ast-param "x" (AstTyVar type-name) false) AstParamNil)
-    (AstTyVar type-name)
+    (ast-param-cons
+      (ast-param "x" (AstTyVar (intern type-name)) false)
+      AstParamNil)
+    (AstTyVar (intern type-name))
     body))
 
 ;; --- tail-recursive clone for list-like types --------------------------------
@@ -324,8 +326,8 @@
 
 (define (clone-type-is-name? [ty : AstType] [name : String]) : bool
   (match ty
-    [(AstTyVar n) (string-eq n name)]
-    [(AstTyEnum n) (string-eq n name)]
+    [(AstTyVar n) (string-eq (intern-str n) name)]
+    [(AstTyEnum n) (string-eq (intern-str n) name)]
     [_ false]))
 
 ;; True iff `tail` is the enum itself, either directly or through a Box tail.
@@ -419,7 +421,7 @@
 (define (clone-list-rev-name [type-name : String]) : String
   (string-append (clone-helper-name type-name) "$rev"))
 
-;; `(Nil)` â€” a nullary constructor is a zero-arg call, as in clone-variant-arm.
+;; `(Nil)` - a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [nil-ctor : String]) : i64
   (ast-expr-call (ast-node-push (AstExprVar (intern nil-ctor))) AstExprNil))
 
@@ -441,9 +443,11 @@
   (ast-decl-def-fn
     fn-name
     (ast-param-cons
-      (ast-param "x" (AstTyVar type-name) false)
-      (ast-param-cons (ast-param "acc" (AstTyVar type-name) false) AstParamNil))
-    (AstTyVar type-name)
+      (ast-param "x" (AstTyVar (intern type-name)) false)
+      (ast-param-cons
+        (ast-param "acc" (AstTyVar (intern type-name)) false)
+        AstParamNil))
+    (AstTyVar (intern type-name))
     body))
 
 ;; The `(Cons-pattern h t)` -> recursive-tail-call match arm shared by acc/rev.
@@ -525,7 +529,7 @@
         boxed-tail
         (ast-node-push (AstExprVar (intern "h")))))))
 
-;; clone$L: reverse(acc(x, Nil), Nil) â€” both folds run in O(1) stack frames.
+;; clone$L: reverse(acc(x, Nil), Nil) - both folds run in O(1) stack frames.
 (define (clone-list-entry-decl [type-name : String] [nil-ctor : String]) : AstDecl
   (clone-make-helper-decl
     type-name
@@ -713,9 +717,10 @@
     [(AstTyBox elem) (clone-root-add-type decls able roots (ty-node-get elem))]
     [(AstTyRegion _ inner)
       (clone-root-add-type decls able roots (ty-node-get inner))]
-    [(AstTyVar name) (clone-root-add-name decls able roots name)]
-    [(AstTyEnum name) (clone-root-add-name decls able roots name)]
-    [(AstTyStruct name) (clone-root-add-name decls able roots name)]
+    [(AstTyVar name) (clone-root-add-name decls able roots (intern-str name))]
+    [(AstTyEnum name) (clone-root-add-name decls able roots (intern-str name))]
+    [(AstTyStruct name)
+      (clone-root-add-name decls able roots (intern-str name))]
     [_ roots]))
 
 (define (clone-root-expand

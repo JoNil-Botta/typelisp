@@ -901,8 +901,8 @@
 
 (define (ctfe-reflect-info-canonical-type [info : CtfeReflectInfo]) : AstType
   (match info
-    [(CtfeReflectStruct key _ _ _) (AstTyStruct key)]
-    [(CtfeReflectEnum key _ _ _) (AstTyEnum key)]))
+    [(CtfeReflectStruct key _ _ _) (AstTyStruct (intern key))]
+    [(CtfeReflectEnum key _ _ _) (AstTyEnum (intern key))]))
 
 (define (ctfe-reflect-resolve-type-list
   [infos : CtfeReflectInfoList]
@@ -946,15 +946,15 @@
         region
         (ctfe-reflect-resolve-type infos (ty-node-get inner)))]
     [(AstTyStruct name)
-      (match (ctfe-reflect-info-lookup infos name)
+      (match (ctfe-reflect-info-lookup infos (intern-str name))
         [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
         [(CtfeNoReflectInfo) ty])]
     [(AstTyEnum name)
-      (match (ctfe-reflect-info-lookup infos name)
+      (match (ctfe-reflect-info-lookup infos (intern-str name))
         [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
         [(CtfeNoReflectInfo) ty])]
     [(AstTyVar name)
-      (match (ctfe-reflect-info-lookup infos name)
+      (match (ctfe-reflect-info-lookup infos (intern-str name))
         [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
         [(CtfeNoReflectInfo) ty])]
     [_ ty]))
@@ -1079,26 +1079,26 @@
           (string-append
             "_"
             (ctfe-type-key-with-reflections infos (ty-node-get inner)))))]
-    [(AstTyEnum name) (string-append "enum_" name)]
+    [(AstTyEnum name) (string-append "enum_" (intern-str name))]
     [(AstTyEnumArgs name lifetimes)
       (string-append
         "enumargs_"
         (string-append
-          name
+          (intern-str name)
           (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
-    [(AstTyStruct name) (string-append "struct_" name)]
+    [(AstTyStruct name) (string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
       (string-append
         "structargs_"
         (string-append
-          name
+          (intern-str name)
           (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
-    [(AstTyVar name) (string-append "var_" name)]
+    [(AstTyVar name) (string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
       (string-append
         "varargs_"
         (string-append
-          name
+          (intern-str name)
           (string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
 
 (define (ctfe-type-key [ty : AstType]) : String
@@ -1414,26 +1414,26 @@
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ size _ _) size])]
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyStructArgs name _)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ size _ _) size])]
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ size _ _) size])]
         [(CtfeNoLayoutInfo) -1])]
     [(AstTyVarArgs name _)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ size _ _) size])]
@@ -1471,26 +1471,26 @@
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ _ align _) align])]
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyStructArgs name _)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ _ align _) align])]
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ _ align _) align])]
         [(CtfeNoLayoutInfo) -1])]
     [(AstTyVarArgs name _)
-      (match (ctfe-layout-info-lookup layouts name)
+      (match (ctfe-layout-info-lookup layouts (intern-str name))
         [(CtfeSomeLayoutInfo info)
           (match info
             [(CtfeLayoutInfo _ _ _ align _) align])]
@@ -1563,11 +1563,12 @@
   [layouts : CtfeLayoutInfoList]
   [ty : AstType]) : CtfeMaybeLayoutInfo
   (match ty
-    [(AstTyStruct name) (ctfe-layout-info-lookup layouts name)]
-    [(AstTyStructArgs name _) (ctfe-layout-info-lookup layouts name)]
-    [(AstTyEnum name) (ctfe-layout-info-lookup layouts name)]
-    [(AstTyEnumArgs name _) (ctfe-layout-info-lookup layouts name)]
-    [(AstTyVar name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyStruct name) (ctfe-layout-info-lookup layouts (intern-str name))]
+    [(AstTyStructArgs name _)
+      (ctfe-layout-info-lookup layouts (intern-str name))]
+    [(AstTyEnum name) (ctfe-layout-info-lookup layouts (intern-str name))]
+    [(AstTyEnumArgs name _) (ctfe-layout-info-lookup layouts (intern-str name))]
+    [(AstTyVar name) (ctfe-layout-info-lookup layouts (intern-str name))]
     [(AstTyRegion _ inner)
       (ctfe-layout-info-for-type layouts (ty-node-get inner))]
     [_ (CtfeNoLayoutInfo)]))
@@ -1858,12 +1859,12 @@
 
 (define (ctfe-type-nominal-key [ty : AstType]) : String
   (match ty
-    [(AstTyStruct name) name]
-    [(AstTyStructArgs name _) name]
-    [(AstTyEnum name) name]
-    [(AstTyEnumArgs name _) name]
-    [(AstTyVar name) name]
-    [(AstTyVarArgs name _) name]
+    [(AstTyStruct name) (intern-str name)]
+    [(AstTyStructArgs name _) (intern-str name)]
+    [(AstTyEnum name) (intern-str name)]
+    [(AstTyEnumArgs name _) (intern-str name)]
+    [(AstTyVar name) (intern-str name)]
+    [(AstTyVarArgs name _) (intern-str name)]
     [_ ""]))
 
 (define (ctfe-struct-field-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
@@ -5154,35 +5155,35 @@
         [_ false])]
     [(AstTyEnum a-name)
       (match b
-        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [(AstTyEnum b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyEnumArgs a-name a-lifetimes)
       (match b
         [(AstTyEnumArgs b-name b-lifetimes)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
-        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [(AstTyStruct b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyStructArgs a-name a-lifetimes)
       (match b
         [(AstTyStructArgs b-name b-lifetimes)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
-        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [(AstTyVar b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyVarArgs a-name a-lifetimes)
       (match b
         [(AstTyVarArgs b-name b-lifetimes)
           (and
-            (string-eq a-name b-name)
+            (= a-name b-name)
             (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
 
@@ -5320,9 +5321,12 @@
 
 (define (compiler-ctfe-layout-query-ok?) : bool
   (let
-    [packet-ty : i64 (ast-node-push (AstExprTypeLiteral (AstTyVar "Packet")))]
-    [box-ty : i64 (ast-node-push (AstExprTypeLiteral (AstTyVar "Box")))]
-    [choice-ty : i64 (ast-node-push (AstExprTypeLiteral (AstTyVar "Choice")))]
+    [packet-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Packet"))))]
+    [box-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Box"))))]
+    [choice-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Choice"))))]
     [env : CtfeEnv
       (ctfe-env-with-layouts
         (CtfeLayoutInfoCons
@@ -5453,8 +5457,10 @@
 (define (compiler-ctfe-reflection-query-ok?) : bool
   (let
     [env : CtfeEnv (compiler-ctfe-reflection-env)]
-    [point-ty : i64 (ast-node-push (AstExprTypeLiteral (AstTyVar "Point")))]
-    [maybe-ty : i64 (ast-node-push (AstExprTypeLiteral (AstTyVar "Maybe")))]
+    [point-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Point"))))]
+    [maybe-ty : i64
+      (ast-node-push (AstExprTypeLiteral (AstTyVar (intern "Maybe"))))]
     [array-ty : i64
       (ast-node-push (AstExprTypeLiteral (ast-ty-array (AstTyI64) 4)))]
     [dyn-array-ty : i64

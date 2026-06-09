@@ -1374,15 +1374,15 @@
         (string-append
           " "
           (string-append (tc-type-render (ty-node-get inner)) ")")))]
-    [(AstTyEnum name) name]
+    [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (tc-render-nominal-lifetime-type name lifetimes)]
-    [(AstTyStruct name) name]
+      (tc-render-nominal-lifetime-type (intern-str name) lifetimes)]
+    [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (tc-render-nominal-lifetime-type name lifetimes)]
-    [(AstTyVar name) name]
+      (tc-render-nominal-lifetime-type (intern-str name) lifetimes)]
+    [(AstTyVar name) (intern-str name)]
     [(AstTyVarArgs name lifetimes)
-      (tc-render-nominal-lifetime-type name lifetimes)]))
+      (tc-render-nominal-lifetime-type (intern-str name) lifetimes)]))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit)))
@@ -1634,7 +1634,7 @@
     [(TcTypeBind key ty rest)
       (if (= key (tc-name-id (tc-region-marker-name)))
         (match ty
-          [(AstTyVar region) (TcSomeString region)]
+          [(AstTyVar region) (TcSomeString (intern-str region))]
           [_ (tc-active-region-scan (box-get rest))])
         (tc-active-region-scan (box-get rest)))]))
 
@@ -1644,7 +1644,7 @@
     [_ (tc-active-region-scan env)]))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
-  (tc-bind env (tc-region-marker-name) (AstTyVar region)))
+  (tc-bind env (tc-region-marker-name) (AstTyVar (intern region))))
 
 (define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
   (match items
@@ -1660,7 +1660,7 @@
     (TcStringCons name (box items))))
 
 (define (tc-bind-cleanup-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
-  (tc-bind env (tc-cleanup-owner-marker-name) (AstTyVar name)))
+  (tc-bind env (tc-cleanup-owner-marker-name) (AstTyVar (intern name))))
 
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
@@ -1668,7 +1668,7 @@
   [name : String]) : bool
   (if (= key (tc-name-id (tc-cleanup-owner-marker-name)))
     (match ty
-      [(AstTyVar owner) (string-eq owner name)]
+      [(AstTyVar owner) (string-eq (intern-str owner) name)]
       [_ false])
     false))
 
@@ -1711,9 +1711,11 @@
         (if (= key (tc-name-id (tc-cleanup-owner-marker-name)))
           (match ty
             [(AstTyVar owner)
-              (if (tc-cleanup-owner-active? root owner)
-                (tc-string-list-add owners owner)
-                owners)]
+              (let
+                [owner-str : String (intern-str owner)]
+                (if (tc-cleanup-owner-active? root owner-str)
+                  (tc-string-list-add owners owner-str)
+                  owners))]
             [_ owners])
           owners))]))
 
@@ -1878,7 +1880,7 @@
     true
     (if (= key (tc-name-id (tc-region-marker-name)))
       (match ty
-        [(AstTyVar region) (string-eq region lifetime)]
+        [(AstTyVar region) (string-eq (intern-str region) lifetime)]
         [_ false])
       false)))
 
@@ -2477,9 +2479,9 @@
         (if (= key (tc-name-id (tc-region-marker-name)))
           (match ty
             [(AstTyVar region)
-              (if (string-eq region value-region)
+              (if (string-eq (intern-str region) value-region)
                 false
-                (if (string-eq region target-region)
+                (if (string-eq (intern-str region) target-region)
                   true
                   (tc-region-outlives-or-matches-scan
                     (box-get rest)
@@ -2721,24 +2723,24 @@
 
 (define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
-    (AstTyEnum name)
+    (AstTyEnum (intern name))
     (if (=
       (compiler-symbol-handle-kind handle)
       (compiler-symbol-kind-defstruct))
-      (AstTyStruct name)
-      (AstTyVar name))))
+      (AstTyStruct (intern name))
+      (AstTyVar (intern name)))))
 
 (define (tc-resolved-nominal-type-with-args
   [name : String]
   [handle : i64]
   [lifetimes : AstLifetimeList]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
-    (AstTyEnumArgs name lifetimes)
+    (AstTyEnumArgs (intern name) lifetimes)
     (if (=
       (compiler-symbol-handle-kind handle)
       (compiler-symbol-kind-defstruct))
-      (AstTyStructArgs name lifetimes)
-      (AstTyVarArgs name lifetimes))))
+      (AstTyStructArgs (intern name) lifetimes)
+      (AstTyVarArgs (intern name) lifetimes))))
 
 (define tc-nominal-owner-cache-handle : i64
   0)
@@ -3078,7 +3080,7 @@
               (AstTyExpr)
               (if (string-eq name "ExprList")
                 (AstTyExprList)
-                (AstTyVar name)))]))]))
+                (AstTyVar (intern name))))]))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
   (if (tc-type-needs-resolution? ty)
@@ -3103,8 +3105,8 @@
       [(AstTyRegion region inner)
         (ast-ty-region region (tc-resolve-type ctx (ty-node-get inner)))]
       [(AstTyVarArgs name lifetimes)
-        (tc-resolve-type-name-with-args ctx name lifetimes)]
-      [(AstTyVar name) (tc-resolve-type-name ctx name)]
+        (tc-resolve-type-name-with-args ctx (intern-str name) lifetimes)]
+      [(AstTyVar name) (tc-resolve-type-name ctx (intern-str name))]
       [_ ty])
     ty))
 
@@ -3132,7 +3134,7 @@
                   lookup-name
                   handle
                   lifetimes)])]
-          [(NoneI64) (AstTyVarArgs name lifetimes)]))]))
+          [(NoneI64) (AstTyVarArgs (intern name) lifetimes)]))]))
 
 (define (tc-source-str-value-policy-message) : String
   "typecheck: str is a borrowed string-slice referent; use (& lifetime str)")
@@ -3220,23 +3222,27 @@
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx (ty-node-get inner))]
     [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
     [(AstTyEnum name)
-      (match (tc-qualified-type-visible-ok ctx name)
-        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+      (match (tc-qualified-type-visible-ok ctx (intern-str name))
+        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyStruct name)
-      (match (tc-qualified-type-visible-ok ctx name)
-        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+      (match (tc-qualified-type-visible-ok ctx (intern-str name))
+        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyEnumArgs name lifetimes)
-      (match (tc-qualified-type-visible-ok ctx name)
-        [(OkTcUnit) (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+      (match (tc-qualified-type-visible-ok ctx (intern-str name))
+        [(OkTcUnit)
+          (tc-nominal-lifetime-use-policy-ok ctx (intern-str name) lifetimes)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyStructArgs name lifetimes)
-      (match (tc-qualified-type-visible-ok ctx name)
-        [(OkTcUnit) (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+      (match (tc-qualified-type-visible-ok ctx (intern-str name))
+        [(OkTcUnit)
+          (tc-nominal-lifetime-use-policy-ok ctx (intern-str name) lifetimes)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstTyVarArgs name _) (ErrTcUnit (tc-source-type-policy-message name))]
-    [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
+    [(AstTyVarArgs name _)
+      (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
+    [(AstTyVar name)
+      (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
     [_ OkTcUnit]))
 
 (define (tc-source-maybe-type-policy-ok
@@ -4060,36 +4066,30 @@
         (tc-type-without-regions b))]
     [(AstTyEnum a-name)
       (match b
-        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [(AstTyEnum b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyEnumArgs a-name a-lifetimes)
       (match b
         [(AstTyEnumArgs b-name b-lifetimes)
-          (and
-            (string-eq a-name b-name)
-            (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and (= a-name b-name) (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyStruct a-name)
       (match b
-        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [(AstTyStruct b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyStructArgs a-name a-lifetimes)
       (match b
         [(AstTyStructArgs b-name b-lifetimes)
-          (and
-            (string-eq a-name b-name)
-            (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and (= a-name b-name) (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyVar a-name)
       (match b
-        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [(AstTyVar b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyVarArgs a-name a-lifetimes)
       (match b
         [(AstTyVarArgs b-name b-lifetimes)
-          (and
-            (string-eq a-name b-name)
-            (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+          (and (= a-name b-name) (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
 
 (define (tc-type-eq [a : AstType] [b : AstType]) : bool
@@ -4998,8 +4998,8 @@
   (let
     [ret : AstType
       (match lifetimes
-        [(AstLifetimeNil) (AstTyEnum enum-name)]
-        [_ (AstTyEnumArgs enum-name lifetimes)])]
+        [(AstLifetimeNil) (AstTyEnum (intern enum-name))]
+        [_ (AstTyEnumArgs (intern enum-name) lifetimes)])]
     (match fields
       [(AstTypeNil) ret]
       [_ (ast-ty-func (tc-resolve-type-list ctx fields) ret)])))
@@ -5096,7 +5096,7 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [enum-ty : AstType (AstTyEnum scoped-name)]
+        [enum-ty : AstType (AstTyEnum (intern scoped-name))]
         (match (tc-bind-enum-variants-in-module
           (tc-context-with-module ctx module)
           env
@@ -5116,7 +5116,7 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [enum-ty : AstType (AstTyEnumArgs scoped-name lifetimes)]
+        [enum-ty : AstType (AstTyEnumArgs (intern scoped-name) lifetimes)]
         (match (tc-bind-enum-variants-in-module
           (tc-context-with-module ctx module)
           env
@@ -5136,7 +5136,7 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [struct-ty : AstType (AstTyStruct scoped-name)]
+        [struct-ty : AstType (AstTyStruct (intern scoped-name))]
         [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
@@ -5151,7 +5151,7 @@
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
-        [struct-ty : AstType (AstTyStructArgs scoped-name lifetimes)]
+        [struct-ty : AstType (AstTyStructArgs (intern scoped-name) lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
@@ -5311,7 +5311,7 @@
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnum (compiler-symbol-module-key module name-str))]
+          (AstTyEnum (intern (compiler-symbol-module-key module name-str)))]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
@@ -5328,7 +5328,9 @@
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnumArgs (compiler-symbol-module-key module name-str) lifetimes)]
+          (AstTyEnumArgs
+            (intern (compiler-symbol-module-key module name-str))
+            lifetimes)]
         (OkTcEnv
           (tc-bind-enum-cleanup-alias
             (tc-bind-enum-variant-aliases
@@ -5345,7 +5347,7 @@
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStruct (compiler-symbol-module-key module name-str))]
+          (AstTyStruct (intern (compiler-symbol-module-key module name-str)))]
         [constructor-ty : AstType
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
@@ -5364,7 +5366,7 @@
         [name-str : String (intern-str name)]
         [struct-ty : AstType
           (AstTyStructArgs
-            (compiler-symbol-module-key module name-str)
+            (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func
@@ -5581,7 +5583,7 @@
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnum (compiler-symbol-module-key module name-str))]
+          (AstTyEnum (intern (compiler-symbol-module-key module name-str)))]
         (OkTcEnv
           (tc-bind-enum-cleanup-local
             (tc-bind-enum-variants-local
@@ -5597,7 +5599,9 @@
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
-          (AstTyEnumArgs (compiler-symbol-module-key module name-str) lifetimes)]
+          (AstTyEnumArgs
+            (intern (compiler-symbol-module-key module name-str))
+            lifetimes)]
         (OkTcEnv
           (tc-bind-enum-cleanup-local
             (tc-bind-enum-variants-local
@@ -5613,7 +5617,7 @@
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
-          (AstTyStruct (compiler-symbol-module-key module name-str))]
+          (AstTyStruct (intern (compiler-symbol-module-key module name-str)))]
         [constructor-ty : AstType
           (ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
         (OkTcEnv
@@ -5626,7 +5630,7 @@
         [name-str : String (intern-str name)]
         [struct-ty : AstType
           (AstTyStructArgs
-            (compiler-symbol-module-key module name-str)
+            (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
         [constructor-ty : AstType
           (ast-ty-func (tc-field-type-list ctx fields) struct-ty)]
@@ -6415,7 +6419,7 @@
       [(AstTyEnumArgs formal-name formal-lifetimes)
         (match got
           [(AstTyEnumArgs actual-name actual-lifetimes)
-            (if (string-eq formal-name actual-name)
+            (if (= formal-name actual-name)
               (tc-infer-lifetime-list
                 params
                 subst
@@ -6426,7 +6430,7 @@
       [(AstTyStructArgs formal-name formal-lifetimes)
         (match got
           [(AstTyStructArgs actual-name actual-lifetimes)
-            (if (string-eq formal-name actual-name)
+            (if (= formal-name actual-name)
               (tc-infer-lifetime-list
                 params
                 subst
@@ -6989,7 +6993,7 @@
                         ctx
                         env
                         func
-                        enum-name
+                        (intern-str enum-name)
                         (ty-node-get inner))]
                     [_ (ErrTcType "typecheck: arity mismatch")])]
                 [(AstTyEnumArgs enum-name _)
@@ -6999,19 +7003,29 @@
                         ctx
                         env
                         func
-                        enum-name
+                        (intern-str enum-name)
                         (ty-node-get inner))]
                     [_ (ErrTcType "typecheck: arity mismatch")])]
                 [_ (ErrTcType "typecheck: call target is not a function")])]
             [(AstTyEnum enum-name)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
+                  (tc-nullary-variant-call-expr
+                    ctx
+                    env
+                    func
+                    (intern-str enum-name)
+                    fn-ty)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [(AstTyEnumArgs enum-name _)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
+                  (tc-nullary-variant-call-expr
+                    ctx
+                    env
+                    func
+                    (intern-str enum-name)
+                    fn-ty)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
         [(ErrTcType message) (ErrTcType message)])]))
@@ -11021,12 +11035,14 @@
       (tc-inline-aggregate-type-list-finite-ok ctx elems stack)]
     [(AstTyArray elem _)
       (tc-inline-aggregate-type-finite-ok ctx (ty-node-get elem) stack)]
-    [(AstTyEnum name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+    [(AstTyEnum name)
+      (tc-inline-aggregate-nominal-finite-ok ctx (intern-str name) stack)]
     [(AstTyEnumArgs name _)
-      (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
-    [(AstTyStruct name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+      (tc-inline-aggregate-nominal-finite-ok ctx (intern-str name) stack)]
+    [(AstTyStruct name)
+      (tc-inline-aggregate-nominal-finite-ok ctx (intern-str name) stack)]
     [(AstTyStructArgs name _)
-      (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+      (tc-inline-aggregate-nominal-finite-ok ctx (intern-str name) stack)]
     [_ OkTcUnit]))
 
 (define (tc-inline-aggregate-layout-finite-ok [ctx : TcContext] [name : String]) : ResultTcUnit
@@ -11362,7 +11378,10 @@
               (tc-layout-info-align elem-info)))]
         [(ErrTcLayoutInfo message) (ErrTcLayoutInfo message)])]
     [(AstTyStruct name)
-      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+      (match (tc-inline-aggregate-layout-for-with-stack
+        ctx
+        (intern-str name)
+        stack)
         [(OkTcInlineAggregateLayout layout)
           (OkTcLayoutInfo
             (TcLayoutInfo
@@ -11370,7 +11389,10 @@
               (tc-inline-aggregate-layout-align layout)))]
         [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
     [(AstTyStructArgs name _)
-      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+      (match (tc-inline-aggregate-layout-for-with-stack
+        ctx
+        (intern-str name)
+        stack)
         [(OkTcInlineAggregateLayout layout)
           (OkTcLayoutInfo
             (TcLayoutInfo
@@ -11378,7 +11400,10 @@
               (tc-inline-aggregate-layout-align layout)))]
         [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
     [(AstTyEnum name)
-      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+      (match (tc-inline-aggregate-layout-for-with-stack
+        ctx
+        (intern-str name)
+        stack)
         [(OkTcInlineAggregateLayout layout)
           (OkTcLayoutInfo
             (TcLayoutInfo
@@ -11386,7 +11411,10 @@
               (tc-inline-aggregate-layout-align layout)))]
         [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
     [(AstTyEnumArgs name _)
-      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+      (match (tc-inline-aggregate-layout-for-with-stack
+        ctx
+        (intern-str name)
+        stack)
         [(OkTcInlineAggregateLayout layout)
           (OkTcLayoutInfo
             (TcLayoutInfo
@@ -11439,53 +11467,57 @@
     [(AstTyPtr _) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyMutPtr _) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyStruct nested)
-      (match (tc-struct-decl ctx nested)
-        [(OkTcStructDecl decl)
-          (match decl
-            [(TcStructDecl repr _ _)
-              (if (ast-struct-repr-c? repr)
-                (match (tc-repr-c-struct-layout-with-seen ctx nested seen)
-                  [(OkTcReprCLayout layout)
-                    (OkTcLayoutInfo
-                      (TcLayoutInfo
-                        (tc-repr-c-layout-size layout)
-                        (tc-repr-c-layout-align layout)))]
-                  [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
-                (ErrTcLayoutInfo
-                  (tc-cat3
-                    "typecheck: repr c struct "
-                    owner
+      (let
+        [nested-str : String (intern-str nested)]
+        (match (tc-struct-decl ctx nested-str)
+          [(OkTcStructDecl decl)
+            (match decl
+              [(TcStructDecl repr _ _)
+                (if (ast-struct-repr-c? repr)
+                  (match (tc-repr-c-struct-layout-with-seen ctx nested-str seen)
+                    [(OkTcReprCLayout layout)
+                      (OkTcLayoutInfo
+                        (TcLayoutInfo
+                          (tc-repr-c-layout-size layout)
+                          (tc-repr-c-layout-align layout)))]
+                    [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
+                  (ErrTcLayoutInfo
                     (tc-cat3
-                      " field "
-                      field
-                      (string-append
-                        " references default-layout struct "
-                        nested)))))])]
-        [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
+                      "typecheck: repr c struct "
+                      owner
+                      (tc-cat3
+                        " field "
+                        field
+                        (string-append
+                          " references default-layout struct "
+                          nested-str)))))])]
+          [(ErrTcStructDecl message) (ErrTcLayoutInfo message)]))]
     [(AstTyStructArgs nested _)
-      (match (tc-struct-decl ctx nested)
-        [(OkTcStructDecl decl)
-          (match decl
-            [(TcStructDecl repr _ _)
-              (if (ast-struct-repr-c? repr)
-                (match (tc-repr-c-struct-layout-with-seen ctx nested seen)
-                  [(OkTcReprCLayout layout)
-                    (OkTcLayoutInfo
-                      (TcLayoutInfo
-                        (tc-repr-c-layout-size layout)
-                        (tc-repr-c-layout-align layout)))]
-                  [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
-                (ErrTcLayoutInfo
-                  (tc-cat3
-                    "typecheck: repr c struct "
-                    owner
+      (let
+        [nested-str : String (intern-str nested)]
+        (match (tc-struct-decl ctx nested-str)
+          [(OkTcStructDecl decl)
+            (match decl
+              [(TcStructDecl repr _ _)
+                (if (ast-struct-repr-c? repr)
+                  (match (tc-repr-c-struct-layout-with-seen ctx nested-str seen)
+                    [(OkTcReprCLayout layout)
+                      (OkTcLayoutInfo
+                        (TcLayoutInfo
+                          (tc-repr-c-layout-size layout)
+                          (tc-repr-c-layout-align layout)))]
+                    [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
+                  (ErrTcLayoutInfo
                     (tc-cat3
-                      " field "
-                      field
-                      (string-append
-                        " references default-layout struct "
-                        nested)))))])]
-        [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
+                      "typecheck: repr c struct "
+                      owner
+                      (tc-cat3
+                        " field "
+                        field
+                        (string-append
+                          " references default-layout struct "
+                          nested-str)))))])]
+          [(ErrTcStructDecl message) (ErrTcLayoutInfo message)]))]
     [_ (ErrTcLayoutInfo (tc-repr-c-unsupported-field-message owner field ty))]))
 
 (define (tc-repr-c-fields-layout
@@ -11957,15 +11989,19 @@
 (define (tc-result-info [ctx : TcContext] [ty : AstType]) : ResultTcResultInfo
   (match (tc-type-strip-region ty)
     [(AstTyEnum enum-name)
-      (match (tc-context-enum-variants ctx enum-name)
-        [(OkAstVariantDefList variants)
-          (tc-result-info-from-variants ctx enum-name variants)]
-        [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
+      (let
+        [enum-name-str : String (intern-str enum-name)]
+        (match (tc-context-enum-variants ctx enum-name-str)
+          [(OkAstVariantDefList variants)
+            (tc-result-info-from-variants ctx enum-name-str variants)]
+          [(ErrAstVariantDefList message) (ErrTcResultInfo message)]))]
     [(AstTyEnumArgs enum-name _)
-      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
-        [(OkAstVariantDefList variants)
-          (tc-result-info-from-variants ctx enum-name variants)]
-        [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
+      (let
+        [enum-name-str : String (intern-str enum-name)]
+        (match (tc-program-enum-variants (tc-context-program ctx) enum-name-str)
+          [(OkAstVariantDefList variants)
+            (tc-result-info-from-variants ctx enum-name-str variants)]
+          [(ErrAstVariantDefList message) (ErrTcResultInfo message)]))]
     [_ (ErrTcResultInfo "typecheck: try requires Result-like enum")]))
 
 (define (tc-try-infos-compatible
@@ -12162,12 +12198,16 @@
   [field : String]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(AstTyStruct struct-name)
-      (match (tc-struct-field-type ctx struct-name field)
+      (match (tc-struct-field-type ctx (intern-str struct-name) field)
         [(OkTcType field-ty)
           (OkTcType (tc-project-from-region-container receiver-ty field-ty))]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstTyStructArgs struct-name lifetimes)
-      (match (tc-struct-field-type-with-args ctx struct-name lifetimes field)
+      (match (tc-struct-field-type-with-args
+        ctx
+        (intern-str struct-name)
+        lifetimes
+        field)
         [(OkTcType field-ty)
           (OkTcType (tc-project-from-region-container receiver-ty field-ty))]
         [(ErrTcType message) (ErrTcType message)])]
@@ -12219,7 +12259,7 @@
     [(TcBorrowPlace lifetime receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstTyStruct struct-name)
-          (match (tc-struct-field-type ctx struct-name field)
+          (match (tc-struct-field-type ctx (intern-str struct-name) field)
             [(OkTcType field-ty)
               (OkTcBorrowPlace
                 (TcBorrowPlace lifetime (tc-borrow-referent-type field-ty)))]
@@ -12227,7 +12267,7 @@
         [(AstTyStructArgs struct-name lifetimes)
           (match (tc-struct-field-type-with-args
             ctx
-            struct-name
+            (intern-str struct-name)
             lifetimes
             field)
             [(OkTcType field-ty)
@@ -12535,7 +12575,7 @@
               (tc-bind-variant-pattern
                 ctx
                 env
-                enum-name
+                (intern-str enum-name)
                 (intern-str name)
                 AstLifetimeNil
                 args
@@ -12544,7 +12584,7 @@
               (tc-bind-variant-pattern
                 ctx
                 env
-                enum-name
+                (intern-str enum-name)
                 (intern-str name)
                 lifetimes
                 args
@@ -12674,7 +12714,7 @@
                 ctx
                 env
                 lifetime
-                enum-name
+                (intern-str enum-name)
                 (intern-str name)
                 AstLifetimeNil
                 args)]
@@ -12683,7 +12723,7 @@
                 ctx
                 env
                 lifetime
-                enum-name
+                (intern-str enum-name)
                 (intern-str name)
                 lifetimes
                 args)]
@@ -12739,7 +12779,7 @@
               ctx
               env
               lifetime
-              enum-name
+              (intern-str enum-name)
               AstLifetimeNil
               pattern)]
           [(AstTyEnumArgs enum-name lifetimes)
@@ -12747,7 +12787,7 @@
               ctx
               env
               lifetime
-              enum-name
+              (intern-str enum-name)
               lifetimes
               pattern)]
           [_
@@ -12768,7 +12808,7 @@
           (tc-bind-variant-pattern
             ctx
             env
-            enum-name
+            (intern-str enum-name)
             (intern-str variant-name)
             AstLifetimeNil
             AstPatternNil
@@ -12779,7 +12819,7 @@
             (tc-bind-variant-pattern
               ctx
               env
-              enum-name
+              (intern-str enum-name)
               (intern-str variant-name)
               AstLifetimeNil
               args
@@ -12792,7 +12832,7 @@
           (tc-bind-variant-pattern
             ctx
             env
-            enum-name
+            (intern-str enum-name)
             (intern-str variant-name)
             lifetimes
             AstPatternNil
@@ -12803,7 +12843,7 @@
             (tc-bind-variant-pattern
               ctx
               env
-              enum-name
+              (intern-str enum-name)
               (intern-str variant-name)
               lifetimes
               args
@@ -13016,35 +13056,41 @@
         [args : AstPatternList (box-get args-box)]
         (match (tc-type-strip-region (tc-resolve-type ctx field-ty))
           [(AstTyEnum enum-name)
-            (match (tc-context-enum-variants ctx enum-name)
-              [(OkAstVariantDefList variants)
-                (if (tc-enum-has-single-variant?
-                  ctx
-                  variants
-                  enum-name
-                  (intern-str name))
-                  (tc-variant-pattern-irrefutable?
+            (let
+              [enum-name-str : String (intern-str enum-name)]
+              (match (tc-context-enum-variants ctx enum-name-str)
+                [(OkAstVariantDefList variants)
+                  (if (tc-enum-has-single-variant?
                     ctx
-                    enum-name
-                    (intern-str name)
-                    args)
-                  false)]
-              [(ErrAstVariantDefList _) false])]
+                    variants
+                    enum-name-str
+                    (intern-str name))
+                    (tc-variant-pattern-irrefutable?
+                      ctx
+                      enum-name-str
+                      (intern-str name)
+                      args)
+                    false)]
+                [(ErrAstVariantDefList _) false]))]
           [(AstTyEnumArgs enum-name _)
-            (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
-              [(OkAstVariantDefList variants)
-                (if (tc-enum-has-single-variant?
-                  ctx
-                  variants
-                  enum-name
-                  (intern-str name))
-                  (tc-variant-pattern-irrefutable?
+            (let
+              [enum-name-str : String (intern-str enum-name)]
+              (match (tc-program-enum-variants
+                (tc-context-program ctx)
+                enum-name-str)
+                [(OkAstVariantDefList variants)
+                  (if (tc-enum-has-single-variant?
                     ctx
-                    enum-name
-                    (intern-str name)
-                    args)
-                  false)]
-              [(ErrAstVariantDefList _) false])]
+                    variants
+                    enum-name-str
+                    (intern-str name))
+                    (tc-variant-pattern-irrefutable?
+                      ctx
+                      enum-name-str
+                      (intern-str name)
+                      args)
+                    false)]
+                [(ErrAstVariantDefList _) false]))]
           [_ false]))]
     [_ false]))
 
@@ -13268,15 +13314,21 @@
   [arms : AstMatchArmList]) : ResultTcUnit
   (match (tc-type-strip-region scrut-ty)
     [(AstTyEnum enum-name)
-      (match (tc-context-enum-variants ctx enum-name)
-        [(OkAstVariantDefList variants)
-          (tc-enum-variants-exhaustive-ok ctx enum-name variants arms)]
-        [(ErrAstVariantDefList _) (ErrTcUnit "typecheck: non-exhaustive match")])]
+      (let
+        [enum-name-str : String (intern-str enum-name)]
+        (match (tc-context-enum-variants ctx enum-name-str)
+          [(OkAstVariantDefList variants)
+            (tc-enum-variants-exhaustive-ok ctx enum-name-str variants arms)]
+          [(ErrAstVariantDefList _)
+            (ErrTcUnit "typecheck: non-exhaustive match")]))]
     [(AstTyEnumArgs enum-name _)
-      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
-        [(OkAstVariantDefList variants)
-          (tc-enum-variants-exhaustive-ok ctx enum-name variants arms)]
-        [(ErrAstVariantDefList _) (ErrTcUnit "typecheck: non-exhaustive match")])]
+      (let
+        [enum-name-str : String (intern-str enum-name)]
+        (match (tc-program-enum-variants (tc-context-program ctx) enum-name-str)
+          [(OkAstVariantDefList variants)
+            (tc-enum-variants-exhaustive-ok ctx enum-name-str variants arms)]
+          [(ErrAstVariantDefList _)
+            (ErrTcUnit "typecheck: non-exhaustive match")]))]
     [(AstTyBool) (tc-match-bool-exhaustive-ok arms)]
     [_
       (if (tc-match-arms-have-catchall? arms)
@@ -13362,7 +13414,7 @@
     [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
     [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
 
-;; spmd-reduce purity/effect rules (#1011, SPEC.md Â§5.15): mirror the Rust
+;; spmd-reduce purity/effect rules (#1011, SPEC.md 5.15): mirror the Rust
 ;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
 ;; narrow, clearly-pure surface and rejects everything else with a focused
 ;; diagnostic rather than guessing at varying/uniform semantics not yet
@@ -13418,40 +13470,40 @@
         [index : AstExpr (ast-node-get index-box)]
         (if in-index
           (ErrTcUnit
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md Â§5.15)")
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md 5.15)")
           (match (tc-spmd-value-pure-at array false)
             [(OkTcUnit) (tc-spmd-value-pure-at index true)]
             [(ErrTcUnit message) (ErrTcUnit message)])))]
     [(AstExprSet _ _)
       (ErrTcUnit
-        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md Â§5.15)")]
+        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md 5.15)")]
     [(AstExprArraySet _ _ _)
       (ErrTcUnit
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.15)")]
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(AstExprArrayPush _ _)
       (ErrTcUnit
-        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.15)")]
+        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(AstExprCall _ _)
       (ErrTcUnit
-        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md Â§5.15)")]
+        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")]
     [(AstExprForeach _ _ _ _ _)
       (ErrTcUnit
-        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md Â§5.15)")]
+        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
     [(AstExprSpmdReduce _ _ _ _ _ _ _)
       (ErrTcUnit
-        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md Â§5.15)")]
+        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
     [(AstExprIf _ _ _)
       (ErrTcUnit
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")]
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
     [(AstExprWhile _ _)
       (ErrTcUnit
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")]
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
     [(AstExprMatch _ _)
       (ErrTcUnit
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.15)")]
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
     [_
       (ErrTcUnit
-        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md Â§5.15)")]))
+        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md 5.15)")]))
 
 (define (tc-spmd-value-let-bindings-pure-at
   [bindings : AstLetBindingList]
@@ -13904,11 +13956,14 @@
             (match (tc-init-aggregate-layout-ok ctx resolved)
               [(OkTcUnit) (tc-init-type-supported ctx env (ty-node-get elem))]
               [(ErrTcUnit message) (ErrTcUnit message)]))]
-        [(AstTyStruct name) (tc-init-struct-supported ctx env name resolved)]
+        [(AstTyStruct name)
+          (tc-init-struct-supported ctx env (intern-str name) resolved)]
         [(AstTyStructArgs name _)
-          (tc-init-struct-supported ctx env name resolved)]
-        [(AstTyEnum name) (tc-init-enum-supported ctx env name resolved)]
-        [(AstTyEnumArgs name _) (tc-init-enum-supported ctx env name resolved)]
+          (tc-init-struct-supported ctx env (intern-str name) resolved)]
+        [(AstTyEnum name)
+          (tc-init-enum-supported ctx env (intern-str name) resolved)]
+        [(AstTyEnumArgs name _)
+          (tc-init-enum-supported ctx env (intern-str name) resolved)]
         [_ (ErrTcUnit (tc-init-unsupported-message ctx resolved))]))))
 
 (define (tc-init-expr [ctx : TcContext] [env : TcTypeEnv] [ty : AstType]) : ResultTcType
@@ -14956,9 +15011,9 @@
 (define (tc-macro-signature-type [ty : AstType]) : AstType
   (match ty
     [(AstTyVar name)
-      (if (string-eq name "Expr")
+      (if (= name (intern "Expr"))
         (AstTyExpr)
-        (if (string-eq name "ExprList")
+        (if (= name (intern "ExprList"))
           (AstTyExprList)
           ty))]
     [_ ty]))
@@ -20330,13 +20385,13 @@
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct struct-name)
-      (match (tc-struct-decl ctx struct-name)
+      (match (tc-struct-decl ctx (intern-str struct-name))
         [(OkTcStructDecl decl)
           (match decl
             [(TcStructDecl _ cleanup _) (ast-struct-cleanup? cleanup)])]
         [(ErrTcStructDecl _) false])]
     [(AstTyStructArgs struct-name _)
-      (match (tc-struct-decl ctx struct-name)
+      (match (tc-struct-decl ctx (intern-str struct-name))
         [(OkTcStructDecl decl)
           (match decl
             [(TcStructDecl _ cleanup _) (ast-struct-cleanup? cleanup)])]
@@ -20346,13 +20401,13 @@
 (define (tc-cleanup-owning-enum-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyEnum enum-name)
-      (match (tc-enum-decl ctx enum-name)
+      (match (tc-enum-decl ctx (intern-str enum-name))
         [(OkTcEnumDecl decl)
           (match decl
             [(TcEnumDecl cleanup _) (ast-enum-cleanup? cleanup)])]
         [(ErrTcEnumDecl _) false])]
     [(AstTyEnumArgs enum-name _)
-      (match (tc-enum-decl ctx enum-name)
+      (match (tc-enum-decl ctx (intern-str enum-name))
         [(OkTcEnumDecl decl)
           (match decl
             [(TcEnumDecl cleanup _) (ast-enum-cleanup? cleanup)])]
@@ -20749,8 +20804,8 @@
       (compiler-symbol-module-key (tc-context-module ctx) name)]
     [enum-ty : AstType
       (match lifetimes
-        [(AstLifetimeNil) (AstTyEnum enum-name)]
-        [_ (AstTyEnumArgs enum-name lifetimes)])]
+        [(AstLifetimeNil) (AstTyEnum (intern enum-name))]
+        [_ (AstTyEnumArgs (intern enum-name) lifetimes)])]
     (match (tc-check-enum-cleanup-fn ctx env enum-name cleanup enum-ty)
       [(OkTcUnit)
         (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]

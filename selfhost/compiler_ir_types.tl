@@ -1038,15 +1038,15 @@
         (string-append
           " "
           (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
-    [(AstTyEnum name) name]
+    [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render name lifetimes)]
-    [(AstTyStruct name) name]
+      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+    [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render name lifetimes)]
-    [(AstTyVar name) name]
+      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+    [(AstTyVar name) (intern-str name)]
     [(AstTyVarArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render name lifetimes)]
+      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
     [(AstTyPtr elem)
       (compiler-ir-cat3
         "(Ptr "
@@ -2187,15 +2187,15 @@
         " "
         (compiler-ir-type-name (ty-node-get inner))
         ")")]
-    [(AstTyEnum name) name]
+    [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render name lifetimes)]
-    [(AstTyStruct name) name]
+      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+    [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render name lifetimes)]
-    [(AstTyVar name) (compiler-ir-cat3 "'" name "'")]
+      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
+    [(AstTyVar name) (compiler-ir-cat3 "'" (intern-str name) "'")]
     [(AstTyVarArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render name lifetimes)]
+      (compiler-ir-nominal-lifetime-render (intern-str name) lifetimes)]
     [(AstTyPtr elem)
       (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyMutPtr elem)

@@ -254,26 +254,26 @@
           (string-append
             " "
             (string-append (repl-type-render (ty-node-get inner)) ")"))))]
-    [(AstTyEnum name) name]
+    [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
       (string-append
         "("
         (string-append
-          name
+          (intern-str name)
           (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
-    [(AstTyStruct name) name]
+    [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
       (string-append
         "("
         (string-append
-          name
+          (intern-str name)
           (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
-    [(AstTyVar name) (string-append "'" (string-append name "'"))]
+    [(AstTyVar name) (string-append "'" (string-append (intern-str name) "'"))]
     [(AstTyVarArgs name lifetimes)
       (string-append
         "("
         (string-append
-          name
+          (intern-str name)
           (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]))
 
 (define (repl-print-error-line [message : String]) : unit

@@ -5,6 +5,8 @@
 
 (import "compiler_symbols.tl")
 
+(import "compiler_builtin_ids.tl")
+
 (import "compiler_diagnostic.tl")
 
 (import "compiler_ctfe.tl")
@@ -799,6 +801,11 @@
 
 (define (tc-name-id [name : String]) : i64
   (intern name))
+
+(define (tc-builtin-name-id [name : String]) : i64
+  (begin
+    (compiler-builtin-refresh!)
+    (tc-name-id name)))
 
 (define (tc-bind-raw-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name-id ty (box env)))
@@ -6084,18 +6091,7 @@
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
-  (core/cond
-    (string-eq name "string-length")
-    true
-    (string-eq name "length")
-    true
-    (string-eq name "string-eq")
-    true
-    (string-eq name "string=?")
-    true
-    (string-eq name "string->int")
-    true
-    false))
+  (compiler-builtin-typecheck-region-arg-id? (tc-builtin-name-id name)))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -7246,26 +7242,21 @@
     [_ (ErrTcType "typecheck: arity mismatch")]))
 
 (define (tc-borrowed-string-builtin-name? [name : String]) : bool
-  (core/cond
-    (string-eq name "string-eq")
-    true
-    (string-eq name "string=?")
-    true
-    (string-eq name "string->int")
-    true
-    false))
+  (compiler-builtin-typecheck-borrowed-string-id? (tc-builtin-name-id name)))
 
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
   [args : AstExprList]) : ResultTcType
-  (core/cond
-    (or (string-eq name "string-eq") (string-eq name "string=?"))
-    (tc-two-string-handle-builtin-call ctx env args (AstTyBool))
-    (string-eq name "string->int")
-    (tc-one-string-handle-builtin-call ctx env args (AstTyI64))
-    (ErrTcType "typecheck: unknown borrowed string builtin")))
+  (let
+    [name-id : i64 (tc-builtin-name-id name)]
+    (core/cond
+      (compiler-builtin-typecheck-string-eq-id? name-id)
+      (tc-two-string-handle-builtin-call ctx env args (AstTyBool))
+      (compiler-builtin-typecheck-string-to-int-id? name-id)
+      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))
+      (ErrTcType "typecheck: unknown borrowed string builtin"))))
 
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
 ;; String plus any integer index, yielding `char`. The parser emits this as an
@@ -7315,7 +7306,7 @@
     (tc-default-builtin-unshadowed? env name)
     (tc-string-handle-type? arg-ty))
     (OkTcType (AstTyI64))
-    (if (string-eq name "string-length")
+    (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
       (if (tc-default-builtin-unshadowed? env name)
         (ErrTcType "typecheck: argument type mismatch")
         (tc-call-expr ctx env func args))
@@ -7328,7 +7319,7 @@
   [func : AstExpr]
   [args : AstExprList]
   [arg-ty : AstType]) : ResultTcType
-  (if (string-eq name "array-length")
+  (if (compiler-builtin-typecheck-array-length-id? (tc-builtin-name-id name))
     (ErrTcType "typecheck: array-length requires dynamic array")
     (tc-length-string-call ctx env name func args arg-ty)))
 
@@ -7338,7 +7329,7 @@
   [name : String]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (if (string-eq name "string-length")
+  (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
     (if (tc-default-builtin-unshadowed? env name)
       (ErrTcType "typecheck: argument type mismatch")
       (tc-call-expr ctx env func args))
@@ -7375,11 +7366,13 @@
                       arg-ty)])]
               [(ErrTcType message) (ErrTcType message)])]
           [_
-            (if (string-eq name "array-length")
+            (if (compiler-builtin-typecheck-array-length-id?
+              (tc-builtin-name-id name))
               (ErrTcType "typecheck: arity mismatch")
               (tc-call-expr ctx env func args))]))]
     [_
-      (if (string-eq name "array-length")
+      (if (compiler-builtin-typecheck-array-length-id?
+        (tc-builtin-name-id name))
         (ErrTcType "typecheck: arity mismatch")
         (tc-call-expr ctx env func args))]))
 
@@ -7536,15 +7529,14 @@
       ;; ordinary call/resolution paths.
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
+        [name-id : i64 (tc-builtin-name-id name)]
         (core/cond
           (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
           (tc-layout-query-runtime-call name args)
-          (or
-            (string-eq name "array-length")
-            (or (string-eq name "length") (string-eq name "string-length")))
+          (compiler-builtin-typecheck-length-call-id? name-id)
           (tc-array-length-call ctx env name func args)
           (and
-            (or (string-eq name "string-ref") (string-eq name "char-at"))
+            (compiler-builtin-typecheck-string-ref-call-id? name-id)
             (not (tc-name-bound? env name)))
           (tc-string-ref-call ctx env args)
           (and
@@ -7555,7 +7547,9 @@
             (ctfe-reflection-query-name? name)
             (not (tc-name-bound? env name)))
           (tc-reflection-query-runtime-call name)
-          (and (string-eq name "clone") (not (tc-name-bound? env name)))
+          (and
+            (compiler-builtin-typecheck-clone-id? name-id)
+            (not (tc-name-bound? env name)))
           (tc-clone-call ctx env args)
           (tc-call-expr ctx env func args)))]
     [_ (tc-call-expr ctx env func args)]))

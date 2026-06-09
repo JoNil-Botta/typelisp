@@ -1050,8 +1050,14 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExprQuote _) names]
-    [(AstExprQuasiquote _) names]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
     [(AstExprUnquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -1182,7 +1188,10 @@
             (if (string-i64-map-contains? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
-    [(AstDeclDefMacro _ _ _ _) names]
+    [(AstDeclDefMacro _ _ _ body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tltest-reach-mark-expr body names))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1325,6 +1334,7 @@
   (match decl
     [(AstDeclDef name _ _) (intern-str name)]
     [(AstDeclDefFn name _ _ _ _) (intern-str name)]
+    [(AstDeclDefMacro name _ _ _) (intern-str name)]
     [(AstDeclExtern name _ _ _) (intern-str name)]
     [(AstDeclUnsafe inner-box)
       (let
@@ -1459,6 +1469,64 @@
   (if (tltest-import-alias-preserved-self-test?)
     unit
     (panic "test CLI inline harness dropped import alias")))
+
+(define (tltest-macro-quasiquote-deps-self-test?) : bool
+  (let
+    [helper-name : String "__tl_macro_generated_helper"]
+    [macro-name : String "__tl_macro_generated_call"]
+    [helper-decl : AstDecl
+      (ast-decl-def-fn
+        helper-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [macro-decl : AstDecl
+      (ast-decl-def-macro
+        macro-name
+        AstMacroParamNil
+        (AstTyExpr)
+        (ast-expr-quasiquote (tltest-call-expr helper-name)))]
+    [span : AstSourceSpan (AstSourceSpan 31 1 31 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        helper-decl
+        (ast-decl-cons
+          macro-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "uses-macro-generated-helper"
+              (tltest-call-expr macro-name)
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "macro-deps.tl"
+        (ast-decl-path-cons
+          "macro-deps.tl"
+          (ast-decl-path-cons "macro-deps.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (and
+                  (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
+                  (and
+                    (string-eq (tltest-decl-name-at harness-decls 1) macro-name)
+                    (and
+                      (string-eq
+                        (tltest-decl-name-at harness-decls 2)
+                        "__tl_inline_test_0")
+                      (string-eq (tltest-decl-name-at harness-decls 3) "main"))))))])])))
+
+(test
+  test-cli-inline-harness-keeps-macro-quasiquote-deps
+  (if (tltest-macro-quasiquote-deps-self-test?)
+    unit
+    (panic "test CLI inline harness dropped macro quasiquote dependency")))
 
 (define (tltest-check-only
   [program : AstProgram]

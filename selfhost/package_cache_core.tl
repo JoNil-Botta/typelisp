@@ -11,6 +11,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum PackageCachePinKind
   (PackageCachePinRev)
   (PackageCachePinTag)
@@ -46,9 +48,6 @@
 
 (define package-cache-complete-marker-name : String
   ".typelisp-cache-complete")
-
-(define (package-cache-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (package-cache-pin-kind-name [kind : PackageCachePinKind]) : String
   (match kind
@@ -86,10 +85,7 @@
     (string-eq value "branch")
     (OkPackageCachePinKind (PackageCachePinBranch))
     (ErrPackageCachePinKind
-      (package-cache-cat3
-        "package-cache: unsupported remote pin kind '"
-        value
-        "'"))))
+      (str-cat "package-cache: unsupported remote pin kind '" value "'"))))
 
 (define (package-cache-find-code-from
   [text : String]
@@ -149,7 +145,7 @@
             (OkPackageCacheKey (PackageCacheKey (struct-get spec url) commit))))]
       [_
         (ErrPackageCacheKey
-          (package-cache-cat3
+          (str-cat
             "package-cache: cache key requires exact rev pin, got "
             (package-cache-pin-kind-name kind)
             ""))])))
@@ -205,7 +201,7 @@
     [byte : i64 (% code 256)]
     [hi : i64 (/ byte 16)]
     [lo : i64 (% byte 16)]
-    (package-cache-cat3
+    (str-cat
       "_x"
       (package-cache-hex-digit hi)
       (string-append (package-cache-hex-digit lo) "_"))))

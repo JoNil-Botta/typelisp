@@ -219,26 +219,23 @@
 (define build-status-already-exists : i64
   17)
 
-(define (build-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
 (define (build-invalid-manifest-message [diag : CompilerDiagnostic]) : String
-  (build-cat3
+  (str-cat
     "invalid package manifest '"
     (compiler-diagnostic-path diag)
     (string-append "': " (compiler-diagnostic-message diag))))
 
 (define (build-unknown-target [value : String]) : String
-  (build-cat3 "build: unknown target " value ""))
+  (str-cat "build: unknown target " value ""))
 
 (define (build-unknown-mode [value : String]) : String
-  (build-cat3 "build: unknown backend mode " value ""))
+  (str-cat "build: unknown backend mode " value ""))
 
 (define (build-unknown-opt-level [value : String]) : String
-  (build-cat3 "build: unknown opt level '" value "'; expected 0, 1, 2, or 3"))
+  (str-cat "build: unknown opt level '" value "'; expected 0, 1, 2, or 3"))
 
 (define (build-unknown-profile [value : String]) : String
-  (build-cat3 "build: unknown profile '" value "'; expected dev or release"))
+  (str-cat "build: unknown profile '" value "'; expected dev or release"))
 
 (define (build-default-profile) : BuildProfile
   (BuildProfileRelease))
@@ -793,7 +790,7 @@
       [(ErrCompilerPkgManifestDiagnostic diag)
         (ErrBuildManifest (build-invalid-manifest-message diag))])
     (ErrBuildManifest
-      (build-cat3 "cannot read package manifest '" manifest-path "'"))))
+      (str-cat "cannot read package manifest '" manifest-path "'"))))
 
 (define (build-package-output-dir [manifest-dir : String] [name : String]) : String
   (build-package-output-dir-profile manifest-dir name (build-default-profile)))
@@ -1038,7 +1035,7 @@
       (match (try-read-file (& path))
         [(ErrIoString error)
           (ErrBuildPackageLockState
-            (build-cat3
+            (str-cat
               "build: cannot read package lock '"
               path
               (string-append "': " (io-error-message error))))]
@@ -1046,7 +1043,7 @@
           (match (package-lock-parse source)
             [(ErrPackageLockFile message)
               (ErrBuildPackageLockState
-                (build-cat3
+                (str-cat
                   "build: invalid package lock '"
                   path
                   (string-append "': " message)))]
@@ -1067,7 +1064,7 @@
       [(OkIoUnit) (OkBuildString path)]
       [(ErrIoUnit error)
         (ErrBuildString
-          (build-cat3
+          (str-cat
             "build: cannot write package lock '"
             path
             (string-append "': " (io-error-message error))))])))

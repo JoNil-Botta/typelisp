@@ -4546,37 +4546,38 @@
   [src : CompilerIrValue]
   [src-offset : i64]
   [size : i64]) : LowerState
-  (if (<= size 0)
+  (core/cond
+    (<= size 0)
     state
-    (if (> size lower-inline-copy-threshold)
-      ;; Large copy: one tl_memcpy call instead of size/8 inline chunks.
-      (lower-emit-memcpy state dst dst-offset src src-offset size)
-      (if (> size 16)
-        ;; Mid-size copy (17..64 B): one IrInstrCopyBytes instead of size/8
-        ;; gep+load+store word chunks. At -O1 every word chunk round-trips its
-        ;; intermediate var through a fresh stack slot (~6 movq per word); the
-        ;; backend expands IrInstrCopyBytes as two base loads plus 16-byte
-        ;; movups pairs, and one IR instruction replaces up to 24 so the
-        ;; optimizer passes also walk less IR (#2371).
-        (match (lower-offset-addr state dst dst-offset)
-          [(LowerExpr dst-state dst-addr _)
-            (match (lower-offset-addr dst-state src src-offset)
-              [(LowerExpr src-state src-addr _)
-                (lower-state-emit
-                  src-state
-                  (IrInstrCopyBytes dst-addr src-addr size))])])
-        (let
-          [chunk : i64 (lower-copy-chunk-size size)]
-          [chunk-ty : AstType (lower-copy-chunk-type chunk)]
-          (match (lower-load-at-offset state src src-offset chunk-ty)
-            [(LowerExpr loaded value _)
-              (lower-copy-bytes
-                (lower-store-at-offset loaded dst dst-offset value chunk-ty)
-                dst
-                (+ dst-offset chunk)
-                src
-                (+ src-offset chunk)
-                (- size chunk))]))))))
+    ;; Large copy: one tl_memcpy call instead of size/8 inline chunks.
+    (> size lower-inline-copy-threshold)
+    (lower-emit-memcpy state dst dst-offset src src-offset size)
+    ;; Mid-size copy (17..64 B): one IrInstrCopyBytes instead of size/8
+    ;; gep+load+store word chunks. At -O1 every word chunk round-trips its
+    ;; intermediate var through a fresh stack slot (~6 movq per word); the
+    ;; backend expands IrInstrCopyBytes as two base loads plus 16-byte
+    ;; movups pairs, and one IR instruction replaces up to 24 so the
+    ;; optimizer passes also walk less IR (#2371).
+    (> size 16)
+    (match (lower-offset-addr state dst dst-offset)
+      [(LowerExpr dst-state dst-addr _)
+        (match (lower-offset-addr dst-state src src-offset)
+          [(LowerExpr src-state src-addr _)
+            (lower-state-emit
+              src-state
+              (IrInstrCopyBytes dst-addr src-addr size))])])
+    (let
+      [chunk : i64 (lower-copy-chunk-size size)]
+      [chunk-ty : AstType (lower-copy-chunk-type chunk)]
+      (match (lower-load-at-offset state src src-offset chunk-ty)
+        [(LowerExpr loaded value _)
+          (lower-copy-bytes
+            (lower-store-at-offset loaded dst dst-offset value chunk-ty)
+            dst
+            (+ dst-offset chunk)
+            src
+            (+ src-offset chunk)
+            (- size chunk))]))))
 
 ;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) only
 ;; when it is a struct or enum (incl. their generic …Args forms). Tuples,

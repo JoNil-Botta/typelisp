@@ -5412,6 +5412,25 @@
     (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetLinux))
     (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetWindows))))
 
+(define (compiler-backend-inline-aggregate-copy-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-inline-aggregates-for-target
+    (compiler-lower-inline-aggregate-copy-source)
+    target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "id_pair")
+        (compiler-backend-string-contains? asm "(%r11), %rax")
+        (compiler-backend-string-contains? asm "%rax, (%r10)")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-aggregate-copy-ok?) : bool
+  (and
+    (compiler-backend-inline-aggregate-copy-target-ok? (BackendTargetLinux))
+    (compiler-backend-inline-aggregate-copy-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-inline-aggregate-storage-ok?) : bool
   (and
     (compiler-backend-inline-struct-ok?)
@@ -5419,7 +5438,9 @@
       (compiler-backend-inline-enum-ok?)
       (and
         (compiler-backend-inline-boxed-recursive-ok?)
-        (compiler-backend-inline-aggregate-call-ok?)))))
+        (and
+          (compiler-backend-inline-aggregate-call-ok?)
+          (compiler-backend-inline-aggregate-copy-ok?))))))
 
 (define (compiler-backend-test-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode

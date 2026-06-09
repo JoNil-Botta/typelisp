@@ -4471,6 +4471,19 @@
             (+ src-offset chunk)
             (- size chunk))]))))
 
+(define (lower-copy-bytes-compact
+  [state : LowerState]
+  [dst : CompilerIrValue]
+  [dst-offset : i64]
+  [src : CompilerIrValue]
+  [src-offset : i64]
+  [size : i64]) : LowerState
+  (if (<= size 0)
+    state
+    (if (and (= dst-offset 0) (= src-offset 0))
+      (lower-state-emit state (IrInstrCopyBytes dst src size))
+      (lower-copy-bytes state dst dst-offset src src-offset size))))
+
 (define (lower-inline-aggregate-copy-size [ctx : TcContext] [ty : AstType]) : ResultLowerSize
   (match (tc-inline-aggregate-type-layout ctx ty)
     [(OkTcLayoutInfo info)
@@ -4489,7 +4502,7 @@
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
-              (lower-copy-bytes copy-state copy-value 0 value 0 size)
+              (lower-copy-bytes-compact copy-state copy-value 0 value 0 size)
               copy-value
               ty))])]
     [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
@@ -4505,7 +4518,7 @@
         [(LowerExpr copy-state copy-value _)
           (OkLowerExpr
             (LowerExpr
-              (lower-copy-bytes copy-state copy-value 0 value 0 size)
+              (lower-copy-bytes-compact copy-state copy-value 0 value 0 size)
               copy-value
               ty))])]
     [(ErrLowerSize message) (ErrLowerExpr (lower-diagnostic message))]))
@@ -23866,6 +23879,12 @@
     [x : BadList (BadCons 1 BadNil)]
     0))")
 
+(define (compiler-lower-inline-aggregate-copy-source) : String
+  "(defstruct Pair (a i64) (b i64))
+(define (id-pair [p : Pair]) : Pair p)
+(define (main) : i64
+  (struct-get (id-pair (Pair 20 22)) b))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-inline-struct-source)
@@ -23960,6 +23979,18 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-aggregate-copy-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-inline-aggregate-copy-source)
+    (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-copy-bytes-count functions "id-pair") 2)
+            (= (lower-test-function-store-ptr-count functions "id-pair") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -23967,9 +23998,11 @@
       (compiler-lower-inline-enum-shape-ok?)
       (and
         (compiler-lower-inline-boxed-recursive-shape-ok?)
-        (compiler-lower-inline-error-ok?
-          (compiler-lower-inline-recursive-error-source)
-          "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))
+        (and
+          (compiler-lower-inline-aggregate-copy-shape-ok?)
+          (compiler-lower-inline-error-ok?
+            (compiler-lower-inline-recursive-error-source)
+            "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge"))))))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (:generated point-family Point \"i64-i64\")
@@ -24433,6 +24466,11 @@
     [(IrInstrStorePtr _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-copy-bytes-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCopyBytes _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-alloc-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrAlloc _ _) 1]
@@ -24785,6 +24823,14 @@
       (+
         (lower-test-instr-store-ptr-count instr)
         (lower-test-instrs-store-ptr-count (box-get rest)))]))
+
+(define (lower-test-instrs-copy-bytes-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-copy-bytes-count instr)
+        (lower-test-instrs-copy-bytes-count (box-get rest)))]))
 
 (define (lower-test-instrs-alloc-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -25202,6 +25248,21 @@
           (set!
             acc
             (+ acc (lower-test-instr-store-ptr-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-copy-bytes-count [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+ acc (lower-test-instr-copy-bytes-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -25686,6 +25747,18 @@
     [(IrBlockArray seq)
       (lower-test-blocks-store-ptr-count (compiler-ir-block-seq-to-list seq))]))
 
+(define (lower-test-blocks-copy-bytes-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instr-seq-copy-bytes-count instrs)
+            (lower-test-blocks-copy-bytes-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (lower-test-blocks-copy-bytes-count (compiler-ir-block-seq-to-list seq))]))
+
 (define (lower-test-blocks-alloc-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
@@ -26145,6 +26218,18 @@
           (if (string-eq fname name)
             (lower-test-blocks-store-ptr-count blocks)
             (lower-test-function-store-ptr-count (box-get rest) name))])]))
+
+(define (lower-test-function-copy-bytes-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-copy-bytes-count blocks)
+            (lower-test-function-copy-bytes-count (box-get rest) name))])]))
 
 (define (lower-test-function-alloc-count
   [funcs : CompilerIrFunctionList]

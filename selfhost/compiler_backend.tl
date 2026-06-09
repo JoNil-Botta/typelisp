@@ -4926,6 +4926,82 @@
     "(%r10)"
     (backend-cat4 (int->string disp) "(%r10)" "" "")))
 
+(define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
+  (if (= disp 0)
+    (backend-cat4 "(" reg ")" "")
+    (backend-cat4 (int->string disp) "(" reg ")")))
+
+(define (compiler-backend-copy-chunk-size [remaining : i64]) : i64
+  (core/cond (>= remaining 8) 8 (>= remaining 4) 4 (>= remaining 2) 2 1))
+
+(define (compiler-backend-copy-chunk-type [chunk : i64]) : AstType
+  (core/cond
+    (= chunk 8)
+    (AstTyU64)
+    (= chunk 4)
+    (AstTyU32)
+    (= chunk 2)
+    (AstTyU16)
+    (AstTyU8)))
+
+(define (compiler-backend-emit-copy-bytes-chunks
+  [offset : i64]
+  [remaining : i64]) : String
+  (if (<= remaining 0)
+    ""
+    (let
+      [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
+      [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
+      [reg : String (compiler-backend-sized-reg "%rax" chunk-ty)]
+      (string-append
+        (backend-cat5
+          "    mov"
+          (compiler-backend-int-instruction-suffix chunk-ty)
+          " "
+          (compiler-backend-copy-address offset "%r11")
+          ", ")
+        (string-append
+          reg
+          (string-append
+            "\n"
+            (string-append
+              (backend-cat5
+                "    mov"
+                (compiler-backend-int-instruction-suffix chunk-ty)
+                " "
+                reg
+                ", ")
+              (string-append
+                (compiler-backend-copy-address offset "%r10")
+                (string-append
+                  "\n"
+                  (compiler-backend-emit-copy-bytes-chunks
+                    (+ offset chunk)
+                    (- remaining chunk)))))))))))
+
+(define (compiler-backend-emit-copy-bytes
+  [assignments : CompilerRegAssignmentList]
+  [dst : CompilerIrValue]
+  [src : CompilerIrValue]
+  [size : i64]) : ResultCompilerBackend
+  (if (<= size 0)
+    (OkCompilerBackend "")
+    (match (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
+      [(OkCompilerBackend dst-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          src
+          "%r11")
+          [(OkCompilerBackend src-asm)
+            (OkCompilerBackend
+              (string-append
+                dst-asm
+                (string-append
+                  src-asm
+                  (compiler-backend-emit-copy-bytes-chunks 0 size))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-emit-load-from-gep
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -7883,6 +7959,12 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrCopyBytes dst src size)
+        (match (compiler-backend-emit-copy-bytes assignments dst src size)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrBoundsCheck index length ok-label)
         (match (compiler-backend-emit-bounds-check
           target
@@ -8367,6 +8449,10 @@
         (compiler-backend-count-value-use counts offset))]
     [(IrInstrLoad _ src _) (compiler-backend-count-value-use counts src)]
     [(IrInstrStorePtr dst src _)
+      (begin
+        (compiler-backend-count-value-use counts dst)
+        (compiler-backend-count-value-use counts src))]
+    [(IrInstrCopyBytes dst src _)
       (begin
         (compiler-backend-count-value-use counts dst)
         (compiler-backend-count-value-use counts src))]
@@ -11642,6 +11728,10 @@
     [(IrInstrLoad _ src _)
       (compiler-backend-collect-value-collections collections src)]
     [(IrInstrStorePtr dst src _)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections dst)
+        src)]
+    [(IrInstrCopyBytes dst src _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections dst)
         src)]
@@ -16310,6 +16400,11 @@ tl_string_concat5:
     [(IrInstrLoad _ src _)
       (compiler-backend-object-value-ref parts function src)]
     [(IrInstrStorePtr dst src _)
+      (compiler-backend-object-value-ref
+        (compiler-backend-object-value-ref parts function dst)
+        function
+        src)]
+    [(IrInstrCopyBytes dst src _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function dst)
         function

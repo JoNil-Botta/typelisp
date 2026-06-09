@@ -1072,6 +1072,8 @@
     [(IrInstrLoad _ src _) (opt-collect-value-uses set src)]
     [(IrInstrStorePtr ptr value _)
       (opt-collect-value-uses (opt-collect-value-uses set ptr) value)]
+    [(IrInstrCopyBytes dst src _)
+      (opt-collect-value-uses (opt-collect-value-uses set dst) src)]
     [(IrInstrBoundsCheck index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
@@ -1361,6 +1363,10 @@
       (begin
         (opt-collect-value-uses-array items ptr)
         (opt-collect-value-uses-array items value))]
+    [(IrInstrCopyBytes dst src _)
+      (begin
+        (opt-collect-value-uses-array items dst)
+        (opt-collect-value-uses-array items src))]
     [(IrInstrBoundsCheck index length _)
       (begin
         (opt-collect-value-uses-array items index)
@@ -1674,6 +1680,10 @@
       (or
         (opt-aggregate-value-has-pointer? base ptrs ptr)
         (opt-aggregate-value-has-pointer? base ptrs value))]
+    [(IrInstrCopyBytes dst src _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs dst)
+        (opt-aggregate-value-has-pointer? base ptrs src))]
     [(IrInstrBoundsCheck index length _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs index)
@@ -1788,6 +1798,7 @@
       (and
         (opt-aggregate-value-has-pointer? base ptrs ptr)
         (not (opt-aggregate-value-has-pointer? base ptrs value)))]
+    [(IrInstrCopyBytes _ _ _) false]
     [_ false]))
 
 (define (opt-aggregate-instr-crosses-unknown-effect?
@@ -3087,6 +3098,13 @@
             (opt-value-eq aptr bptr)
             (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
         [_ false])]
+    [(IrInstrCopyBytes adst asrc asize)
+      (match b
+        [(IrInstrCopyBytes bdst bsrc bsize)
+          (and
+            (= asize bsize)
+            (and (opt-value-eq adst bdst) (opt-value-eq asrc bsrc)))]
+        [_ false])]
     [(IrInstrCast ad av afrom ato)
       (match b
         [(IrInstrCast bd bv bfrom bto)
@@ -3647,6 +3665,7 @@
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCopyBytes _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrVectorStore _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrPredicatedStore _ _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
@@ -3784,6 +3803,11 @@
         (opt-copy-resolve env ptr)
         (opt-copy-resolve env value)
         ty)]
+    [(IrInstrCopyBytes dst src size)
+      (IrInstrCopyBytes
+        (opt-copy-resolve env dst)
+        (opt-copy-resolve env src)
+        size)]
     [(IrInstrCast dst src from-ty to-ty)
       (IrInstrCast dst (opt-copy-resolve env src) from-ty to-ty)]
     [(IrInstrBinOp dst op l r ty)
@@ -4029,6 +4053,7 @@
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
+    [(IrInstrCopyBytes _ _ _) (OptBoundsNil)]
     [(IrInstrVectorStore _ _ _ _ _) (OptBoundsNil)]
     [(IrInstrPredicatedStore _ _ _ _ _ _) (OptBoundsNil)]
     [(IrInstrJump _) (OptBoundsNil)]
@@ -5962,6 +5987,10 @@
       (opt-verify-two
         (opt-verify-value-use defs doms ptr block-label pos)
         (opt-verify-value-use defs doms value block-label pos))]
+    [(IrInstrCopyBytes dst src _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms dst block-label pos)
+        (opt-verify-value-use defs doms src block-label pos))]
     [(IrInstrBoundsCheck index length _)
       (opt-verify-two
         (opt-verify-value-use defs doms index block-label pos)
@@ -6956,6 +6985,14 @@
           (opt-ssa-rewrite-value env ptr)
           (opt-ssa-rewrite-value env value)
           ty)
+        env
+        next-var)]
+    [(IrInstrCopyBytes dst src size)
+      (OptSsaInstrResult
+        (IrInstrCopyBytes
+          (opt-ssa-rewrite-value env dst)
+          (opt-ssa-rewrite-value env src)
+          size)
         env
         next-var)]
     [(IrInstrBoundsCheck index length ok-label)
@@ -7977,6 +8014,11 @@
         (opt-global-copy-resolve facts doms block-id pos ptr)
         (opt-global-copy-resolve facts doms block-id pos value)
         ty)]
+    [(IrInstrCopyBytes dst src size)
+      (IrInstrCopyBytes
+        (opt-global-copy-resolve facts doms block-id pos dst)
+        (opt-global-copy-resolve facts doms block-id pos src)
+        size)]
     [(IrInstrBoundsCheck index length ok-label)
       (IrInstrBoundsCheck
         (opt-global-copy-resolve facts doms block-id pos index)
@@ -10147,6 +10189,7 @@
   (match instr
     [(IrInstrAlloc _ _) true]
     [(IrInstrStorePtr _ _ _) true]
+    [(IrInstrCopyBytes _ _ _) true]
     [(IrInstrVectorStore _ _ _ _ _) true]
     [(IrInstrPredicatedStore _ _ _ _ _ _) true]
     [(IrInstrCpuId _ _ _ _) true]
@@ -11239,6 +11282,11 @@
         (opt-sccp-rewrite-value env ptr)
         (opt-sccp-rewrite-value env value)
         ty)]
+    [(IrInstrCopyBytes dst src size)
+      (IrInstrCopyBytes
+        (opt-sccp-rewrite-value env dst)
+        (opt-sccp-rewrite-value env src)
+        size)]
     [(IrInstrCast dst src from-ty to-ty)
       (opt-sccp-rewrite-scalar-def
         env
@@ -11576,6 +11624,7 @@
     [(IrInstrCallIndirectC dst _ _ _) dst]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrStorePtr _ _ _) (- 0 1)]
+    [(IrInstrCopyBytes _ _ _) (- 0 1)]
     [(IrInstrBoundsCheck _ _ _) (- 0 1)]
     [(IrInstrVectorStore _ _ _ _ _) (- 0 1)]
     [(IrInstrPredicatedStore _ _ _ _ _ _) (- 0 1)]
@@ -12972,6 +13021,11 @@
         index
         (opt-inline-census-value index census dst)
         src)]
+    [(IrInstrCopyBytes dst src _)
+      (opt-inline-census-value
+        index
+        (opt-inline-census-value index census dst)
+        src)]
     [(IrInstrBoundsCheck idx length _)
       (opt-inline-census-value
         index
@@ -13549,6 +13603,7 @@
     ;; into a call site duplicates that label (assembler "symbol already defined"),
     ;; so callees containing one are not inlinable.
     [(IrInstrStorePtr _ _ _) true]
+    [(IrInstrCopyBytes _ _ _) true]
     [_ false]))
 
 (define (opt-inline-seq-ok? [instrs : CompilerIrInstrList] [np : i64]) : bool
@@ -13823,6 +13878,11 @@
         (opt-inline-remap-value d sa np base)
         (opt-inline-remap-value s sa np base)
         (clone ty))]
+    [(IrInstrCopyBytes d s size)
+      (IrInstrCopyBytes
+        (opt-inline-remap-value d sa np base)
+        (opt-inline-remap-value s sa np base)
+        size)]
     [(IrInstrCall dst name a ty)
       (IrInstrCall
         (opt-inline-rebase-var dst np base)
@@ -14680,6 +14740,8 @@
       (opt-reach-value index (opt-reach-value index state base) offset)]
     [(IrInstrLoad _ src _) (opt-reach-value index state src)]
     [(IrInstrStorePtr dst src _)
+      (opt-reach-value index (opt-reach-value index state dst) src)]
+    [(IrInstrCopyBytes dst src _)
       (opt-reach-value index (opt-reach-value index state dst) src)]
     [(IrInstrBoundsCheck idx length _)
       (opt-reach-value index (opt-reach-value index state idx) length)]

@@ -1460,8 +1460,7 @@
         ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
         ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
         ;; element stride, reading garbage.
-        [(I64I64MapFound index)
-          (OkTcType (array-ref values index))]
+        [(I64I64MapFound index) (OkTcType (array-ref values index))]
         [(I64I64MapMissing)
           (ErrTcType
             (string-append "typecheck: unbound name " (intern-str name-id)))])]
@@ -11516,8 +11515,11 @@
     [index : i64 (compiler-symbol-handle-index handle)]
     (if (>= index 199999)
       (- 0 1)
-      (+ (* index 2)
-        (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
+      (+
+        (* index 2)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-defenum))
           1
           0)))))
 
@@ -11573,9 +11575,7 @@
             (set! i (+ i 1))))
         (set! tc-agg-regwords-cache-filled true)))))
 
-(define (tc-inline-aggregate-regwords-compute
-  [ctx : TcContext]
-  [name : String]) : i64
+(define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name : String]) : i64
   (match (tc-inline-aggregate-layout-for ctx name)
     [(OkTcInlineAggregateLayout layout)
       (if (tc-inline-aggregate-layout-register-resident? layout)
@@ -11583,9 +11583,7 @@
         0)]
     [(ErrTcInlineAggregateLayout _) 0]))
 
-(define (tc-inline-aggregate-regwords-cached
-  [ctx : TcContext]
-  [name : String]) : i64
+(define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name : String]) : i64
   (begin
     (tc-agg-regwords-cache-ensure!)
     (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
@@ -11602,7 +11600,8 @@
                   [(OkTcInlineAggregateLayout layout)
                     (let
                       [words : i64
-                        (if (tc-inline-aggregate-layout-register-resident? layout)
+                        (if (tc-inline-aggregate-layout-register-resident?
+                          layout)
                           (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
                           0)]
                       (begin

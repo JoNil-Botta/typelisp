@@ -4145,7 +4145,9 @@
 (define (lower-inline-layout-size-or
   [ctx : TcContext]
   [ty : AstType]
-  [fallback : i64]) : i64
+  [fallback : i64])
+  :
+  i64
   ;; #2386 (compile-time): a bare struct/enum size is memoized by symbol handle
   ;; (its size is stable; this is the hot type-size query in lowering). Generic
   ;; ...Args / tuples / arrays depend on type arguments, so keep the uncached path.
@@ -4532,9 +4534,7 @@
                       dst-addr
                       (compiler-ir-value-cons
                         src-addr
-                        (compiler-ir-value-cons
-                          (IrValueI64 size)
-                          (IrValueNil)))))
+                        (compiler-ir-value-cons (IrValueI64 size) (IrValueNil)))))
                   (AstTyUnit)))])])]))
 
 (define (lower-copy-bytes
@@ -10354,7 +10354,9 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]
-  [expr-ty : AstType]) : ResultLowerExpr
+  [expr-ty : AstType])
+  :
+  ResultLowerExpr
   ;; #2357: mirror lower-var-or-nullary-variant -- a register-group GLOBAL read
   ;; yields IrValueGlobal and must be materialized into a group VALUE (load both
   ;; words) before any IrInstrWord/struct-get/match extraction; main's interned
@@ -20833,7 +20835,9 @@
   [arms : AstMatchArmList]
   [merge-label : String]
   [expr-ty : AstType]
-  [borrow-lifetime : TcMaybeString]) : ResultLowerExpr
+  [borrow-lifetime : TcMaybeString])
+  :
+  ResultLowerExpr
   ;; #2386: a 1-word register-resident enum value IS the tag word (nullary, no
   ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
   ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
@@ -21778,7 +21782,8 @@
           ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
           ;; disabled tail-call optimization for every call (mode is always on),
           ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-          (not (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)))
+          (not
+            (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)))
         (lower-tail-call-direct-supported? ctx state env type-env name ret-ty))
         (match (lower-tail-call-args-for-target
           ctx
@@ -22079,11 +22084,32 @@
           [(LowerExpr scrut-state scrut-value scrut-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
               [(AstTyEnum _)
-                (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+                (lower-return-expr
+                  ctx
+                  state
+                  env
+                  type-env
+                  origin
+                  ret-ty
+                  sret-var)]
               [(AstTyEnumArgs _ _)
-                (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+                (lower-return-expr
+                  ctx
+                  state
+                  env
+                  type-env
+                  origin
+                  ret-ty
+                  sret-var)]
               [(AstTyVarArgs _ _)
-                (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+                (lower-return-expr
+                  ctx
+                  state
+                  env
+                  type-env
+                  origin
+                  ret-ty
+                  sret-var)]
               [_
                 (match (lower-state-alloc-var scrut-state)
                   [(LowerAlloc scrut-alloc scrut-var)
@@ -22254,7 +22280,9 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
-  [ty : AstType]) : ResultLowerEnv
+  [ty : AstType])
+  :
+  ResultLowerEnv
   ;; #1867 Phase 4: the defensive per-param entry copy is redundant -- inline
   ;; struct/enum are value types with no in-place mutation, and copies already
   ;; happen at every escape site (construction, store, and the sret/arena

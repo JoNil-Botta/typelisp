@@ -3392,9 +3392,7 @@
         [(IrInstrWord bd bsrc bi bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq asrc bsrc)
-              (and (= ai bi) (opt-type-eq aty bty))))]
+            (and (opt-value-eq asrc bsrc) (and (= ai bi) (opt-type-eq aty bty))))]
         [_ false])]))
 
 (define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
@@ -10912,7 +10910,10 @@
 
 (define (opt-sccp-env-make [cap : i64]) : OptSccpEnv
   (let
-    [n : i64 (if (< cap 1) 1 cap)]
+    [n : i64
+      (if (< cap 1)
+        1
+        cap)]
     [slots : (Array OptSccpValue) (make-array OptSccpValue n)]
     (begin
       (opt-sccp-env-fill-unknown! slots n 0)
@@ -10966,11 +10967,11 @@
       (opt-sccp-max-var-instr-seq
         instrs
         (+ index 1)
-        (if (> dst acc) dst acc)))))
+        (if (> dst acc)
+          dst
+          acc)))))
 
-(define (opt-sccp-max-var-blocks
-  [blocks : CompilerIrBlockList]
-  [acc : i64]) : i64
+(define (opt-sccp-max-var-blocks [blocks : CompilerIrBlockList] [acc : i64]) : i64
   (match blocks
     [(IrBlockNil) acc]
     [(IrBlockCons block rest)
@@ -10982,15 +10983,17 @@
     [(IrBlockArray seq)
       (opt-sccp-max-var-blocks (compiler-ir-block-seq-to-list seq) acc)]))
 
-(define (opt-sccp-max-var-params
-  [params : CompilerIrParamList]
-  [acc : i64]) : i64
+(define (opt-sccp-max-var-params [params : CompilerIrParamList] [acc : i64]) : i64
   (match params
     [(IrParamNil) acc]
     [(IrParamCons param rest)
       (match param
         [(IrParam _ _ id)
-          (opt-sccp-max-var-params (box-get rest) (if (> id acc) id acc))])]))
+          (opt-sccp-max-var-params
+            (box-get rest)
+            (if (> id acc)
+              id
+              acc))])]))
 
 (defenum OptSccpState
   (OptSccpState OptLabelSet OptSccpEnv bool))
@@ -11028,7 +11031,9 @@
 (define (opt-sccp-env-lookup [env : OptSccpEnv] [var : i64]) : OptSccpValue
   (match env
     [(OptSccpEnv cap slots)
-      (if (if (>= var 0) (< var cap) false)
+      (if (if (>= var 0)
+        (< var cap)
+        false)
         (array-ref slots var)
         (OptSccpUnknown))]))
 
@@ -11039,7 +11044,9 @@
   (match env
     [(OptSccpEnv cap slots)
       (begin
-        (if (if (>= var 0) (< var cap) false)
+        (if (if (>= var 0)
+          (< var cap)
+          false)
           (array-set! slots var value)
           unit)
         env)]))

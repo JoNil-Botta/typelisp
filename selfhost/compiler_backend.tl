@@ -7044,7 +7044,16 @@
   (and
     (compiler-backend-index-function-defines? program-index name)
     (<=
-      (compiler-backend-call-stack-arg-count target args types 0 0 0 0 0 program-index)
+      (compiler-backend-call-stack-arg-count
+        target
+        args
+        types
+        0
+        0
+        0
+        0
+        0
+        program-index)
       (compiler-backend-incoming-stack-arg-count
         target
         source-function
@@ -16467,8 +16476,7 @@ tl_memcpy:
             (compiler-backend-runtime-arena-functions profile))]
         [profile-asm : String
           (compiler-backend-runtime-profile-functions-for-target target profile)]
-        [memcpy-asm : String
-          (compiler-backend-runtime-memcpy-functions target)]
+        [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
         [runtime-front-asm : String
           (string-append
             memcpy-asm

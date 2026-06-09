@@ -2542,9 +2542,7 @@
               (compiler-ir-instr-seq-to-list instrs))
             (box-get rest))])]
     [(IrBlockArray seq)
-      (compiler-reg-group-vars-blocks
-        set
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-reg-group-vars-blocks set (compiler-ir-block-seq-to-list seq))]))
 
 ;; #2386: a Phi merging group values, or a Mov copying one, must mark its dst (and
 ;; the other endpoints) as a group var too -- otherwise the merged value gets a

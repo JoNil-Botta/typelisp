@@ -38,7 +38,7 @@
   [h : i64]) : i64
   (+ g h))
 (define (main) : i64
-  (add8 1 2 3 4 5 6 7 8))")
+  (+ 0 (add8 1 2 3 4 5 6 7 8)))")
 
 ;; SysV call with more than eight f64 args (#750): xmm0..xmm7 then stack.
 (define (compiler-backend-stack-f64-args-source) : String
@@ -81,7 +81,7 @@
   [f8 : f64]) : i64
   (+ i6 (if (< f8 100.0) 1 0)))
 (define (main) : i64
-  (mix 1 2 3 4 5 6 7 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))")
+  (+ 0 (mix 1 2 3 4 5 6 7 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0)))")
 
 ;; #750 RUN-LEVEL witness source: a self-contained program that exercises all
 ;; three spill paths (integer, f64, and mixed) and returns 96 only when every
@@ -158,6 +158,70 @@
   (finish x y))
 (define (main) : i64
   (step 20 22))")
+
+(define (compiler-backend-direct-tail-call-stack-source) : String
+  "(define (finishstack
+  [n : i64]
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [acc : i64]) : i64
+  (+ n (+ a (+ b (+ c (+ d (+ e (+ f acc))))))))
+(define (stepstack
+  [n : i64]
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [acc : i64]) : i64
+  (finishstack n a b c d e acc f))
+(define (main) : i64
+  (stepstack 1 2 3 4 5 6 7 14))")
+
+(define (compiler-backend-direct-tail-call-mixed-source) : String
+  "(define (finishmixed
+  [i0 : i64]
+  [i1 : i64]
+  [i2 : i64]
+  [i3 : i64]
+  [i4 : i64]
+  [i5 : i64]
+  [i6 : i64]
+  [f0 : f64]
+  [f1 : f64]
+  [f2 : f64]
+  [f3 : f64]
+  [f4 : f64]
+  [f5 : f64]
+  [f6 : f64]
+  [f7 : f64]
+  [f8 : f64]) : i64
+  (if (< f8 9.5) i6 0))
+(define (stepmixed
+  [i0 : i64]
+  [i1 : i64]
+  [i2 : i64]
+  [i3 : i64]
+  [i4 : i64]
+  [i5 : i64]
+  [i6 : i64]
+  [f0 : f64]
+  [f1 : f64]
+  [f2 : f64]
+  [f3 : f64]
+  [f4 : f64]
+  [f5 : f64]
+  [f6 : f64]
+  [f7 : f64]
+  [f8 : f64]) : i64
+  (finishmixed i0 i1 i2 i3 i4 i5 i6 f0 f1 f2 f3 f4 f5 f6 f7 f8))
+(define (main) : i64
+  (stepmixed 1 2 3 4 5 6 42 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))")
 
 (define (compiler-backend-raw-pointer-fixture-source) : String
   "(extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
@@ -4816,7 +4880,7 @@
   (+ (+ (+ (+ a b) c) d) e))
 
 (define (call5 [x : f64]) : f64
-  (sum5 x 2.0 3.0 4.0 5.0))
+  (+ 0.0 (sum5 x 2.0 3.0 4.0 5.0)))
 
 (define (main) : i64
   (if (< (call5 1.0) 16.0) 42 0))")
@@ -4835,7 +4899,7 @@
           (compiler-backend-string-contains? asm "    subq $96, %rsp\n")
           (compiler-backend-string-contains?
             asm
-            "    movsd -40(%rbp), %xmm15\n")
+            "    movsd -48(%rbp), %xmm15\n")
           (compiler-backend-string-contains? asm "    movsd %xmm15, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm0\n"))
         (and
@@ -4981,10 +5045,70 @@
         (not (compiler-backend-string-contains? asm "    call _tl_finish\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-tail-call-stack-slot
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    movq %r11, 72(%rbp)\n"
+    "    movq %r11, 24(%rbp)\n"))
+
+(define (compiler-backend-direct-tail-call-stack-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-direct-tail-call-stack-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    jmp _tl_finishstack\n")
+        (and
+          (not
+            (compiler-backend-string-contains? asm "    call _tl_finishstack\n"))
+          (and
+            (compiler-backend-string-contains? asm "    pushq %r11\n")
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-direct-tail-call-stack-slot target)))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-call-mixed-slot
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    movsd %xmm15, 136(%rbp)\n"
+    "    movsd %xmm15, 24(%rbp)\n"))
+
+(define (compiler-backend-direct-tail-call-mixed-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-direct-tail-call-mixed-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    jmp _tl_finishmixed\n")
+        (and
+          (not
+            (compiler-backend-string-contains? asm "    call _tl_finishmixed\n"))
+          (and
+            (compiler-backend-string-contains? asm "    subq $8, %rsp\n")
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-direct-tail-call-mixed-slot target)))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-direct-tail-call-ok?) : bool
   (and
     (compiler-backend-direct-tail-call-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))))
+    (and
+      (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))
+      (and
+        (compiler-backend-direct-tail-call-stack-target-ok?
+          (BackendTargetLinux))
+        (and
+          (compiler-backend-direct-tail-call-stack-target-ok?
+            (BackendTargetWindows))
+          (and
+            (compiler-backend-direct-tail-call-mixed-target-ok?
+              (BackendTargetLinux))
+            (compiler-backend-direct-tail-call-mixed-target-ok?
+              (BackendTargetWindows))))))))
 
 (define (compiler-backend-export-symbol-source) : String
   "(define (exported [x : i64]) (:export-symbol \"tl_exported_value\") : i64

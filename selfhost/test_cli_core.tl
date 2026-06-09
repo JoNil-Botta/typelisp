@@ -1745,6 +1745,43 @@
 (define (tltest-package-test-source? [source : String] [tests-prefix : String]) : bool
   (tltest-string-prefix? (compiler-load-normalize-path source) tests-prefix))
 
+(define (tltest-package-diagnostics-prefix [tests-prefix : String]) : String
+  (string-append tests-prefix "diagnostics/"))
+
+(define (tltest-package-integration-source?
+  [source : String]
+  [tests-prefix : String]) : bool
+  (not
+    (tltest-string-prefix?
+      (compiler-load-normalize-path source)
+      (tltest-package-diagnostics-prefix tests-prefix))))
+
+(define (tltest-package-integration-filter-self-test?) : bool
+  (let
+    [tests-prefix : String (tltest-package-tests-prefix "repo")]
+    (and
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/diagnostics/backend/quote_runtime_value.tl"
+          tests-prefix))
+      (and
+        (tltest-package-integration-source?
+          "repo/tests/integration/hello.tl"
+          tests-prefix)
+        (and
+          (tltest-package-integration-source?
+            "repo/tests/basic.tl"
+            tests-prefix)
+          (tltest-package-integration-source?
+            "repo/tests/diagnostics_extra/example.tl"
+            tests-prefix))))))
+
+(test
+  test-cli-package-integration-skips-diagnostics-fixtures
+  (if (tltest-package-integration-filter-self-test?)
+    unit
+    (panic "test CLI package integration filter mismatch")))
+
 (define (tltest-decls-have-main? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclNil) false]
@@ -1990,6 +2027,7 @@
 
 (define (tltest-package-run-integration-sources
   [sources : StringList]
+  [tests-prefix : String]
   [target : String]
   [roots : StringVec]
   [opt-level : i64]
@@ -2003,30 +2041,45 @@
   (match sources
     [(StringNil) (OkTestPackageTotals file-count test-count)]
     [(StringCons source rest)
-      (match (tltest-package-run-integration-source
-        source
-        target
-        roots
-        opt-level
-        test-mode
-        backend-target
-        manifest-dir
-        package-owner
-        deps)
-        [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
-        [(OkTestPackageTotals source-files source-tests)
-          (tltest-package-run-integration-sources
-            (box-get rest)
-            target
-            roots
-            opt-level
-            test-mode
-            backend-target
-            manifest-dir
-            package-owner
-            deps
-            (+ file-count source-files)
-            (+ test-count source-tests))])]))
+      (if (tltest-package-integration-source? source tests-prefix)
+        (match (tltest-package-run-integration-source
+          source
+          target
+          roots
+          opt-level
+          test-mode
+          backend-target
+          manifest-dir
+          package-owner
+          deps)
+          [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
+          [(OkTestPackageTotals source-files source-tests)
+            (tltest-package-run-integration-sources
+              (box-get rest)
+              tests-prefix
+              target
+              roots
+              opt-level
+              test-mode
+              backend-target
+              manifest-dir
+              package-owner
+              deps
+              (+ file-count source-files)
+              (+ test-count source-tests))])
+        (tltest-package-run-integration-sources
+          (box-get rest)
+          tests-prefix
+          target
+          roots
+          opt-level
+          test-mode
+          backend-target
+          manifest-dir
+          package-owner
+          deps
+          file-count
+          test-count))]))
 
 (define (tltest-run-package
   [manifest-path : String]
@@ -2075,6 +2128,7 @@
                   [(OkTestPackageTotals inline-file-count inline-test-count)
                     (match (tltest-package-run-integration-sources
                       integration-sources
+                      tests-prefix
                       target
                       roots
                       opt-level

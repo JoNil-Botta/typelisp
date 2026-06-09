@@ -57,7 +57,9 @@ package-local `tests/**/*.tl` integration test files. Integration test files run
 as normal programs: a `main` exit status of `0` passes, while any non-zero
 status fails the package test command with exit `1`. `typelisp test --check`
 type-checks generated inline harnesses and integration test files without
-assembling or linking.
+assembling or linking. Package integration discovery skips the reserved
+`tests/diagnostics/**` expected-error corpus; dedicated diagnostics gates own
+those fixtures.
 
 Use inline tests for behavior that naturally belongs next to the declarations
 under test. Import `stdlib/test.tl` for assertions such as `assert-i64-eq`.

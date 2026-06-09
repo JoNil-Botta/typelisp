@@ -5696,6 +5696,11 @@
     [(IrInstrSyscall dst _) (OptSomeI64 dst)]
     [(IrInstrCall dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrPhi dst _ _) (OptSomeI64 dst)]
+    ;; #2386: Pack/Word define their dst like any scalar op. Without these arms
+    ;; the verifier saw every use of a register-group word as use-before-def
+    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
+    [(IrInstrPack dst _ _) (OptSomeI64 dst)]
+    [(IrInstrWord dst _ _ _) (OptSomeI64 dst)]
     [_ (OptNoI64)]))
 
 (define (opt-instr-def-position [instr : CompilerIrInstr] [pos : i64]) : i64
@@ -10954,6 +10959,11 @@
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
     [(IrInstrCallIndirectC dst _ _ _) dst]
+    ;; Pack/Word dsts must be counted so opt-sccp-env-make sizes the lattice
+    ;; array over them; opt-sccp-env-set silently drops out-of-range writes,
+    ;; which would defeat the Overdefined binding in opt-sccp-process-instr.
+    [(IrInstrPack dst _ _) dst]
+    [(IrInstrWord dst _ _ _) dst]
     [_ (- 0 1)]))
 
 (define (opt-sccp-max-var-instr-seq
@@ -11257,6 +11267,13 @@
     [(IrInstrCallIndirect dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrCallIndirectC dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    ;; #2386 register-group dsts: bind Overdefined like loads/calls. Falling
+    ;; into the wildcard left them OptSccpUnknown forever, so a branch on a
+    ;; Word-extracted enum tag marked NO successor executable and SCCP folded
+    ;; match arms away at -O2 (stale-constant miscompile).
+    [(IrInstrPack dst _ _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrWord dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [_ state]))
 
@@ -20452,6 +20469,49 @@
           (IrInstrNil))))
     (IrBlockNil)))
 
+;; #2386 regression guard: a branch conditioned on an IrInstrWord-extracted enum
+;; tag. Pack/Word dsts must be bound Overdefined in the SCCP lattice; when they
+;; stayed Unknown the branch marked NO successor executable and both arms were
+;; folded away as unreachable (the -O2 stale-constant miscompile on matches over
+;; 16-byte register-resident enums).
+(define (opt-sccp-group-word-branch-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrPack
+          0
+          (IrValueCons
+            (IrValueI64 1)
+            (box (IrValueCons (IrValueI64 5) (box IrValueNil))))
+          (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrWord 1 (IrValueVar 0) 0 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 2 (IrBinEq) (IrValueVar 1) (IrValueI64 0) (AstTyBool))
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueVar 2) "then" "else")
+              (IrInstrNil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (IrInstrMov 3 (IrValueI64 2) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "merge") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons
+            (IrInstrMov 3 (IrValueI64 3) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "merge") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "merge"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
 (define (compiler-optimize-sccp-self-test) : i64
   (let
     [cross : CompilerIrBlockList
@@ -20464,6 +20524,8 @@
       (opt-sccp-blocks (opt-sccp-loop-params) (opt-sccp-loop-blocks))]
     [trap : CompilerIrBlockList
       (opt-sccp-blocks (IrParamNil) (opt-sccp-trap-blocks))]
+    [group : CompilerIrBlockList
+      (opt-sccp-blocks (IrParamNil) (opt-sccp-group-word-branch-blocks))]
     (core/cond
       (not (= (opt-count-arith-blocks cross) 0))
       1
@@ -20493,6 +20555,15 @@
       13
       (not (= (opt-count-mov-dst-blocks trap 1) 0))
       14
+      ;; #2386: the Word-conditioned branch and BOTH its arms must survive.
+      (not (= (compiler-ir-block-list-count group) 4))
+      15
+      (not (= (opt-count-branches-blocks group) 1))
+      16
+      (not (opt-block-list-has-label? group "then"))
+      17
+      (not (opt-block-list-has-label? group "else"))
+      18
       42)))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList

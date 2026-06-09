@@ -511,6 +511,16 @@
     [(TcTypeCache _ _ _ _ rest) (lower-type-env-count (box-get rest))]
     [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
 
+(define (lower-type-env-contains-reference? [env : TcTypeEnv]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ rest)
+      (lower-type-env-contains-reference? (box-get rest))]
+    [(TcTypeBind _ ty rest)
+      (if (tc-type-contains-reference? ty)
+        true
+        (lower-type-env-contains-reference? (box-get rest)))]))
+
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
     8
@@ -21716,13 +21726,37 @@
     [(SomeI64 _) false]
     [(NoneI64) true]))
 
-(define (lower-tail-call-target?
-  [_state : LowerState]
+(define (lower-tail-call-local-indirect-safe?
   [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : i64]) : bool
+  (match (sym-i64-lookup-id env name)
+    [(SomeI64 _) (not (lower-type-env-contains-reference? type-env))]
+    [(NoneI64) true]))
+
+(define (lower-tail-call-reference-capturing-lambda?
+  [type-env : TcTypeEnv]
   [callee : AstExpr]) : bool
   (match (ast-expr-unspan callee)
-    [(AstExprVar name) (lower-tail-call-var-unshadowed? env name)]
+    [(AstExprAnn inner-box _)
+      (lower-tail-call-reference-capturing-lambda?
+        type-env
+        (ast-node-get inner-box))]
+    [(AstExprCast inner-box _)
+      (lower-tail-call-reference-capturing-lambda?
+        type-env
+        (ast-node-get inner-box))]
+    [(AstExprLambda params _ body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tc-lambda-captures-reference? type-env params body))]
     [_ false]))
+
+(define (lower-tail-call-target?
+  [_state : LowerState]
+  [_env : SymI64Env]
+  [_callee : AstExpr]) : bool
+  true)
 
 (define (lower-tail-call-self-target? [state : LowerState] [name : i64]) : bool
   (string-eq
@@ -21795,6 +21829,58 @@
             (tc-resolve-type-list ctx param-types))]
         [_ (lower-args ctx state env type-env args)])]
     [(ErrTcType _) (lower-args ctx state env type-env args)]))
+
+(define (lower-tail-call-indirect-supported?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [func-ty : AstType]
+  [args : AstExprList]
+  [ret-ty : AstType]) : bool
+  (if (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)
+    false
+    (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
+      [(AstTyFunc _ callee-ret)
+        (lower-tail-call-compatible-return? ctx (ty-node-get callee-ret) ret-ty)]
+      [_ false])))
+
+(define (lower-tail-call-indirect-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [callee : AstExpr]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (match (tc-expr ctx type-env callee)
+    [(OkTcType func-ty)
+      (if (lower-tail-call-indirect-supported? ctx type-env func-ty args ret-ty)
+        (match (lower-expr ctx state env type-env callee)
+          [(OkLowerExpr lowered-func)
+            (match lowered-func
+              [(LowerExpr func-state func-value lowered-func-ty)
+                (match (lower-indirect-call-args
+                  ctx
+                  func-state
+                  env
+                  type-env
+                  args
+                  lowered-func-ty)
+                  [(OkLowerArgs args-state values)
+                    (OkLowerState
+                      (lower-state-emit-at-expr
+                        args-state
+                        (IrInstrTailCallIndirect
+                          func-value
+                          (compiler-ir-call-args-from-list values)
+                          ret-ty)
+                        origin))]
+                  [(ErrLowerArgs message) (ErrLowerState message)])])]
+          [(ErrLowerExpr message) (ErrLowerState message)])
+        (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
+    [(ErrTcType message)
+      (ErrLowerState (lower-diagnostic-at-expr callee message))]))
 
 (define (lower-tail-let-bindings-candidate-env
   [env : SymI64Env]
@@ -21999,8 +22085,34 @@
                   ret-ty)
                 origin))]
           [(ErrLowerArgs message) (ErrLowerState message)])
-        (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
-    [_ (lower-return-expr ctx state env type-env origin ret-ty sret-var)]))
+        (cond
+          (lower-tail-call-var-unshadowed? env name)
+          (lower-return-expr ctx state env type-env origin ret-ty sret-var)
+          (lower-tail-call-local-indirect-safe? env type-env name)
+          (lower-tail-call-indirect-expr
+            ctx
+            state
+            env
+            type-env
+            callee
+            args
+            ret-ty
+            sret-var
+            origin)
+          (lower-return-expr ctx state env type-env origin ret-ty sret-var)))]
+    [_
+      (if (lower-tail-call-reference-capturing-lambda? type-env callee)
+        (lower-return-expr ctx state env type-env origin ret-ty sret-var)
+        (lower-tail-call-indirect-expr
+          ctx
+          state
+          env
+          type-env
+          callee
+          args
+          ret-ty
+          sret-var
+          origin))]))
 
 (define (lower-tail-begin
   [ctx : TcContext]
@@ -26078,6 +26190,11 @@
     [(IrInstrCallIndirect _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-indirect-tail-call-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrTailCallIndirect _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-indirect-c-call-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrCallIndirectC _ _ _ _) 1]
@@ -26086,6 +26203,10 @@
 (define (lower-test-instr-indirect-unit-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrCallIndirect _ _ _ ty)
+      (match ty
+        [(AstTyUnit) 1]
+        [_ 0])]
+    [(IrInstrTailCallIndirect _ _ ty)
       (match ty
         [(AstTyUnit) 1]
         [_ 0])]
@@ -26150,6 +26271,8 @@
   [function-name : String]) : i64
   (match instr
     [(IrInstrCallIndirect _ func _ _)
+      (lower-test-value-function-count func function-name)]
+    [(IrInstrTailCallIndirect func _ _)
       (lower-test-value-function-count func function-name)]
     [_ 0]))
 
@@ -26474,6 +26597,15 @@
       (+
         (lower-test-instr-indirect-call-count instr)
         (lower-test-instrs-indirect-call-count (box-get rest)))]))
+
+(define (lower-test-instrs-indirect-tail-call-count
+  [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-indirect-tail-call-count instr)
+        (lower-test-instrs-indirect-tail-call-count (box-get rest)))]))
 
 (define (lower-test-instrs-indirect-unit-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -26827,6 +26959,25 @@
             (+
               acc
               (lower-test-instr-indirect-call-count (array-ref slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-indirect-tail-call-count
+  [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-indirect-tail-call-count
+                (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -27344,6 +27495,20 @@
       (lower-test-blocks-indirect-call-count
         (compiler-ir-block-seq-to-list seq))]))
 
+(define (lower-test-blocks-indirect-tail-call-count
+  [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instr-seq-indirect-tail-call-count instrs)
+            (lower-test-blocks-indirect-tail-call-count (box-get rest)))])]
+    [(IrBlockArray seq)
+      (lower-test-blocks-indirect-tail-call-count
+        (compiler-ir-block-seq-to-list seq))]))
+
 (define (lower-test-blocks-indirect-c-call-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
@@ -27819,6 +27984,18 @@
           (if (string-eq fname name)
             (lower-test-blocks-indirect-call-count blocks)
             (lower-test-function-indirect-call-count (box-get rest) name))])]))
+
+(define (lower-test-function-indirect-tail-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-indirect-tail-call-count blocks)
+            (lower-test-function-indirect-tail-call-count (box-get rest) name))])]))
 
 (define (lower-test-function-indirect-c-call-count
   [funcs : CompilerIrFunctionList]
@@ -28819,6 +28996,12 @@
 (define (step5 [x : i64]) : i64 (finish5 x 1 2 3 4))
 (define (main) : i64 (step5 32))")
 
+(define (compiler-lower-tail-indirect-source) : String
+  "(define (finish [x : i64]) : i64 x)
+(define (step [f : (-> i64 i64)] [x : i64]) : i64
+  (f x))
+(define (main) : i64 (step finish 42))")
+
 (define (compiler-lower-tail-cleanup-source) : String
   "(define (finish [x : i64]) : i64 x)
 (define (step [x : i64]) : i64
@@ -28880,6 +29063,18 @@
             (= (lower-test-function-call-count functions "step5" "finish5") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-tail-indirect-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-indirect-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-indirect-tail-call-count functions "step")
+              1)
+            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-tail-cleanup-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-tail-cleanup-source))
     [(OkCompilerLower program _)
@@ -28903,7 +29098,9 @@
           (compiler-lower-tail-direct-shape-ok?)
           (and
             (compiler-lower-tail-direct-stack-shape-ok?)
-            (compiler-lower-tail-cleanup-shape-ok?)))))))
+            (and
+              (compiler-lower-tail-indirect-shape-ok?)
+              (compiler-lower-tail-cleanup-shape-ok?))))))))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
@@ -29671,15 +29868,24 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-function-indirect-call-count functions "apply1")
+                (lower-test-function-indirect-tail-call-count
+                  functions
+                  "apply1")
                 1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "apply1")
+                0)
                 unit
                 (set! ok false))
               (if (= (lower-test-function-call-count functions "apply1" "f") 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "shadow-inc")
+                (lower-test-function-indirect-tail-call-count
+                  functions
+                  "shadow-inc")
                 1)
                 unit
                 (set! ok false))
@@ -29706,7 +29912,11 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (= (lower-test-function-indirect-call-count functions "main") 1)])]
+          (and
+            (=
+              (lower-test-function-indirect-tail-call-count functions "main")
+              1)
+            (= (lower-test-function-indirect-call-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
@@ -29739,7 +29949,11 @@
             (and
               (= (compiler-ir-function-list-count functions) 2)
               (and
-                (= (lower-test-function-indirect-call-count functions "main") 1)
+                (=
+                  (lower-test-function-indirect-tail-call-count
+                    functions
+                    "main")
+                  1)
                 (and
                   (=
                     (lower-test-function-indirect-callee-function-count
@@ -29794,7 +30008,7 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count functions "main")
                 1)
                 unit
                 (set! ok false))
@@ -29824,12 +30038,12 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count functions "main")
                 1)
                 unit
                 (set! ok false))
               (if (>=
-                (lower-test-function-indirect-call-count
+                (lower-test-function-indirect-tail-call-count
                   functions
                   capturing-name)
                 1)
@@ -29857,7 +30071,7 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count functions "main")
                 1)
                 unit
                 (set! ok false))
@@ -29884,7 +30098,7 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count functions "main")
                 1)
                 unit
                 (set! ok false))
@@ -29907,7 +30121,9 @@
         [(IrProgram _ functions _)
           (and
             (= (compiler-ir-function-list-count functions) 2)
-            (= (lower-test-function-indirect-call-count functions "main") 1))])]
+            (=
+              (lower-test-function-indirect-tail-call-count functions "main")
+              1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-capturing-lambda-reference-shape-ok?) : bool

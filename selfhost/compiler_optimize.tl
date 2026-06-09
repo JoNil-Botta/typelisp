@@ -1127,6 +1127,8 @@
     ;; that feeds a Pack/Word.
     [(IrInstrPack _ words _) (opt-collect-value-list-uses set words)]
     [(IrInstrWord _ src _ _) (opt-collect-value-uses set src)]
+    [(IrInstrTailCallIndirect func args _)
+      (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
     ;; `IrInstrAlloc` has no operand uses; `IrInstrJump` has none either.
     [_ set]))
 
@@ -1440,6 +1442,10 @@
     ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
     [(IrInstrPack _ words _) (opt-collect-value-list-uses-array items words)]
     [(IrInstrWord _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrTailCallIndirect func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-call-args-uses-array items args))]
     [_ unit]))
 
 (define (opt-collect-instr-seq-uses-array
@@ -1775,6 +1781,10 @@
       (opt-aggregate-maybe-value-has-pointer? base ptrs maybe)]
     [(IrInstrPhi _ inputs _)
       (opt-aggregate-phi-inputs-have-pointer? base ptrs inputs)]
+    [(IrInstrTailCallIndirect func args _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs func)
+        (opt-aggregate-call-args-has-pointer? base ptrs args))]
     [_ false]))
 
 (define (opt-aggregate-instrs-touch-candidate?
@@ -3346,6 +3356,13 @@
             (string-eq aname bname)
             (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty)))]
         [_ false])]
+    [(IrInstrTailCallIndirect afunc aargs aty)
+      (match b
+        [(IrInstrTailCallIndirect bfunc bargs bty)
+          (and
+            (opt-value-eq afunc bfunc)
+            (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty)))]
+        [_ false])]
     [(IrInstrStore aname av aty)
       (match b
         [(IrInstrStore bname bv bty)
@@ -3688,6 +3705,7 @@
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrTailCallIndirect _ _ _) (OptCseResult (OptExprNil) instr)]
     ;; #2386: register-group ops are plain defining instructions -- invalidate
     ;; their dst, keep the instruction (no CSE key for them yet).
     [(IrInstrPack dst _ _)
@@ -3907,7 +3925,12 @@
     [(IrInstrPack dst words ty)
       (IrInstrPack dst (opt-copy-subst-value-list env words) ty)]
     [(IrInstrWord dst src index ty)
-      (IrInstrWord dst (opt-copy-resolve env src) index ty)]))
+      (IrInstrWord dst (opt-copy-resolve env src) index ty)]
+    [(IrInstrTailCallIndirect func args ty)
+      (IrInstrTailCallIndirect
+        (opt-copy-resolve env func)
+        (opt-copy-subst-call-args env args)
+        ty)]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -4095,7 +4118,8 @@
     [(IrInstrBoundsCheck _ _ _) facts]
     ;; #2386: register-group ops define their dst -- invalidate any bounds fact.
     [(IrInstrPack dst _ _) (opt-bounds-invalidate-var facts dst)]
-    [(IrInstrWord dst _ _ _) (opt-bounds-invalidate-var facts dst)]))
+    [(IrInstrWord dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrTailCallIndirect _ _ _) (OptBoundsNil)]))
 
 (define (opt-bounds-instrs
   [facts : OptBoundsFacts]
@@ -6134,7 +6158,11 @@
     [(IrInstrPack _ words _)
       (opt-verify-value-list-uses defs doms words block-label pos)]
     [(IrInstrWord _ src _ _)
-      (opt-verify-value-use defs doms src block-label pos)]))
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrTailCallIndirect func args _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms func block-label pos)
+        (opt-verify-call-args-uses defs doms args block-label pos))]))
 
 (define (opt-verify-instr-list-uses
   [defs : OptVarDefList]
@@ -7223,7 +7251,15 @@
           (OptSsaInstrResult
             (IrInstrWord out-dst (opt-ssa-rewrite-value env src) index ty)
             next-env
-            out-next)])]))
+            out-next)])]
+    [(IrInstrTailCallIndirect func args ty)
+      (OptSsaInstrResult
+        (IrInstrTailCallIndirect
+          (opt-ssa-rewrite-value env func)
+          (opt-ssa-rewrite-call-args env args)
+          ty)
+        env
+        next-var)]))
 
 (define (opt-ssa-rename-instr-seq-from
   [facts : OptSsaFacts]
@@ -8187,7 +8223,12 @@
     ;; #2386: leave register-group ops un-substituted here; not propagating a
     ;; global copy into their operands is always sound (original vars stay valid).
     [(IrInstrPack _ _ _) instr]
-    [(IrInstrWord _ _ _ _) instr]))
+    [(IrInstrWord _ _ _ _) instr]
+    [(IrInstrTailCallIndirect func args ty)
+      (IrInstrTailCallIndirect
+        (opt-global-copy-resolve facts doms block-id pos func)
+        (opt-global-copy-subst-call-args facts doms block-id pos args)
+        ty)]))
 
 (define (opt-global-copy-instrs
   [facts : OptGlobalCopyFactTable]
@@ -8645,6 +8686,7 @@
     [(IrInstrBranch _ _ _) true]
     [(IrInstrReturn _) true]
     [(IrInstrTailCall _ _ _) true]
+    [(IrInstrTailCallIndirect _ _ _) true]
     [_ false]))
 
 (define (opt-cfg-instr-seq-can-fallthrough? [instrs : CompilerIrInstrSeq]) : bool
@@ -10265,6 +10307,7 @@
     [(IrInstrCallIndirectC _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrStore _ _ _) true]
+    [(IrInstrTailCallIndirect _ _ _) true]
     [_ false]))
 
 (define (opt-induction-blocker-instrs? [instrs : CompilerIrInstrList]) : bool
@@ -11631,7 +11674,12 @@
     [(IrInstrJump _) instr]
     ;; #2386: register-group ops carry no SCCP-constant operands to fold.
     [(IrInstrPack _ _ _) instr]
-    [(IrInstrWord _ _ _ _) instr]))
+    [(IrInstrWord _ _ _ _) instr]
+    [(IrInstrTailCallIndirect callee args ty)
+      (IrInstrTailCallIndirect
+        (opt-sccp-rewrite-value env callee)
+        (opt-sccp-rewrite-call-args env args)
+        ty)]))
 
 (define (opt-sccp-rewrite-instrs
   [env : OptSccpEnv]
@@ -11825,7 +11873,8 @@
     [(IrInstrReturn _) (- 0 1)]
     ;; #2386: register-group ops define their dst.
     [(IrInstrPack dst _ _) dst]
-    [(IrInstrWord dst _ _ _) dst]))
+    [(IrInstrWord dst _ _ _) dst]
+    [(IrInstrTailCallIndirect _ _ _) (- 0 1)]))
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
@@ -13357,7 +13406,12 @@
     [(IrInstrPhi _ inputs _) (opt-inline-census-phi-inputs index census inputs)]
     ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
     [(IrInstrPack _ words _) (opt-inline-census-value-list index census words)]
-    [(IrInstrWord _ src _ _) (opt-inline-census-value index census src)]))
+    [(IrInstrWord _ src _ _) (opt-inline-census-value index census src)]
+    [(IrInstrTailCallIndirect func args _)
+      (opt-inline-census-args
+        index
+        (opt-inline-census-value index census func)
+        args)]))
 
 (define (opt-inline-census-instr-seq-from
   [index : OptFunctionIndex]
@@ -13682,6 +13736,8 @@
   (match instr
     [(IrInstrCallIndirect dst (IrValueFunction name) args ty)
       (IrInstrCall dst name args ty)]
+    [(IrInstrTailCallIndirect (IrValueFunction name) args ty)
+      (IrInstrTailCall name args ty)]
     [_ instr]))
 
 (define (opt-devirt-known-function-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -15197,7 +15253,9 @@
     ;; lowering materializes any global/function reference into a var before
     ;; packing, so the group operands themselves reach nothing new.
     [(IrInstrPack _ _ _) state]
-    [(IrInstrWord _ src _ _) (opt-reach-value index state src)]))
+    [(IrInstrWord _ src _ _) (opt-reach-value index state src)]
+    [(IrInstrTailCallIndirect func args _)
+      (opt-reach-call-args index (opt-reach-value index state func) args)]))
 
 (define (opt-reach-instrs
   [index : OptFunctionIndex]
@@ -22527,6 +22585,7 @@
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
+    [(IrInstrTailCallIndirect _ _ _) true]
     [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
 
 (define (opt-alias-update-gep

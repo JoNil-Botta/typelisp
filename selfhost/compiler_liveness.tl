@@ -619,7 +619,9 @@
     [(IrInstrPhi _ inputs _) (compiler-live-phi-input-vars inputs)]
     [(IrInstrPack _ words _) (compiler-live-value-list-vars words)]
     [(IrInstrWord _ src _ _) (compiler-live-value-vars src)]
-    [(IrInstrJump _) (compiler-live-set-empty)]))
+    [(IrInstrJump _) (compiler-live-set-empty)]
+    [(IrInstrTailCallIndirect func args _)
+      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]))
 
 (define (compiler-live-instr-defs [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr

@@ -15,6 +15,7 @@ cd "$ROOT"
 
 RUNS=${TYPELISP_IR_RUNS:-3}
 FILTER=${TYPELISP_IR_FILTER:-}
+CASES=${TYPELISP_IR_CASES:-}
 WORKDIR=${TYPELISP_IR_OUT:-target/instruction-counts}
 OPT_LEVEL=${TYPELISP_IR_OPT_LEVEL:-1}
 MEASURE_BENCHMARKS=1
@@ -27,6 +28,7 @@ usage: scripts/measure-instruction-counts.sh [options] [typelisp-seed]
 Options:
   --runs N              Repeated cachegrind runs per case (default: 3)
   --filter TEXT         Run benchmark names containing TEXT
+  --cases LIST          Run exact comma-separated benchmark names
   --output DIR          Output root (default: target/instruction-counts)
   --opt-level N         Self-compile opt level 0, 1, or 2 (default: 1)
   --benchmarks-only     Measure benchmark binaries only
@@ -39,6 +41,7 @@ Environment:
   TYPELISP_BIN          Seed compiler when no argument is given
   TYPELISP_IR_RUNS      Default --runs
   TYPELISP_IR_FILTER    Default --filter
+  TYPELISP_IR_CASES     Default --cases
   TYPELISP_IR_OUT       Default --output
   TYPELISP_IR_OPT_LEVEL Default --opt-level
 EOF
@@ -61,6 +64,14 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             }
             FILTER=$2
+            shift 2
+            ;;
+        --cases)
+            [ "$#" -ge 2 ] || {
+                echo "missing value for --cases" >&2
+                exit 2
+            }
+            CASES=$2
             shift 2
             ;;
         --output)
@@ -128,6 +139,13 @@ case "$OPT_LEVEL" in
     0 | 1 | 2) ;;
     *)
         echo "--opt-level must be 0, 1, or 2: $OPT_LEVEL" >&2
+        exit 2
+        ;;
+esac
+
+case "$CASES" in
+    *[!A-Za-z0-9_.,-]*)
+        echo "--cases may only contain comma-separated benchmark names: $CASES" >&2
         exit 2
         ;;
 esac
@@ -319,19 +337,33 @@ build_benchmark() {
     measure_repeated benchmark "$name" 0 "$bin"
 }
 
+benchmark_selected() {
+    name=$1
+    if [ -n "$CASES" ]; then
+        case ",$CASES," in
+            *,"$name",*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    if [ -n "$FILTER" ]; then
+        case "$name" in
+            *"$FILTER"*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    return 0
+}
+
 measure_benchmarks() {
     matched=0
     for bench_tl in benchmarks/*/bench.tl; do
         [ -e "$bench_tl" ] || continue
         name=$(basename "$(dirname "$bench_tl")")
-        case "$name" in
-            *"$FILTER"*) ;;
-            *) continue ;;
-        esac
+        benchmark_selected "$name" || continue
         matched=$((matched + 1))
         build_benchmark "$bench_tl" "$name"
     done
-    [ "$matched" -gt 0 ] || fail "no benchmark cases matched filter: $FILTER"
+    [ "$matched" -gt 0 ] || fail "no benchmark cases matched filter='$FILTER' cases='$CASES'"
 }
 
 measure_self_compile() {
@@ -349,6 +381,9 @@ measure_self_compile() {
 echo "[ir-count] compiler: $COMPILER"
 echo "[ir-count] output: $WORKDIR"
 echo "[ir-count] runs per case: $RUNS"
+if [ -n "$CASES" ]; then
+    echo "[ir-count] exact benchmark cases: $CASES"
+fi
 
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
     measure_benchmarks

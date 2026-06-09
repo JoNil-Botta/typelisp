@@ -71,6 +71,13 @@ jobs:
               ;;
           esac
 
+      - name: Install Linux instruction-count tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
       - name: CI verification
         shell: bash
         run: scripts/ci-verify.sh

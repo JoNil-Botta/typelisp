@@ -615,6 +615,13 @@ if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 native integration corpus" scripts/verify-integration.sh
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 examples" scripts/verify-examples.sh
     run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI benchmark comparison correctness" scripts/bench.sh --correctness
+    if [ "$HOST_OS" = linux ]; then
+        if command -v valgrind >/dev/null 2>&1; then
+            run_with_compiler "$SEED_TYPELISP_BIN" "Linux instruction-count baseline" scripts/check-instruction-counts.sh
+        else
+            echo "[no-rust-stage0] SKIP Linux instruction-count baseline: valgrind not found"
+        fi
+    fi
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 optimization corpus correctness" scripts/run-optimization-benchmarks.sh --correctness
     if [ "$HOST_OS" = linux ]; then
         run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 SPMD SIMD comparison" scripts/verify-spmd-simd.sh

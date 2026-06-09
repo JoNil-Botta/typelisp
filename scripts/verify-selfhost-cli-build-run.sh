@@ -254,7 +254,18 @@ cli_surface_manifest_commands() {
 
 cli_surface_help_commands() {
     awk '
-        /^[[:space:]]+typelisp / {
+        /^Commands:/ {
+            in_commands = 1
+            next
+        }
+        in_commands && /^[[:space:]]*$/ {
+            in_commands = 0
+            next
+        }
+        in_commands && /^[^[:space:]]/ {
+            in_commands = 0
+        }
+        in_commands && /^[[:space:]]+typelisp / {
             print $2
         }
     ' "$WORKDIR/cli-surface-help.err" | sort -u
@@ -265,6 +276,7 @@ assert_cli_surface_help_matches_manifest() {
     assert_status cli-surface-help "$status" 0
     assert_empty cli-surface-help "$WORKDIR/cli-surface-help.out"
     assert_contains cli-surface-help "$WORKDIR/cli-surface-help.err" "Usage:"
+    assert_contains cli-surface-help "$WORKDIR/cli-surface-help.err" "Synopsis:"
 
     cli_surface_manifest_commands > "$WORKDIR/cli-surface-manifest.commands"
     cli_surface_help_commands > "$WORKDIR/cli-surface-help.commands"
@@ -767,7 +779,19 @@ set -e
 assert_status root-package-help "$status" 0
 assert_empty root-package-help "$WORKDIR/root-package-help.out"
 assert_contains root-package-help "$WORKDIR/root-package-help.err" "Usage:"
-assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp build [--manifest-path <typelisp.pkg>]"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "Synopsis:"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "Commands:"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp build          Build a source file or package artifact"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" 'Run `typelisp <command> --help` for command-specific usage.'
+
+set +e
+"$ROOT_PKG_EXE" build --help > "$WORKDIR/root-package-build-help.out" 2> "$WORKDIR/root-package-build-help.err"
+status=$?
+set -e
+assert_status root-package-build-help "$status" 0
+assert_empty root-package-build-help "$WORKDIR/root-package-build-help.out"
+assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "Summary:"
+assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "typelisp build [--manifest-path <typelisp.pkg>]"
 
 CHAIN_DIR="$WORKDIR/package-graph-chain"
 CHAIN_ROOT="$CHAIN_DIR/root"

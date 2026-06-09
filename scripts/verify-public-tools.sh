@@ -343,13 +343,26 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$err" "fmt"
     assert_contains "$err" "doc"
 else
+    assert_contains "$err" "Synopsis:"
+    assert_contains "$err" "Commands:"
     assert_contains "$err" "typelisp repl"
     assert_contains "$err" "typelisp lsp"
     assert_contains "$err" "typelisp fmt"
     assert_contains "$err" "typelisp doc"
     assert_contains "$err" "typelisp clean"
+    assert_contains "$err" "Global Options:"
+    assert_contains "$err" "Common Command Options:"
+    assert_contains "$err" "Environment:"
+    assert_contains "$err" "typelisp compile        Generate assembly or IR"
+    assert_contains "$err" "--opt-level <0|1|2>            Select optimizer level"
+    assert_contains "$err" 'Run `typelisp <command> --help` for command-specific usage.'
 fi
 USAGE_ERR=$err
+if grep -q "Common Command Options:" "$USAGE_ERR"; then
+    EXPECT_NORMALIZED_HELP=1
+else
+    EXPECT_NORMALIZED_HELP=0
+fi
 if grep -q "typelisp clean" "$USAGE_ERR"; then
     HAS_CLEAN_COMMAND=1
 else
@@ -384,6 +397,9 @@ assert_subcommand_help() {
     assert_stdout_empty
     assert_contains "$err" "Usage:"
     assert_contains "$err" "$_usage"
+    if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
+        assert_contains "$err" "Summary:"
+    fi
 }
 
 assert_subcommand_help_pair() {
@@ -394,6 +410,9 @@ assert_subcommand_help_pair() {
 }
 
 assert_subcommand_help_pair build "typelisp build"
+if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
+    assert_contains "$err" "--opt-level <0|1|2>            Package-build optimizer level"
+fi
 assert_subcommand_help_pair run "typelisp run"
 assert_subcommand_help_pair check "typelisp check"
 assert_subcommand_help_pair fmt "typelisp fmt"
@@ -403,7 +422,13 @@ fi
 assert_subcommand_help_pair test "typelisp test"
 assert_subcommand_help_pair doc "typelisp doc"
 assert_subcommand_help_pair compile "typelisp compile"
+if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
+    assert_contains "$err" "--emit-ir                      Emit intermediate representation"
+fi
 assert_subcommand_help_pair repl "typelisp repl"
+if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
+    assert_contains "$err" "REPL Commands:"
+fi
 assert_subcommand_help_pair new "typelisp new"
 assert_subcommand_help_pair init "typelisp init"
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then

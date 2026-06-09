@@ -708,21 +708,36 @@ Source (.tl)
 
 ## CLI
 
-```bash
-typelisp lsp                      # Start stdio LSP diagnostics server
-typelisp repl                     # Start minimal stdio REPL (.help, .type, .exit)
-typelisp check          file.tl    # Type check
-typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>, --cfg <name>
-typelisp compile --batch list.txt  # Compile input|output pairs in one compiler process
-typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
-typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
-typelisp build                    # Build nearest typelisp.pkg artifact; --profile dev|release, --target <target>, --backend-mode <mode>
-typelisp fmt            [file.tl...] # Format files or nearest package; --check reports changes without writing
-typelisp lint           [file.tl...] # Lint files or nearest package; --check exits non-zero on findings
-typelisp test           [file.tl]  # Run inline `(test ...)` items or nearest package; --check type-checks harnesses
+```text
+Synopsis:
+    typelisp - A typed Lisp/Scheme dialect with x86_64 backend
+
+Usage:
+    typelisp <command> [options]
+    typelisp <command> --help
+
+Commands:
+    typelisp build          Build a source file or package artifact
+    typelisp check          Type check a source file or package
+    typelisp clean          Remove build artifacts
+    typelisp compile        Generate assembly or IR
+    typelisp doc            Generate documentation or run doc tests
+    typelisp fmt            Format source files or a package
+    typelisp init           Scaffold a package in the current directory
+    typelisp lint           Lint source files or a package
+    typelisp lsp            Start stdio LSP diagnostics server
+    typelisp new            Scaffold a new package directory
+    typelisp repl           Start minimal stdio REPL
+    typelisp run            Compile, link, and run a source file
+    typelisp test           Run or check inline tests
 ```
 
 `check` is the public type-check command.
+
+Common options include `--target <target>`, `--backend-mode <mode>`,
+`--manifest-path <file>`, `--stdlib-root <dir>`, `--opt-level <0|1|2>`,
+and `--cfg <name>`. Run `typelisp <command> --help` for command-specific
+usage.
 
 The `typelisp repl` command provides a stdio command loop for `.help`,
 `.type <expr>`, and `.exit`. Top-level declarations are remembered for later

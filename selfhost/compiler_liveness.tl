@@ -575,6 +575,7 @@
     [(IrInstrGep _ base offset _) (compiler-live-values2-vars base offset)]
     [(IrInstrLoad _ src _) (compiler-live-value-vars src)]
     [(IrInstrStorePtr dst src _) (compiler-live-values2-vars dst src)]
+    [(IrInstrCopyBytes dst src _) (compiler-live-values2-vars dst src)]
     [(IrInstrBoundsCheck index length _)
       (compiler-live-values2-vars index length)]
     [(IrInstrCast _ src _ _) (compiler-live-value-vars src)]

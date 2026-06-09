@@ -12,65 +12,56 @@ permissions:
   contents: read
 
 jobs:
-  # TEMPORARY DEBUG WORKFLOW (debug-2357-ci): reproduce the Windows-only
-  # SIGSEGV when the build-stage0.sh-built stage1 compiles
-  # selfhost/build_run_core.tl. Uploads the binary and assembly as artifacts.
+  # TEMPORARY DEBUG WORKFLOW (debug-2357-ci) v2: solo compiles pass on the
+  # runner, so reproduce the SIGSEGV through the real manifest gate with WER
+  # crash dumps enabled, and upload the dump + binary for offline analysis.
   debug:
-    name: Debug build_run_core crash (windows-latest)
+    name: Debug manifest gate crash (windows-latest)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: Toolchain and CPU info
-        shell: bash
+      - name: Enable WER local crash dumps
+        shell: powershell
         run: |
-          clang --version || true
-          command -v lld-link && lld-link --version || true
-          command -v link && link 2>&1 | head -2 || true
-          powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores | Format-List" || true
-          powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,TotalVisibleMemorySize,FreePhysicalMemory | Format-List" || true
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Force | Out-Null
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name DumpFolder -Value "C:\dumps" -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name DumpCount -Value 5 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
+          New-Item -ItemType Directory -Force C:\dumps | Out-Null
 
       - name: Fetch stage0
         shell: bash
-        run: |
-          scripts/fetch-stage0.sh
-          sha256sum target/stage0/typelisp.exe
+        run: scripts/fetch-stage0.sh
 
       - name: Build stage1 via build-stage0.sh
         shell: bash
         run: |
           scripts/build-stage0.sh target/stage0/typelisp.exe target/debug-stage1.exe
           sha256sum target/debug-stage1.exe
-          sha256sum target/build-stage0/cli.s
 
-      - name: Compile build_run_core solo
+      - name: Run manifest gate (per-file chunks)
         shell: bash
         run: |
           set +e
-          target/debug-stage1.exe compile selfhost/build_run_core.tl -o target/brc.s --stdlib-root "$PWD/stdlib" > target/brc.out 2> target/brc.err
+          TYPELISP_BIN="$PWD/target/debug-stage1.exe" \
+          TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 \
+          TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=1 \
+            scripts/verify-selfhost-compile-manifest.sh
           code=$?
-          echo "exit=$code"
-          echo "--- stdout"; cat target/brc.out
-          echo "--- stderr"; cat target/brc.err
-          if [ "$code" -ne 0 ]; then
-            echo "CRASH reproduced with exit $code"
-          fi
-          # also try the other heavy drivers for scope
-          for f in selfhost/cli.tl selfhost/check.tl selfhost/compile.tl; do
-            target/debug-stage1.exe compile "$f" -o "target/$(basename "$f").s" --stdlib-root "$PWD/stdlib" > /dev/null 2>&1
-            echo "$f exit=$?"
-          done
+          echo "gate exit=$code"
+          ls -la C:/dumps 2>/dev/null || true
           exit 0
 
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-2357-windows
+          name: debug-2357-windows-v2
           path: |
             target/debug-stage1.exe
-            target/build-stage0/cli.s
-            target/brc.out
-            target/brc.err
+            C:\dumps\*.dmp
+            target/selfhost-compile-manifest/compile-batch-chunks/*.err
+            target/selfhost-compile-manifest/compile-batch-chunks/*.out
           if-no-files-found: warn

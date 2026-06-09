@@ -777,6 +777,35 @@ EOF
     assert_contains "$WORKDIR/test-package-integration-fail.stdout" "TypeLisp integration test file:"
     assert_contains "$WORKDIR/test-package-integration-fail.stderr" "typelisp test: test executable exited with exit status: 7"
 
+    DIAG_PKG="$WORKDIR/integration-lower-diagnostic-pkg"
+    mkdir -p "$DIAG_PKG/src" "$DIAG_PKG/tests"
+    cat > "$DIAG_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "integration_lower_diagnostic_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$DIAG_PKG/src/lib.tl" <<'EOF'
+(define lib-value : i64 42)
+EOF
+    cat > "$DIAG_PKG/tests/quote_runtime_value.tl" <<'EOF'
+(define (main) : i64
+  (begin
+    '(+ 1 2)
+    0))
+EOF
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --target linux-x86_64 --manifest-path "$DIAG_PKG/typelisp.pkg" 3>&2 > "$WORKDIR/test-package-integration-lower-diagnostic.stdout" 2> "$WORKDIR/test-package-integration-lower-diagnostic.stderr"
+    pkg_diag_status=$?
+    set -e
+    if [ "$pkg_diag_status" -ne 1 ]; then
+        echo "host-action CLI package integration diagnostic exited $pkg_diag_status, expected 1" >&2
+        exit 1
+    fi
+    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stdout" "TypeLisp integration test file:"
+    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stderr" "quote_runtime_value.tl:3:5: Expr value is compile-time only"
+
     BAD_SRC="$WORKDIR/inline-test-bad.tl"
     cat > "$BAD_SRC" <<'EOF'
 (test compile-error

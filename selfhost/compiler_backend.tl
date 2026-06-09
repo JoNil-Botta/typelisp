@@ -6947,10 +6947,11 @@
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       ;; #2386: a register-group arg occupies two integer slots and, when it does
       ;; not fit in the remaining arg registers, two stack slots -- mirror exactly
-      ;; what emit-call-args does so the reserved frame space matches.
-      (if (and
-        (compiler-backend-group-type? program-index arg-ty)
-        (not (compiler-backend-target-windows? target)))
+      ;; what emit-call-args does so the reserved frame space matches. That
+      ;; includes Windows: emit-call-args groups on BOTH targets (indexing by
+      ;; `position` there), so counting a Windows group arg as one scalar slot
+      ;; made tail-call stack accounting diverge from emission.
+      (if (compiler-backend-group-type? program-index arg-ty)
         (compiler-backend-call-stack-arg-count
           target
           args
@@ -6959,7 +6960,11 @@
           (+ int-idx 2)
           float-idx
           (+ position 2)
-          (if (compiler-backend-group-arg-in-regs? target int-idx)
+          (if (compiler-backend-group-arg-in-regs?
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              int-idx))
             stack-count
             (+ stack-count 2))
           program-index)
@@ -7034,6 +7039,17 @@
     0
     0))
 
+;; #2386: true when any arg type is a 2-word register group.
+(define (compiler-backend-type-list-has-group?
+  [types : AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons ty rest)
+      (if (compiler-backend-group-type? program-index (ty-node-get ty))
+        true
+        (compiler-backend-type-list-has-group? (box-get rest) program-index))]))
+
 (define (compiler-backend-direct-tail-call?
   [target : CompilerBackendTarget]
   [source-function : String]
@@ -7041,9 +7057,8 @@
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (and
-    (compiler-backend-index-function-defines? program-index name)
-    (<=
+  (let
+    [tail-stack : i64
       (compiler-backend-call-stack-arg-count
         target
         args
@@ -7053,11 +7068,23 @@
         0
         0
         0
-        program-index)
-      (compiler-backend-incoming-stack-arg-count
-        target
-        source-function
-        program-index))))
+        program-index)]
+    (and
+      (compiler-backend-index-function-defines? program-index name)
+      (and
+        (<=
+          tail-stack
+          (compiler-backend-incoming-stack-arg-count
+            target
+            source-function
+            program-index))
+        ;; #2386: the staged tail-call path stages each arg scalar-wise (one
+        ;; 8-byte slot, word0 only), so a register-group arg that needs stack
+        ;; staging would lose word1 and shift every later arg. Decline the
+        ;; direct tail call and fall back to a plain call instead.
+        (or
+          (= tail-stack 0)
+          (not (compiler-backend-type-list-has-group? types program-index)))))))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
@@ -8341,7 +8368,8 @@
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [ret-ty : AstType]) : ResultCompilerBackend
+  [ret-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (= (compiler-ir-instr-seq-count instrs) 2)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 0)]
@@ -8355,6 +8383,10 @@
                   (if (compiler-backend-branch-uses-var? value dst)
                     (match (compiler-backend-phi-input-value inputs from-label)
                       [(OkBackendValue incoming)
+                        ;; The real program-index must reach emit-return here:
+                        ;; an empty index makes the register-group return check
+                        ;; always false, so a 16-byte group return would load
+                        ;; only word0 (#2386 word1-drop miscompile).
                         (compiler-backend-emit-return
                           source-function
                           blocks
@@ -8362,9 +8394,7 @@
                           assignments
                           vars
                           ret-ty
-                          (compiler-backend-program-index-build
-                            IrFunctionNil
-                            IrExternNil))]
+                          program-index)]
                       [(ErrBackendValue message)
                         (ErrCompilerBackend
                           (compiler-diagnostic-at-start "" message))])
@@ -8381,7 +8411,8 @@
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [ret-ty : AstType]) : ResultCompilerBackend
+  [ret-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match blocks
     [(IrBlockNil) (OkCompilerBackend "")]
     [(IrBlockCons block rest)
@@ -8395,7 +8426,8 @@
               from-label
               assignments
               vars
-              ret-ty)
+              ret-ty
+              program-index)
             (compiler-backend-emit-trivial-phi-return-edge
               source-function
               (box-get rest)
@@ -8403,7 +8435,8 @@
               from-label
               assignments
               vars
-              ret-ty))])]
+              ret-ty
+              program-index))])]
     [(IrBlockArray seq)
       (compiler-backend-emit-trivial-phi-return-edge
         source-function
@@ -8412,7 +8445,8 @@
         from-label
         assignments
         vars
-        ret-ty)]))
+        ret-ty
+        program-index)]))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
   [source-function : String]
@@ -8423,7 +8457,8 @@
   [vars : i64]
   [ret-ty : AstType]
   [moved-dst : i64]
-  [moved-src : CompilerIrValue]) : ResultCompilerBackend
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (= (compiler-ir-instr-seq-count instrs) 2)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs 0)]
@@ -8440,6 +8475,9 @@
                         (if (compiler-backend-branch-uses-var?
                           incoming
                           moved-dst)
+                          ;; Same #2386 word1-drop hazard as the plain trivial
+                          ;; phi return edge: emit-return needs the real
+                          ;; program-index to spot register-group returns.
                           (compiler-backend-emit-return
                             source-function
                             blocks
@@ -8447,9 +8485,7 @@
                             assignments
                             vars
                             ret-ty
-                            (compiler-backend-program-index-build
-                              IrFunctionNil
-                              IrExternNil))
+                            program-index)
                           (OkCompilerBackend ""))]
                       [(ErrBackendValue message)
                         (ErrCompilerBackend
@@ -8469,7 +8505,8 @@
   [vars : i64]
   [ret-ty : AstType]
   [moved-dst : i64]
-  [moved-src : CompilerIrValue]) : ResultCompilerBackend
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match blocks
     [(IrBlockNil) (OkCompilerBackend "")]
     [(IrBlockCons block rest)
@@ -8485,7 +8522,8 @@
               vars
               ret-ty
               moved-dst
-              moved-src)
+              moved-src
+              program-index)
             (compiler-backend-emit-mov-trivial-phi-return-edge
               source-function
               (box-get rest)
@@ -8495,7 +8533,8 @@
               vars
               ret-ty
               moved-dst
-              moved-src))])]
+              moved-src
+              program-index))])]
     [(IrBlockArray seq)
       (compiler-backend-emit-mov-trivial-phi-return-edge
         source-function
@@ -8506,7 +8545,8 @@
         vars
         ret-ty
         moved-dst
-        moved-src)]))
+        moved-src
+        program-index)]))
 
 ;; The destination's home register, or "" if it is spilled / has no home. Used to
 ;; load a move's source directly into the destination register (1 instr) instead
@@ -9163,6 +9203,7 @@
           functions
           externs
           program-index
+          vars
           instr-diag)]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
@@ -9249,7 +9290,8 @@
           current-label
           assignments
           vars
-          ret-ty)
+          ret-ty
+          program-index)
           [(OkCompilerBackend direct-return)
             (if (string-eq direct-return "")
               (match (compiler-backend-emit-phi-edge-copies
@@ -9472,6 +9514,13 @@
         [(IrSomeValue value) (compiler-backend-count-value-use counts value)])]
     [(IrInstrPhi _ inputs _)
       (compiler-backend-count-phi-input-uses counts inputs)]
+    ;; #2386 register-group instrs: count their operand uses so the
+    ;; single-use fusion peepholes cannot elide the home store of a var a
+    ;; Pack/Word still reads (-O2 copy-prop substitutes vars directly into
+    ;; Pack/Word operands).
+    [(IrInstrPack _ words _)
+      (compiler-backend-count-value-list-uses counts words)]
+    [(IrInstrWord _ src _ _) (compiler-backend-count-value-use counts src)]
     [_ unit]))
 
 (define (compiler-backend-count-instr-seq-uses
@@ -10002,7 +10051,8 @@
     vars
     ret-ty
     dst
-    src)
+    src
+    program-index)
     [(OkCompilerBackend direct-return)
       (if (string-eq direct-return "")
         (compiler-backend-emit-instrs-normal
@@ -10187,7 +10237,10 @@
       0
       instr-diag
       program-index
-      0)
+      ;; vars must be the real frame var count: group-word1 slots live at
+      ;; -(8*(vars+var+1))(%rbp), so 0 here made a stack-homed group arg read
+      ;; its word0 slot for BOTH words (#2386 closure-arg miscompile).
+      vars)
       [(OkCompilerBackend args-asm)
         (match (compiler-backend-emit-load-value-with-plan
           assignments
@@ -10245,6 +10298,7 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [declared-param-types : AstTypeList
@@ -10277,7 +10331,10 @@
       0
       instr-diag
       program-index
-      0)
+      ;; Real frame var count for group-word1 slot addressing (see
+      ;; emit-indirect-call): latent today because C-ABI lowering never passes
+      ;; 16-byte aggregates by value, but keep it correct.
+      vars)
       [(OkCompilerBackend args-asm)
         (match (compiler-backend-emit-load-value-with-plan
           assignments
@@ -12516,7 +12573,13 @@
     [frame : i64
       (+
         (compiler-backend-frame-size
-          (compiler-backend-frame-slots vars CompilerRegAssignmentNil))
+          ;; #2386: group params spill word1 at -(8*(vars+var+1))(%rbp); the
+          ;; frame must cover those slots (no red zone on Windows -- the
+          ;; outgoing stack-arg area would clobber them otherwise).
+          (compiler-backend-frame-slots-with-groups
+            vars
+            CompilerRegAssignmentNil
+            (compiler-backend-type-list-has-group? param-types program-index)))
         (compiler-backend-closure-adapter-outgoing-frame-space target args))]
     [call-space : i64
       (compiler-backend-call-arg-space target args param-types program-index)]

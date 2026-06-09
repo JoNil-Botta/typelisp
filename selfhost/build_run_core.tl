@@ -5,6 +5,8 @@
 
 (import "compiler_object_coff.tl")
 
+(import "compiler_object_elf.tl")
+
 (import "../stdlib/env.tl")
 
 (import "../stdlib/fs.tl")
@@ -635,6 +637,93 @@
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
+(define (source-tool-linux-direct-object-env-name) : String
+  "TYPELISP_LINUX_DIRECT_OBJECT")
+
+(define (source-tool-linux-direct-object-enabled?) : bool
+  (source-tool-env-command-set? (source-tool-linux-direct-object-env-name)))
+
+(define (source-tool-linux-direct-object-linkable?
+  [image : CompilerObjectImage]) : bool
+  (and
+    (compiler-object-elf-image-supported? image)
+    (and
+      (compiler-object-symbol-list-contains?
+        (struct-get image symbols)
+        "_start"
+        (ObjectSymbolExport)
+        (ObjectSymbolFunction))
+      (> (compiler-object-elf-section-raw-size image (ObjectSectionText)) 0))))
+
+(define (source-tool-linux-direct-object-unavailable-message) : String
+  "linux direct object unavailable: object image lacks encoded .text or _start")
+
+(define (source-tool-render-linkable-linux-elf-object
+  [image : CompilerObjectImage]) : ResultSourceToolString
+  (if (source-tool-linux-direct-object-linkable? image)
+    (match (compiler-object-elf-render image)
+      [(OkCompilerObjectElf obj) (OkSourceToolString obj)]
+      [(ErrCompilerObjectElf message) (ErrSourceToolString message)])
+    (ErrSourceToolString (source-tool-linux-direct-object-unavailable-message))))
+
+(define (source-tool-emit-linux-elf-object
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
+  (match target
+    [(BackendTargetLinux)
+      (match (source-tool-try-read-file source)
+        [(ErrIoString error)
+          (ErrSourceToolString
+            (source-tool-cannot-read-module-message source error))]
+        [(OkIoString _)
+          (match (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
+            source
+            target
+            true
+            stdlib-roots
+            opt-level
+            mode
+            (compiler-cfg-empty)
+            (source-tool-linux-crt-entry? target link-inputs))
+            [(OkCompilerDriverObject image)
+              (source-tool-render-linkable-linux-elf-object image)]
+            [(ErrCompilerDriverObject diag)
+              (ErrSourceToolString (compiler-diagnostic-render diag))])])]
+    [(BackendTargetWindows)
+      (ErrSourceToolString
+        "direct ELF object emission is only available for linux-x86_64")]))
+
+(define (source-tool-emit-lowered-linux-elf-object
+  [source : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
+  (match target
+    [(BackendTargetLinux)
+      (match (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+        source
+        program
+        spans
+        target
+        true
+        (BackendModeScalar)
+        opt-level
+        true
+        (source-tool-linux-crt-entry? target link-inputs))
+        [(OkCompilerDriverObject image)
+          (source-tool-render-linkable-linux-elf-object image)]
+        [(ErrCompilerDriverObject diag)
+          (ErrSourceToolString (compiler-diagnostic-render diag))])]
+    [(BackendTargetWindows)
+      (ErrSourceToolString
+        "direct ELF object emission is only available for linux-x86_64")]))
+
 (define (source-tool-windows-direct-object-env-name) : String
   "TYPELISP_WINDOWS_DIRECT_OBJECT")
 
@@ -992,6 +1081,14 @@
       (source-tool-link-inputs-empty))
     (source-tool-windows-stack-reserve-arg)))
 
+(define (source-tool-linux-direct-object-linkability-smoke-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (main) : i64 0)"
+    (BackendTargetLinux))
+    [(OkCompilerBackendObject image)
+      (not (source-tool-linux-direct-object-linkable? image))]
+    [(ErrCompilerBackendObject _) false]))
+
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64 0)"
@@ -1219,6 +1316,37 @@
         (SourceToolDirectObjectUnavailable message)])
     (SourceToolDirectObjectUnavailable "windows direct object disabled")))
 
+(define (source-tool-try-linux-direct-object-and-link
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]
+  [obj-path : String]
+  [bin-path : String]) : SourceToolDirectObjectStatus
+  (if (and
+    (source-tool-linux-direct-object-enabled?)
+    (compiler-backend-target-linux? target))
+    (match (source-tool-emit-linux-elf-object
+      source
+      target
+      stdlib-roots
+      opt-level
+      mode
+      link-inputs)
+      [(OkSourceToolString obj)
+        (source-tool-write-direct-object-and-link
+          obj-path
+          bin-path
+          target
+          link-inputs
+          obj
+          "source-tool: failed to write direct object artifact")]
+      [(ErrSourceToolString message)
+        (SourceToolDirectObjectUnavailable message)])
+    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
+
 (define (source-tool-try-lowered-windows-direct-object-and-link
   [source : String]
   [program : CompilerIrProgram]
@@ -1248,6 +1376,37 @@
       [(ErrSourceToolString message)
         (SourceToolDirectObjectUnavailable message)])
     (SourceToolDirectObjectUnavailable "windows direct object disabled")))
+
+(define (source-tool-try-lowered-linux-direct-object-and-link
+  [source : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]
+  [obj-path : String]
+  [bin-path : String]) : SourceToolDirectObjectStatus
+  (if (and
+    (source-tool-linux-direct-object-enabled?)
+    (compiler-backend-target-linux? target))
+    (match (source-tool-emit-lowered-linux-elf-object
+      source
+      program
+      spans
+      target
+      opt-level
+      link-inputs)
+      [(OkSourceToolString obj)
+        (source-tool-write-direct-object-and-link
+          obj-path
+          bin-path
+          target
+          link-inputs
+          obj
+          "test: failed to write direct object artifact")]
+      [(ErrSourceToolString message)
+        (SourceToolDirectObjectUnavailable message)])
+    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
 
 (define (source-tool-write-assembly-and-link
   [target : CompilerBackendTarget]
@@ -1307,7 +1466,7 @@
   [obj-path : String]
   [bin-path : String]
   [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-try-windows-direct-object-and-link
+  (match (source-tool-try-linux-direct-object-and-link
     source
     target
     stdlib-roots
@@ -1319,17 +1478,29 @@
     [(SourceToolDirectObjectOk) SourceToolCommandOk]
     [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
     [(SourceToolDirectObjectUnavailable _)
-      (source-tool-emit-assembly-and-link
+      (match (source-tool-try-windows-direct-object-and-link
         source
         target
         stdlib-roots
         opt-level
         mode
         link-inputs
-        asm-path
         obj-path
-        bin-path
-        write-context)]))
+        bin-path)
+        [(SourceToolDirectObjectOk) SourceToolCommandOk]
+        [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
+        [(SourceToolDirectObjectUnavailable _)
+          (source-tool-emit-assembly-and-link
+            source
+            target
+            stdlib-roots
+            opt-level
+            mode
+            link-inputs
+            asm-path
+            obj-path
+            bin-path
+            write-context)])]))
 
 (define (source-tool-lowered-object-or-assembly-and-link
   [source : String]
@@ -1343,7 +1514,7 @@
   [bin-path : String]
   [asm : String]
   [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-try-lowered-windows-direct-object-and-link
+  (match (source-tool-try-lowered-linux-direct-object-and-link
     source
     program
     spans
@@ -1355,14 +1526,26 @@
     [(SourceToolDirectObjectOk) SourceToolCommandOk]
     [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
     [(SourceToolDirectObjectUnavailable _)
-      (source-tool-write-assembly-and-link
+      (match (source-tool-try-lowered-windows-direct-object-and-link
+        source
+        program
+        spans
         target
-        asm-path
-        obj-path
-        bin-path
+        opt-level
         link-inputs
-        asm
-        write-context)]))
+        obj-path
+        bin-path)
+        [(SourceToolDirectObjectOk) SourceToolCommandOk]
+        [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
+        [(SourceToolDirectObjectUnavailable _)
+          (source-tool-write-assembly-and-link
+            target
+            asm-path
+            obj-path
+            bin-path
+            link-inputs
+            asm
+            write-context)])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

@@ -4187,6 +4187,11 @@
       [(AstTyF32) true]
       [_ false])))
 
+(define (tc-function-to-integer-cast? [from-ty : AstType] [to-ty : AstType]) : bool
+  (match (tc-type-strip-region from-ty)
+    [(AstTyFunc _ _) (tc-integer-type? (tc-type-strip-region to-ty))]
+    [_ false]))
+
 (define (tc-raw-pointer-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyPtr _) true]
@@ -14540,12 +14545,18 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-expr ctx env inner)
           [(OkTcType inner-ty)
-            (if (and
-              (tc-castable-type? inner-ty)
-              (tc-castable-type? (tc-resolve-type ctx ty)))
-              (OkTcType (tc-resolve-type ctx ty))
-              (ErrTcType
-                "typecheck: cast requires scalar numeric (integer/char/float) source and target"))]
+            (let
+              [target-ty : AstType (tc-resolve-type ctx ty)]
+              (if (and
+                (tc-castable-type? inner-ty)
+                (tc-castable-type? target-ty))
+                (OkTcType target-ty)
+                (if (tc-function-to-integer-cast? inner-ty target-ty)
+                  (match (tc-require-unsafe env "function-to-integer cast")
+                    [(OkTcUnit) (OkTcType target-ty)]
+                    [(ErrTcUnit message) (ErrTcType message)])
+                  (ErrTcType
+                    "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprBorrow mutable lifetime place-box)
       (let

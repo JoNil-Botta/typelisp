@@ -104,6 +104,9 @@ Coverage notes:
 - `random_api.tl` covers deterministic seed normalization and MINSTD sequences,
   bounded draws, invalid bounds, weighted-index edge cases, zero-weight
   skipping, and stable picks for fixed seeds.
+- `thread_api.tl` covers worker count fallback shape, invalid semaphore
+  creation, two native worker threads, semaphore signaling, and join return
+  values.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `text_buf_borrowed_check.tl` verifies the lifetime-parameterized

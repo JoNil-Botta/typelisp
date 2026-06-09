@@ -3988,10 +3988,14 @@
   "(define (main [a : bool]) : bool (= a 1))")
 
 (define (compiler-typecheck-scalar-cond-ok-source) : String
-  "(define (main [x : i64]) : i64 (cond [(= x 0) 1] [else 2]))")
+  "(defmacro (cond [condition : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
+  `(if ,condition ,then-expr ,else-expr))
+(define (main [x : i64]) : i64 (cond (= x 0) 1 2))")
 
 (define (compiler-typecheck-scalar-cond-bad-source) : String
-  "(define (main) : i64 (cond [1 2] [else 3]))")
+  "(defmacro (cond [condition : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
+  `(if ,condition ,then-expr ,else-expr))
+(define (main) : i64 (cond 1 2 3))")
 
 (define (compiler-typecheck-scalar-narrow-match-source) : String
   "(define (narrow-u8 [n : u8]) : i64 (match n [0 1] [_ 0]))

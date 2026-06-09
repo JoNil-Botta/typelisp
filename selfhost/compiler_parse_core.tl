@@ -546,9 +546,6 @@
 (define (compiler-parse-tag-expr-cast) : i64
   207)
 
-(define (compiler-parse-tag-expr-cond) : i64
-  208)
-
 (define (compiler-parse-tag-expr-tuple) : i64
   220)
 
@@ -605,12 +602,6 @@
 
 (define (compiler-parse-tag-expr-return) : i64
   270)
-
-(define (compiler-parse-tag-expr-when) : i64
-  271)
-
-(define (compiler-parse-tag-expr-unless) : i64
-  272)
 
 (define (compiler-parse-tag-expr-ptr-null) : i64
   252)
@@ -819,7 +810,6 @@
       (set! out (sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
       (set! out (sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
       (set! out (sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
-      (set! out (sym-i64-bind out "cond" (compiler-parse-tag-expr-cond)))
       (set! out (sym-i64-bind out "tuple" (compiler-parse-tag-expr-tuple)))
       (set!
         out
@@ -1082,8 +1072,6 @@
         (compiler-parse-tag-expr-set)
         (string-eq name "cast")
         (compiler-parse-tag-expr-cast)
-        (string-eq name "cond")
-        (compiler-parse-tag-expr-cond)
         (string-eq name "type")
         (compiler-parse-tag-expr-type-literal)
         (string-eq name "init")
@@ -2612,144 +2600,27 @@
         [_ (ErrAstExpr "parse: malformed if")])]
     [_ (ErrAstExpr "parse: malformed if")]))
 
-(define (parse-ast-unit-expr) : i64
-  (ast-node-push (AstExprLiteral AstLitUnit)))
+(define (parse-ast-cond-bracket-diagnostic) : String
+  "parse: bracket-arm cond is retired; use flat cond: (cond test value ... fallback)")
 
-(define (parse-ast-expr-list-append-unit [exprs : AstExprList]) : AstExprList
-  (match exprs
-    [(AstExprNil) (ast-expr-cons (parse-ast-unit-expr) AstExprNil)]
-    [(AstExprCons head rest)
-      (let
-        [rest-list : AstExprList (box-get rest)]
-        (ast-expr-cons head (parse-ast-expr-list-append-unit rest-list)))]))
+(define (parse-ast-cond-call-name? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    (or
+      (string-eq name "cond")
+      (and (> n 5) (string-eq (substring name (- n 5) 5) "/cond")))))
 
-(define (parse-ast-when-like-error [is-unless : bool]) : String
-  (if is-unless
-    "parse: unless expects a condition and at least one body expression"
-    "parse: when expects a condition and at least one body expression"))
-
-(define (parse-ast-when-like
-  [dispatch : SymI64Env]
-  [rest : SpannedSexpr]
-  [is-unless : bool]) : ResultAstExpr
+(define (parse-ast-cond-bracket-operand? [rest : SpannedSexpr]) : bool
   (match rest
-    [(SpSCons cond body _)
-      (match (sp-node-get body)
-        [(SpSNil _) (ErrAstExpr (parse-ast-when-like-error is-unless))]
-        [_
-          (match (parse-ast-expr dispatch (sp-node-get cond))
-            [(OkAstExpr parsed-cond)
-              (match (parse-ast-expr-list dispatch (sp-node-get body))
-                [(OkAstExprList parsed-body)
-                  (let
-                    [unit-expr : i64 (parse-ast-unit-expr)]
-                    [body-expr : i64
-                      (ast-node-push
-                        (AstExprBegin
-                          (parse-ast-expr-list-append-unit parsed-body)))]
-                    (if is-unless
-                      (OkAstExpr (ast-expr-if parsed-cond unit-expr body-expr))
-                      (OkAstExpr (ast-expr-if parsed-cond body-expr unit-expr))))]
-                [(ErrAstExprList message) (ErrAstExpr message)])]
-            [(ErrAstExpr message) (ErrAstExpr message)])])]
-    [_ (ErrAstExpr (parse-ast-when-like-error is-unless))]))
-
-(define (parse-ast-when [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
-  (parse-ast-when-like dispatch rest false))
-
-(define (parse-ast-unless [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
-  (parse-ast-when-like dispatch rest true))
-
-(define (parse-ast-cond-test-arm
-  [dispatch : SymI64Env]
-  [cond : SpannedSexpr]
-  [body : SpannedSexpr]
-  [rest : SpannedSexpr]) : ResultAstExpr
-  (match (parse-ast-expr dispatch cond)
-    [(OkAstExpr parsed-cond)
-      (match (parse-ast-expr dispatch body)
-        [(OkAstExpr parsed-body)
-          (match (parse-ast-cond-arms dispatch rest true)
-            [(OkAstExpr parsed-else)
-              (OkAstExpr (ast-expr-if parsed-cond parsed-body parsed-else))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
-        [(ErrAstExpr message) (ErrAstExpr message)])]
-    [(ErrAstExpr message) (ErrAstExpr message)]))
-
-(define (parse-ast-cond-arm
-  [dispatch : SymI64Env]
-  [arm : SpannedSexpr]
-  [rest : SpannedSexpr]
-  [has-test : bool]) : ResultAstExpr
-  (match arm
-    [(SpSBracketList items _)
-      (parse-ast-cond-arm dispatch (sp-node-get items) rest has-test)]
-    [(SpSCons head body-tail _)
-      (match (sp-node-get body-tail)
-        [(SpSCons body end _)
-          (match (sp-node-get end)
-            [(SpSNil _)
-              (match (sp-node-get head)
-                [(SpSSym name _)
-                  (if (string-eq name "else")
-                    (if has-test
-                      (match rest
-                        [(SpSNil _)
-                          (parse-ast-expr dispatch (sp-node-get body))]
-                        [_ (ErrAstExpr "parse: cond else arm must be final")])
-                      (match rest
-                        [(SpSNil _)
-                          (ErrAstExpr
-                            "parse: cond requires at least one test arm")]
-                        [_ (ErrAstExpr "parse: cond else arm must be final")]))
-                    (parse-ast-cond-test-arm
-                      dispatch
-                      (sp-node-get head)
-                      (sp-node-get body)
-                      rest))]
-                [_
-                  (parse-ast-cond-test-arm
-                    dispatch
-                    (sp-node-get head)
-                    (sp-node-get body)
-                    rest)])]
-            [_ (ErrAstExpr "parse: malformed cond arm")])]
-        [_ (ErrAstExpr "parse: malformed cond arm")])]
-    [_ (ErrAstExpr "parse: malformed cond arm")]))
-
-(define (parse-ast-cond-arms
-  [dispatch : SymI64Env]
-  [arms : SpannedSexpr]
-  [has-test : bool]) : ResultAstExpr
-  (match arms
-    [(SpSNil _) (ErrAstExpr "parse: cond requires final else arm")]
-    [(SpSCons arm rest _)
-      (parse-ast-cond-arm
-        dispatch
-        (sp-node-get arm)
-        (sp-node-get rest)
-        has-test)]
-    [_ (ErrAstExpr "parse: malformed cond")]))
-
-(define (parse-ast-cond [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
-  (parse-ast-cond-arms dispatch rest false))
-
-(define (parse-ast-cond-legacy-form? [rest : SpannedSexpr]) : bool
-  (match rest
-    [(SpSNil _) true]
-    [(SpSCons head _ _)
+    [(SpSNil _) false]
+    [(SpSCons head tail _)
       (match (sp-node-get head)
         [(SpSBracketList _ _) true]
-        [_ false])]
+        [_ (parse-ast-cond-bracket-operand? (sp-node-get tail))])]
     [_ false]))
 
-(define (parse-ast-cond-or-call
-  [dispatch : SymI64Env]
-  [head : SpannedSexpr]
-  [rest : SpannedSexpr]) : ResultAstExpr
-  (if (parse-ast-cond-legacy-form? rest)
-    (parse-ast-cond dispatch rest)
-    (parse-ast-call dispatch head rest)))
+(define (parse-ast-cond-bracket-call? [name : String] [rest : SpannedSexpr]) : bool
+  (and (parse-ast-cond-call-name? name) (parse-ast-cond-bracket-operand? rest)))
 
 (define (parse-ast-while [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4126,32 +3997,32 @@
           [_ (parse-ast-call dispatch head rest)])
         (let
           [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
-          (core/cond
-            (= tag (compiler-parse-tag-expr-ptr-addr-of))
-            (parse-ast-ptr-addr-of rest)
-            (= tag (compiler-parse-tag-expr-ptr-read))
-            (parse-ast-ptr-read dispatch rest)
-            (= tag (compiler-parse-tag-expr-ptr-write))
-            (parse-ast-ptr-write dispatch rest)
-            (= tag (compiler-parse-tag-expr-ptr-offset))
-            (parse-ast-ptr-offset dispatch rest)
-            (= tag (compiler-parse-tag-expr-ptr-cast))
-            (parse-ast-ptr-cast-like dispatch false rest)
-            (= tag (compiler-parse-tag-expr-ptr-to-int))
-            (parse-ast-ptr-to-int dispatch rest)
-            (= tag (compiler-parse-tag-expr-int-to-ptr))
-            (parse-ast-ptr-cast-like dispatch true rest)
-            (= tag (compiler-parse-tag-expr-cond))
-            (parse-ast-cond-or-call dispatch head rest)
-            (ast-unop-tag? tag)
-            (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
-            (ast-binop-tag? tag)
-            (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
-            (= tag (compiler-parse-tag-ty-ref))
-            (parse-ast-borrow dispatch false rest)
-            (= tag (compiler-parse-tag-ty-mut-ref))
-            (parse-ast-borrow dispatch true rest)
-            (parse-ast-list-expr-tag dispatch tag head rest))))]
+          (if (parse-ast-cond-bracket-call? op rest)
+            (ErrAstExpr (parse-ast-cond-bracket-diagnostic))
+            (core/cond
+              (= tag (compiler-parse-tag-expr-ptr-addr-of))
+              (parse-ast-ptr-addr-of rest)
+              (= tag (compiler-parse-tag-expr-ptr-read))
+              (parse-ast-ptr-read dispatch rest)
+              (= tag (compiler-parse-tag-expr-ptr-write))
+              (parse-ast-ptr-write dispatch rest)
+              (= tag (compiler-parse-tag-expr-ptr-offset))
+              (parse-ast-ptr-offset dispatch rest)
+              (= tag (compiler-parse-tag-expr-ptr-cast))
+              (parse-ast-ptr-cast-like dispatch false rest)
+              (= tag (compiler-parse-tag-expr-ptr-to-int))
+              (parse-ast-ptr-to-int dispatch rest)
+              (= tag (compiler-parse-tag-expr-int-to-ptr))
+              (parse-ast-ptr-cast-like dispatch true rest)
+              (ast-unop-tag? tag)
+              (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
+              (ast-binop-tag? tag)
+              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
+              (= tag (compiler-parse-tag-ty-ref))
+              (parse-ast-borrow dispatch false rest)
+              (= tag (compiler-parse-tag-ty-mut-ref))
+              (parse-ast-borrow dispatch true rest)
+              (parse-ast-list-expr-tag dispatch tag head rest)))))]
     [_ (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
@@ -6464,12 +6335,12 @@
   (let
     [x : i64 1]
     [arr (array 1 2 3)]
-    (begin
-      (set! x (+ x 41))
-      (cond
-        [(and (= x 42) true)
-         (match (Some x) [(Some v) v] [_ 0])]
-        [else 0]))))")
+      (begin
+        (set! x (+ x 41))
+        (cond
+          (and (= x 42) true)
+          (match (Some x) [(Some v) v] [_ 0])
+          0))))")
 
 (define (compiler-parse-smoke-score [program : AstProgram]) : i64
   (match program
@@ -6524,8 +6395,11 @@
 (define (compiler-parse-malformed-set-source) : String
   "(define (main) : i64 (set! x))")
 
-(define (compiler-parse-cond-no-else-source) : String
-  "(define (main) : i64 (cond))")
+(define (compiler-parse-bracket-cond-source) : String
+  "(define (main) : i64 (cond [(= 1 1) 1] [else 0]))")
+
+(define (compiler-parse-qualified-bracket-cond-source) : String
+  "(define (main) : i64 (core/cond [(= 1 1) 1] [else 0]))")
 
 (define (compiler-parse-region-source) : String
   "(define (main) : (in r String)
@@ -8471,23 +8345,27 @@
             "parse: malformed set!")
           (and
             (compiler-parse-error-ok?
-              (compiler-parse-cond-no-else-source)
-              "parse: cond requires final else arm")
+              (compiler-parse-bracket-cond-source)
+              (parse-ast-cond-bracket-diagnostic))
             (and
               (compiler-parse-error-ok?
-                (compiler-parse-with-region-empty-source)
-                "parse: with-arena 'r' requires a non-empty body")
+                (compiler-parse-qualified-bracket-cond-source)
+                (parse-ast-cond-bracket-diagnostic))
               (and
                 (compiler-parse-error-ok?
-                  (compiler-parse-region-type-bad-source)
-                  "parse: region name must be an identifier")
+                  (compiler-parse-with-region-empty-source)
+                  "parse: with-arena 'r' requires a non-empty body")
                 (and
                   (compiler-parse-error-ok?
-                    (compiler-parse-malformed-try-source)
-                    "parse: try expects exactly one expression")
-                  (compiler-parse-error-ok?
-                    (compiler-parse-malformed-return-source)
-                    "parse: return expects exactly one expression"))))))))))
+                    (compiler-parse-region-type-bad-source)
+                    "parse: region name must be an identifier")
+                  (and
+                    (compiler-parse-error-ok?
+                      (compiler-parse-malformed-try-source)
+                      "parse: try expects exactly one expression")
+                    (compiler-parse-error-ok?
+                      (compiler-parse-malformed-return-source)
+                      "parse: return expects exactly one expression")))))))))))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (core/cond

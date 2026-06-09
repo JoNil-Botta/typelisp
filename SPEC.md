@@ -2607,32 +2607,29 @@ All operators are prefix functions (or special forms):
 - Both branches must have the same type.
 - Returns the value of the taken branch.
 
-`(cond [test expr] ... [else fallback])` is a Lisp-native else-if surface
-form. It parses to nested `if` expressions, so each test must type-check as
-`bool` and all branch result types must merge using the normal `if` rules.
-The final arm is required and must be `[else fallback]`; `else` is only special
-as the head of the final `cond` arm.
+`(cond test expr ... fallback)` is the flat conditional macro surface provided
+by the implicit core macro prelude. It expands to nested `if` expressions, so
+each test must type-check as `bool` and all branch result types must merge using
+the normal `if` rules. The argument list is `test result` pairs followed by one
+final fallback expression, so at least three arguments are required and the
+arity must be odd. Qualified calls such as `core/cond` use the same flat shape.
+The legacy bracket-arm form `(cond [test expr] ... [else fallback])` is retired
+and is not accepted.
 
 ```lisp test=ignore name=cond-expression reason=fragment
 (cond
-  [(= x 0) 10]
-  [(= x 1) 20]
-  [else 30])
+  (= x 0)
+  10
+  (= x 1)
+  20
+  30)
 ```
 
-`(when cond body...)` and `(unless cond body...)` are unit-valued guard forms.
+`(when cond body)` and `(unless cond body)` are unit-valued guard macros.
 `when` evaluates its body only when `cond` is true; `unless` evaluates its body
-only when `cond` is false. The body must contain at least one expression. Body
-results are discarded, and the whole form has type `unit`, which makes these
-forms suitable for side effects and early-return guards.
-
-Transition note: during the stdlib macro migration, the selfhost parser leaves
-unqualified `when` and `unless` as macro-call candidates. Macro expansion gives
-a visible local macro with that name ownership of the call; otherwise the
-compiler applies the compatibility guard-form desugaring described above. The
-legacy bracket-arm `cond` form remains compatibility parsed for now, while a
-flat call-shaped `cond` form can be owned by a macro before #1141 decides the
-final stdlib `cond` arm surface.
+only when `cond` is false. The body must be a single unit-valued expression; use
+an explicit `begin` for multiple side effects. The whole form has type `unit`,
+which makes these forms suitable for side effects and early-return guards.
 
 ```lisp test=ignore name=when-unless-guards reason=fragment
 (when (< x 0) (return 0))
@@ -4876,9 +4873,9 @@ variant-payload ::= type field-meta*           ; payload cleanup metadata reserv
 expr          ::= literal
                 | ident
                 | "(" "if" expr expr expr ")"
-                | "(" "cond" cond-arm+ ")"
-                | "(" "when" expr expr+ ")"
-                | "(" "unless" expr expr+ ")"
+                | "(" "cond" expr expr (expr expr)* expr ")"
+                | "(" "when" expr expr ")"
+                | "(" "unless" expr expr ")"
                 | "(" "let" binding+ expr ")"
                 | "(" "while" expr expr ")"
                 | "(" "begin" expr+ ")"
@@ -4926,8 +4923,6 @@ resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 spmd-lane-form ::= "program-index" | "program-count"
-cond-arm      ::= "[" expr expr "]"
-                | "[" "else" expr "]"         ; required final arm
 match-arm     ::= "[" pattern expr "]"
 pattern       ::= "_"
                 | literal

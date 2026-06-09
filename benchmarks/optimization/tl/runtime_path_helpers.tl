@@ -15,14 +15,17 @@
 
 (define (path-join [left : String] [right : String]) : String
   (cond
-    [(= (string-length left) 0) right]
-    [(= (string-length right) 0) left]
-    [(path-ends-separator? left)
-      (if (path-starts-separator? right)
-        (string-append left (substring right 1 (- (string-length right) 1)))
-        (string-append left right))]
-    [(path-starts-separator? right) (string-append left right)]
-    [else (string-append (string-append left "/") right)]))
+    (= (string-length left) 0)
+    right
+    (= (string-length right) 0)
+    left
+    (path-ends-separator? left)
+    (if (path-starts-separator? right)
+      (string-append left (substring right 1 (- (string-length right) 1)))
+      (string-append left right))
+    (path-starts-separator? right)
+    (string-append left right)
+    (string-append (string-append left "/") right)))
 
 (define (last-separator-index [path : String]) : i64
   (let

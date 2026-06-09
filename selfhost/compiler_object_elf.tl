@@ -174,18 +174,20 @@
           [c : char (string-ref text i)]
           (begin
             (cond
-              [(= c #-') (set! negative true)]
-              [(= c #.') (set! fraction true)]
-              [(compiler-object-elf-decimal-digit? c)
-                (let
-                  [digit : f64
-                    (cast (compiler-object-elf-decimal-digit-value c) : f64)]
-                  (if fraction
-                    (begin
-                      (set! scale (* scale 0.1))
-                      (set! value (+ value (* digit scale))))
-                    (set! value (+ (* value 10.0) digit))))]
-              [else unit])
+              (= c #-')
+              (set! negative true)
+              (= c #.')
+              (set! fraction true)
+              (compiler-object-elf-decimal-digit? c)
+              (let
+                [digit : f64
+                  (cast (compiler-object-elf-decimal-digit-value c) : f64)]
+                (if fraction
+                  (begin
+                    (set! scale (* scale 0.1))
+                    (set! value (+ value (* digit scale))))
+                  (set! value (+ (* value 10.0) digit))))
+              unit)
             (set! i (+ i 1)))))
       (if negative
         (- 0.0 value)
@@ -616,18 +618,29 @@
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
   (cond
-    [(= index compiler-object-elf-section-text-index) 1]
-    [(= index compiler-object-elf-section-data-index) 7]
-    [(= index compiler-object-elf-section-rodata-index) 13]
-    [(= index compiler-object-elf-section-bss-index) 21]
-    [(= index compiler-object-elf-section-rela-text-index) 26]
-    [(= index compiler-object-elf-section-rela-data-index) 37]
-    [(= index compiler-object-elf-section-rela-rodata-index) 48]
-    [(= index compiler-object-elf-section-rela-bss-index) 61]
-    [(= index compiler-object-elf-section-symtab-index) 71]
-    [(= index compiler-object-elf-section-strtab-index) 79]
-    [(= index compiler-object-elf-section-shstrtab-index) 87]
-    [else 0]))
+    (= index compiler-object-elf-section-text-index)
+    1
+    (= index compiler-object-elf-section-data-index)
+    7
+    (= index compiler-object-elf-section-rodata-index)
+    13
+    (= index compiler-object-elf-section-bss-index)
+    21
+    (= index compiler-object-elf-section-rela-text-index)
+    26
+    (= index compiler-object-elf-section-rela-data-index)
+    37
+    (= index compiler-object-elf-section-rela-rodata-index)
+    48
+    (= index compiler-object-elf-section-rela-bss-index)
+    61
+    (= index compiler-object-elf-section-symtab-index)
+    71
+    (= index compiler-object-elf-section-strtab-index)
+    79
+    (= index compiler-object-elf-section-shstrtab-index)
+    87
+    0))
 
 (define (compiler-object-elf-push-header!
   [out : (Array u8)]

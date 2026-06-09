@@ -12,72 +12,65 @@ permissions:
   contents: read
 
 jobs:
-  # TypeLisp is self-hosted: there is no Rust compiler to build. The single
-  # verification flow fetches the published self-hosted stage0 (cli.tl) and runs
-  # every gate through it (and, on Linux, through a freshly bootstrapped stage1).
-  # The gate is fail-closed: Linux and Windows must run every applicable gate.
-  # Do not add skip flags; compiler/runtime capability changes should land first,
-  # then a follow-up PR can use the new capability.
-  ci:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - name: Test + Integration
-            os: ubuntu-latest
-            timeout_minutes: 120
-          - name: Test + Integration (windows-latest)
-            os: windows-latest
-            timeout_minutes: 120
+  # TEMPORARY DEBUG WORKFLOW (debug-2357-ci): reproduce the Windows-only
+  # SIGSEGV when the build-stage0.sh-built stage1 compiles
+  # selfhost/build_run_core.tl. Uploads the binary and assembly as artifacts.
+  debug:
+    name: Debug build_run_core crash (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check implementation language allowlist
+      - name: Toolchain and CPU info
         shell: bash
-        run: scripts/check-implementation-languages.sh
+        run: |
+          clang --version || true
+          command -v lld-link && lld-link --version || true
+          command -v link && link 2>&1 | head -2 || true
+          powershell -Command "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores | Format-List" || true
+          powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,TotalVisibleMemorySize,FreePhysicalMemory | Format-List" || true
 
-      - uses: actions/setup-node@v4
+      - name: Fetch stage0
+        shell: bash
+        run: |
+          scripts/fetch-stage0.sh
+          sha256sum target/stage0/typelisp.exe
+
+      - name: Build stage1 via build-stage0.sh
+        shell: bash
+        run: |
+          scripts/build-stage0.sh target/stage0/typelisp.exe target/debug-stage1.exe
+          sha256sum target/debug-stage1.exe
+          sha256sum target/build-stage0/cli.s
+
+      - name: Compile build_run_core solo
+        shell: bash
+        run: |
+          set +e
+          target/debug-stage1.exe compile selfhost/build_run_core.tl -o target/brc.s --stdlib-root "$PWD/stdlib" > target/brc.out 2> target/brc.err
+          code=$?
+          echo "exit=$code"
+          echo "--- stdout"; cat target/brc.out
+          echo "--- stderr"; cat target/brc.err
+          if [ "$code" -ne 0 ]; then
+            echo "CRASH reproduced with exit $code"
+          fi
+          # also try the other heavy drivers for scope
+          for f in selfhost/cli.tl selfhost/check.tl selfhost/compile.tl; do
+            target/debug-stage1.exe compile "$f" -o "target/$(basename "$f").s" --stdlib-root "$PWD/stdlib" > /dev/null 2>&1
+            echo "$f exit=$?"
+          done
+          exit 0
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: tools/vs-code-extension/package-lock.json
-
-      - name: VS Code extension smoke
-        shell: bash
-        working-directory: tools/vs-code-extension
-        run: |
-          npm ci
-          npm run check
-          npm run package
-
-      - name: Check native toolchain
-        shell: bash
-        run: |
-          case "$RUNNER_OS" in
-            Linux)
-              command -v as
-              command -v ld
-              ;;
-            Windows)
-              command -v clang
-              command -v lld-link || command -v lld-link.exe
-              ;;
-            *)
-              echo "unsupported runner OS: $RUNNER_OS" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Install Linux instruction-count tools
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind
-
-      - name: CI verification
-        shell: bash
-        run: scripts/ci-verify.sh
+          name: debug-2357-windows
+          path: |
+            target/debug-stage1.exe
+            target/build-stage0/cli.s
+            target/brc.out
+            target/brc.err
+          if-no-files-found: warn

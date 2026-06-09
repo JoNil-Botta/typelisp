@@ -115,8 +115,6 @@
 
 (include-str compiler-embedded-stdlib-tests-test-assert-success "stdlib/tests/test_assert_success.tl")
 
-(include-str compiler-embedded-stdlib-tests-thread-api "stdlib/tests/thread_api.tl")
-
 (include-str compiler-embedded-stdlib-tests-text-buf-api "stdlib/tests/text_buf_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-text-buf-borrowed-check "stdlib/tests/text_buf_borrowed_check.tl")
@@ -265,8 +263,6 @@
     (string-eq suffix "tests/test_assert_success.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-test-assert-success)
-    (string-eq suffix "tests/thread_api.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-thread-api)
     (string-eq suffix "tests/text_buf_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-text-buf-api)

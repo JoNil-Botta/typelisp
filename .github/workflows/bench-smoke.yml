@@ -3,9 +3,9 @@ name: Benchmark smoke
 # Opt-in, non-blocking benchmark build/run smoke (#1099). Builds and runs ONE
 # tiny benchmark through the #1097 harness on Linux and asserts the TypeLisp and
 # C binaries agree on observable output. This is a correctness smoke, NOT a
-# performance gate — wall-clock timing is too noisy to block CI on (#929) — so it
-# lives in this separate manual/nightly workflow instead of the required CI
-# checks.
+# performance gate -- wall-clock timing is too noisy to block CI on (#929).
+# Required CI runs every comparison benchmark through `scripts/bench.sh
+# --correctness`; this workflow remains a manual/nightly single-case smoke.
 
 on:
   workflow_dispatch:

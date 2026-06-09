@@ -8,7 +8,8 @@ set -eu
 # times, and prints a TypeLisp-vs-C comparison: wall-clock runtime (min/median),
 # executable size, emitted assembly size, and TypeLisp compile time.
 #
-# Benchmarks are intentionally kept OUT of normal correctness CI; run manually.
+# Normal CI runs `--correctness`, which builds/runs every comparison benchmark
+# without timing. Full timing comparisons remain manual.
 #
 # Linux builds the native ELF through `typelisp build` (GNU as/ld); Windows
 # (Git Bash / MSYS / Cygwin) builds a native windows-x86_64 exe through
@@ -29,13 +30,28 @@ CLANG_OPT=${BENCH_CLANG_OPT:--O2}
 FILTER=${BENCH_FILTER:-}
 
 # `--smoke` (#1099): build + run ONE benchmark and assert TypeLisp and C agree
-# on observable output, then stop — no timing runs. This is a fast correctness
+# on observable output, then stop -- no timing runs. This is a fast correctness
 # smoke for CI (a few seconds), NOT a performance gate. Defaults to the small
 # `arith_loop` benchmark when no BENCH_FILTER is set.
+#
+# `--correctness` (#2439): build + run EVERY comparison benchmark and assert
+# TypeLisp and C agree on observable output, with no timing, size, or ratio work.
 SMOKE=0
+CORRECTNESS=0
 for _arg in "$@"; do
-    [ "$_arg" = "--smoke" ] && SMOKE=1
+    case "$_arg" in
+        --smoke) SMOKE=1 ;;
+        --correctness) CORRECTNESS=1 ;;
+        *)
+            echo "unknown benchmark harness argument: $_arg" >&2
+            exit 2
+            ;;
+    esac
 done
+if [ "$SMOKE" = 1 ] && [ "$CORRECTNESS" = 1 ]; then
+    echo "--smoke and --correctness are mutually exclusive" >&2
+    exit 2
+fi
 if [ "$SMOKE" = 1 ] && [ -z "$FILTER" ]; then
     FILTER=arith_loop
 fi
@@ -115,6 +131,17 @@ time_build() {
     elapsed "$_s" "$_e"
 }
 
+# run_build OUT_FILE -- COMMAND...  : run COMMAND without collecting timing
+run_build() {
+    _out=$1
+    shift
+    "$@" >"$_out.build.stdout" 2>"$_out.build.stderr" || {
+        echo "FAIL: build command failed: $*" >&2
+        sed 's/^/  /' "$_out.build.stderr" >&2 || true
+        exit 1
+    }
+}
+
 # run BIN once; echo its exit code
 run_exit() {
     set +e
@@ -146,7 +173,18 @@ time_runs() {
 ratio() { awk "BEGIN { if ($2 == 0) { print \"n/a\" } else { printf \"%.2fx\", $1 / $2 } }"; }
 
 found=0
-printf '%s\n' "TypeLisp benchmark harness (host=$HOST_OS, runs=$RUNS, clang $CLANG_OPT)"
+MODE=timing
+if [ "$SMOKE" = 1 ]; then
+    MODE=smoke
+fi
+if [ "$CORRECTNESS" = 1 ]; then
+    MODE=correctness
+fi
+if [ "$MODE" = timing ]; then
+    printf '%s\n' "TypeLisp benchmark harness (host=$HOST_OS, mode=$MODE, runs=$RUNS, clang $CLANG_OPT)"
+else
+    printf '%s\n' "TypeLisp benchmark harness (host=$HOST_OS, mode=$MODE, no timing, clang $CLANG_OPT)"
+fi
 printf '%s\n' "compiler: $COMPILER"
 printf '\n'
 
@@ -155,7 +193,12 @@ for bench_tl in benchmarks/*/bench.tl; do
     dir=$(dirname "$bench_tl")
     name=$(basename "$dir")
     baseline_c="$dir/baseline.c"
-    [ -f "$baseline_c" ] || continue
+    if [ ! -f "$baseline_c" ]; then
+        if [ "$CORRECTNESS" = 1 ]; then
+            echo "skip: $name has bench.tl but no baseline.c, so it is not a comparison benchmark" >&2
+        fi
+        continue
+    fi
     case "$name" in
         *"$FILTER"*) ;;
         *) continue ;;
@@ -166,12 +209,18 @@ for bench_tl in benchmarks/*/bench.tl; do
     tl_asm="$WORKDIR/$name.tl.s"
     c_bin="$WORKDIR/$name.c$EXE"
 
-    # TypeLisp: measure compile-to-asm time + asm size, then build a runnable exe.
-    tl_compile=$(time_build "$WORKDIR/$name.asm" "$COMPILER" compile "$bench_tl" -o "$tl_asm" $TARGET_ARGS)
-    time_build "$WORKDIR/$name.tlbuild" "$COMPILER" build "$bench_tl" -o "$tl_bin" $TARGET_ARGS >/dev/null
+    if [ "$SMOKE" = 1 ] || [ "$CORRECTNESS" = 1 ]; then
+        # Timing-free modes only build runnable artifacts and compare outputs.
+        run_build "$WORKDIR/$name.tlbuild" "$COMPILER" build "$bench_tl" -o "$tl_bin" $TARGET_ARGS
+        run_build "$WORKDIR/$name.cbuild" clang $CLANG_OPT "$baseline_c" -o "$c_bin"
+    else
+        # TypeLisp: measure compile-to-asm time + asm size, then build a runnable exe.
+        tl_compile=$(time_build "$WORKDIR/$name.asm" "$COMPILER" compile "$bench_tl" -o "$tl_asm" $TARGET_ARGS)
+        time_build "$WORKDIR/$name.tlbuild" "$COMPILER" build "$bench_tl" -o "$tl_bin" $TARGET_ARGS >/dev/null
 
-    # C baseline.
-    c_compile=$(time_build "$WORKDIR/$name.cbuild" clang $CLANG_OPT "$baseline_c" -o "$c_bin")
+        # C baseline.
+        c_compile=$(time_build "$WORKDIR/$name.cbuild" clang $CLANG_OPT "$baseline_c" -o "$c_bin")
+    fi
 
     # Correctness gate: both must agree on the exit code.
     tl_code=$(run_exit "$tl_bin")
@@ -184,8 +233,13 @@ for bench_tl in benchmarks/*/bench.tl; do
     # Smoke mode: the build + correctness gate above is the whole check. Report
     # and stop before any timing so CI stays fast and timing-noise-free.
     if [ "$SMOKE" = 1 ]; then
-        printf 'smoke OK: %s — typelisp and C agree on exit %s (build+run only, no timing)\n' "$name" "$tl_code"
+        printf 'smoke OK: %s -- typelisp and C agree on exit %s (build+run only, no timing)\n' "$name" "$tl_code"
         break
+    fi
+
+    if [ "$CORRECTNESS" = 1 ]; then
+        printf 'correctness OK: %s -- typelisp and C agree on exit %s\n' "$name" "$tl_code"
+        continue
     fi
 
     set -- $(time_runs "$tl_bin")
@@ -216,4 +270,8 @@ if [ "$found" -eq 0 ]; then
     exit 1
 fi
 
-echo "benchmark harness completed: $found benchmark(s)"
+if [ "$CORRECTNESS" = 1 ]; then
+    echo "benchmark correctness completed: $found benchmark(s)"
+else
+    echo "benchmark harness completed: $found benchmark(s)"
+fi

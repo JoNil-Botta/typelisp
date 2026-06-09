@@ -7410,6 +7410,16 @@
       (tc-call-expr ctx env func args))
     (OkTcType (AstTyI64))))
 
+(define (tc-array-length-receiver [ctx : TcContext] [receiver-ty : AstType]) : ResultTcArrayReceiver
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyDynArray elem-ty)
+      (OkTcArrayReceiver (TcArrayReceiver receiver-ty (ty-node-get elem-ty)))]
+    [(AstTyRef _ referent-ty)
+      (tc-array-length-receiver ctx (ty-node-get referent-ty))]
+    [(AstTyMutRef _ referent-ty)
+      (tc-array-length-receiver ctx (ty-node-get referent-ty))]
+    [_ (ErrTcArrayReceiver "typecheck: array-length requires dynamic array")]))
+
 ;; `array-length` remains dynamic-array-only. `length` and `string-length` keep
 ;; their legacy owned-String path while also accepting explicit borrowed `str`
 ;; handles for the unshadowed default builtin.
@@ -7428,10 +7438,10 @@
           [(AstExprNil)
             (match (tc-expr ctx env arg)
               [(OkTcType arg-ty)
-                (match (tc-type-strip-region arg-ty)
-                  [(AstTyDynArray _)
+                (match (tc-array-length-receiver ctx arg-ty)
+                  [(OkTcArrayReceiver _)
                     (tc-array-length-array-call ctx env name func args)]
-                  [_
+                  [(ErrTcArrayReceiver _)
                     (tc-array-length-non-array-call
                       ctx
                       env

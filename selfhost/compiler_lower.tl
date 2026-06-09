@@ -15900,12 +15900,22 @@
     [(CompilerLowerWindowsAvx512) true]
     [_ false]))
 
+(define (lower-mode-avx2? [mode : CompilerLowerMode]) : bool
+  (match mode
+    [(CompilerLowerAvx2) true]
+    [(CompilerLowerLinuxAvx2) true]
+    [(CompilerLowerWindowsAvx2) true]
+    [_ false]))
+
 (define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx512) true]
     [(CompilerLowerLinuxAvx512) true]
     [(CompilerLowerWindowsAvx512) true]
     [_ false]))
+
+(define (lower-avx2-masked-if-diagnostic) : String
+  "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
   (match mode
@@ -19240,7 +19250,9 @@
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
                   body
-                  "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))
+                  (if (lower-mode-avx2? (lower-state-mode state))
+                    (lower-avx2-masked-if-diagnostic)
+                    "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))
               (lower-scalar-foreach-lowered
                 ctx
                 state
@@ -23223,6 +23235,15 @@
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
+    [(ErrCompilerLower diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerLower _ _) false]))
+
+(define (compiler-lower-mode-error-ok?
+  [src : String]
+  [mode : CompilerLowerMode]
+  [want : String]) : bool
+  (match (lower-compiler-source-with-mode src mode)
     [(ErrCompilerLower diag)
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _ _) false]))
@@ -28950,6 +28971,17 @@
   (compiler-lower-avx512-masked-if-source-shape-ok?
     (compiler-lower-avx512-masked-if-offset-source)))
 
+(define (compiler-lower-avx2-masked-if-diagnostic-ok?) : bool
+  (and
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx512-masked-if-source)
+      (CompilerLowerAvx2)
+      (lower-avx2-masked-if-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-avx512-masked-if-offset-source)
+      (CompilerLowerAvx2)
+      (lower-avx2-masked-if-diagnostic))))
+
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
     [(OkCompilerLower program _)
@@ -28992,7 +29024,9 @@
       (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)
       (and
         (compiler-lower-avx512-masked-if-shape-ok?)
-        (compiler-lower-avx512-masked-if-offset-shape-ok?)))))
+        (and
+          (compiler-lower-avx512-masked-if-offset-shape-ok?)
+          (compiler-lower-avx2-masked-if-diagnostic-ok?))))))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?
   [src : String]

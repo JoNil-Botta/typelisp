@@ -5,12 +5,14 @@ set -eu
 #
 # Builds each SPMD corpus program at `scalar`, `avx2`, and `avx512`, runs every
 # available variant, and asserts they produce IDENTICAL exit codes (with empty
-# stderr). `scalar` is always the reference; a SIMD mode is only built/run when
-# the host CPU can actually execute that ISA (via scripts/detect-simd-isa.sh),
-# and is skipped cleanly otherwise. This is the comparison the SPMD acceptance
-# criteria need (#1011-#1014): proving SIMD lowering -- including the masked
-# `foreach` tail (#1014) and `spmd-reduce` folds -- matches scalar semantics,
-# not merely that a mode runs on a trivial program (cf. #1148, full-width only).
+# stderr). Staged unsupported mode/program pairs are compiled and must fail with
+# an explicit diagnostic. `scalar` is always the reference; a SIMD mode is only
+# run when the host CPU can actually execute that ISA (via
+# scripts/detect-simd-isa.sh), and is skipped cleanly otherwise. This is the
+# comparison the SPMD acceptance criteria need (#1011-#1014): proving SIMD
+# lowering -- including the masked `foreach` tail (#1014) and `spmd-reduce`
+# folds -- matches scalar semantics, not merely that a mode runs on a trivial
+# program (cf. #1148, full-width only).
 #
 # The corpus deliberately includes non-power-of-two lengths (the SIMD tail),
 # foreach lanes across i64/i32/f64/f32, and reductions across the scalar
@@ -90,13 +92,17 @@ isa_available() {
     printf '%s\n' "$SIMD_ISAS" | grep -qx "$1"
 }
 
-spmd_mode_supported() {
+spmd_mode_expected_compile_diagnostic() {
     _prog=$1
     _mode=$2
     case "$_prog:$_mode" in
-        tests/spmd/masked_if_i64.tl:avx2) return 1 ;;
-        tests/spmd/masked_if_offset_i64.tl:avx2) return 1 ;;
-        *) return 0 ;;
+        tests/spmd/masked_if_i64.tl:avx2)
+            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/masked_if_offset_i64.tl:avx2)
+            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        *) return 1 ;;
     esac
 }
 
@@ -146,6 +152,25 @@ run_spmd_mode() {
     fi
 }
 
+# Compile $1 at backend mode $2; sets `mode_code` to the compiler exit status
+# and writes stdout/stderr to <tag>.<mode>.compile.{out,err} under WORKDIR.
+compile_spmd_mode() {
+    _prog=$1
+    _mode=$2
+    _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
+    mode_out="$WORKDIR/$_tag.$_mode.compile.out"
+    mode_err="$WORKDIR/$_tag.$_mode.compile.err"
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    : > "$mode_out"
+    : > "$mode_err"
+
+    set +e
+    "$COMPILER" compile "$_prog" --backend-mode "$_mode" -o "$_asm" \
+        > "$mode_out" 2> "$mode_err"
+    mode_code=$?
+    set -e
+}
+
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -168,8 +193,19 @@ while IFS= read -r prog; do
     for pair in "avx2 avx2" "avx512 avx512f"; do
         mode=${pair%% *}
         isa=${pair##* }
-        if ! spmd_mode_supported "$prog" "$mode"; then
-            echo "[spmd-simd]   skip $mode (program requires AVX-512 lowering)"
+        if expected_diag=$(spmd_mode_expected_compile_diagnostic "$prog" "$mode"); then
+            compile_spmd_mode "$prog" "$mode"
+            if [ "$mode_code" = 0 ]; then
+                echo "[spmd-simd]   $mode unexpectedly compiled; wanted diagnostic:" >&2
+                echo "    $expected_diag" >&2
+                echo "$prog $mode (missing diagnostic)" >> "$FAILURES"
+            elif ! grep -F -- "$expected_diag" "$mode_err" > /dev/null; then
+                echo "[spmd-simd]   $mode diagnostic mismatch:" >&2
+                sed 's/^/    /' "$mode_err" >&2
+                echo "$prog $mode (wrong diagnostic)" >> "$FAILURES"
+            else
+                echo "[spmd-simd]   $mode -> expected diagnostic OK"
+            fi
             continue
         fi
         if ! isa_available "$isa"; then

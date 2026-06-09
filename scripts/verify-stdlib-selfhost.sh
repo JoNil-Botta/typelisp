@@ -55,6 +55,8 @@ reject_diag() {
             printf 'typecheck: cannot assign to borrowed place `m`' ;;
         stdlib/tests/hashmap_value_borrow_resize_live.tl)
             printf 'typecheck: cannot assign to borrowed place `m`' ;;
+        stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl)
+            printf 'typecheck: cannot assign to borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_entry_double_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `m.slots`' ;;
         stdlib/tests/hashmap_mut_entry_put_live.tl)

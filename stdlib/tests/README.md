@@ -84,6 +84,8 @@ Coverage notes:
   `StringStringMap` and `I64I64Map` APIs, key descriptor identities, borrowed
   string-key wrappers, update-only, entry-or-insert, live mutable-entry helpers,
   tombstone reuse, growth/rehash, and deterministic bucket-order iteration. The
+  `hashmap_mut_borrow_insert_or_update_live.tl` fixture verifies that a live
+  map-level mutable borrow rejects insert-or-update. The
   `hashmap_mut_entry_*_live.tl` fixtures verify that live mutable entries reject
   aliasing entries, value borrows, puts, and resizes.
 - `process_api.tl` covers command construction, argv append helpers,

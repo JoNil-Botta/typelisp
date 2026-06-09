@@ -11785,6 +11785,34 @@
           (tc-inline-field-layout-type field))
         (lower-c-abi-inline-fields-integer-only? ctx (box-get rest)))]))
 
+(define (lower-c-abi-win64-register-field-type?
+  [ctx : TcContext]
+  [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyF32) true]
+    [(AstTyF64) true]
+    [_ (lower-c-abi-integer-field-type? ctx ty)]))
+
+(define (lower-c-abi-inline-fields-win64-register?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]) : bool
+  (match fields
+    [(TcInlineFieldLayoutNil) true]
+    [(TcInlineFieldLayoutCons field rest)
+      (and
+        (lower-c-abi-win64-register-field-type?
+          ctx
+          (tc-inline-field-layout-type field))
+        (lower-c-abi-inline-fields-win64-register? ctx (box-get rest)))]))
+
+(define (lower-c-abi-register-aggregate-fields-ok?
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [fields : TcInlineFieldLayoutList]) : bool
+  (if (lower-mode-windows-c-abi? mode)
+    (lower-c-abi-inline-fields-win64-register? ctx fields)
+    (lower-c-abi-inline-fields-integer-only? ctx fields)))
+
 (define (lower-c-abi-integer-scalar-type [size : i64]) : AstType
   (core/cond
     (<= size 1)
@@ -11809,7 +11837,7 @@
 
 (define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
-    "integer-only structs of size 1, 2, 4, or 8 bytes"
+    "flat scalar structs of size 1, 2, 4, or 8 bytes"
     "integer-only structs up to 8 bytes"))
 
 (define (lower-c-abi-unsupported-message
@@ -11837,7 +11865,7 @@
       (core/cond
         (and
           (lower-c-abi-register-aggregate-size? mode size)
-          (lower-c-abi-inline-fields-integer-only? ctx fields))
+          (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
         (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
         (and allow-sret? (and (lower-mode-windows-c-abi? mode) (> size 8)))
         (LowerCAbiSretAggregate size)
@@ -26887,10 +26915,21 @@
   (big-use (Big 1 2)))")
 
 (define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
-  "(defstruct FloatBox (value f64))
-(extern (float-box-use [arg0 : FloatBox]) : i64 (:symbol \"tl_cabi_float_box_use\"))
+  "(defstruct InnerFloatBox (value f64))
+(defstruct OuterFloatBox (inner InnerFloatBox))
+(extern (outer-float-box-use [arg0 : OuterFloatBox]) : i64 (:symbol \"tl_cabi_outer_float_box_use\"))
 (define (main) : i64
-  (float-box-use (FloatBox 1.5)))")
+  (outer-float-box-use (OuterFloatBox (InnerFloatBox 1.5))))")
+
+(define (compiler-lower-c-abi-windows-small-float-aggregate-source) : String
+  "(defstruct FloatPair
+  (:repr c)
+  (x f32)
+  (y f32))
+(extern (float-pair-use [arg0 : FloatPair]) : i64 (:symbol \"tl_cabi_float_pair_use\"))
+(extern (float-pair-make [tag : u64]) : FloatPair (:symbol \"tl_cabi_float_pair_make\"))
+(define (main) : i64
+  (float-pair-use (float-pair-make (cast 5 : u64))))")
 
 (define (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
@@ -26902,6 +26941,30 @@
           (and
             (= (lower-test-function-call-count functions "main" "big-use") 1)
             (>= (lower-test-function-call-count functions "main" "tl_alloc") 2))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-windows-small-float-aggregate-source)
+    (CompilerLowerWindowsScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "float-pair-make")
+              1)
+            (and
+              (=
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "float-pair-use")
+                1)
+              (= (lower-test-function-call-count functions "main" "tl_alloc") 1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-extern-link-inputs-ok?
@@ -29828,9 +29891,12 @@
       (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-windows-error-ok?
         (compiler-lower-c-abi-windows-unsupported-aggregate-source)
-        "lower: unsupported windows-x86_64 C aggregate ABI for FloatBox; this slice supports integer-only structs of size 1, 2, 4, or 8 bytes")
+        "lower: unsupported windows-x86_64 C aggregate ABI for OuterFloatBox; this slice supports flat scalar structs of size 1, 2, 4, or 8 bytes")
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)

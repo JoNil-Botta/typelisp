@@ -377,6 +377,12 @@ publication uses
 it with the host toolchain so a seed compiler does not depend on its own
 `build` command.
 
+Package-wide source discovery walks regular `.tl` source files below the
+manifest directory while skipping build/tool state (`target`, VCS directories),
+nested package roots that have their own `typelisp.pkg`, and directories named
+`tests`. Test directories are reserved for `typelisp test` integration
+discovery and repository fixture corpora such as `selfhost/tests/`.
+
 Package builds load local dependency manifests into a normalized DAG keyed by
 manifest path before code generation. Transitive dependencies are built once per
 package build invocation, diamond graphs share the common archive build,

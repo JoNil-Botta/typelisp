@@ -2,8 +2,10 @@
 ;;
 ;; Package-wide tool commands should agree on which files belong to a package.
 ;; This module resolves a `typelisp.pkg` path, loads the manifest, and walks the
-;; package root for regular `.tl` files in deterministic order. Hosts without
-;; directory enumeration fall back to the manifest entry source.
+;; package root for regular `.tl` files in deterministic order. Package-local
+;; `tests` directories are reserved for `typelisp test` and fixture corpora, so
+;; ordinary package source discovery skips them. Hosts without directory
+;; enumeration fall back to the manifest entry source.
 (import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
 
 (import "../stdlib/fs.tl")
@@ -148,6 +150,29 @@
         (string-eq name ".hg")
         (or (string-eq name ".svn") (string-eq name ".jj"))))))
 
+(define (package-source-test-dir? [name : String]) : bool
+  (string-eq name "tests"))
+
+(define (package-source-skip-dir? [name : String]) : bool
+  (or (package-source-internal-dir? name) (package-source-test-dir? name)))
+
+(define (package-source-skip-dir-self-test?) : bool
+  (and
+    (package-source-skip-dir? "target")
+    (and
+      (package-source-skip-dir? ".git")
+      (and
+        (package-source-skip-dir? "tests")
+        (and
+          (not (package-source-skip-dir? "tests_extra"))
+          (not (package-source-skip-dir? "src")))))))
+
+(test
+  package-source-skips-package-test-directories
+  (if (package-source-skip-dir-self-test?)
+    unit
+    (panic "package-source: skip-dir self-test mismatch")))
+
 (define (package-source-dir-has-manifest? [dir : String]) : bool
   (file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
 
@@ -236,7 +261,7 @@
   [relative : String]
   [name : String]
   [acc : StringList]) : ResultPackageSourceList
-  (if (package-source-internal-dir? name)
+  (if (package-source-skip-dir? name)
     (OkPackageSourceList acc)
     (let
       [child-relative : String (package-source-relative-join relative name)]

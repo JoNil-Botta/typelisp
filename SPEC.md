@@ -283,9 +283,9 @@ narrower or unsigned integer is required. Floating-point literals are always
 - String literals have type `String` in v1. Their bytes live in static
   read-only data, but the source value is still an owned `String` handle, not a
   borrowed `str`.
-- Runtime-created strings from `string-append`, `substring`, `read-file`,
-  `arg`, `int->string`, stdin/file reads, and stdlib helpers allocate fresh
-  `String` storage in the active arena.
+- Runtime-created strings from `str-cat`/the low-level concat primitives,
+  `substring`, `read-file`, `arg`, `int->string`, stdin/file reads, and stdlib
+  helpers allocate fresh `String` storage in the active arena.
 - `String` is move-only under the aggregate handle rules in section 4.6.2.
   Non-consuming string operations are borrow-like compatibility operations
   until the borrowed `str` API migration lands.
@@ -1479,7 +1479,7 @@ inputs while preserving owned `String` results for allocation sites.
 |----------|---------|-----------------------|
 | Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
-| Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `string-append`/`string-concat`, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
+| Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths; check-only companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The companion modules expose source/typecheck-only lifetime-preserving aggregate shapes: branch-composed `StringReplaceResult` for replacement helpers and `ReadFileOrResult` for fallback reads. Ordinary runnable wrappers remain conservatively owned-compatible until reference-typed aggregate lowering and fuller branch lifetime unification land (#1722/#804). |
 | Mutable or binary byte storage | dynamic arrays today; future byte-buffer/slice work | Not modeled as `str`. `str` is immutable borrowed text/bytes and should not become the mutable buffer type. |
 
@@ -3763,14 +3763,21 @@ stdlib extern wrappers.
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |
 | `string=?` | `String String → bool` | Alias for `string-eq` |
-| `string-append` | `String String → String` | Concatenate two strings |
-| `string-concat` | `String String → String` | Alias for `string-append` |
 | `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
 | `string-slice` | `String i64 i64 → String` | Alias for `substring` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
 | `panic` | `String → never` (internal) | Print message to stderr and abort |
 | `error` | `String → never` (internal) | Alias for `panic` |
+
+User-facing fixed-arity string concatenation is the stdlib macro
+`stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
+`stdlib/text_buf.tl`. `string-append`, `string-concat`, and the fixed-arity
+`string-concat3`/`string-concat4`/`string-concat5` primitives remain accepted as
+deprecated low-level compatibility plumbing for `str-cat` expansion and legacy
+code, but they are not the documented public concatenation surface. The staged
+lint rule is enabled explicitly with `typelisp lint --deprecated-string-concat`
+until the remaining in-tree migrations are complete.
 
 - `make-array` checks the runtime length before allocation. Negative lengths and
   `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap
@@ -3841,7 +3848,6 @@ exports or migration targets, not backend-owned core helpers.
 | Alias | Expands to |
 |-------|------------|
 | `string=?` | `string-eq` |
-| `string-concat` | `string-append` |
 | `string-slice` | `substring` |
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
@@ -4016,11 +4022,11 @@ guarantees and are not implemented yet (#809/#896).
 Issue #320 chose the near-term reclamation policy. The current
 process-lifetime arena remains the default because it is simple, deterministic,
 and correct for one-shot compiled programs. It covers all current heap
-allocation kinds: fresh string storage from `substring`, `string-append`,
-`read-file`, `arg`, and `int->string`; dynamic array element buffers and fat
-values; returned enum and struct storage; and self-hosted data structures built
-from those primitives. Future closures are expected to allocate in the same
-heap until a more precise model exists.
+allocation kinds: fresh string storage from `substring`, `str-cat`/the
+low-level concat primitives, `read-file`, `arg`, and `int->string`; dynamic
+array element buffers and fat values; returned enum and struct storage; and
+self-hosted data structures built from those primitives. Future closures are
+expected to allocate in the same heap until a more precise model exists.
 
 General per-object `free`, implicit destructors, and borrowed references are not
 part of this v1 policy. Aggregate handles are represented as pointer-shaped
@@ -4071,9 +4077,9 @@ reclamation between phases.
 ```
 
 Allocation sites inside a `with-arena` scope target the active region:
-- String operations that create fresh storage (`substring`, `string-append`,
-  `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, `box`, and
-  returned aggregate storage from calls inside the region.
+- String operations that create fresh storage (`substring`, `str-cat`,
+  low-level concat primitives, `read-file`, `int->string`, `arg`), `make-array`,
+  `box`, and returned aggregate storage from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated *before*
   the `with-arena`).
 
@@ -4128,7 +4134,7 @@ stdlib surface.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing; check-only `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` companion surfaces | Compatibility wrapper calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. The companion modules express the borrowed/caller-owned distinction in source/typecheck-only reference-typed aggregates; ordinary lowering of those aggregate values still waits for reference/borrow lowering. |
 | Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
@@ -4167,7 +4173,7 @@ is:
   (let
     [scratch : i64 (arena-make)]
     (with-escape scratch
-      (string-append "answer " (int->string 42)))))
+      (int->string 42))))
 ```
 
 `with-escape` evaluates the arena expression in the current arena, records the
@@ -4288,9 +4294,9 @@ not the future safe reference/borrow model (#182), not a replacement for
   without moving it, but ordinary user-defined function parameters remain
   by-value and therefore consume aggregate arguments.
 - `String` values are immutable at the source level. String literals may share
-  `.rodata`; `substring`, `string-slice`, `string-append`, `string-concat`,
-  `read-file`, `arg`, and `int->string` return fresh heap-allocated string
-  storage. There is no source operation that mutates a string's bytes.
+  `.rodata`; `substring`, `string-slice`, `str-cat`, low-level concat
+  primitives, `read-file`, `arg`, and `int->string` return fresh heap-allocated
+  string storage. There is no source operation that mutates a string's bytes.
 - Dynamic arrays are mutable heap buffers. `array-set!` mutates the buffer named
   by the live owner handle under the temporary compatibility rule in section
   4.6.2. Explicit shared mutable aliases require future reference/borrow
@@ -4347,8 +4353,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Structs with construction and field access.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `string-append`/`string-concat`,
-  `substring`/`string-slice`, `string->int`, `int->string`,
+  `string-eq`/`string=?`, `str-cat`, `substring`/`string-slice`,
+  `string->int`, `int->string`,
   `print-string`/`print-str`, `print-char`, `print-float`, `print-error`.
 - Stdlib I/O helpers in `stdlib/io.tl`: `arg-count`, `arg`, `read-file`,
   `write-file`, `file-exists?`, `file-open`, `file-close`,
@@ -4363,8 +4369,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
-- Builtin `print`, `print-bool`, `print-newline`, and string/array primitives such as
-  `string-append`/`string-concat`.
+- Builtin `print`, `print-bool`, `print-newline`, and string/array primitives
+  such as `substring`, `string-ref`, and `array-ref`.
 - Stdlib-owned FFI wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
   `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
   environment variables, filesystem status helpers, and CPUID/XGETBV.
@@ -4484,6 +4490,7 @@ names for APIs that distinguish success from an error value. Matches must be
 exhaustive; omitted variants are rejected by the type checker.
 
 ```lisp test=compile name=monomorphic-option-result
+(import "stdlib/str_cat.tl")
 (import "stdlib/string.tl")
 
 (defenum MaybeI64
@@ -4502,7 +4509,7 @@ exhaustive; omitted variants are rejected by the type checker.
 (define (read-small [text : String]) : ResultI64
   (if (string-eq text "7")
     (OkI64 7)
-    (ErrI64 (string-append "bad: " text))))
+    (ErrI64 (str-cat "bad: " text))))
 
 (define (maybe-score [m : MaybeI64]) : i64
   (match m
@@ -4541,6 +4548,8 @@ generic traits or implicit conversions.
   non-exhaustive.
 
 ```lisp test=ignore name=result-try-success reason="try propagation awaits public test-mode coverage"
+(import "stdlib/str_cat.tl")
+
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -4548,7 +4557,7 @@ generic traits or implicit conversions.
 (define (read-small [text : String]) : ResultI64
   (if (string-eq text "7")
     (OkI64 7)
-    (ErrI64 (string-append "bad: " text))))
+    (ErrI64 (str-cat "bad: " text))))
 
 (define (read-plus-one [text : String]) : ResultI64
   (let ([value : i64 (try (read-small text))])
@@ -4556,6 +4565,8 @@ generic traits or implicit conversions.
 ```
 
 ```lisp test=ignore name=result-try-incompatible-error reason="negative propagation example; should be an expect-error once SPEC examples support this form"
+(import "stdlib/str_cat.tl")
+
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -4567,7 +4578,7 @@ generic traits or implicit conversions.
 (define (read-small [text : String]) : ResultI64
   (if (string-eq text "7")
     (OkI64 7)
-    (ErrI64 (string-append "bad: " text))))
+    (ErrI64 (str-cat "bad: " text))))
 
 (define (bad-propagation [text : String]) : ResultBool
   (let ([value : i64 (try (read-small text))])
@@ -4645,7 +4656,7 @@ Selected Command Forms:
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release]
   typelisp run <file.tl> [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
   typelisp test [<file.tl>] [--check]
 ```
 
@@ -4657,8 +4668,9 @@ forms. `compile -o <file>` writes assembly or IR to the given path,
 --release` aliases `--profile release`, and `build --manifest-path <file>` uses
 an explicit package manifest. `fmt --check` reports files that would change
 without writing them, while `lint --check` exits non-zero when lint findings are
-present. Without explicit files, `fmt` and `lint` default to the nearest
-`typelisp.pkg` upward. `test --check` type-checks generated inline test
+present. `lint --deprecated-string-concat` enables the staged deprecation rule
+for user-facing concat primitives. Without explicit files, `fmt` and `lint`
+default to the nearest `typelisp.pkg` upward. `test --check` type-checks generated inline test
 harnesses without assembling or running them; `test` defaults to the host target
 unless `--target <target>` is supplied.
 

@@ -3,7 +3,8 @@
 ;; render each finding as `path:line:col: message`. Kept main-less so both the
 ;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
 ;; import it. Warn-only by default; callers can pass `--check` after the input
-;; path to exit non-zero when findings remain.
+;; path to exit non-zero when findings remain. The deprecated string-concat rule
+;; is opt-in until the remaining in-tree str-cat migrations land.
 (import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
 
 (import "../stdlib/io.tl")
@@ -18,11 +19,12 @@
 
 (import "../stdlib/string.tl")
 
-;; Parsed lint CLI config: input paths, stdlib roots, and whether `--check`
-;; enforcing mode was requested (exit non-zero when findings are present).
+;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
+;; enforcing mode was requested (exit non-zero when findings are present), and
+;; whether the staged deprecated string-concat rule is enabled.
 (defenum SelfhostLintConfig
-  (SelfhostLintFileConfig StringVec StringVec bool)
-  (SelfhostLintPackageConfig String bool StringVec bool))
+  (SelfhostLintFileConfig StringVec StringVec bool bool)
+  (SelfhostLintPackageConfig String bool StringVec bool bool))
 
 (defenum ResultSelfhostLintConfig
   (OkSelfhostLintConfig SelfhostLintConfig)
@@ -36,19 +38,25 @@
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]
-  [enforcing : bool]) : ResultSelfhostLintConfig
+  [enforcing : bool]
+  [deprecated-string-concat : bool]) : ResultSelfhostLintConfig
   (if (string-vec-is-empty? input-paths)
     (OkSelfhostLintConfig
       (SelfhostLintPackageConfig
         manifest-path
         has-manifest
         stdlib-roots
-        enforcing))
+        enforcing
+        deprecated-string-concat))
     (if has-manifest
       (ErrSelfhostLintConfig
         "selfhost-lint: cannot combine input paths with --manifest-path")
       (OkSelfhostLintConfig
-        (SelfhostLintFileConfig input-paths stdlib-roots enforcing)))))
+        (SelfhostLintFileConfig
+          input-paths
+          stdlib-roots
+          enforcing
+          deprecated-string-concat)))))
 
 (define (selfhost-lint-parse-options
   [idx : i64]
@@ -57,14 +65,16 @@
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]
-  [enforcing : bool]) : ResultSelfhostLintConfig
+  [enforcing : bool]
+  [deprecated-string-concat : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
     (selfhost-lint-config-finish
       input-paths
       manifest-path
       has-manifest
       stdlib-roots
-      enforcing)
+      enforcing
+      deprecated-string-concat)
     (let
       [current : String (arg idx)]
       (core/cond
@@ -76,6 +86,17 @@
           manifest-path
           has-manifest
           stdlib-roots
+          true
+          deprecated-string-concat)
+        (string-eq current "--deprecated-string-concat")
+        (selfhost-lint-parse-options
+          (+ idx 1)
+          count
+          input-paths
+          manifest-path
+          has-manifest
+          stdlib-roots
+          enforcing
           true)
         (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
@@ -88,7 +109,8 @@
             manifest-path
             has-manifest
             (string-vec-push stdlib-roots (arg (+ idx 1)))
-            enforcing))
+            enforcing
+            deprecated-string-concat))
         (string-eq current "--manifest-path")
         (if (>= (+ idx 1) count)
           (ErrSelfhostLintConfig
@@ -102,7 +124,8 @@
               (arg (+ idx 1))
               true
               stdlib-roots
-              enforcing)))
+              enforcing
+              deprecated-string-concat)))
         (selfhost-lint-flag? current)
         (ErrSelfhostLintConfig
           (string-append "selfhost-lint: unknown flag " current))
@@ -113,7 +136,8 @@
           manifest-path
           has-manifest
           stdlib-roots
-          enforcing)))))
+          enforcing
+          deprecated-string-concat)))))
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
@@ -124,6 +148,7 @@
     ""
     false
     (string-vec-new)
+    false
     false))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
@@ -308,16 +333,40 @@
     0
     (lint-findings-empty)))
 
-(define (selfhost-lint-program-findings
+(define (selfhost-lint-program-findings-with-options
   [source : String]
-  [program : AstProgram]) : LintFindings
+  [program : AstProgram]
+  [deprecated-string-concat : bool]) : LintFindings
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (selfhost-lint-filter-derived-origins
           source
-          (lint-program (ast-program decls) (lint-default-ladder-threshold))))]))
+          (if deprecated-string-concat
+            (lint-program-with-deprecated-string-concat
+              source
+              (ast-program decls)
+              (lint-default-ladder-threshold))
+            (lint-program (ast-program decls) (lint-default-ladder-threshold)))))]))
+
+(define (selfhost-lint-program-findings
+  [source : String]
+  [program : AstProgram]) : LintFindings
+  (selfhost-lint-program-findings-with-options source program false))
+
+(define (selfhost-lint-source-with-roots-and-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : StringVec]
+  [deprecated-string-concat : bool]) : LintFindings
+  (match (parse-ast-source-diagnostic path source)
+    [(OkAstProgramDiagnostic program)
+      (selfhost-lint-program-findings-with-options
+        source
+        program
+        deprecated-string-concat)]
+    [(ErrAstProgramDiagnostic _) (lint-findings-empty)]))
 
 ;; Parse `source` (attributed to `path`) and run the lint rules over this source
 ;; unit only. Imports are linted when their own files are selected by the repo
@@ -326,10 +375,7 @@
   [path : String]
   [source : String]
   [stdlib-roots : StringVec]) : LintFindings
-  (match (parse-ast-source-diagnostic path source)
-    [(OkAstProgramDiagnostic program)
-      (selfhost-lint-program-findings source program)]
-    [(ErrAstProgramDiagnostic _) (lint-findings-empty)]))
+  (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
 ;; 1 when the file could not be loaded.
@@ -344,14 +390,18 @@
 (define (selfhost-lint-file
   [input-path : String]
   [stdlib-roots : StringVec]
-  [enforcing : bool]) : i64
+  [enforcing : bool]
+  [deprecated-string-concat : bool]) : i64
   (let
     [source : String (read-file input-path)]
     (match (parse-ast-source-diagnostic input-path source)
       [(OkAstProgramDiagnostic program)
         (let
           [findings : LintFindings
-            (selfhost-lint-program-findings source program)]
+            (selfhost-lint-program-findings-with-options
+              source
+              program
+              deprecated-string-concat)]
           (begin
             (selfhost-lint-print-findings input-path findings)
             (print-string
@@ -373,6 +423,7 @@
   [index : i64]
   [stdlib-roots : StringVec]
   [enforcing : bool]
+  [deprecated-string-concat : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (if (>= index (string-vec-len input-paths))
@@ -385,12 +436,17 @@
             (print-string
               (string-append "--- " (string-append input-path "\n")))
             unit)
-          (selfhost-lint-file input-path stdlib-roots enforcing))]
+          (selfhost-lint-file
+            input-path
+            stdlib-roots
+            enforcing
+            deprecated-string-concat))]
       (selfhost-lint-files-from
         input-paths
         (+ index 1)
         stdlib-roots
         enforcing
+        deprecated-string-concat
         print-headers
         (if (= status 0)
           file-status
@@ -400,6 +456,7 @@
   [input-paths : StringVec]
   [stdlib-roots : StringVec]
   [enforcing : bool]
+  [deprecated-string-concat : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (selfhost-lint-files-from
@@ -407,6 +464,7 @@
     0
     stdlib-roots
     enforcing
+    deprecated-string-concat
     print-headers
     status))
 
@@ -414,6 +472,7 @@
   [input-paths : StringList]
   [stdlib-roots : StringVec]
   [enforcing : bool]
+  [deprecated-string-concat : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (match input-paths
@@ -426,11 +485,16 @@
               (print-string
                 (string-append "--- " (string-append input-path "\n")))
               unit)
-            (selfhost-lint-file input-path stdlib-roots enforcing))]
+            (selfhost-lint-file
+              input-path
+              stdlib-roots
+              enforcing
+              deprecated-string-concat))]
         (selfhost-lint-package-files
           (box-get rest)
           stdlib-roots
           enforcing
+          deprecated-string-concat
           print-headers
           (if (= status 0)
             file-status
@@ -440,7 +504,8 @@
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]
-  [enforcing : bool]) : i64
+  [enforcing : bool]
+  [deprecated-string-concat : bool]) : i64
   (match (package-source-discover-for "lint" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
@@ -451,6 +516,7 @@
         (struct-get source-set sources)
         stdlib-roots
         enforcing
+        deprecated-string-concat
         (> (string-list-count (struct-get source-set sources)) 1)
         0)]))
 
@@ -459,23 +525,30 @@
   (match (selfhost-lint-config-from start count)
     [(OkSelfhostLintConfig config)
       (match config
-        [(SelfhostLintFileConfig input-paths stdlib-roots enforcing)
+        [(SelfhostLintFileConfig
+            input-paths
+            stdlib-roots
+            enforcing
+            deprecated-string-concat)
           (selfhost-lint-files
             input-paths
             stdlib-roots
             enforcing
+            deprecated-string-concat
             (> (string-vec-len input-paths) 1)
             0)]
         [(SelfhostLintPackageConfig
             manifest-path
             has-manifest
             stdlib-roots
-            enforcing)
+            enforcing
+            deprecated-string-concat)
           (selfhost-lint-package
             manifest-path
             has-manifest
             stdlib-roots
-            enforcing)])]
+            enforcing
+            deprecated-string-concat)])]
     [(ErrSelfhostLintConfig message)
       (begin
         (print-error (string-append message "\n"))

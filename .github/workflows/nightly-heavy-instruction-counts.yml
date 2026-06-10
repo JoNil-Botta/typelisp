@@ -1,0 +1,53 @@
+name: Heavy instruction counts
+
+# Scheduled, non-blocking cachegrind baseline for benchmark cases that are too
+# slow for the required per-PR Linux gate (#2536). Regressions fail this nightly
+# default-branch run, but this workflow is not a pull-request requirement.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly, after the lighter benchmark smoke. Scheduled runs only fire on
+    # the default branch.
+    - cron: '30 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  heavy-instruction-counts:
+    name: Heavy instruction counts (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check native toolchain
+        shell: bash
+        run: |
+          command -v as
+          command -v ld
+
+      - name: Install Linux instruction-count tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          if ! sudo apt-get install -y valgrind; then
+            echo "[heavy-ir] valgrind install failed; continuing so the checker can report a skip if unavailable"
+          fi
+          command -v valgrind || true
+
+      - name: Fetch published stage0 compiler
+        shell: bash
+        run: scripts/fetch-stage0.sh
+
+      - name: Heavy instruction-count baseline
+        shell: bash
+        run: |
+          TYPELISP_BIN=target/stage0/typelisp \
+            scripts/check-instruction-counts.sh \
+              --baseline perf/insn-exec-heavy-baseline.tsv \
+              --benchmarks spmd_map,spmd_mask,spmd_zip,spmd_short_tail,string_scan \
+              --benchmarks-only \
+              --runs 1 \
+              --output target/instruction-count-heavy

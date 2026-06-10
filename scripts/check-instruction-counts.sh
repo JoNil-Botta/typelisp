@@ -11,12 +11,15 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 DEFAULT_BENCHMARKS="arith_loop,array_sum,hashmap_churn,hashmap_grow,hashmap_insert,hashmap_get,spmd_reduce"
-BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
+DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
+DEFAULT_WORKDIR="target/instruction-count-check"
+BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
 RUNS=${TYPELISP_IR_CHECK_RUNS:-1}
 BENCHMARKS=${TYPELISP_IR_CHECK_BENCHMARKS:-$DEFAULT_BENCHMARKS}
 SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
-WORKDIR=${TYPELISP_IR_CHECK_OUT:-target/instruction-count-check}
+WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 UPDATE_BASELINE=0
+BENCHMARKS_ONLY=0
 SEED_ARG=
 
 usage() {
@@ -24,9 +27,11 @@ usage() {
 usage: scripts/check-instruction-counts.sh [options] [typelisp-seed]
 
 Options:
-  --update-baseline    Regenerate perf/insn-exec-baseline.tsv
+  --update-baseline    Regenerate the selected baseline TSV
+  --baseline FILE      Baseline TSV path (default: perf/insn-exec-baseline.tsv)
   --runs N             Cachegrind runs per metric (default: 1)
   --benchmarks LIST    Comma-separated benchmark names for the per-PR gate
+  --benchmarks-only    Measure benchmark cases only, not self_compile
   --output DIR         Work directory (default: target/instruction-count-check)
   -h, --help           Show this help
 
@@ -34,6 +39,7 @@ Environment:
   TYPELISP_BIN                  Seed compiler when no argument is given
   TYPELISP_IR_CHECK_RUNS        Default --runs
   TYPELISP_IR_CHECK_BENCHMARKS  Default --benchmarks
+  TYPELISP_IR_CHECK_BASELINE    Default --baseline
   TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM
                                 Default self_compile tolerance in ppm (5000 = 0.5%)
   TYPELISP_IR_CHECK_OUT         Default --output
@@ -45,6 +51,14 @@ while [ "$#" -gt 0 ]; do
         --update-baseline)
             UPDATE_BASELINE=1
             shift
+            ;;
+        --baseline)
+            [ "$#" -ge 2 ] || {
+                echo "missing value for --baseline" >&2
+                exit 2
+            }
+            BASELINE=$2
+            shift 2
             ;;
         --runs)
             [ "$#" -ge 2 ] || {
@@ -61,6 +75,10 @@ while [ "$#" -gt 0 ]; do
             }
             BENCHMARKS=$2
             shift 2
+            ;;
+        --benchmarks-only)
+            BENCHMARKS_ONLY=1
+            shift
             ;;
         --output)
             [ "$#" -ge 2 ] || {
@@ -118,6 +136,13 @@ case "$WORKDIR" in
         ;;
 esac
 
+case "$BASELINE" in
+    "" | / | . | ..)
+        echo "unsafe --baseline path: $BASELINE" >&2
+        exit 2
+        ;;
+esac
+
 case "$(uname -s)" in
     Linux*) ;;
     *)
@@ -151,13 +176,19 @@ esac
 }
 
 update_command="scripts/check-instruction-counts.sh --update-baseline"
+if [ "$BASELINE" != "$DEFAULT_BASELINE" ]; then
+    update_command="$update_command --baseline $BASELINE"
+fi
 if [ "$RUNS" != 1 ]; then
     update_command="$update_command --runs $RUNS"
 fi
 if [ "$BENCHMARKS" != "$DEFAULT_BENCHMARKS" ]; then
     update_command="$update_command --benchmarks $BENCHMARKS"
 fi
-if [ "$WORKDIR" != "target/instruction-count-check" ]; then
+if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
+    update_command="$update_command --benchmarks-only"
+fi
+if [ "$WORKDIR" != "$DEFAULT_WORKDIR" ]; then
     update_command="$update_command --output $WORKDIR"
 fi
 if [ -n "$SEED_ARG" ]; then
@@ -180,12 +211,17 @@ scripts/build-stage0.sh "$SEED" "$STAGE1_COMPILER"
 echo "[ir-check] build current stage2 compiler for measurement: $CHECK_COMPILER"
 scripts/build-stage0.sh "$STAGE1_COMPILER" "$CHECK_COMPILER"
 
-echo "[ir-check] measure per-PR instruction-count subset"
+echo "[ir-check] measure instruction-count subset"
+measure_args=
+if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
+    measure_args="--benchmarks-only"
+fi
 env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     scripts/measure-instruction-counts.sh \
     --runs "$RUNS" \
     --cases "$BENCHMARKS" \
     --output "$MEASURE_OUT" \
+    $measure_args \
     "$CHECK_COMPILER"
 
 awk -F '\t' '

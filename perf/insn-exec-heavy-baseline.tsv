@@ -1,0 +1,6 @@
+name	ir_count
+benchmark/spmd_map	106923083513
+benchmark/spmd_mask	112452071094
+benchmark/spmd_short_tail	87058533352
+benchmark/spmd_zip	140101424956
+benchmark/string_scan	57475002359

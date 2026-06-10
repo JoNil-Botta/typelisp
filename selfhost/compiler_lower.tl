@@ -5736,6 +5736,26 @@
           base
           result-ty)])))
 
+(define (lower-borrow-place-slot-reference
+  [ctx : TcContext]
+  [state : LowerState]
+  [slot : CompilerIrValue]
+  [stored-ty : AstType]
+  [result-ty : AstType]
+  [load-value-reference : bool]) : LowerExpr
+  (if (and
+    load-value-reference
+    (lower-borrow-place-value-reference?
+      ctx
+      (tc-borrow-referent-type stored-ty)))
+    (match (lower-state-alloc-var state)
+      [(LowerAlloc allocated var-id)
+        (LowerExpr
+          (lower-state-emit allocated (IrInstrLoad var-id slot stored-ty))
+          (IrValueVar var-id)
+          result-ty)])
+    (LowerExpr state slot result-ty)))
+
 (define (lower-borrow-reference-var-address
   [state : LowerState]
   [env : SymI64Env]
@@ -5819,23 +5839,35 @@
   (match (lower-struct-field-info ctx struct-name field)
     [(OkLowerFieldInfo info)
       (match info
-        [(LowerFieldInfo offset _)
-          ;; #2386: a register-resident receiver has no address; materialize the
-          ;; packed word to a fresh slot, then take the field's address there.
-          (if (tc-name-register-resident? ctx struct-name)
-            (match (lower-borrow-copy-to-storage
-              ctx
-              state
-              receiver-value
-              (AstTyStruct (intern struct-name))
-              result-ty)
-              [(LowerExpr mat-state mat-ptr _)
-                (match (lower-gep-byte mat-state mat-ptr offset)
-                  [(LowerExpr ptr-state ptr _)
-                    (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])
-            (match (lower-gep-byte state receiver-value offset)
+        [(LowerFieldInfo offset field-ty)
+          (let
+            [load-value-reference : bool
+              (not
+                (and
+                  (lower-struct-repr-c? ctx struct-name)
+                  (lower-repr-c-inline-field? ctx field-ty)))]
+            ;; #2386: a register-resident receiver has no address; materialize
+            ;; the packed word to a fresh slot, then take the field address
+            ;; there before applying the value-reference load rule.
+            (match (if (tc-name-register-resident? ctx struct-name)
+              (match (lower-borrow-copy-to-storage
+                ctx
+                state
+                receiver-value
+                (AstTyStruct (intern struct-name))
+                result-ty)
+                [(LowerExpr mat-state mat-ptr _)
+                  (lower-gep-byte mat-state mat-ptr offset)])
+              (lower-gep-byte state receiver-value offset))
               [(LowerExpr ptr-state ptr _)
-                (OkLowerExpr (LowerExpr ptr-state ptr result-ty))]))])]
+                (OkLowerExpr
+                  (lower-borrow-place-slot-reference
+                    ctx
+                    ptr-state
+                    ptr
+                    field-ty
+                    result-ty
+                    load-value-reference))]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
 (define (lower-borrow-struct-field-address
@@ -14715,9 +14747,9 @@
   [origin : AstExpr]
   [arr : AstExpr]
   [arr-ty : AstType]) : ResultLowerExpr
-  (match (tc-type-strip-region (tc-resolve-type ctx arr-ty))
-    [(AstTyDynArray _) (lower-array-length-load ctx state env type-env arr)]
-    [_
+  (match (tc-array-length-receiver ctx arr-ty)
+    [(OkTcArrayReceiver _) (lower-array-length-load ctx state env type-env arr)]
+    [(ErrTcArrayReceiver _)
       (if (lower-string-handle-type? ctx arr-ty)
         (lower-array-length-load ctx state env type-env arr)
         (lower-direct-call ctx state env type-env name args result-ty origin))]))
@@ -25083,11 +25115,28 @@
 (define (main) : i64 0)")
 
 (define (compiler-lower-mut-ref-array-access-source) : String
-  "(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
+  "(define (len [a : (& a (Array i64))]) : i64 (array-length a))
+(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
   (array-set! a i v))
 (define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
   (array-push! a v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-mut-ref-array-field-access-source) : String
+  "(defstruct ArrayBag (items (Array i64)))
+(defstruct ArrayBagHandle
+  (:lifetimes bag)
+  (items (&mut bag (Array i64)))
+  (index i64))
+(define (array-bag-handle [bag : (&mut bag ArrayBag)] [index : i64]) : (ArrayBagHandle bag)
+  (ArrayBagHandle (&mut (struct-get bag items)) index))
+(define (len [handle : (ArrayBagHandle bag)]) : i64
+  (array-length (struct-get handle items)))
+(define (get [handle : (ArrayBagHandle bag)]) : i64
+  (array-ref (struct-get handle items) (struct-get handle index)))
+(define (put [handle : (ArrayBagHandle bag)] [v : i64]) : unit
+  (array-set! (struct-get handle items) (struct-get handle index) v))
 (define (main) : i64 0)")
 
 ;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
@@ -29496,6 +29545,21 @@
             (> (lower-test-function-bounds-count functions "put") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-mut-ref-array-field-access-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-mut-ref-array-field-access-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-load-count functions "array-bag-handle") 0)
+            (and
+              (> (lower-test-function-load-count functions "len") 0)
+              (and
+                (> (lower-test-function-bounds-count functions "get") 0)
+                (> (lower-test-function-bounds-count functions "put") 0))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -31631,6 +31695,9 @@
         (set! ok false))
       (if (compiler-lower-array-access-shape-ok?
         (compiler-lower-mut-ref-array-access-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-mut-ref-array-field-access-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-array-push-shape-ok?

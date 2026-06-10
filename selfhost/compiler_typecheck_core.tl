@@ -19396,8 +19396,21 @@
 (define macro-alias-cache-generation : i64
   -1)
 
+(define macro-alias-cache-ready : bool
+  false)
+
+;; The mapping is program-derived, so the cache must not survive into the next
+;; program of a multi-program process (smoke batteries, REPL, LSP, package
+;; builds). macro-expand-program and the REPL typecheck entry reset it at the
+;; same per-program boundary that resets the CTFE-env and clone-able caches;
+;; the intern generation gate additionally covers intern-reset! boundaries.
+(define (macro-alias-cache-reset!) : unit
+  (set! macro-alias-cache-ready false))
+
 (define (macro-alias-cache-ensure!) : unit
-  (if (= macro-alias-cache-generation (intern-generation))
+  (if (if macro-alias-cache-ready
+    (= macro-alias-cache-generation (intern-generation))
+    false)
     unit
     (let
       [i : i64 0]
@@ -19407,7 +19420,8 @@
             (array-set! macro-alias-cache-keys i 0)
             (set! i (+ i 1))))
         (set! macro-alias-cache-count 0)
-        (set! macro-alias-cache-generation (intern-generation))))))
+        (set! macro-alias-cache-generation (intern-generation))
+        (set! macro-alias-cache-ready true)))))
 
 (define (macro-alias-cache-bucket [key : i64]) : i64
   (bit-and (* key 2654435761) (- macro-alias-cache-capacity 1)))
@@ -21039,6 +21053,10 @@
           (set! macro-expand-ctfe-env-ready false)
           ;; Same per-compile reset for the clone-able type set cache.
           (tc-clone-able-cache-reset!)
+          ;; Same per-compile reset for the qualified-alias resolution cache:
+          ;; the (module, qualifier) -> target mapping is derived from this
+          ;; program's declarations.
+          (macro-alias-cache-reset!)
           ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
           ;; the program actually contains a `(type T)` literal -- the sole entry
           ;; point for every CTFE reflection/layout query.

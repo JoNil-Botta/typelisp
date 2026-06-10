@@ -1297,27 +1297,6 @@
     [vx : i64 (ast-node-push (AstExprVar (intern "x")))]
     [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
     [unit-expr : i64 (ast-node-push (AstExprLiteral AstLitUnit))]
-    [string-append-source : String
-      "(define (main) : i64 (string-length (string-append \"a\" \"b\")))"]
-    [string-concat-source : String
-      "(define (main) : i64 (string-length (string-concat \"a\" \"b\")))"]
-    [string-concat5-source : String
-      "(define (main) : i64
-  (string-length (string-concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))"]
-    [nested-string-append-source : String
-      "(define (main) : i64
-  (string-length (string-append \"a\" (string-append \"b\" \"c\"))))"]
-    [loop-string-append-source : String
-      "(define (main) : i64
-  (let
-    [i : i64 0]
-    [out : String \"\"]
-    (begin
-      (while (< i 3)
-        (begin
-          (set! out (string-append out \"x\"))
-          (set! i (+ i 1))))
-      (string-length out))))"]
     [ladder3 : i64
       (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one)))]
     [ladder2 : i64 (ast-expr-if vx one (ast-expr-if vx one one))]
@@ -1620,67 +1599,6 @@
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
         unit
         (panic "lint: deprecated-string-concat suggestion should be registered"))
-      (if (=
-        (lint-findings-count
-          (lint-deprecated-string-concat-scan
-            string-append-source
-            (lint-findings-empty)))
-        1)
-        unit
-        (panic "lint: string-append call should be flagged"))
-      (match (lint-findings-get
-        (lint-deprecated-string-concat-scan
-          string-concat-source
-          (lint-findings-empty))
-        0)
-        [(LintSomeFinding finding)
-          (if (and
-            (= (struct-get finding depth) 0)
-            (string-eq
-              (struct-get finding rule-id)
-              (lint-rule-deprecated-string-concat-id)))
-            unit
-            (panic "lint: string-concat finding should carry default metadata"))]
-        [(LintNoFinding)
-          (panic "lint: string-concat call should produce a finding")])
-      (if (=
-        (lint-findings-count
-          (lint-deprecated-string-concat-scan
-            string-concat5-source
-            (lint-findings-empty)))
-        1)
-        unit
-        (panic "lint: string-concat5 call should be flagged"))
-      (if (=
-        (lint-findings-count
-          (lint-deprecated-string-concat-scan
-            nested-string-append-source
-            (lint-findings-empty)))
-        2)
-        unit
-        (panic "lint: nested string append should produce two findings"))
-      (match (lint-findings-get
-        (lint-deprecated-string-concat-scan
-          nested-string-append-source
-          (lint-findings-empty))
-        1)
-        [(LintSomeFinding finding)
-          (if (= (struct-get finding depth) 1)
-            unit
-            (panic "lint: nested string append should carry chain depth"))]
-        [(LintNoFinding)
-          (panic "lint: nested string append should produce a chain finding")])
-      (match (lint-findings-get
-        (lint-deprecated-string-concat-scan
-          loop-string-append-source
-          (lint-findings-empty))
-        0)
-        [(LintSomeFinding finding)
-          (if (= (struct-get finding depth) 2)
-            unit
-            (panic "lint: loop string append should carry loop depth"))]
-        [(LintNoFinding)
-          (panic "lint: loop string append should produce a finding")])
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

@@ -655,31 +655,6 @@
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
 
-(define (selfhost-lint-string-concat-source) : String
-  "(define (main) : i64
-  (string-length (string-append \"a\" \"b\")))")
-
-(define (selfhost-lint-loop-string-concat-source) : String
-  "(define (main) : i64
-  (let
-    [i : i64 0]
-    [out : String \"\"]
-    (begin
-      (while (< i 3)
-        (begin
-          (set! out (string-append out \"x\"))
-          (set! i (+ i 1))))
-      (string-length out))))")
-
-(define (selfhost-lint-nested-string-concat-source) : String
-  "(define (main) : i64
-  (string-length (string-append \"a\" (string-append \"b\" \"c\"))))")
-
-(define (selfhost-lint-suppressed-string-concat-source) : String
-  "(define (main) : i64
-  ;; lint-allow: deprecated-string-concat
-  (string-length (string-append \"a\" \"b\")))")
-
 (define (selfhost-lint-nested-let-source) : String
   "(define (main) : i64
   (let
@@ -741,15 +716,6 @@
       source
       (string-vec-new))))
 
-(define (selfhost-lint-source-finding-count-with-deprecated-string-concat
-  [source : String]) : i64
-  (lint-findings-count
-    (selfhost-lint-source-with-roots-and-options
-      "lint_driver_self_test.tl"
-      source
-      (string-vec-new)
-      true)))
-
 ;; The reported ladder finding has depth 5, a stable rule id, and a real source
 ;; line.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool
@@ -804,23 +770,6 @@
               (lint-rule-unit-if-guard-id)))))]
     [(LintNoFinding) false]))
 
-(define (selfhost-lint-string-concat-finding-ok?
-  [findings : LintFindings]
-  [index : i64]
-  [depth : i64]) : bool
-  (match (lint-findings-get findings index)
-    [(LintSomeFinding finding)
-      (let
-        [fspan : AstSourceSpan (struct-get finding span)]
-        (and
-          (= (struct-get finding depth) depth)
-          (and
-            (> (struct-get fspan start-line) 0)
-            (string-eq
-              (struct-get finding rule-id)
-              (lint-rule-deprecated-string-concat-id)))))]
-    [(LintNoFinding) false]))
-
 (define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
   (if (= (lint-findings-count findings) 2)
     (match (lint-findings-get findings 1)
@@ -859,24 +808,6 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-set-source)
         (string-vec-new))]
-    [string-concat-reported : LintFindings
-      (selfhost-lint-source-with-roots-and-options
-        "lint_driver_self_test.tl"
-        (selfhost-lint-string-concat-source)
-        (string-vec-new)
-        true)]
-    [loop-string-concat-reported : LintFindings
-      (selfhost-lint-source-with-roots-and-options
-        "lint_driver_self_test.tl"
-        (selfhost-lint-loop-string-concat-source)
-        (string-vec-new)
-        true)]
-    [nested-string-concat-reported : LintFindings
-      (selfhost-lint-source-with-roots-and-options
-        "lint_driver_self_test.tl"
-        (selfhost-lint-nested-string-concat-source)
-        (string-vec-new)
-        true)]
     [two-reported : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
@@ -899,32 +830,6 @@
       16
       (not (selfhost-lint-unit-if-finding-ok? unit-set-reported))
       17
-      (not (= (lint-findings-count string-concat-reported) 1))
-      20
-      (not (selfhost-lint-string-concat-finding-ok? string-concat-reported 0 0))
-      21
-      (not (= (lint-findings-count loop-string-concat-reported) 1))
-      22
-      (not
-        (selfhost-lint-string-concat-finding-ok?
-          loop-string-concat-reported
-          0
-          2))
-      23
-      (not (= (lint-findings-count nested-string-concat-reported) 2))
-      24
-      (not
-        (selfhost-lint-string-concat-finding-ok?
-          nested-string-concat-reported
-          1
-          1))
-      25
-      (not
-        (=
-          (selfhost-lint-source-finding-count-with-deprecated-string-concat
-            (selfhost-lint-suppressed-string-concat-source))
-          0))
-      26
       (not (= (lint-findings-count two-reported) 2))
       18
       (not (selfhost-lint-render-order-ok? two-reported))

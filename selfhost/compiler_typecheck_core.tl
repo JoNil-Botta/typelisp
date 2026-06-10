@@ -19319,11 +19319,17 @@
 (define (macro-find-decl-by-index [decls : AstDeclList] [target : i64]) : MacroMaybeDecl
   (macro-find-decl-by-index-loop decls target 0 ""))
 
-(define (macro-import-alias-target-list
+;; The module accumulator and the current module compare as INTERN IDS: the
+;; previous String-based walk converted every AstDeclModule's interned name
+;; back to a fresh String (`intern-str` allocates) and string-compared it, for
+;; every declaration walked, on every qualified-alias resolution -- 11.6% of
+;; the stage2 self-compile CPU profile. Import aliases still compare by
+;; content, but only for imports declared in the current module.
+(define (macro-import-alias-target-ids
   [decls : AstDeclList]
-  [current-module : String]
+  [current-module-id : i64]
   [alias : String]
-  [module : String]) : TcMaybeString
+  [module-id : i64]) : TcMaybeString
   (match decls
     [(AstDeclNil) (TcNoString)]
     [(AstDeclCons decl rest)
@@ -19331,40 +19337,163 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (macro-import-alias-target-list
+            (macro-import-alias-target-ids
               rest
-              current-module
+              current-module-id
               alias
-              (intern-str next-module))]
+              next-module)]
           [(AstDeclImport (AstImportSpec _ _ expected maybe-alias))
             (match maybe-alias
               [(AstSomeImportAlias import-alias)
                 (if (and
-                  (string-eq module current-module)
+                  (= module-id current-module-id)
                   (string-eq import-alias alias))
                   (match expected
                     [(AstSomeModuleName target) (TcSomeString target)]
                     [(AstNoModuleName) (TcSomeString alias)])
-                  (macro-import-alias-target-list
+                  (macro-import-alias-target-ids
                     rest
-                    current-module
+                    current-module-id
                     alias
-                    module))]
+                    module-id))]
               [(AstNoImportAlias)
-                (macro-import-alias-target-list
+                (macro-import-alias-target-ids
                   rest
-                  current-module
+                  current-module-id
                   alias
-                  module)])]
-          [_ (macro-import-alias-target-list rest current-module alias module)]))]))
+                  module-id)])]
+          [_
+            (macro-import-alias-target-ids
+              rest
+              current-module-id
+              alias
+              module-id)]))]))
+
+;; --- qualified-alias resolution cache -----------------------------------------
+;; Even with id compares, each resolution walks the ENTIRE declaration list
+;; (most declarations are neither modules nor imports), and the same
+;; (current-module, qualifier) pair resolves identically for the whole
+;; program: the mapping is derived only from AstDeclModule/AstDeclImport
+;; declarations, which macro expansion, comptime generation, and
+;; specialization never insert or reorder mid-compile. Memoize per
+;; generation (same idiom as the marker name-id memos), open-addressed and
+;; keyed by the two intern ids. Key slots store key+1 so the zeroed table is
+;; empty; values store the resolved target's intern id, or -1 for "no alias
+;; import" (return the qualifier unchanged). Inserts stop at half load --
+;; only memoization, never correctness, degrades.
+(define macro-alias-cache-capacity : i64
+  4096)
+
+(define macro-alias-cache-keys : (Array i64)
+  (make-array i64 4096))
+
+(define macro-alias-cache-values : (Array i64)
+  (make-array i64 4096))
+
+(define macro-alias-cache-count : i64
+  0)
+
+(define macro-alias-cache-generation : i64
+  -1)
+
+(define (macro-alias-cache-ensure!) : unit
+  (if (= macro-alias-cache-generation (intern-generation))
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i macro-alias-cache-capacity)
+          (begin
+            (array-set! macro-alias-cache-keys i 0)
+            (set! i (+ i 1))))
+        (set! macro-alias-cache-count 0)
+        (set! macro-alias-cache-generation (intern-generation))))))
+
+(define (macro-alias-cache-bucket [key : i64]) : i64
+  (bit-and (* key 2654435761) (- macro-alias-cache-capacity 1)))
+
+;; Returns the cached value for `key`, or -2 when the key is absent.
+(define (macro-alias-cache-get [key : i64]) : i64
+  (let
+    [cursor : i64 (macro-alias-cache-bucket key)]
+    [steps : i64 0]
+    [out : i64 -2]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-alias-cache-capacity))
+        (let
+          [slot : i64 (array-ref macro-alias-cache-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot (+ key 1))
+              (begin
+                (set! out (array-ref macro-alias-cache-values cursor))
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and (+ cursor 1) (- macro-alias-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (macro-alias-cache-put! [key : i64] [value : i64]) : unit
+  (if (>= (* macro-alias-cache-count 2) macro-alias-cache-capacity)
+    unit
+    (let
+      [cursor : i64 (macro-alias-cache-bucket key)]
+      [steps : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps macro-alias-cache-capacity))
+          (let
+            [slot : i64 (array-ref macro-alias-cache-keys cursor)]
+            (if (= slot 0)
+              (begin
+                (array-set! macro-alias-cache-keys cursor (+ key 1))
+                (array-set! macro-alias-cache-values cursor value)
+                (set! macro-alias-cache-count (+ macro-alias-cache-count 1))
+                (set! done true))
+              (if (= slot (+ key 1))
+                (set! done true)
+                (begin
+                  (set!
+                    cursor
+                    (bit-and (+ cursor 1) (- macro-alias-cache-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
 
 (define (macro-resolve-qualified-module
   [decls : AstDeclList]
   [current-module : String]
   [qualifier : String]) : String
-  (match (macro-import-alias-target-list decls current-module qualifier "")
-    [(TcSomeString target) target]
-    [(TcNoString) qualifier]))
+  (begin
+    (macro-alias-cache-ensure!)
+    (let
+      [current-module-id : i64 (intern current-module)]
+      [qualifier-id : i64 (intern qualifier)]
+      [key : i64 (+ (* current-module-id 262144) qualifier-id)]
+      [cached : i64 (macro-alias-cache-get key)]
+      (if (= cached -2)
+        (match (macro-import-alias-target-ids
+          decls
+          current-module-id
+          qualifier
+          (intern ""))
+          [(TcSomeString target)
+            (begin
+              (macro-alias-cache-put! key (intern target))
+              target)]
+          [(TcNoString)
+            (begin
+              (macro-alias-cache-put! key -1)
+              qualifier)])
+        (if (< cached 0)
+          qualifier
+          (intern-str cached))))))
 
 (define (macro-missing-export-message [name : String]) : String
   (string-append "typecheck: missing macro export " name))

@@ -9586,12 +9586,14 @@
 
 ;; --- conservative loop-invariant code motion (#1801) ------------------------
 ;;
-;; LICM is deliberately scalar-only and verifier-gated. It moves only
-;; non-trapping `BinOp` and `UnOp` definitions from natural loops with a single
-;; safe preheader. A candidate's value operands must be defined outside the loop
-;; or by an earlier instruction already selected for the same hoist. Loads,
-;; stores, calls, allocations, bounds checks, GEPs, phis, vector memory ops, and
-;; trapping arithmetic are left in place.
+;; LICM is verifier-gated. It moves non-trapping scalar `BinOp`/`UnOp`
+;; definitions from natural loops with a single safe preheader. Memory LICM adds
+;; a conservative load slice: invariant address GEPs and plain loads may move
+;; only when the whole loop has no alias-fact-clearing memory/call/unknown
+;; effect. A candidate's value operands must be defined outside the loop or by
+;; an earlier instruction already selected for the same hoist. Stores, calls,
+;; allocations, bounds checks, phis, vector memory ops, and trapping arithmetic
+;; are left in place.
 (defenum OptLicmInstrsResult
   (OptLicmInstrsResult CompilerIrInstrList CompilerIrInstrList I64I64Map bool))
 
@@ -9656,18 +9658,69 @@
         (opt-used-contains hoisted var))]
     [_ true]))
 
+(define (opt-licm-values-invariant?
+  [loop-defs : I64I64Map]
+  [hoisted : I64I64Map]
+  [a : CompilerIrValue]
+  [b : CompilerIrValue]) : bool
+  (and
+    (opt-licm-value-invariant? loop-defs hoisted a)
+    (opt-licm-value-invariant? loop-defs hoisted b)))
+
+(define (opt-licm-memory-blocker-instr? [instr : CompilerIrInstr]) : bool
+  (opt-alias-instr-clears-all? instr))
+
+(define (opt-licm-memory-safe-instr-seq-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-licm-memory-blocker-instr?
+      (compiler-ir-instr-seq-ref instrs index))
+      false
+      (opt-licm-memory-safe-instr-seq-from? instrs (+ index 1)))))
+
+(define (opt-licm-memory-safe-instr-seq? [instrs : CompilerIrInstrSeq]) : bool
+  (opt-licm-memory-safe-instr-seq-from? instrs 0))
+
+(define (opt-licm-memory-safe-blocks? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (and
+            (opt-licm-memory-safe-instr-seq? instrs)
+            (opt-licm-memory-safe-blocks? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-licm-memory-safe-blocks? (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-licm-candidate?
   [loop-defs : I64I64Map]
   [hoisted : I64I64Map]
+  [sources : I64I64Map]
+  [memory-safe? : bool]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrBinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))
-        (and
-          (opt-licm-value-invariant? loop-defs hoisted lhs)
-          (opt-licm-value-invariant? loop-defs hoisted rhs)))]
+        (opt-licm-values-invariant? loop-defs hoisted lhs rhs))]
     [(IrInstrUnOp _ _ src _) (opt-licm-value-invariant? loop-defs hoisted src)]
+    [(IrInstrGep dst base offset _)
+      (and
+        memory-safe?
+        (and
+          (opt-gvn-stable-var? sources dst)
+          (opt-licm-values-invariant? loop-defs hoisted base offset)))]
+    [(IrInstrLoad dst src _)
+      (and
+        memory-safe?
+        (and
+          (opt-gvn-stable-var? sources dst)
+          (and
+            (opt-gvn-value-stable? sources src)
+            (opt-licm-value-invariant? loop-defs hoisted src))))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -9680,14 +9733,18 @@
 (define (opt-licm-filter-instrs
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrList]
+  [sources : I64I64Map]
+  [memory-safe? : bool]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (match instrs
     [(IrInstrNil) (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)]
     [(IrInstrCons instr rest)
-      (if (opt-licm-candidate? loop-defs hoisted instr)
+      (if (opt-licm-candidate? loop-defs hoisted sources memory-safe? instr)
         (match (opt-licm-filter-instrs
           loop-defs
           (box-get rest)
+          sources
+          memory-safe?
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult kept moved next-hoisted _)
             (OptLicmInstrsResult
@@ -9695,7 +9752,12 @@
               (compiler-ir-instr-cons instr moved)
               next-hoisted
               true)])
-        (match (opt-licm-filter-instrs loop-defs (box-get rest) hoisted)
+        (match (opt-licm-filter-instrs
+          loop-defs
+          (box-get rest)
+          sources
+          memory-safe?
+          hoisted)
           [(OptLicmInstrsResult kept moved next-hoisted changed)
             (OptLicmInstrsResult
               (compiler-ir-instr-cons instr kept)
@@ -9707,16 +9769,20 @@
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
+  [sources : I64I64Map]
+  [memory-safe? : bool]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (if (opt-licm-candidate? loop-defs hoisted instr)
+      (if (opt-licm-candidate? loop-defs hoisted sources memory-safe? instr)
         (match (opt-licm-filter-instr-seq-from
           loop-defs
           instrs
           (+ index 1)
+          sources
+          memory-safe?
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult kept moved next-hoisted _)
             (OptLicmInstrsResult
@@ -9728,6 +9794,8 @@
           loop-defs
           instrs
           (+ index 1)
+          sources
+          memory-safe?
           hoisted)
           [(OptLicmInstrsResult kept moved next-hoisted changed)
             (OptLicmInstrsResult
@@ -9739,23 +9807,40 @@
 (define (opt-licm-filter-instr-seq
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrSeq]
+  [sources : I64I64Map]
+  [memory-safe? : bool]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
-  (opt-licm-filter-instr-seq-from loop-defs instrs 0 hoisted))
+  (opt-licm-filter-instr-seq-from
+    loop-defs
+    instrs
+    0
+    sources
+    memory-safe?
+    hoisted))
 
 (define (opt-licm-filter-body-blocks
   [loop-defs : I64I64Map]
   [blocks : CompilerIrBlockList]
+  [sources : I64I64Map]
+  [memory-safe? : bool]
   [hoisted : I64I64Map]) : OptLicmBlocksResult
   (match blocks
     [(IrBlockNil) (OptLicmBlocksResult (IrBlockNil) (IrInstrNil) hoisted false)]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (match (opt-licm-filter-instr-seq loop-defs instrs hoisted)
+          (match (opt-licm-filter-instr-seq
+            loop-defs
+            instrs
+            sources
+            memory-safe?
+            hoisted)
             [(OptLicmInstrsResult kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
                 loop-defs
                 (box-get rest)
+                sources
+                memory-safe?
                 next-hoisted)
                 [(OptLicmBlocksResult
                     rest-blocks
@@ -9773,6 +9858,8 @@
       (opt-licm-filter-body-blocks
         loop-defs
         (compiler-ir-block-seq-to-list seq)
+        sources
+        memory-safe?
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -9870,6 +9957,7 @@
 
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
+  [sources : I64I64Map]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : CompilerIrBlockList
   (match (opt-natural-loop-preheader loop)
@@ -9882,9 +9970,12 @@
           (opt-licm-collect-defs-blocks
             body-blocks
             (i64-i64-map-with-capacity map-capacity))]
+        [memory-safe? : bool (opt-licm-memory-safe-blocks? body-blocks)]
         (match (opt-licm-filter-body-blocks
           loop-defs
           body-blocks
+          sources
+          memory-safe?
           (i64-i64-map-with-capacity map-capacity))
           [(OptLicmBlocksResult filtered-body hoisted _ changed)
             (if changed
@@ -9897,6 +9988,7 @@
 
 (define (opt-licm-apply-loops
   [index : OptCfgIndex]
+  [sources : I64I64Map]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match loops
@@ -9904,19 +9996,25 @@
     [(OptNaturalLoopCons loop rest)
       (opt-licm-apply-loops
         index
+        sources
         (box-get rest)
-        (opt-licm-apply-loop index blocks loop))]))
+        (opt-licm-apply-loop index sources blocks loop))]))
 
 (define (opt-licm-blocks-with-context
   [context : OptCfgContext]
+  [sources : I64I64Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-apply-loops
     (struct-get context index)
+    sources
     (opt-cfg-natural-loops-with-context blocks context)
     blocks))
 
 (define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-licm-blocks-with-context (opt-cfg-context-build blocks) blocks))
+  (opt-licm-blocks-with-context
+    (opt-cfg-context-build blocks)
+    (opt-gvn-sources-blocks blocks (i64-i64-map-with-capacity 64))
+    blocks))
 
 (define (opt-licm-function-with-context
   [context : OptCfgContext]
@@ -9926,8 +10024,12 @@
       (match func
         [(IrFunction name params ret-ty frame blocks)
           (let
+            [sources : I64I64Map
+              (opt-gvn-sources-blocks
+                blocks
+                (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
             [hoisted-blocks : CompilerIrBlockList
-              (opt-licm-blocks-with-context context blocks)]
+              (opt-licm-blocks-with-context context sources blocks)]
             [hoisted : CompilerIrFunction
               (IrFunction name params ret-ty frame hoisted-blocks)]
             (match (opt-verify-function hoisted)
@@ -19745,6 +19847,20 @@
     [(IrBlockArray seq)
       (opt-count-load-blocks (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-count-load-label-blocks
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label label)
+            (opt-count-load-instr-seq instrs)
+            (opt-count-load-label-blocks (box-get rest) label))])]
+    [(IrBlockArray seq)
+      (opt-count-load-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
+
 (define (opt-blocks-binop-lhs-var
   [blocks : CompilerIrBlockList]
   [dst : i64]
@@ -21307,6 +21423,202 @@
                   (IrInstrNil)))
               (IrBlockNil))))))))
 
+(define (opt-licm-load-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 3 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 6 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrStorePtr (IrValueVar 6) (IrValueI64 99) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            4
+            (compiler-ir-phi-input-cons
+              (IrValueVar 3)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" IrPhiInputNil))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrGep 7 (IrValueVar 6) (IrValueI64 0) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 4)
+                  (IrValueI64 1)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBranch (IrValueVar 0) "body" "exit")
+                  (IrInstrNil)))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 8)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-load-store-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 3 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 6 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrStorePtr (IrValueVar 6) (IrValueI64 99) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            4
+            (compiler-ir-phi-input-cons
+              (IrValueVar 3)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" IrPhiInputNil))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrGep 7 (IrValueVar 6) (IrValueI64 0) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrStorePtr (IrValueVar 7) (IrValueI64 100) (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 4)
+                    (IrValueI64 1)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrBranch (IrValueVar 0) "body" "exit")
+                    (IrInstrNil))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 8)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-load-call-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 3 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 6 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrStorePtr (IrValueVar 6) (IrValueI64 99) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            4
+            (compiler-ir-phi-input-cons
+              (IrValueVar 3)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" IrPhiInputNil))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrGep 7 (IrValueVar 6) (IrValueI64 0) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 4)
+                    (IrValueI64 1)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrBranch (IrValueVar 0) "body" "exit")
+                    (IrInstrNil))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 8)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-load-varying-address-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 3 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 6 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrStorePtr (IrValueVar 6) (IrValueI64 99) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            4
+            (compiler-ir-phi-input-cons
+              (IrValueVar 3)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" IrPhiInputNil))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrGep 7 (IrValueVar 6) (IrValueVar 4) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  5
+                  (IrBinAdd)
+                  (IrValueVar 4)
+                  (IrValueI64 1)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBranch (IrValueVar 0) "body" "exit")
+                  (IrInstrNil)))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 8)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
 (define (compiler-optimize-licm-self-test) : i64
   (let
     [arith-func : CompilerIrFunction
@@ -21324,6 +21636,18 @@
     [nested-func : CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-nested-blocks))]
     [nested : CompilerIrBlockList (opt-function-blocks nested-func)]
+    [load-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-load-blocks))]
+    [load-blocks : CompilerIrBlockList (opt-function-blocks load-func)]
+    [load-store-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-load-store-blocks))]
+    [load-store : CompilerIrBlockList (opt-function-blocks load-store-func)]
+    [load-call-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-load-call-blocks))]
+    [load-call : CompilerIrBlockList (opt-function-blocks load-call-func)]
+    [load-varying-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-load-varying-address-blocks))]
+    [load-varying : CompilerIrBlockList (opt-function-blocks load-varying-func)]
     (core/cond
       (not (opt-verify-ok? (opt-verify-function arith-func)))
       1
@@ -21353,6 +21677,28 @@
       13
       (not (= (opt-count-arith-blocks nested) 1))
       14
+      (not (opt-verify-ok? (opt-verify-function load-func)))
+      15
+      (not (= (opt-count-gep-label-blocks load-blocks "entry") 1))
+      16
+      (not (= (opt-count-load-label-blocks load-blocks "entry") 1))
+      17
+      (not (= (opt-count-load-label-blocks load-blocks "loop") 0))
+      18
+      (not (opt-verify-ok? (opt-verify-function load-store-func)))
+      19
+      (not (= (opt-count-load-label-blocks load-store "loop") 1))
+      20
+      (not (= (opt-count-load-label-blocks load-store "entry") 0))
+      21
+      (not (opt-verify-ok? (opt-verify-function load-call-func)))
+      22
+      (not (= (opt-count-load-label-blocks load-call "loop") 1))
+      23
+      (not (opt-verify-ok? (opt-verify-function load-varying-func)))
+      24
+      (not (= (opt-count-load-label-blocks load-varying "loop") 1))
+      25
       42)))
 
 (define (opt-induction-params) : CompilerIrParamList

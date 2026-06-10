@@ -1609,10 +1609,9 @@
 ;; across a call is NOT ineligible: the integer pool admits only callee-saved
 ;; registers (%r12-%r15) which the callee (TypeLisp function prologue/epilogue, or
 ;; a runtime helper that push/pops them) preserves across the call, so a
-;; call-spanning value keeps its home with no spill/reload. Dropping the old
-;; call-live rule both removes the spill churn around calls and removes the only
-;; consumer of full per-instruction liveness, so register planning needs only the
-;; cheap block-level liveness used by compiler-reg-block-intervals.
+;; call-spanning value keeps its home with no spill/reload. The scalar planner
+;; can use either full per-instruction or cheap block-level register intervals;
+;; this helper is only the structural eligibility policy layered on top.
 (define (compiler-reg-ineligible-vars
   [func : CompilerIrFunction]
   [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
@@ -2002,6 +2001,18 @@
       (match right
         [(CompilerRegInterval _ right-start right-end)
           (not (or (<= left-end right-start) (<= right-end left-start)))])]))
+
+(define (compiler-reg-interval-range?
+  [intervals : CompilerRegIntervalList]
+  [var : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (match (compiler-reg-interval-lookup intervals var)
+    [(CompilerRegSomeInterval interval)
+      (match interval
+        [(CompilerRegInterval _ got-start got-end)
+          (and (= got-start start) (= got-end end))])]
+    [(CompilerRegNoInterval) false]))
 
 (define (compiler-reg-vars-interfere?
   [intervals : CompilerRegIntervalList]
@@ -2802,15 +2813,32 @@
       (compiler-reg-live-intervals func liveness)
       (compiler-reg-ineligible-vars-simd func liveness types))))
 
-;; Scalar register plan (#perf, opt level 2): cheap block-level live intervals,
-;; structural ineligibility that keeps call-spanning integers/handles in
-;; callee-saved registers, and float-call-spanning exclusion for the caller-saved
-;; XMM pool.
+;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
+;; small multi-block functions, structural ineligibility that keeps
+;; call-spanning integers/handles in callee-saved registers, and
+;; float-call-spanning exclusion for the caller-saved XMM pool. Single-block
+;; functions cannot have loop-carried values; very large functions stay on the
+;; cheap block-level interval builder to cap opt2 compiler cost.
+(define (compiler-reg-scalar-full-interval-block-limit) : i64
+  8)
+
+(define (compiler-reg-scalar-full-intervals? [func : CompilerIrFunction]) : bool
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (let
+        [count : i64 (compiler-ir-block-list-count blocks)]
+        (and
+          (> count 1)
+          (<= count (compiler-reg-scalar-full-interval-block-limit))))]))
+
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
   (let
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
-    [intervals : CompilerRegIntervalList (compiler-reg-block-intervals func)]
+    [intervals : CompilerRegIntervalList
+      (if (compiler-reg-scalar-full-intervals? func)
+        (compiler-reg-live-intervals func (compiler-live-analyze-function func))
+        (compiler-reg-block-intervals func))]
     (compiler-reg-plan-from
       func
       type-info
@@ -3159,6 +3187,42 @@
                       (compiler-ir-instr-cons
                         (IrInstrReturn (IrSomeValue (IrValueVar 5)))
                         IrInstrNil)))))))))
+      IrBlockNil)))
+
+(define (compiler-reg-param-livein-gap-function) : CompilerIrFunction
+  (IrFunction
+    "param_livein_gap"
+    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons (IrInstrJump "body") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil)))
+        IrBlockNil))))
+
+(define (compiler-reg-single-block-livein-gap-function) : CompilerIrFunction
+  (IrFunction
+    "single_block_livein_gap"
+    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            IrInstrNil)))
       IrBlockNil)))
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
@@ -3569,6 +3633,30 @@
           (not (compiler-live-set-contains? ineligible 2))
           (not (compiler-live-set-contains? ineligible 4))))]))
 
+(define (compiler-reg-scalar-function-intervals-ok?) : bool
+  (match (compiler-reg-plan-function-scalar
+    (compiler-reg-param-livein-gap-function))
+    [(CompilerRegPlan _ _ intervals _)
+      (compiler-reg-interval-range? intervals 0 1 4)]))
+
+(define (compiler-reg-scalar-interval-guardrail-ok?) : bool
+  (match (compiler-reg-plan-function-scalar
+    (compiler-reg-single-block-livein-gap-function))
+    [(CompilerRegPlan _ _ intervals _)
+      (compiler-reg-interval-range? intervals 0 0 2)]))
+
+(define (compiler-reg-scalar-loop-backedge-ok?) : bool
+  (match (compiler-reg-plan-function-scalar
+    (compiler-reg-loop-backedge-function))
+    [(CompilerRegPlan assignments _ _ _)
+      (and
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 1))
+        (and
+          (compiler-reg-location-any-register?
+            (compiler-reg-assignment-lookup assignments 2))
+          (compiler-reg-different-location? assignments 1 2)))]))
+
 (define (compiler-reg-same-location?
   [assignments : CompilerRegAssignmentList]
   [left : i64]
@@ -3779,7 +3867,13 @@
                               (compiler-reg-scalar-call-live-ok?)
                               (and
                                 (compiler-reg-scalar-f64-call-live-ok?)
-                                (compiler-reg-scalar-handle-eligible-ok?))))))))))))))))
+                                (and
+                                  (compiler-reg-scalar-handle-eligible-ok?)
+                                  (and
+                                    (compiler-reg-scalar-function-intervals-ok?)
+                                    (and
+                                      (compiler-reg-scalar-interval-guardrail-ok?)
+                                      (compiler-reg-scalar-loop-backedge-ok?)))))))))))))))))))
     42
     (begin
       (panic "regalloc: smoke mismatch")

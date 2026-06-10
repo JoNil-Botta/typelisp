@@ -23288,16 +23288,32 @@
           (OptSomeAliasKind (opt-alias-fact-kind fact))
           (opt-alias-lookup rest var)))]))
 
-;; Drop any binding for `var` (a redefined/escaped temporary).
-(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-bound? [facts : OptAliasFacts] [var : i64]) : bool
+  (match facts
+    [(OptAliasNil) false]
+    [(OptAliasCons fact rest)
+      (if (= (opt-alias-fact-var fact) var)
+        true
+        (opt-alias-bound? (box-get rest) var))]))
+
+(define (opt-alias-remove-var-scan [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasNil) (OptAliasNil)]
     [(OptAliasCons fact rest)
       (let
         [rest : OptAliasFacts (box-get rest)]
         (if (= (opt-alias-fact-var fact) var)
-          (opt-alias-remove-var rest var)
-          (OptAliasCons fact (box (opt-alias-remove-var rest var)))))]))
+          (opt-alias-remove-var-scan rest var)
+          (OptAliasCons fact (box (opt-alias-remove-var-scan rest var)))))]))
+
+;; Drop any binding for `var` (a redefined/escaped temporary). Every bind goes
+;; through a remove first, but fresh destinations are the overwhelmingly common
+;; case (~4% of a stage2 self-compile was spent re-boxing the whole spine per
+;; bound instruction), so removal of an absent var returns the list unchanged.
+(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (if (opt-alias-bound? facts var)
+    (opt-alias-remove-var-scan facts var)
+    facts))
 
 ;; Bind `var` to `kind`, replacing any prior binding for that var.
 (define (opt-alias-bind
@@ -23482,15 +23498,25 @@
         (OptSomeI64 (opt-load-entry-var entry))
         (opt-load-table-lookup (box-get rest) key))]))
 
-(define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
+(define (opt-load-table-remove-key-scan
+  [table : OptLoadTable]
+  [key : OptLoadKey]) : OptLoadTable
   (match table
     [(OptLoadNil) (OptLoadNil)]
     [(OptLoadCons entry rest)
       (let
-        [tail : OptLoadTable (opt-load-table-remove-key (box-get rest) key)]
+        [tail : OptLoadTable
+          (opt-load-table-remove-key-scan (box-get rest) key)]
         (if (opt-load-key-eq (opt-load-entry-key entry) key)
           tail
           (OptLoadCons entry (box tail))))]))
+
+;; Removal of an absent key returns the table unchanged instead of re-boxing
+;; the whole spine (see opt-alias-remove-var).
+(define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
+  (match (opt-load-table-lookup table key)
+    [(OptSomeI64 _) (opt-load-table-remove-key-scan table key)]
+    [(OptNoI64) table]))
 
 (define (opt-load-table-bind
   [table : OptLoadTable]
@@ -23500,21 +23526,38 @@
     (OptLoadEntry key var)
     (box (opt-load-table-remove-key table key))))
 
-;; Drop entries whose address expression references `var`, or whose cached load
-;; result was `var`. The IR is not globally SSA, so any reused var id must make
-;; old load facts disappear before the new instruction is processed.
-(define (opt-load-table-invalidate-var [table : OptLoadTable] [var : i64]) : OptLoadTable
+(define (opt-load-table-mentions-var? [table : OptLoadTable] [var : i64]) : bool
+  (match table
+    [(OptLoadNil) false]
+    [(OptLoadCons entry rest)
+      (if (or
+        (= (opt-load-entry-var entry) var)
+        (opt-load-key-uses-var? (opt-load-entry-key entry) var))
+        true
+        (opt-load-table-mentions-var? (box-get rest) var))]))
+
+(define (opt-load-table-invalidate-var-scan [table : OptLoadTable] [var : i64]) : OptLoadTable
   (match table
     [(OptLoadNil) (OptLoadNil)]
     [(OptLoadCons entry rest)
       (let
         [rest2 : OptLoadTable
-          (opt-load-table-invalidate-var (box-get rest) var)]
+          (opt-load-table-invalidate-var-scan (box-get rest) var)]
         (if (or
           (= (opt-load-entry-var entry) var)
           (opt-load-key-uses-var? (opt-load-entry-key entry) var))
           rest2
           (OptLoadCons entry (box rest2))))]))
+
+;; Drop entries whose address expression references `var`, or whose cached load
+;; result was `var`. The IR is not globally SSA, so any reused var id must make
+;; old load facts disappear before the new instruction is processed. This runs
+;; for every defining instruction, so the no-match case returns the table
+;; unchanged instead of re-boxing the whole spine.
+(define (opt-load-table-invalidate-var [table : OptLoadTable] [var : i64]) : OptLoadTable
+  (if (opt-load-table-mentions-var? table var)
+    (opt-load-table-invalidate-var-scan table var)
+    table))
 
 (define (opt-load-cse-state-invalidate-def
   [state : OptLoadCseState]

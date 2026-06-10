@@ -534,10 +534,10 @@
 ;; compare would dedup nondeterministically and break the stage2 == stage3
 ;; fixpoint. String payloads (lifetime names) compare by content.
 (define ty-node-dedup-capacity : i64
-  1048576)
+  16384)
 
 (define ty-node-dedup-slots : (Array i64)
-  (make-array i64 1048576))
+  (make-array i64 16384))
 
 (define ty-node-dedup-count : i64
   0)
@@ -637,183 +637,180 @@
             (ty-type-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
-;; Shallow structural equality between two pool nodes. Child ids compare as
-;; plain integers because children are themselves deduplicated.
-(define (ty-node-shallow-eq? [a-id : i64] [b-id : i64]) : bool
+;; Shallow structural equality between a pool node and a candidate node. Child
+;; ids compare as plain integers because children are themselves deduplicated.
+(define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
   (match (ty-node-get a-id)
     [(AstTyI64)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyI64) true]
         [_ false])]
     [(AstTyI32)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyI32) true]
         [_ false])]
     [(AstTyI16)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyI16) true]
         [_ false])]
     [(AstTyI8)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyI8) true]
         [_ false])]
     [(AstTyU64)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyU64) true]
         [_ false])]
     [(AstTyU32)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyU32) true]
         [_ false])]
     [(AstTyU16)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyU16) true]
         [_ false])]
     [(AstTyU8)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyU8) true]
         [_ false])]
     [(AstTyF64)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyF64) true]
         [_ false])]
     [(AstTyF32)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyF32) true]
         [_ false])]
     [(AstTyBool)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyBool) true]
         [_ false])]
     [(AstTyChar)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyChar) true]
         [_ false])]
     [(AstTyString)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyString) true]
         [_ false])]
     [(AstTyStr)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyStr) true]
         [_ false])]
     [(AstTyUnit)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyUnit) true]
         [_ false])]
     [(AstTyNever)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyNever) true]
         [_ false])]
     [(AstTyExpr)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyExpr) true]
         [_ false])]
     [(AstTyExprList)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyExprList) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyFunc b-args b-ret)
           (and (= a-ret b-ret) (ty-type-list-eq? a-args b-args))]
         [_ false])]
     [(AstTyTuple a-elems)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyTuple b-elems) (ty-type-list-eq? a-elems b-elems)]
         [_ false])]
     [(AstTyArray a-elem a-count)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyArray b-elem b-count)
           (and (= a-elem b-elem) (= a-count b-count))]
         [_ false])]
     [(AstTyDynArray a-elem)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyDynArray b-elem) (= a-elem b-elem)]
         [_ false])]
     [(AstTyBox a-inner)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyBox b-inner) (= a-inner b-inner)]
         [_ false])]
     [(AstTyRegion a-name a-inner)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyRegion b-name b-inner)
           (and (= a-inner b-inner) (string-eq a-name b-name))]
         [_ false])]
     [(AstTyRef a-name a-inner)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyRef b-name b-inner)
           (and (= a-inner b-inner) (string-eq a-name b-name))]
         [_ false])]
     [(AstTyMutRef a-name a-inner)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyMutRef b-name b-inner)
           (and (= a-inner b-inner) (string-eq a-name b-name))]
         [_ false])]
     [(AstTyEnum a-name)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyEnum b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyEnumArgs a-name a-lifetimes)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyEnumArgs b-name b-lifetimes)
           (and (= a-name b-name) (ty-lifetime-list-eq? a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyStruct a-name)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyStruct b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyStructArgs a-name a-lifetimes)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyStructArgs b-name b-lifetimes)
           (and (= a-name b-name) (ty-lifetime-list-eq? a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyVar a-name)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyVar b-name) (= a-name b-name)]
         [_ false])]
     [(AstTyVarArgs a-name a-lifetimes)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyVarArgs b-name b-lifetimes)
           (and (= a-name b-name) (ty-lifetime-list-eq? a-lifetimes b-lifetimes))]
         [_ false])]
     [(AstTyPtr a-inner)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyPtr b-inner) (= a-inner b-inner)]
         [_ false])]
     [(AstTyMutPtr a-inner)
-      (match (ty-node-get b-id)
+      (match b
         [(AstTyMutPtr b-inner) (= a-inner b-inner)]
         [_ false])]))
 
 ;: Append `node` to the pool, returning an existing id when an identical node
-;: was already pushed. The node is appended tentatively first, so hashing and
-;: comparison run on pool copies; a duplicate pops the tentative slot again.
+;: was already pushed. The table is probed before appending so the common
+;: duplicate path does not churn the pool count or temporarily force growth.
 (define (ty-node-push [node : AstType]) : i64
-  (let
-    [tentative : i64 (ty-node-push-raw node)]
-    (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
-      tentative
-      (let
-        [mask : i64 (- ty-node-dedup-capacity 1)]
-        [idx : i64 (bit-and (ty-node-hash-value (ty-node-get tentative)) mask)]
-        [result : i64 (- 0 1)]
-        (begin
-          (while (< result 0)
-            (let
-              [slot : i64 (array-ref ty-node-dedup-slots idx)]
-              (if (= slot 0)
+  (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
+    (ty-node-push-raw node)
+    (let
+      [mask : i64 (- ty-node-dedup-capacity 1)]
+      [idx : i64 (bit-and (ty-node-hash-value node) mask)]
+      [result : i64 (- 0 1)]
+      (begin
+        (while (< result 0)
+          (let
+            [slot : i64 (array-ref ty-node-dedup-slots idx)]
+            (if (= slot 0)
+              (let
+                [id : i64 (ty-node-push-raw node)]
                 (begin
-                  (array-set! ty-node-dedup-slots idx (+ tentative 1))
+                  (array-set! ty-node-dedup-slots idx (+ id 1))
                   (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
-                  (set! result tentative))
-                (if (ty-node-shallow-eq? (- slot 1) tentative)
-                  (begin
-                    ;; Duplicate: pop the tentative node (it is the last one).
-                    (set! ty-node-pool-count tentative)
-                    (set! result (- slot 1)))
-                  (set! idx (bit-and (+ idx 1) mask))))))
-          result)))))
+                  (set! result id)))
+              (if (ty-node-shallow-eq? (- slot 1) node)
+                (set! result (- slot 1))
+                (set! idx (bit-and (+ idx 1) mask))))))
+        result))))
 
 ;: Read the type node at `id`.
 ;;
@@ -2189,6 +2186,32 @@
             (not exhausted)
             (and (= id capacity) (and (= len (+ capacity 1)) grew))))))))
 
+(define (compiler-ast-type-dedup-smoke?) : bool
+  (begin
+    (ty-node-pool-reset!)
+    (let
+      [first-i64 : i64 (ty-node-push (AstTyI64))]
+      [first-len : i64 (ty-node-pool-len)]
+      [second-i64 : i64 (ty-node-push (AstTyI64))]
+      [second-len : i64 (ty-node-pool-len)]
+      [first-array : i64 (ty-node-push (ast-ty-array (AstTyI64) 4))]
+      [array-len : i64 (ty-node-pool-len)]
+      [second-array : i64 (ty-node-push (ast-ty-array (AstTyI64) 4))]
+      [final-len : i64 (ty-node-pool-len)]
+      [ok : bool
+        (and
+          (= first-i64 second-i64)
+          (and
+            (= first-len 1)
+            (and
+              (= second-len 1)
+              (and
+                (= first-array second-array)
+                (and (= array-len 2) (= final-len 2))))))]
+      (begin
+        (ty-node-pool-reset!)
+        ok))))
+
 (define (compiler-ast-smoke) : i64
   (let
     [i64-ty : AstType (AstTyI64)]
@@ -2223,6 +2246,7 @@
       (ast-expr-binary (AstBinAdd) (ast-node-push (AstExprLiteral lit)) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
+    [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
     [param : AstParam (ast-param "x" i64-ty false)]
     [params : AstParamList (ast-param-cons param AstParamNil)]
@@ -2234,7 +2258,7 @@
           nested-ty-ok?
           (and
             nested-expr-pattern-ok?
-            (and decl-program-ok? pool-exhaustion-ok?)))
+            (and decl-program-ok? (and type-dedup-ok? pool-exhaustion-ok?))))
           (+
             (ast-type-tag fn-ty)
             (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))

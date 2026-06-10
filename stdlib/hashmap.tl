@@ -105,15 +105,16 @@
       0
       next)))
 
-;: Unchecked slot read. Probe/iteration indices are always in [0, capacity)
-;: (masked bucket index, wrapped with next-index), so the array-ref bounds check
-;: is dead weight; this body inlines to gep+load+return at opt2.
+;; #2357: MUST stay `array-ref`. `StringI64MapSlot` is an inline-by-value enum
+;; (#1867), so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
+;; (Ptr StringI64MapSlot)) index))` form mis-scales the element stride and reads
+;; garbage; `array-ref` lowers with the correct element size.
+;: Read the slot at `index`. Probe/iteration indices are always in
+;: `[0, capacity)`, so the bounds check never fires.
 (define (string-i64-map-slot-at
   [slots : (Array StringI64MapSlot)]
   [index : i64]) : StringI64MapSlot
-  (unsafe
-    (ptr-read
-      (ptr-offset (ptr-cast (array-data slots) : (Ptr StringI64MapSlot)) index))))
+  (array-ref slots index))
 
 ;: Pick the insertion slot for an absent key: reuse the first tombstone seen
 ;: (`first-tombstone` >= 0) so deletes do not strand keys, otherwise the empty

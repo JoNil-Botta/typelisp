@@ -325,6 +325,24 @@ main:
     leave
     ret
 
+    .globl tl_memcpy
+tl_memcpy:
+    movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
+    movq %rsi, %rax
+    addq %rcx, %rax
+    cmpq %rax, %rdi
+    jae .Ltl_memcpy_fwd
+    leaq -1(%rdi,%rcx), %rdi
+    leaq -1(%rsi,%rcx), %rsi
+    std
+    rep movsb
+    cld
+    ret
+.Ltl_memcpy_fwd:
+    rep movsb
+    ret
     .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax

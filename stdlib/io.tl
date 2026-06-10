@@ -245,6 +245,15 @@
 ;: Runtime allocator binding used to allocate raw handle tables.
 (extern (io-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
+;: Runtime binding to create a fresh independent arena for the handle tables.
+(extern (io-arena-make) : i64 (:symbol "tl_arena_make"))
+
+;: Runtime binding for the current active arena handle.
+(extern (io-arena-current) : i64 (:symbol "tl_arena_current"))
+
+;: Runtime binding to switch the active arena.
+(extern (io-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set"))
+
 ;: Maximum number of stdlib file handles tracked by the raw handle table.
 (define io-file-handle-cap : i64
   1024)
@@ -345,10 +354,20 @@
   (unsafe
     (ptr-write! (ptr-offset items index) value)))
 
-;: Lazily allocate and zero the raw file-handle tables.
+;; #2357: the table pointers are stored as raw integer addresses the region
+;; checker cannot see, and this init can fire inside a (with-arena ...) region
+;; (the batch compile driver scopes each entry). Allocate the tables in a
+;; dedicated persistent arena so a region reset cannot reclaim them; the
+;; active arena is restored before returning.
+;: Lazily allocate and zero the raw file-handle tables in a persistent arena.
 (define (io-file-table-init!) : unit
   (if (= io-file-fds-addr (cast 0 : u64))
     (let
+      [table-arena : i64 (io-arena-make)]
+      [prev-arena : i64 (io-arena-current)]
+      [switched : unit
+        (unsafe
+          (io-arena-set table-arena))]
       [fds : (MutPtr i64)
         (unsafe
           (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
@@ -367,6 +386,9 @@
       [last-bytes : (MutPtr String)
         (unsafe
           (ptr-cast (io-runtime-alloc 16384) : (MutPtr String)))]
+      [restored : unit
+        (unsafe
+          (io-arena-set prev-arena))]
       [i : i64 0]
       (begin
         (set!

@@ -21,6 +21,12 @@ esac
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
+# #2357: the batch driver scopes each entry's compile in its own arena region
+# (compile-cli-run-batch-entries), so a chunk's peak memory is the heaviest
+# single compile (~2.8GB for the whole-compiler drivers), not the sum of all
+# entries. Without that scoping a 16-case chunk accumulated 9.7GB and
+# SIGSEGV'd the Windows CI runner (freestanding runtime: a failed memory
+# commit surfaces as an access violation, exit 139).
 BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-16}
 
 case "$EXPECTATION_MODE" in

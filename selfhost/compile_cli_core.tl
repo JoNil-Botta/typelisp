@@ -741,17 +741,28 @@
     [(CompileCliBatchEntryNil) 0]
     [(CompileCliBatchEntryCons input-path output-path rest)
       (let
+        ;; Scope each batch entry's compile in its own arena region: the
+        ;; pipeline otherwise allocates everything in the program-lifetime
+        ;; arena, so a batch accumulates every entry's full working set
+        ;; (~14MB even for a trivial repeated file; gigabytes across the
+        ;; selfhost manifest -- the Windows CI OOM). The result is a
+        ;; region-free i64 status, node pools grow in the persistent base
+        ;; arena (#2357), and compiler-driver-reset-file-state! clears
+        ;; intern/pool state at the next entry before anything could read
+        ;; reclaimed region memory.
         [status : i64
-          (compile-cli-run-compile-file
-            input-path
-            output-path
-            false
-            has-target
-            target
-            stdlib-roots
-            cfg-names
-            backend-mode
-            opt-level)]
+          (with-arena
+            batch-entry
+            (compile-cli-run-compile-file
+              input-path
+              output-path
+              false
+              has-target
+              target
+              stdlib-roots
+              cfg-names
+              backend-mode
+              opt-level))]
         (if (= status 0)
           (compile-cli-run-batch-entries
             (box-get rest)

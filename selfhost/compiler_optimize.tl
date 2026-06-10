@@ -1122,6 +1122,11 @@
         [(IrSomeValue value) (opt-collect-value-uses set value)]
         [(IrNoValue) set])]
     [(IrInstrPhi _ inputs _) (opt-collect-phi-uses set inputs)]
+    ;; #2386: register-group ops use their operands -- Pack uses each word value,
+    ;; Word uses the source group. Omitting these would let DCE drop a definition
+    ;; that feeds a Pack/Word.
+    [(IrInstrPack _ words _) (opt-collect-value-list-uses set words)]
+    [(IrInstrWord _ src _ _) (opt-collect-value-uses set src)]
     ;; `IrInstrAlloc` has no operand uses; `IrInstrJump` has none either.
     [_ set]))
 
@@ -1432,6 +1437,9 @@
         [(IrSomeValue value) (opt-collect-value-uses-array items value)]
         [(IrNoValue) unit])]
     [(IrInstrPhi _ inputs _) (opt-collect-phi-uses-array items inputs)]
+    ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
+    [(IrInstrPack _ words _) (opt-collect-value-list-uses-array items words)]
+    [(IrInstrWord _ src _ _) (opt-collect-value-uses-array items src)]
     [_ unit]))
 
 (define (opt-collect-instr-seq-uses-array
@@ -3371,6 +3379,20 @@
           (and
             (= ad bd)
             (and (opt-phi-input-list-eq ainputs binputs) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrPack ad awords aty)
+      (match b
+        [(IrInstrPack bd bwords bty)
+          (and
+            (= ad bd)
+            (and (opt-value-list-eq awords bwords) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrWord ad asrc ai aty)
+      (match b
+        [(IrInstrWord bd bsrc bi bty)
+          (and
+            (= ad bd)
+            (and (opt-value-eq asrc bsrc) (and (= ai bi) (opt-type-eq aty bty))))]
         [_ false])]))
 
 (define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
@@ -3665,7 +3687,13 @@
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
-    [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]))
+    [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]
+    ;; #2386: register-group ops are plain defining instructions -- invalidate
+    ;; their dst, keep the instruction (no CSE key for them yet).
+    [(IrInstrPack dst _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrWord dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]))
 
 (define (opt-cse-instrs [table : OptExprTable] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
@@ -3873,7 +3901,13 @@
     [(IrInstrAlloc _ _) instr]
     [(IrInstrLaneId _ _ _) instr]
     [(IrInstrJump _) instr]
-    [(IrInstrPhi _ _ _) instr]))
+    [(IrInstrPhi _ _ _) instr]
+    ;; #2386: register-group ops carry value operands -- substitute copies into
+    ;; the packed words / the extracted source group.
+    [(IrInstrPack dst words ty)
+      (IrInstrPack dst (opt-copy-subst-value-list env words) ty)]
+    [(IrInstrWord dst src index ty)
+      (IrInstrWord dst (opt-copy-resolve env src) index ty)]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -3916,6 +3950,10 @@
     [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCallIndirectC dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
+    ;; #2386: register-group ops define their dst -- drop any stale copy fact for
+    ;; it (a reused var id must not trigger a later stale rewrite).
+    [(IrInstrPack dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrWord dst _ _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
 
 (defenum OptCopyResult
@@ -4054,7 +4092,10 @@
     [(IrInstrBranch _ _ _) (OptBoundsNil)]
     [(IrInstrReturn _) (OptBoundsNil)]
     [(IrInstrPhi _ _ _) (OptBoundsNil)]
-    [(IrInstrBoundsCheck _ _ _) facts]))
+    [(IrInstrBoundsCheck _ _ _) facts]
+    ;; #2386: register-group ops define their dst -- invalidate any bounds fact.
+    [(IrInstrPack dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrWord dst _ _ _) (opt-bounds-invalidate-var facts dst)]))
 
 (define (opt-bounds-instrs
   [facts : OptBoundsFacts]
@@ -5655,6 +5696,11 @@
     [(IrInstrSyscall dst _) (OptSomeI64 dst)]
     [(IrInstrCall dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrPhi dst _ _) (OptSomeI64 dst)]
+    ;; #2386: Pack/Word define their dst like any scalar op. Without these arms
+    ;; the verifier saw every use of a register-group word as use-before-def
+    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
+    [(IrInstrPack dst _ _) (OptSomeI64 dst)]
+    [(IrInstrWord dst _ _ _) (OptSomeI64 dst)]
     [_ (OptNoI64)]))
 
 (define (opt-instr-def-position [instr : CompilerIrInstr] [pos : i64]) : i64
@@ -6083,7 +6129,12 @@
     [(IrInstrPhi _ inputs _) (opt-verify-phi-input-uses defs doms inputs)]
     [(IrInstrAlloc _ _) (OkCompilerOptimizeVerify)]
     [(IrInstrLaneId _ _ _) (OkCompilerOptimizeVerify)]
-    [(IrInstrJump _) (OkCompilerOptimizeVerify)]))
+    [(IrInstrJump _) (OkCompilerOptimizeVerify)]
+    ;; #2386: verify register-group operands dominate their use.
+    [(IrInstrPack _ words _)
+      (opt-verify-value-list-uses defs doms words block-label pos)]
+    [(IrInstrWord _ src _ _)
+      (opt-verify-value-use defs doms src block-label pos)]))
 
 (define (opt-verify-instr-list-uses
   [defs : OptVarDefList]
@@ -7156,7 +7207,23 @@
     [(IrInstrEntryArgv _) (OptSsaInstrResult instr env next-var)]
     [(IrInstrEntryEnvp _) (OptSsaInstrResult instr env next-var)]
     [(IrInstrJump _) (OptSsaInstrResult instr env next-var)]
-    [(IrInstrPhi _ _ _) (OptSsaInstrResult instr env next-var)]))
+    [(IrInstrPhi _ _ _) (OptSsaInstrResult instr env next-var)]
+    ;; #2386: SSA-rename register-group ops -- rewrite operands with the current
+    ;; env, then rename the dst.
+    [(IrInstrPack dst words ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrPack out-dst (opt-ssa-rewrite-value-list env words) ty)
+            next-env
+            out-next)])]
+    [(IrInstrWord dst src index ty)
+      (match (opt-ssa-rename-dst facts env next-var dst)
+        [(OptSsaDstResult out-dst next-env out-next)
+          (OptSsaInstrResult
+            (IrInstrWord out-dst (opt-ssa-rewrite-value env src) index ty)
+            next-env
+            out-next)])]))
 
 (define (opt-ssa-rename-instr-seq-from
   [facts : OptSsaFacts]
@@ -8116,7 +8183,11 @@
     [(IrInstrAlloc _ _) instr]
     [(IrInstrLaneId _ _ _) instr]
     [(IrInstrJump _) instr]
-    [(IrInstrPhi _ _ _) instr]))
+    [(IrInstrPhi _ _ _) instr]
+    ;; #2386: leave register-group ops un-substituted here; not propagating a
+    ;; global copy into their operands is always sound (original vars stay valid).
+    [(IrInstrPack _ _ _) instr]
+    [(IrInstrWord _ _ _ _) instr]))
 
 (define (opt-global-copy-instrs
   [facts : OptGlobalCopyFactTable]
@@ -10818,9 +10889,121 @@
   (OptSccpConst CompilerIrValue AstType)
   (OptSccpOverdefined))
 
+;; #2357 (orig #2386 2951f920): the SCCP lattice was a persistent assoc list
+;; (OptSccpEnvCons id value rest) where opt-sccp-env-set rebuilt the WHOLE list on
+;; every bind (via opt-sccp-env-remove) -> O(V) alloc per bind, O(V^2) per analysis
+;; sweep, x fixpoint sweeps x all functions (~42s / ~12GB of the -O2 optimize
+;; phase). The lattice is a single monotonically-rising map threaded linearly
+;; through analysis (never branched), so it is now a mutable array indexed by var
+;; id: O(1) lookup/set, no rebuild. Var ids are dense within a function; the array
+;; is sized to cover every bound var (params + every instruction dst that
+;; opt-sccp-process-instr binds). Out-of-range lookups return Unknown (the same
+;; default the list gave for an unbound var), so the analysis result -- and the
+;; folded output -- is byte-identical.
 (defenum OptSccpEnv
-  (OptSccpEnvNil)
-  (OptSccpEnvCons i64 OptSccpValue (Box OptSccpEnv)))
+  (OptSccpEnv i64 (Array OptSccpValue)))
+
+(define (opt-sccp-env-fill-unknown!
+  [slots : (Array OptSccpValue)]
+  [n : i64]
+  [i : i64]) : unit
+  (if (>= i n)
+    unit
+    (begin
+      (array-set! slots i (OptSccpUnknown))
+      (opt-sccp-env-fill-unknown! slots n (+ i 1)))))
+
+(define (opt-sccp-env-make [cap : i64]) : OptSccpEnv
+  (let
+    [n : i64
+      (if (< cap 1)
+        1
+        cap)]
+    [slots : (Array OptSccpValue) (make-array OptSccpValue n)]
+    (begin
+      (opt-sccp-env-fill-unknown! slots n 0)
+      (OptSccpEnv n slots))))
+
+;; Destination var bound by `opt-sccp-process-instr`, or -1 for instructions that
+;; bind nothing. MUST mirror the binding arms of opt-sccp-process-instr so the
+;; environment array is sized to cover every var the analysis can bind.
+(define (opt-sccp-instr-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrMov dst _ _) dst]
+    [(IrInstrCast dst _ _ _) dst]
+    [(IrInstrBinOp dst _ _ _ _) dst]
+    [(IrInstrUnOp dst _ _ _) dst]
+    [(IrInstrPhi dst _ _) dst]
+    [(IrInstrAlloc dst _) dst]
+    [(IrInstrAddrOf dst _) dst]
+    [(IrInstrGep dst _ _ _) dst]
+    [(IrInstrLoad dst _ _) dst]
+    [(IrInstrEntryArgc dst) dst]
+    [(IrInstrEntryArgv dst) dst]
+    [(IrInstrEntryEnvp dst) dst]
+    [(IrInstrCpuId dst _ _ _) dst]
+    [(IrInstrXgetbv dst _) dst]
+    [(IrInstrSyscall dst _) dst]
+    [(IrInstrLaneId dst _ _) dst]
+    [(IrInstrSplat dst _ _ _) dst]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) dst]
+    [(IrInstrVectorReduce dst _ _ _ _) dst]
+    [(IrInstrVectorCompare dst _ _ _ _ _) dst]
+    [(IrInstrMaskBinOp dst _ _ _ _) dst]
+    [(IrInstrMaskNot dst _ _) dst]
+    [(IrInstrMaskReduce dst _ _ _) dst]
+    [(IrInstrSelect dst _ _ _ _ _) dst]
+    [(IrInstrVectorLoad dst _ _ _ _) dst]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) dst]
+    [(IrInstrTailMask dst _ _ _) dst]
+    [(IrInstrCall dst _ _ _) dst]
+    [(IrInstrCallIndirect dst _ _ _) dst]
+    [(IrInstrCallIndirectC dst _ _ _) dst]
+    ;; Pack/Word dsts must be counted so opt-sccp-env-make sizes the lattice
+    ;; array over them; opt-sccp-env-set silently drops out-of-range writes,
+    ;; which would defeat the Overdefined binding in opt-sccp-process-instr.
+    [(IrInstrPack dst _ _) dst]
+    [(IrInstrWord dst _ _ _) dst]
+    [_ (- 0 1)]))
+
+(define (opt-sccp-max-var-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (let
+      [dst : i64 (opt-sccp-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      (opt-sccp-max-var-instr-seq
+        instrs
+        (+ index 1)
+        (if (> dst acc)
+          dst
+          acc)))))
+
+(define (opt-sccp-max-var-blocks [blocks : CompilerIrBlockList] [acc : i64]) : i64
+  (match blocks
+    [(IrBlockNil) acc]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-sccp-max-var-blocks
+            (box-get rest)
+            (opt-sccp-max-var-instr-seq instrs 0 acc))])]
+    [(IrBlockArray seq)
+      (opt-sccp-max-var-blocks (compiler-ir-block-seq-to-list seq) acc)]))
+
+(define (opt-sccp-max-var-params [params : CompilerIrParamList] [acc : i64]) : i64
+  (match params
+    [(IrParamNil) acc]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ id)
+          (opt-sccp-max-var-params
+            (box-get rest)
+            (if (> id acc)
+              id
+              acc))])]))
 
 (defenum OptSccpState
   (OptSccpState OptLabelSet OptSccpEnv bool))
@@ -10857,26 +11040,26 @@
 
 (define (opt-sccp-env-lookup [env : OptSccpEnv] [var : i64]) : OptSccpValue
   (match env
-    [(OptSccpEnvNil) (OptSccpUnknown)]
-    [(OptSccpEnvCons id value rest)
-      (let
-        [rest : OptSccpEnv (box-get rest)]
-        (if (= id var)
-          value
-          (opt-sccp-env-lookup rest var)))]))
+    [(OptSccpEnv cap slots)
+      (if (if (>= var 0)
+        (< var cap)
+        false)
+        (array-ref slots var)
+        (OptSccpUnknown))]))
 
-(define (opt-sccp-env-remove [env : OptSccpEnv] [var : i64]) : OptSccpEnv
-  (match env
-    [(OptSccpEnvNil) (OptSccpEnvNil)]
-    [(OptSccpEnvCons id value rest)
-      (let
-        [rest : OptSccpEnv (box-get rest)]
-        (if (= id var)
-          (opt-sccp-env-remove rest var)
-          (OptSccpEnvCons id value (box (opt-sccp-env-remove rest var)))))]))
-
+;; Mutates the shared lattice array in place and returns the same env. The
+;; environment is threaded linearly through the monotone analysis, so in-place
+;; update is observationally identical to the old persistent cons/remove.
 (define (opt-sccp-env-set [env : OptSccpEnv] [var : i64] [value : OptSccpValue]) : OptSccpEnv
-  (OptSccpEnvCons var value (box (opt-sccp-env-remove env var))))
+  (match env
+    [(OptSccpEnv cap slots)
+      (begin
+        (if (if (>= var 0)
+          (< var cap)
+          false)
+          (array-set! slots var value)
+          unit)
+        env)]))
 
 (define (opt-sccp-state-bind
   [state : OptSccpState]
@@ -11085,6 +11268,13 @@
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrCallIndirectC dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    ;; #2386 register-group dsts: bind Overdefined like loads/calls. Falling
+    ;; into the wildcard left them OptSccpUnknown forever, so a branch on a
+    ;; Word-extracted enum tag marked NO successor executable and SCCP folded
+    ;; match arms away at -O2 (stale-constant miscompile).
+    [(IrInstrPack dst _ _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrWord dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [_ state]))
 
 (define (opt-sccp-process-instrs
@@ -11151,10 +11341,13 @@
 (define (opt-sccp-initial-state
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
-  (OptSccpState
-    (opt-label-add (OptLabelNil) (opt-cfg-entry-label blocks))
-    (opt-sccp-env-from-params params (OptSccpEnvNil))
-    true))
+  (let
+    [max-var : i64
+      (opt-sccp-max-var-params params (opt-sccp-max-var-blocks blocks (- 0 1)))]
+    (OptSccpState
+      (opt-label-add (OptLabelNil) (opt-cfg-entry-label blocks))
+      (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
+      true)))
 
 (define (opt-sccp-analyze-fixed
   [blocks : CompilerIrBlockList]
@@ -11435,7 +11628,10 @@
     [(IrInstrAlloc _ _) instr]
     [(IrInstrAddrOf _ _) instr]
     [(IrInstrLaneId _ _ _) instr]
-    [(IrInstrJump _) instr]))
+    [(IrInstrJump _) instr]
+    ;; #2386: register-group ops carry no SCCP-constant operands to fold.
+    [(IrInstrPack _ _ _) instr]
+    [(IrInstrWord _ _ _ _) instr]))
 
 (define (opt-sccp-rewrite-instrs
   [env : OptSccpEnv]
@@ -11626,7 +11822,10 @@
     [(IrInstrStore _ _ _) (- 0 1)]
     [(IrInstrJump _) (- 0 1)]
     [(IrInstrBranch _ _ _) (- 0 1)]
-    [(IrInstrReturn _) (- 0 1)]))
+    [(IrInstrReturn _) (- 0 1)]
+    ;; #2386: register-group ops define their dst.
+    [(IrInstrPack dst _ _) dst]
+    [(IrInstrWord dst _ _ _) dst]))
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
@@ -11763,9 +11962,18 @@
         [buckets : (Array OptGvnBucket) (struct-get table buckets)]
         [bucket : i64 (opt-gvn-bucket-index buckets key)]
         [old-head : OptGvnBucket (array-ref buckets bucket)]
+        ;; #2357: under #1867 inline-by-value aggregates `array-ref` of a
+        ;; memory-backed aggregate returns the element ADDRESS (in-place), not a
+        ;; value snapshot the way main's old heap-handle GVN assumed. So the
+        ;; scope-change MUST capture old-head's value BEFORE the array-set! below
+        ;; overwrites the slot -- otherwise restore writes back the just-pushed
+        ;; head and scoped dominance breaks (a dominated sibling reuses a value
+        ;; that does not dominate it).
+        [result : OptGvnScopeChanges
+          (OptGvnScopeCons (OptGvnScopeChange bucket old-head) (box changes))]
         (begin
           (array-set! buckets bucket (OptGvnBucketCons entry (box old-head)))
-          (OptGvnScopeCons (OptGvnScopeChange bucket old-head) (box changes))))]))
+          result))]))
 
 (define (opt-gvn-table-insert! [table : OptGvnMap] [entry : OptGvnEntry]) : unit
   (begin
@@ -12998,6 +13206,18 @@
         (opt-inline-census-value index census value)
         (box-get rest))]))
 
+(define (opt-inline-census-value-list
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [values : CompilerIrValueList]) : OptInlineCensus
+  (match values
+    [(IrValueNil) census]
+    [(IrValueCons value rest)
+      (opt-inline-census-value-list
+        index
+        (opt-inline-census-value index census value)
+        (box-get rest))]))
+
 (define (opt-inline-census-instr
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -13134,7 +13354,10 @@
     [(IrInstrJump _) census]
     [(IrInstrBranch cond _ _) (opt-inline-census-value index census cond)]
     [(IrInstrReturn maybe) (opt-inline-census-maybe-value index census maybe)]
-    [(IrInstrPhi _ inputs _) (opt-inline-census-phi-inputs index census inputs)]))
+    [(IrInstrPhi _ inputs _) (opt-inline-census-phi-inputs index census inputs)]
+    ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
+    [(IrInstrPack _ words _) (opt-inline-census-value-list index census words)]
+    [(IrInstrWord _ src _ _) (opt-inline-census-value index census src)]))
 
 (define (opt-inline-census-instr-seq-from
   [index : OptFunctionIndex]
@@ -14969,7 +15192,12 @@
     [(IrInstrJump _) state]
     [(IrInstrBranch cond _ _) (opt-reach-value index state cond)]
     [(IrInstrReturn maybe) (opt-reach-maybe-value index state maybe)]
-    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]))
+    [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]
+    ;; #2386: register-group ops carry word-class scalar operands (vars/consts);
+    ;; lowering materializes any global/function reference into a var before
+    ;; packing, so the group operands themselves reach nothing new.
+    [(IrInstrPack _ _ _) state]
+    [(IrInstrWord _ src _ _) (opt-reach-value index state src)]))
 
 (define (opt-reach-instrs
   [index : OptFunctionIndex]
@@ -20241,6 +20469,49 @@
           (IrInstrNil))))
     (IrBlockNil)))
 
+;; #2386 regression guard: a branch conditioned on an IrInstrWord-extracted enum
+;; tag. Pack/Word dsts must be bound Overdefined in the SCCP lattice; when they
+;; stayed Unknown the branch marked NO successor executable and both arms were
+;; folded away as unreachable (the -O2 stale-constant miscompile on matches over
+;; 16-byte register-resident enums).
+(define (opt-sccp-group-word-branch-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrPack
+          0
+          (IrValueCons
+            (IrValueI64 1)
+            (box (IrValueCons (IrValueI64 5) (box IrValueNil))))
+          (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrWord 1 (IrValueVar 0) 0 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 2 (IrBinEq) (IrValueVar 1) (IrValueI64 0) (AstTyBool))
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueVar 2) "then" "else")
+              (IrInstrNil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (IrInstrMov 3 (IrValueI64 2) (AstTyI64))
+          (compiler-ir-instr-cons (IrInstrJump "merge") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons
+            (IrInstrMov 3 (IrValueI64 3) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "merge") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "merge"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
 (define (compiler-optimize-sccp-self-test) : i64
   (let
     [cross : CompilerIrBlockList
@@ -20253,6 +20524,8 @@
       (opt-sccp-blocks (opt-sccp-loop-params) (opt-sccp-loop-blocks))]
     [trap : CompilerIrBlockList
       (opt-sccp-blocks (IrParamNil) (opt-sccp-trap-blocks))]
+    [group : CompilerIrBlockList
+      (opt-sccp-blocks (IrParamNil) (opt-sccp-group-word-branch-blocks))]
     (core/cond
       (not (= (opt-count-arith-blocks cross) 0))
       1
@@ -20282,6 +20555,15 @@
       13
       (not (= (opt-count-mov-dst-blocks trap 1) 0))
       14
+      ;; #2386: the Word-conditioned branch and BOTH its arms must survive.
+      (not (= (compiler-ir-block-list-count group) 4))
+      15
+      (not (= (opt-count-branches-blocks group) 1))
+      16
+      (not (opt-block-list-has-label? group "then"))
+      17
+      (not (opt-block-list-has-label? group "else"))
+      18
       42)))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList

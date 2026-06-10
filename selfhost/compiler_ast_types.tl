@@ -10,6 +10,12 @@
 ;; but later parser work decides when they are populated.
 (import "compiler_intern.tl")
 
+;; #2357: arena access for the node-pool grow paths -- a regrown pool array must
+;; be allocated in the persistent program arena, never a transient scratch arena
+;; (which gets destroyed, leaving the global pool dangling). arena.tl has no
+;; imports, so this adds no cycle.
+(import "../stdlib/arena.tl")
+
 (defstruct AstSourceSpan
   (start-line i64)
   (start-col i64)
@@ -338,6 +344,17 @@
 (define ast-node-pool-slots : (Array AstExpr)
   (make-array AstExpr 4000000))
 
+;; #2357: the program (base) arena, captured at global-init while it is the
+;; active arena (the pool make-array above proves an allocation has happened, so
+;; this is the real base handle, not the pre-allocation 0 sentinel). The node
+;; pools live here for the whole program; a grow MUST allocate the new backing
+;; array here too, otherwise -- if the grow fires while a transient scratch arena
+;; is active (lowering/optimize) -- the regrown global array is freed when that
+;; scratch arena is destroyed, leaving the pool dangling (a non-deterministic
+;; use-after-free). This is why the pool previously failed closed.
+(define node-pool-base-arena : i64
+  (arena-current))
+
 (define ast-node-pool-count : i64
   0)
 
@@ -346,6 +363,9 @@
   ast-node-pool-count)
 
 ;: Grow the pool's backing array to at least double its current capacity.
+;; #2357: allocate the new backing array in the persistent base arena (see
+;; node-pool-base-arena) so it survives destruction of any scratch arena active
+;; when the grow fires.
 (define (ast-node-pool-grow!) : unit
   (let
     [old-slots : (Array AstExpr) ast-node-pool-slots]
@@ -354,7 +374,17 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [new-slots : (Array AstExpr) (make-array AstExpr new-cap)]
+    [prev-arena : i64 (arena-current)]
+    [new-slots : (Array AstExpr)
+      (begin
+        (unsafe
+          (arena-set! node-pool-base-arena))
+        (let
+          [arr : (Array AstExpr) (make-array AstExpr new-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
     [len : i64 ast-node-pool-count]
     [i : i64 0]
     (begin
@@ -377,16 +407,15 @@
         (set! ast-node-pool-count (+ id 1))
         id))))
 
-;: Read the node at `id`. Unchecked: pool ids are an internal invariant (every
-;: id comes from `ast-node-push`), so the bounds check `array-ref` would emit is
-;: dead weight on this hot, ubiquitous accessor. Dropping it also makes the body
-;: a single gep+load+return, which the opt2 inliner can now inline.
+;: Read the node at `id`.
+;;
+;; #2357: this MUST stay `array-ref`, not a raw `(ptr-read (ptr-offset (ptr-cast
+;; (array-data ...) : (Ptr AstExpr)) id))`. With #1867 inline-by-value aggregates
+;; `AstExpr` is a multi-word value; `array-ref` lowers with the correct element
+;; stride/size, whereas the raw ptr-offset path scales by a fixed word and adds a
+;; spurious load, reading garbage and corrupting the pool read.
 (define (ast-node-get [id : i64]) : AstExpr
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (ptr-cast (array-data ast-node-pool-slots) : (Ptr AstExpr))
-        id))))
+  (array-ref ast-node-pool-slots id))
 
 ;: Overwrite the node at `id` in place (used when a node is rewritten in place).
 (define (ast-node-set! [id : i64] [node : AstExpr]) : unit
@@ -429,15 +458,50 @@
 (define (ty-node-pool-exhausted-message) : String
   "compiler: AstType node pool exhausted")
 
-(define (ty-node-pool-mark-exhausted!) : unit
-  (set! ty-node-pool-exhausted true))
+;: Grow the pool's backing array to at least double its current capacity.
+;;
+;; #2357: restored from feat-aggregate-inline. main fail-closed this pool because
+;; the global-array reassignment here had tripped opt2 miscompiles -- but that was
+;; with the raw-ptr `ty-node-get` (now `array-ref`, see below) whose in-place alias
+;; broke when the backing array was reassigned. With `array-ref` the reassignment
+;; is safe (same pattern `ast-node-pool-grow!` already uses), and growing is needed
+;; because #1867 inline-aggregate type resolution pushes more nodes (cli.tl/test.tl
+;; exceed the old fixed 4M cap). Growing keeps the compile.tl bootstrap at its ~4M
+;; footprint (no growth) while letting larger programs proceed.
+(define (ty-node-pool-grow!) : unit
+  (let
+    [old-slots : (Array AstType) ty-node-pool-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [prev-arena : i64 (arena-current)]
+    [new-slots : (Array AstType)
+      (begin
+        (unsafe
+          (arena-set! node-pool-base-arena))
+        (let
+          [arr : (Array AstType) (make-array AstType new-cap)]
+          (begin
+            (unsafe
+              (arena-set! prev-arena))
+            arr)))]
+    [len : i64 ty-node-pool-count]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! ty-node-pool-slots new-slots))))
 
 ;: Append `node` to the pool and return its ty id.
 (define (ty-node-push [node : AstType]) : i64
-  (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
-    (begin
-      (ty-node-pool-mark-exhausted!)
-      0)
+  (begin
+    (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
+      (ty-node-pool-grow!)
+      unit)
     (let
       [id : i64 ty-node-pool-count]
       (begin
@@ -445,13 +509,13 @@
         (set! ty-node-pool-count (+ id 1))
         id))))
 
-;: Read the type node at `id`. Unchecked for the same reason as `ast-node-get`:
-;: ty ids are an internal invariant, so the bounds check is dead weight and its
-;: removal makes the accessor inlinable at opt2.
+;: Read the type node at `id`.
+;;
+;; #2357: MUST stay `array-ref` (see `ast-node-get`): with #1867 inline-by-value
+;; `AstType` is a multi-word value, and the raw ptr-offset/ptr-read path mis-scales
+;; the element stride and reads garbage. `array-ref` lowers with the right size.
 (define (ty-node-get [id : i64]) : AstType
-  (unsafe
-    (ptr-read
-      (ptr-offset (ptr-cast (array-data ty-node-pool-slots) : (Ptr AstType)) id))))
+  (array-ref ty-node-pool-slots id))
 
 ;: Overwrite the type node at `id` in place.
 (define (ty-node-set! [id : i64] [node : AstType]) : unit
@@ -1795,6 +1859,9 @@
                     [_ false])))]
             [_ false]))])))
 
+;; #2357: the ty-node pool now grows on demand (see ty-node-pool-grow!) rather
+;; than failing closed, so a push at capacity allocates a larger backing array and
+;; assigns the next sequential id -- it never exhausts. Verify that growth.
 (define (compiler-ast-type-pool-exhaustion-smoke?) : bool
   (let
     [capacity : i64 (ty-node-pool-capacity)]
@@ -1805,9 +1872,12 @@
         [id : i64 (ty-node-push (AstTyI64))]
         [len : i64 (ty-node-pool-len)]
         [exhausted : bool (ty-node-pool-exhausted?)]
+        [grew : bool (> (ty-node-pool-capacity) capacity)]
         (begin
           (ty-node-pool-reset!)
-          (and exhausted (and (= id 0) (= len capacity))))))))
+          (and
+            (not exhausted)
+            (and (= id capacity) (and (= len (+ capacity 1)) grew))))))))
 
 (define (compiler-ast-smoke) : i64
   (let

@@ -156,7 +156,18 @@
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
   (IrInstrReturn CompilerIrMaybeValue)
-  (IrInstrPhi i64 CompilerIrPhiInputList AstType))
+  (IrInstrPhi i64 CompilerIrPhiInputList AstType)
+  ;; #2386 multi-word register-resident aggregates: a small (<=16 B) inline
+  ;; struct/enum whose fields are all word-class can live in N general-purpose
+  ;; registers (N = ceil(size/8)) instead of a memory slot. IrInstrPack forms
+  ;; such a group var `dst` (typed `ty`, the aggregate type) from its N word
+  ;; values (low word first, e.g. word0 = enum tag); IrInstrWord extracts word
+  ;; `index` of a group value into a scalar `dst`. The register allocator gives a
+  ;; group var N adjacent home registers (or an N*8-byte spill slot); the backend
+  ;; lowers Pack/Word as register/slot word moves -- the value never round-trips
+  ;; through memory.
+  (IrInstrPack i64 CompilerIrValueList AstType)
+  (IrInstrWord i64 CompilerIrValue i64 AstType))
 
 (defenum CompilerIrInstrList
   (IrInstrNil)
@@ -275,18 +286,12 @@
 (define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
   (= (struct-get instrs len) 0))
 
-;; Unchecked: every caller indexes within `[0, len)` (the seq is built once with
-;; `len` slots and iterated by index), so the bounds check is dead weight on this
-;; hot per-instruction accessor; the unchecked body also inlines at opt2.
+;; #2357: MUST stay `array-ref`. `CompilerIrInstr` is an inline-by-value enum
+;; (#1867), so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
+;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
+;; garbage; `array-ref` lowers with the correct element size.
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (ptr-cast
-          (array-data (struct-get instrs slots))
-          :
-          (Ptr CompilerIrInstr))
-        index))))
+  (array-ref (struct-get instrs slots) index))
 
 (define (compiler-ir-block [label : String] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (IrBlock label (compiler-ir-instr-seq-from-list instrs)))
@@ -711,6 +716,17 @@
       (IrInstrPhi
         dst
         (compiler-ir-clone-phi-input-list inputs)
+        (compiler-ir-clone-type ty))]
+    [(IrInstrPack dst words ty)
+      (IrInstrPack
+        dst
+        (compiler-ir-clone-value-list words)
+        (compiler-ir-clone-type ty))]
+    [(IrInstrWord dst src index ty)
+      (IrInstrWord
+        dst
+        (compiler-ir-clone-value src)
+        index
         (compiler-ir-clone-type ty))]))
 
 (define (compiler-ir-clone-instr-list-acc
@@ -1285,7 +1301,9 @@
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
     [(IrInstrBranch _ _ _) IrEffectControlFlow]
-    [(IrInstrReturn _) IrEffectControlFlow]))
+    [(IrInstrReturn _) IrEffectControlFlow]
+    [(IrInstrPack _ _ _) IrEffectPure]
+    [(IrInstrWord _ _ _ _) IrEffectPure]))
 
 ;; Source provenance side table for the lowered IR (#605). Kept OUTSIDE
 ;;

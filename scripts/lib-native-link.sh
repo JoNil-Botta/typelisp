@@ -13,14 +13,22 @@
 # `native_link_detect_host` (sets NL_HOST_OS / NL_OBJ_EXT / NL_BIN_EXT /
 # NL_BOOTSTRAP_TARGET) and `configure_toolchain` once, then `assemble_and_link`.
 #
-# Stack reserve: the self-hosted backend recurses over the AST/IR, so a
-# self-hosted-built compiler needs a generous stack to compile the large cli.tl
-# self-build on Windows (a 16MB reserve STATUS_STACK_OVERFLOWs; 64MB is enough,
-# we reserve 256MB for headroom). The reserve is virtual address space, not
-# committed RAM. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
+# Stack reserve: the self-hosted backend recurses over the AST/IR (parse,
+# typecheck, and lower all descend per-expression), so a self-hosted-built
+# compiler needs a generous stack to self-compile on Windows (a 16MB reserve
+# STATUS_STACK_OVERFLOWs; 64MB sufficed for cli.tl). #2357: making local
+# struct/enum aggregates inline-by-value enlarged the per-frame footprint of
+# those recursive descents. The deepest scenario is an unoptimised whole-program
+# build (`typelisp build --opt-level 0` of the root package, which skips DCE so
+# functions carry their full IR through the backend's recursive descent); that
+# peaks between 512MB and 1GB of stack. The bootstrap fixpoint (compile.tl at
+# -O1) peaks near ~384MB. We reserve 1GB for headroom across both. The reserve
+# is virtual address space, not committed RAM (it commits lazily up to the
+# recursion's actual peak), so the larger reserve costs no resident memory until
+# the deep descent needs it. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
 
 HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
-NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-268435456}
+NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-1073741824}
 TYPELISP_WINDOWS_LINK_POSIX=
 TYPELISP_WINDOWS_CLANG_POSIX=
 

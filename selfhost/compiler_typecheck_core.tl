@@ -11409,22 +11409,130 @@
           (TcStringCons enum-name (box stack)))]
       [(ErrAstVariantDefList message) (ErrTcInlineAggregateLayout message)])))
 
+;; --- full inline-aggregate layout memo ---------------------------------------
+;; The Superluminal profile of the stage2 self-compile shows ~18% of CPU inside
+;; the tc-inline-aggregate-* layout walk: every struct-get field offset, enum
+;; payload offset, and lower-type-size query on a nominal recomputes the whole
+;; recursive layout (the #2386 caches only memoized the final size and the
+;; register-word count as scalars). This cache memoizes the COMPLETE
+;; TcInlineAggregateLayout per type name. Unlike the scalar handle-index caches,
+;; this cache is keyed by the intern id of the nominal name: symbol handles can
+;; be reassigned when specialization rebuilds the symbol table, while intern ids
+;; are stable until intern-reset!. The cached value is deep-cloned into the
+;; persistent program arena (node-pool-base-arena) before storing -- a layout
+;; computed while a transient lowering scratch arena is active would otherwise
+;; dangle after the arena rewinds (the #2441 hazard).
+(defenum TcAggLayoutCacheSlot
+  (TcAggLayoutCacheEmpty)
+  (TcAggLayoutCacheFull TcInlineAggregateLayout))
+
+(define tc-agg-layout-cache-capacity : i64
+  65536)
+
+(define tc-agg-layout-cache : (Array TcAggLayoutCacheSlot)
+  (make-array TcAggLayoutCacheSlot 65536))
+
+(define tc-agg-layout-cache-generation : i64
+  -1)
+
+;; `make-array` does not produce valid Empty enum slots, so the fill is
+;; mandatory before the first probe; generation -1 forces it on first use.
+(define (tc-agg-layout-cache-ensure!) : unit
+  (if (= tc-agg-layout-cache-generation (intern-generation))
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-agg-layout-cache-capacity)
+          (begin
+            (array-set! tc-agg-layout-cache i (TcAggLayoutCacheEmpty))
+            (set! i (+ i 1))))
+        (set! tc-agg-layout-cache-generation (intern-generation))))))
+
+;; Cache key: the INTERN ID of the nominal type name. Unlike the symbol-handle
+;; index used by the scalar #2386 caches, intern ids are stable for the whole
+;; program: the intern table only appends, while the symbol table is rebuilt
+;; after specialization inserts generated declarations, which shifts handle
+;; indexes mid-compile (observed as a wrong cached layout under
+;; --cfg compile-profile). Type names are unique program-wide in the flat
+;; namespace, so the name id identifies exactly one layout per generation.
+(define (tc-agg-layout-cache-slot-key [name : String]) : i64
+  (let
+    [id : i64 (intern name)]
+    (if (>= id tc-agg-layout-cache-capacity)
+      (- 0 1)
+      id)))
+
+;; Deep-clone the completed layout into the persistent program arena and store
+;; it. Only fully-resolved Ok layouts reach this point, so a cached entry can
+;; never participate in a cycle (its computation already terminated).
+(define (tc-agg-layout-cache-store!
+  [key : i64]
+  [layout : TcInlineAggregateLayout]) : unit
+  (let
+    [prev : i64 (arena-current)]
+    (begin
+      (unsafe
+        (arena-set! node-pool-base-arena))
+      (let
+        [persistent : TcInlineAggregateLayout (clone layout)]
+        (begin
+          (unsafe
+            (arena-set! prev))
+          (array-set! tc-agg-layout-cache key (TcAggLayoutCacheFull persistent)))))))
+
+(define (tc-inline-aggregate-layout-kind-dispatch
+  [ctx : TcContext]
+  [name : String]
+  [handle : i64]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
+    (tc-inline-aggregate-enum-layout-with-stack ctx name stack)
+    (if (=
+      (compiler-symbol-handle-kind handle)
+      (compiler-symbol-kind-defstruct))
+      (tc-inline-aggregate-struct-layout-with-stack ctx name stack)
+      (ErrTcInlineAggregateLayout
+        (string-append "typecheck: unknown aggregate " name)))))
+
+(define (tc-inline-aggregate-layout-fill-cache
+  [ctx : TcContext]
+  [name : String]
+  [handle : i64]
+  [stack : TcStringList]
+  [key : i64]) : ResultTcInlineAggregateLayout
+  (match (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack)
+    [(OkTcInlineAggregateLayout layout)
+      (begin
+        (tc-agg-layout-cache-store! key layout)
+        (match (array-ref tc-agg-layout-cache key)
+          [(TcAggLayoutCacheFull cached) (OkTcInlineAggregateLayout cached)]
+          [(TcAggLayoutCacheEmpty)
+            ;; Unreachable: the slot was just stored. Recompute defensively.
+            (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack)]))]
+    [(ErrTcInlineAggregateLayout message) (ErrTcInlineAggregateLayout message)]))
+
 (define (tc-inline-aggregate-layout-for-with-stack
   [ctx : TcContext]
   [name : String]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
   (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
     [(SomeI64 handle)
-      (if (=
-        (compiler-symbol-handle-kind handle)
-        (compiler-symbol-kind-defenum))
-        (tc-inline-aggregate-enum-layout-with-stack ctx name stack)
-        (if (=
-          (compiler-symbol-handle-kind handle)
-          (compiler-symbol-kind-defstruct))
-          (tc-inline-aggregate-struct-layout-with-stack ctx name stack)
-          (ErrTcInlineAggregateLayout
-            (string-append "typecheck: unknown aggregate " name))))]
+      (begin
+        (tc-agg-layout-cache-ensure!)
+        (let
+          [key : i64 (tc-agg-layout-cache-slot-key name)]
+          (if (< key 0)
+            (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack)
+            (match (array-ref tc-agg-layout-cache key)
+              [(TcAggLayoutCacheFull layout) (OkTcInlineAggregateLayout layout)]
+              [(TcAggLayoutCacheEmpty)
+                (tc-inline-aggregate-layout-fill-cache
+                  ctx
+                  name
+                  handle
+                  stack
+                  key)]))))]
     [(NoneI64)
       (ErrTcInlineAggregateLayout
         (string-append "typecheck: unknown aggregate " name))]))
@@ -11678,6 +11786,7 @@
 
 (define (tc-agg-caches-reset!) : unit
   (begin
+    (set! tc-agg-layout-cache-generation -1)
     (set! tc-agg-size-cache-generation -1)
     (set! tc-agg-align-cache-generation -1)
     (set! tc-agg-regwords-cache-generation -1)))

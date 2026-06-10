@@ -1528,6 +1528,10 @@
                 (compiler-live-set-union
                   out
                   (compiler-live-after liveness label instr-index))]
+              [(IrInstrTailCallIndirect _ _ _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-after liveness label instr-index))]
               [_ out]))
           (set! instr-index (+ instr-index 1))
           (set! index (+ index 1))))
@@ -1574,6 +1578,12 @@
                 (compiler-live-set-union
                   out
                   (compiler-live-call-args-vars args))]
+              [(IrInstrTailCallIndirect func args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-value-vars-into
+                    (compiler-live-call-args-vars args)
+                    func))]
               [_ out]))
           (set! index (+ index 1))))
       out)))
@@ -2406,6 +2416,7 @@
               [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirectC _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrTailCallIndirect _ _ _) (compiler-live-set-insert out p)]
               [_ out]))
           (set! p (+ p 2))
           (set! index (+ index 1))))

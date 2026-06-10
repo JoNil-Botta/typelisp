@@ -7224,6 +7224,7 @@
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
     [(IrInstrTailCall _ _ _) true]
+    [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
     [_ false]))
 
@@ -7275,6 +7276,8 @@
         (compiler-backend-call-param-types-index name program-index)
         program-index)]
     [(IrInstrCallIndirectC _ _ args _)
+      (compiler-backend-windows-closure-stack-arg-space args)]
+    [(IrInstrTailCallIndirect _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
 
@@ -9377,7 +9380,26 @@
           index
           ty
           vars
-          instr-diag)])))
+          instr-diag)]
+      [(IrInstrTailCallIndirect func args ty)
+        (match (compiler-backend-emit-tail-indirect-call
+          target
+          source-function
+          blocks
+          func
+          args
+          ty
+          assignments
+          types
+          vars
+          functions
+          externs
+          program-index
+          instr-diag)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])])))
 
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
@@ -10218,6 +10240,24 @@
             [_ AstTypeNil])]
         [(CompilerRegNoType) AstTypeNil])]))
 
+(define (compiler-backend-indirect-tail-call-register-only?
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (=
+    (compiler-backend-call-stack-arg-count
+      target
+      args
+      types
+      0
+      1
+      0
+      1
+      0
+      program-index)
+    0))
+
 (define (compiler-backend-emit-indirect-call
   [target : CompilerBackendTarget]
   [dst : i64]
@@ -10297,6 +10337,108 @@
                                   "%rax")
                                 ty)))
                           "")))))]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
+(define (compiler-backend-emit-tail-indirect-call
+  [target : CompilerBackendTarget]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [func : CompilerIrValue]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [vars : i64]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-indirect-call-param-types
+        types
+        func
+        functions
+        externs
+        program-index)]
+    [call-space : i64
+      (compiler-backend-closure-call-arg-space
+        target
+        args
+        param-types
+        program-index)]
+    [register-only : bool
+      (compiler-backend-indirect-tail-call-register-only?
+        target
+        args
+        param-types
+        program-index)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      0
+      1
+      0
+      1
+      0
+      instr-diag
+      program-index
+      vars)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          func
+          "%r11")
+          [(OkCompilerBackend func-asm)
+            (match (compiler-backend-target-arg-reg target 0)
+              [(OkBackendReg env-reg)
+                (let
+                  [descriptor-asm : String
+                    (backend-cat5
+                      func-asm
+                      "    movq 8(%r11), "
+                      env-reg
+                      "\n    movq (%r11), %rax\n"
+                      "")]
+                  (if register-only
+                    (OkCompilerBackend
+                      (string-append
+                        args-asm
+                        (string-append
+                          descriptor-asm
+                          (compiler-backend-tail-jump-tail
+                            assignments
+                            vars
+                            "*%rax"))))
+                    (OkCompilerBackend
+                      (string-append
+                        (compiler-backend-emit-call-space-sub call-space)
+                        (string-append
+                          args-asm
+                          (string-append
+                            descriptor-asm
+                            (backend-cat5
+                              "    call *%rax\n"
+                              (compiler-backend-emit-call-space-add call-space)
+                              (string-append
+                                (compiler-backend-tail-call-return-normalize ty)
+                                (compiler-backend-return-tail
+                                  source-function
+                                  assignments
+                                  vars
+                                  blocks))
+                              ""
+                              "")))))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
@@ -12958,6 +13100,10 @@
       (compiler-backend-collect-value-collections collections index)]
     [(IrInstrSyscall _ args)
       (compiler-backend-collect-call-args-collections collections args)]
+    [(IrInstrTailCallIndirect func args _)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections collections func)
+        args)]
     [_ collections]))
 
 (define (compiler-backend-collect-instr-seq-collections
@@ -17797,6 +17943,12 @@ tl_memcpy:
       (compiler-backend-object-value-ref parts function index)]
     [(IrInstrSyscall _ args)
       (compiler-backend-object-call-args parts function args 0)]
+    [(IrInstrTailCallIndirect callee args _)
+      (compiler-backend-object-call-args
+        (compiler-backend-object-value-ref parts function callee)
+        function
+        args
+        0)]
     [_ parts]))
 
 (define (compiler-backend-object-instr-seq

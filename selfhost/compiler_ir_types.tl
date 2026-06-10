@@ -167,7 +167,8 @@
   ;; lowers Pack/Word as register/slot word moves -- the value never round-trips
   ;; through memory.
   (IrInstrPack i64 CompilerIrValueList AstType)
-  (IrInstrWord i64 CompilerIrValue i64 AstType))
+  (IrInstrWord i64 CompilerIrValue i64 AstType)
+  (IrInstrTailCallIndirect CompilerIrValue CompilerIrCallArgs AstType))
 
 (defenum CompilerIrInstrList
   (IrInstrNil)
@@ -727,6 +728,11 @@
         dst
         (compiler-ir-clone-value src)
         index
+        (compiler-ir-clone-type ty))]
+    [(IrInstrTailCallIndirect callee args ty)
+      (IrInstrTailCallIndirect
+        (compiler-ir-clone-value callee)
+        (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]))
 
 (define (compiler-ir-clone-instr-list-acc
@@ -1161,9 +1167,23 @@
       (compiler-ir-call-args-render args)
       (str-cat ") : " (compiler-ir-type-render ty) ""))))
 
+(define (compiler-ir-tail-call-indirect-render
+  [callee : CompilerIrValue]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]) : String
+  (str-cat
+    "  tailcall* "
+    (compiler-ir-value-render callee)
+    (str-cat
+      "("
+      (compiler-ir-call-args-render args)
+      (str-cat ") : " (compiler-ir-type-render ty) ""))))
+
 (define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
   (match instr
     [(IrInstrTailCall name args ty) (compiler-ir-tail-call-render name args ty)]
+    [(IrInstrTailCallIndirect callee args ty)
+      (compiler-ir-tail-call-indirect-render callee args ty)]
     [_ "  <ir-instr>"]))
 
 (defenum CompilerIrEffect
@@ -1303,7 +1323,8 @@
     [(IrInstrBranch _ _ _) IrEffectControlFlow]
     [(IrInstrReturn _) IrEffectControlFlow]
     [(IrInstrPack _ _ _) IrEffectPure]
-    [(IrInstrWord _ _ _ _) IrEffectPure]))
+    [(IrInstrWord _ _ _ _) IrEffectPure]
+    [(IrInstrTailCallIndirect _ _ _) IrEffectControlFlow]))
 
 ;; Source provenance side table for the lowered IR (#605). Kept OUTSIDE
 ;;
@@ -1844,6 +1865,7 @@
     [(IrInstrCallIndirect _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrCallIndirectC _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrTailCall _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrTailCallIndirect _ args _) (compiler-ir-call-args-count args)]
     [_ 0]))
 
 (define (compiler-ir-instr-phi-input-count [instr : CompilerIrInstr]) : i64

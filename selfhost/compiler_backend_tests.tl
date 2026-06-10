@@ -225,6 +225,34 @@
 (define (main) : i64
   (stepmixed 1 2 3 4 5 6 42 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))")
 
+(define (compiler-backend-indirect-tail-call-source) : String
+  "(define (finish [x : i64]) : i64 x)
+(define (step [f : (-> i64 i64)] [x : i64]) : i64
+  (f x))
+(define (main) : i64
+  (step finish 42))")
+
+(define (compiler-backend-indirect-tail-call-stack-source) : String
+  "(define (finish6
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]) : i64
+  (+ a (+ b (+ c (+ d (+ e f))))))
+(define (step6
+  [fn : (-> i64 i64 i64 i64 i64 i64 i64)]
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]) : i64
+  (fn a b c d e f))
+(define (main) : i64
+  (step6 finish6 1 2 3 4 5 27))")
+
 (define (compiler-backend-raw-pointer-fixture-source) : String
   "(extern (tl_alloc [arg0 : i64]) : (MutPtr u8))
 
@@ -1543,7 +1571,7 @@
           (compiler-backend-string-contains?
             asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
-          (compiler-backend-string-contains? asm "    call *%rax\n")
+          (compiler-backend-call-or-jmp-ok? asm "*%rax")
           (compiler-backend-string-contains? asm "    movq (%r11), %rax\n"))
         (and
           (compiler-backend-string-contains? asm "    movq 8(%r11), %rdi\n")
@@ -1560,7 +1588,7 @@
       (backend-and4
         (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains? asm "    call _tl_f")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-call-or-jmp-ok? asm "*%rax")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -1619,7 +1647,11 @@
               ;; #1867 sret ABI: only the heap-backed (Array) closure return
               ;; still allocates; Box/Pair/String returns use sret/static data.
               (>= (compiler-backend-alloc-call-count asm) 1)
-              (>= (compiler-backend-string-count asm "    call *%rax\n") 4)
+              (>=
+                (+
+                  (compiler-backend-string-count asm "    call *%rax\n")
+                  (compiler-backend-string-count asm "    jmp *%rax\n"))
+                4)
               (not
                 (compiler-backend-string-contains?
                   asm
@@ -5237,6 +5269,39 @@
             (compiler-backend-direct-tail-call-mixed-target-ok?
               (BackendTargetWindows))))))))
 
+(define (compiler-backend-indirect-tail-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-indirect-tail-call-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    jmp *%rax\n")
+        (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-indirect-tail-call-stack-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-indirect-tail-call-stack-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (not (compiler-backend-string-contains? asm "    jmp *%rax\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-indirect-tail-call-ok?) : bool
+  (and
+    (compiler-backend-indirect-tail-call-target-ok? (BackendTargetLinux))
+    (and
+      (compiler-backend-indirect-tail-call-target-ok? (BackendTargetWindows))
+      (and
+        (compiler-backend-indirect-tail-call-stack-target-ok?
+          (BackendTargetLinux))
+        (compiler-backend-indirect-tail-call-stack-target-ok?
+          (BackendTargetWindows))))))
+
 (define (compiler-backend-export-symbol-source) : String
   "(define (exported [x : i64]) (:export-symbol \"tl_exported_value\") : i64
   (+ x 1))
@@ -5884,7 +5949,9 @@
         (compiler-backend-bool-control-flow-ok?)
         (and
           (compiler-backend-stack-args-ok?)
-          (compiler-backend-direct-tail-call-ok?)))
+          (and
+            (compiler-backend-direct-tail-call-ok?)
+            (compiler-backend-indirect-tail-call-ok?))))
       (and
         (backend-and8
           (compiler-backend-instr-diagnostics-ok?)

@@ -22,6 +22,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum DocTestExpectation
   (DocTestExpectPass)
   (DocTestExpectError)
@@ -161,9 +163,6 @@
   (match expectation
     [(DocTestExpectRun _ _ expected-stderr) expected-stderr]
     [_ ""]))
-
-(define (doc-test-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
 
 (define (doc-test-space? [c : char]) : bool
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
@@ -331,7 +330,7 @@
                     (set! i (+ i 2)))
                   (set!
                     message
-                    (doc-test-cat3
+                    (str-cat
                       "unsupported doctest output escape `\\"
                       (substring text (+ i 1) 1)
                       "`")))))
@@ -573,10 +572,7 @@
             (DocTestFenceMalformed
               (DocTestError
                 line-number
-                (doc-test-cat3
-                  "unsupported TypeLisp doctest option `"
-                  option
-                  "`")))))))))
+                (str-cat "unsupported TypeLisp doctest option `" option "`")))))))))
 
 (define (doc-test-parse-fence-info [info : String] [line-number : i64]) : DocTestFenceInfo
   (let
@@ -1708,10 +1704,10 @@
             (string-append (int->string count) " example(s)"))]
         [(DocTestRunFailureCons _ _)
           (string-append
-            (doc-test-cat3
+            (str-cat
               "doc tests failed: "
               (int->string (doc-test-run-failure-list-count failures))
-              (doc-test-cat3
+              (str-cat
                 " failure(s) across "
                 (int->string count)
                 " example(s)\n"))

@@ -15,6 +15,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum DocSiteModule
   (DocSiteModule String String))
 
@@ -353,7 +355,7 @@
                   (begin
                     (set!
                       out
-                      (doc-html-cat5
+                      (str-cat
                         (string-append
                           out
                           (substring html cursor (- href-start cursor)))
@@ -532,7 +534,7 @@ pre {
 }")
 
 (define (doc-site-index-module-entry [module : DocSiteModule]) : String
-  (doc-html-cat5
+  (str-cat
     "<li><a href=\""
     (doc-html-escape (doc-site-module-output module))
     "\"><code>"
@@ -548,7 +550,7 @@ pre {
         (doc-site-index-module-entries (box-get rest)))]))
 
 (define (doc-site-index-guide-entry [guide : DocSiteGuidePage]) : String
-  (doc-html-cat5
+  (str-cat
     "<li><a href=\""
     (doc-html-escape (doc-site-guide-output guide))
     "\">"
@@ -566,8 +568,8 @@ pre {
 (define (doc-site-render-guide-index-section
   [title : String]
   [guides : DocSiteGuidePageList]) : String
-  (doc-html-cat3
-    (doc-html-cat5
+  (str-cat
+    (str-cat
       "<nav class=\"tl-doc-site-nav\" aria-label=\""
       (doc-html-escape title)
       "\">\n<h2>"
@@ -579,8 +581,8 @@ pre {
 (define (doc-site-render-api-index-section [tree : DocSiteApiTree]) : String
   (let
     [root : String (doc-site-api-tree-root tree)]
-    (doc-html-cat3
-      (doc-html-cat5
+    (str-cat
+      (str-cat
         "<nav class=\"tl-doc-site-nav\" aria-label=\""
         (doc-html-escape root)
         " API\">\n<h2>"
@@ -626,11 +628,11 @@ pre {
 
 (define (doc-site-sidebar-link-open [href : String] [current : String]) : String
   (if (string-eq href current)
-    (doc-html-cat3
+    (str-cat
       "<a class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\""
       (doc-html-escape href)
       "\">")
-    (doc-html-cat3
+    (str-cat
       "<a class=\"tl-doc-tree-link\" href=\""
       (doc-html-escape href)
       "\">")))
@@ -640,13 +642,13 @@ pre {
   [label : String]
   [current : String]) : String
   (if (string-eq href current)
-    (doc-html-cat5
+    (str-cat
       "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\""
       (doc-html-escape href)
       "\">"
       (doc-html-escape label)
       "</a>\n")
-    (doc-html-cat5
+    (str-cat
       "<a class=\"tl-doc-tree-root\" href=\""
       (doc-html-escape href)
       "\">"
@@ -656,7 +658,7 @@ pre {
 (define (doc-site-sidebar-guide-entry
   [guide : DocSiteGuidePage]
   [current : String]) : String
-  (doc-html-cat5
+  (str-cat
     "<li>"
     (doc-site-sidebar-link-open (doc-site-guide-output guide) current)
     (doc-html-escape (doc-site-guide-label guide))
@@ -676,7 +678,7 @@ pre {
 (define (doc-site-sidebar-module-entry
   [module : DocSiteModule]
   [current : String]) : String
-  (doc-html-cat5
+  (str-cat
     "<li>"
     (doc-site-sidebar-link-open (doc-site-module-output module) current)
     "<code>"
@@ -697,7 +699,7 @@ pre {
   [title : String]
   [guides : DocSiteGuidePageList]
   [current : String]) : String
-  (doc-html-cat5
+  (str-cat
     "<li><span class=\"tl-doc-tree-root\">"
     (doc-html-escape title)
     "</span>\n<ul>\n"
@@ -705,13 +707,13 @@ pre {
     "</ul>\n</li>\n"))
 
 (define (doc-site-sidebar-api-tree [tree : DocSiteApiTree] [current : String]) : String
-  (doc-html-cat3
+  (str-cat
     "<li>"
     (doc-site-sidebar-root-link
       (doc-site-api-tree-output tree)
       (doc-site-api-tree-root tree)
       current)
-    (doc-html-cat3
+    (str-cat
       "<ul>\n"
       (doc-site-sidebar-module-entries (doc-site-api-tree-modules tree) current)
       "</ul>\n</li>\n")))
@@ -733,7 +735,7 @@ pre {
         (doc-site-sidebar-sections (box-get rest) current))]))
 
 (define (doc-site-sidebar [sections : DocSiteSectionList] [current : String]) : String
-  (doc-html-cat5
+  (str-cat
     "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Documentation tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n"
     (doc-site-sidebar-sections sections current)
     "</ul>\n</nav>\n"
@@ -746,12 +748,12 @@ pre {
   [sections : DocSiteSectionList]
   [current : String]
   [body : String]) : String
-  (doc-html-cat5
+  (str-cat
     (doc-html-page-open title)
     (doc-html-header "TypeLisp Docs" subtitle)
     "<div class=\"tl-doc-shell\">\n"
     (doc-site-sidebar sections current)
-    (doc-html-cat5
+    (str-cat
       "<main class=\"tl-doc-content\">\n"
       body
       "</main>\n</div>\n"
@@ -777,7 +779,7 @@ pre {
     (doc-site-guide-source guide)
     sections
     (doc-site-guide-output guide)
-    (doc-html-cat3
+    (str-cat
       "<article class=\"tl-doc-language\">\n"
       (doc-site-rewrite-language-links sections (md-render-html markdown))
       "</article>\n")))
@@ -786,7 +788,7 @@ pre {
   [sections : DocSiteSectionList]
   [tree : DocSiteApiTree]) : String
   (doc-site-render-page
-    (doc-html-cat3 "TypeLisp API: " (doc-site-api-tree-root tree) "")
+    (str-cat "TypeLisp API: " (doc-site-api-tree-root tree) "")
     (doc-site-api-tree-root tree)
     sections
     (doc-site-api-tree-output tree)
@@ -798,7 +800,7 @@ pre {
   [docs : DocExtraction]) : String
   (let
     [source : String (doc-site-module-source module)]
-    [title : String (doc-html-cat3 "TypeLisp API: " source "")]
+    [title : String (str-cat "TypeLisp API: " source "")]
     (doc-site-render-page
       title
       source

@@ -61,6 +61,11 @@ assembling or linking. Package integration discovery skips the reserved
 `tests/diagnostics/**` expected-error corpus; dedicated diagnostics gates own
 those fixtures.
 
+Package-wide source discovery for commands such as `check`, `fmt`, `lint`, and
+`doc` treats directories named `tests` as reserved package test/fixture roots
+instead of ordinary package sources. The `typelisp test` command owns
+package-local `tests/` discovery through the integration-test path above.
+
 Use inline tests for behavior that naturally belongs next to the declarations
 under test. Import `stdlib/test.tl` for assertions such as `assert-i64-eq`.
 Keep smoke drivers for existing compiler-module self-tests until those modules

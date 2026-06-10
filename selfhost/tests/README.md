@@ -29,6 +29,10 @@ and `err_manifest` functions). The script fails if a corpus file is added
 without a matching manifest entry, so new cases land with an explicit
 expectation.
 
+This directory is not ordinary package source for the repository root package.
+Package-wide source discovery skips directories named `tests`; the corpus stays
+covered by `scripts/verify-selfhost.sh`.
+
 ## Running locally
 
 The runner needs the GNU assembler (`as`) and linker (`ld`), so it is Linux

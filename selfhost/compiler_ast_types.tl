@@ -535,7 +535,7 @@
 ;; compare would dedup nondeterministically and break the stage2 == stage3
 ;; fixpoint. String payloads (lifetime names) compare by content.
 (define ty-node-dedup-max-capacity : i64
-  262144)
+  65536)
 
 (define ty-node-dedup-capacity : i64
   16384)

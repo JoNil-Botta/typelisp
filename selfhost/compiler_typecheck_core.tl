@@ -11542,7 +11542,8 @@
 ;; handle (dense per-kind index; struct vs enum disambiguated by the low bit), so
 ;; no key strings are stored either. A size is encoded as size+1 (0 = uncached);
 ;; only fully-resolved layouts are cached (Err forward-refs stay uncached until
-;; their nested types resolve). Sizes are stable for the one program per process.
+;; their nested types resolve). Entries are valid only for the current program;
+;; tc-agg-caches-reset! forces the next query to clear them at lower boundaries.
 (define tc-agg-size-cache : (Array i64)
   (make-array i64 400000))
 
@@ -11552,9 +11553,9 @@
 ;; or a later file reads a prior file's stale struct size at the same index --
 ;; mis-classifying its register-residency (observed: a register-group struct
 ;; const-folded to a scalar, tripping the IrInstrWord assertion when compiling
-;; cli.tl after other sources). intern-reset! bumps intern-generation once per
-;; program, so gating the fill on the generation auto-invalidates across files
-;; while leaving single-file compiles (and the bootstrap fixpoint) unchanged.
+;; cli.tl after other sources). Intern generation remains the cheap clear token
+;; inside one compile, while tc-agg-caches-reset! covers lower/test paths that
+;; reuse symbol-handle indices without resetting the intern table.
 (define tc-agg-size-cache-generation : i64
   -1)
 
@@ -11621,9 +11622,14 @@
   (make-array i64 400000))
 
 ;; #2386: same per-program handle-index keying as tc-agg-size-cache, so it is
-;; gated on intern-generation and cleared per program (see that cache above).
+;; gated on intern-generation and explicitly invalidated at lower boundaries.
 (define tc-agg-regwords-cache-generation : i64
   -1)
+
+(define (tc-agg-caches-reset!) : unit
+  (begin
+    (set! tc-agg-size-cache-generation -1)
+    (set! tc-agg-regwords-cache-generation -1)))
 
 (define (tc-agg-regwords-cache-ensure!) : unit
   (if (= tc-agg-regwords-cache-generation (intern-generation))

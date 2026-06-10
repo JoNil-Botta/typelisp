@@ -4611,13 +4611,16 @@
 ;; carried through the IR as the packed word itself (an i64-shaped SSA value)
 ;; rather than a pointer to a stack slot: construction packs the fields with
 ;; shift/or, `struct-get`/`match` extract them with shift/mask, and the value is
-;; passed/returned/cloned exactly like a scalar — never touching memory. Generic
-;; (…Args) aggregates stay on the memory path (their field layout depends on the
-;; instantiation), so only the bare struct/enum forms qualify here.
+;; passed/returned/cloned exactly like a scalar - never touching memory.
+;; #2605: AstTyStructArgs/AstTyEnumArgs here are lifetime-arg forms; they share
+;; the same layout and representation as the bare declaration.
 (define (lower-type-register-resident? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct name) (tc-name-register-resident? ctx (intern-str name))]
+    [(AstTyStructArgs name _)
+      (tc-name-register-resident? ctx (intern-str name))]
     [(AstTyEnum name) (tc-name-register-resident? ctx (intern-str name))]
+    [(AstTyEnumArgs name _) (tc-name-register-resident? ctx (intern-str name))]
     [_ false]))
 
 ;; #2386: number of machine words a register-resident aggregate occupies
@@ -4631,9 +4634,7 @@
 ;; register-group representation (2+ words) rather than the single-word scalar
 ;; representation. Drives the IrInstrPack/IrInstrWord lowering paths.
 (define (lower-type-register-group? [ctx : TcContext] [ty : AstType]) : bool
-  (and
-    (lower-type-register-resident? ctx ty)
-    (> (lower-type-register-word-count ctx ty) 1)))
+  (> (lower-type-register-words ctx ty) 1))
 
 ;; #2386: register-residency in ONE inline-layout build, vs the THREE transient
 ;; layout rebuilds of calling register-resident? + register-group? (which itself
@@ -4648,7 +4649,9 @@
 (define (lower-type-register-words [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct name) (lower-name-register-words ctx (intern-str name))]
+    [(AstTyStructArgs name _) (lower-name-register-words ctx (intern-str name))]
     [(AstTyEnum name) (lower-name-register-words ctx (intern-str name))]
+    [(AstTyEnumArgs name _) (lower-name-register-words ctx (intern-str name))]
     [_ 0]))
 
 (define (lower-type-signed? [ty : AstType]) : bool
@@ -4947,6 +4950,15 @@
             s1
             (IrValueCons w0 (box (IrValueCons w1 (box IrValueNil))))
             ty)])]))
+
+(define (lower-load-register-resident-from-ptr
+  [ctx : TcContext]
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [ty : AstType]) : LowerExpr
+  (if (lower-type-register-group? ctx ty)
+    (lower-load-group-from-ptr state ptr ty)
+    (lower-load-at-offset state ptr 0 ty)))
 
 ;; #2386: build the packed value for ONE machine word (`word-index`) of a
 ;; register-group struct: fold in only the fields that live in that word, each at
@@ -5507,15 +5519,19 @@
     [_ false]))
 
 (define (lower-borrow-place-value-reference? [ctx : TcContext] [ty : AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyTuple _) true]
-    [(AstTyArray _ _) true]
-    [(AstTyDynArray _) true]
-    [(AstTyStruct _) true]
-    [(AstTyStructArgs _ _) true]
-    [(AstTyEnum _) true]
-    [(AstTyEnumArgs _ _) true]
-    [_ false]))
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    (if (lower-type-register-resident? ctx resolved)
+      false
+      (match resolved
+        [(AstTyTuple _) true]
+        [(AstTyArray _ _) true]
+        [(AstTyDynArray _) true]
+        [(AstTyStruct _) true]
+        [(AstTyStructArgs _ _) true]
+        [(AstTyEnum _) true]
+        [(AstTyEnumArgs _ _) true]
+        [_ false]))))
 
 (define (lower-supported-reference-type-list-with-stack?
   [ctx : TcContext]
@@ -5828,10 +5844,10 @@
     [(ErrTcType message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
 
-(define (lower-borrow-struct-field-address-named
+(define (lower-borrow-struct-field-address-from-memory
   [ctx : TcContext]
   [state : LowerState]
-  [receiver-value : CompilerIrValue]
+  [base : CompilerIrValue]
   [struct-name : String]
   [field : String]
   [origin : AstExpr]
@@ -5846,19 +5862,7 @@
                 (and
                   (lower-struct-repr-c? ctx struct-name)
                   (lower-repr-c-inline-field? ctx field-ty)))]
-            ;; #2386: a register-resident receiver has no address; materialize
-            ;; the packed word to a fresh slot, then take the field address
-            ;; there before applying the value-reference load rule.
-            (match (if (tc-name-register-resident? ctx struct-name)
-              (match (lower-borrow-copy-to-storage
-                ctx
-                state
-                receiver-value
-                (AstTyStruct (intern struct-name))
-                result-ty)
-                [(LowerExpr mat-state mat-ptr _)
-                  (lower-gep-byte mat-state mat-ptr offset)])
-              (lower-gep-byte state receiver-value offset))
+            (match (lower-gep-byte state base offset)
               [(LowerExpr ptr-state ptr _)
                 (OkLowerExpr
                   (lower-borrow-place-slot-reference
@@ -5869,6 +5873,44 @@
                     result-ty
                     load-value-reference))]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
+
+(define (lower-borrow-struct-field-address-named
+  [ctx : TcContext]
+  [state : LowerState]
+  [receiver-value : CompilerIrValue]
+  [struct-name : String]
+  [field : String]
+  [origin : AstExpr]
+  [result-ty : AstType])
+  :
+  ResultLowerExpr
+  ;; #2386: a register-resident receiver has no address; materialize the packed
+  ;; word to a fresh slot, then take the field address through the same memory
+  ;; helper used for borrowed struct references.
+  (if (tc-name-register-resident? ctx struct-name)
+    (match (lower-borrow-copy-to-storage
+      ctx
+      state
+      receiver-value
+      (AstTyStruct (intern struct-name))
+      result-ty)
+      [(LowerExpr mat-state mat-ptr _)
+        (lower-borrow-struct-field-address-from-memory
+          ctx
+          mat-state
+          mat-ptr
+          struct-name
+          field
+          origin
+          result-ty)])
+    (lower-borrow-struct-field-address-from-memory
+      ctx
+      state
+      receiver-value
+      struct-name
+      field
+      origin
+      result-ty)))
 
 (define (lower-borrow-struct-field-address
   [ctx : TcContext]
@@ -5906,7 +5948,7 @@
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
                 [(AstTyStruct struct-name)
-                  (lower-borrow-struct-field-address-named
+                  (lower-borrow-struct-field-address-from-memory
                     ctx
                     receiver-state
                     receiver-value
@@ -5915,7 +5957,7 @@
                     origin
                     result-ty)]
                 [(AstTyStructArgs struct-name _)
-                  (lower-borrow-struct-field-address-named
+                  (lower-borrow-struct-field-address-from-memory
                     ctx
                     receiver-state
                     receiver-value
@@ -5932,7 +5974,7 @@
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
                 [(AstTyStruct struct-name)
-                  (lower-borrow-struct-field-address-named
+                  (lower-borrow-struct-field-address-from-memory
                     ctx
                     receiver-state
                     receiver-value
@@ -5941,7 +5983,7 @@
                     origin
                     result-ty)]
                 [(AstTyStructArgs struct-name _)
-                  (lower-borrow-struct-field-address-named
+                  (lower-borrow-struct-field-address-from-memory
                     ctx
                     receiver-state
                     receiver-value
@@ -12292,6 +12334,20 @@
                             result-ty))])))]))])]
     [(ErrLowerFieldInfo message) (ErrLowerExpr message)]))
 
+(define (lower-struct-get-through-reference
+  [ctx : TcContext]
+  [state : LowerState]
+  [receiver-value : CompilerIrValue]
+  [referent-ty : AstType]
+  [struct-name : String]
+  [field : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (if (lower-type-register-resident? ctx referent-ty)
+    (lower-load-register-resident-from-ptr ctx state receiver-value referent-ty)
+    (LowerExpr state receiver-value referent-ty))
+    [(LowerExpr value-state value _)
+      (lower-struct-get-named ctx value-state value struct-name field result-ty)]))
+
 (define (lower-struct-get
   [ctx : TcContext]
   [state : LowerState]
@@ -12325,18 +12381,20 @@
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
                 [(AstTyStruct struct-name)
-                  (lower-struct-get-named
+                  (lower-struct-get-through-reference
                     ctx
                     receiver-state
                     receiver-value
+                    (ty-node-get referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
                 [(AstTyStructArgs struct-name _)
-                  (lower-struct-get-named
+                  (lower-struct-get-through-reference
                     ctx
                     receiver-state
                     receiver-value
+                    (ty-node-get referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
@@ -12349,18 +12407,20 @@
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
                 [(AstTyStruct struct-name)
-                  (lower-struct-get-named
+                  (lower-struct-get-through-reference
                     ctx
                     receiver-state
                     receiver-value
+                    (ty-node-get referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
                 [(AstTyStructArgs struct-name _)
-                  (lower-struct-get-named
+                  (lower-struct-get-through-reference
                     ctx
                     receiver-state
                     receiver-value
+                    (ty-node-get referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
@@ -20906,6 +20966,50 @@
                         expr-ty
                         (TcNoString)
                         false)]
+                    [(AstTyRef borrow-lifetime referent-box)
+                      (let
+                        [referent-ty : AstType
+                          (tc-type-strip-region
+                            (tc-resolve-type ctx (ty-node-get referent-box)))]
+                        (match referent-ty
+                          [(AstTyEnum _)
+                            (lower-match-enum
+                              ctx
+                              merge-state
+                              env
+                              type-env
+                              scrut-var
+                              referent-ty
+                              arms
+                              merge-label
+                              expr-ty
+                              (TcSomeString borrow-lifetime)
+                              true)]
+                          [(AstTyEnumArgs _ _)
+                            (lower-match-enum
+                              ctx
+                              merge-state
+                              env
+                              type-env
+                              scrut-var
+                              referent-ty
+                              arms
+                              merge-label
+                              expr-ty
+                              (TcSomeString borrow-lifetime)
+                              true)]
+                          [_
+                            (lower-match-arms
+                              ctx
+                              merge-state
+                              env
+                              type-env
+                              scrut-var
+                              scrut-ty
+                              arms
+                              merge-label
+                              expr-ty
+                              IrPhiInputNil)]))]
                     [(AstTyVarArgs _ _)
                       (lower-match-enum
                         ctx
@@ -24462,18 +24566,18 @@
 
 (define (lower-compiler-program-unlocated-mode
   [program : AstProgram]
-  [mode : CompilerLowerMode])
-  :
-  ResultCompilerLower
-  ;; Generate declaration families before macro expansion (see
-  ;; typecheck-compiler-program-with-paths for why).
-  (match (gen-normalize-program program)
-    [(OkGenProgram generated)
-      (match (macro-expand-program generated)
-        [(OkMacroExpand expanded)
-          (lower-compiler-expanded-program-unlocated-mode expanded mode)]
-        [(ErrMacroExpand diag) (ErrCompilerLower diag)])]
-    [(ErrGenProgram diag) (ErrCompilerLower diag)]))
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (begin
+    (tc-agg-caches-reset!)
+    ;; Generate declaration families before macro expansion (see
+    ;; typecheck-compiler-program-with-paths for why).
+    (match (gen-normalize-program program)
+      [(OkGenProgram generated)
+        (match (macro-expand-program generated)
+          [(OkMacroExpand expanded)
+            (lower-compiler-expanded-program-unlocated-mode expanded mode)]
+          [(ErrMacroExpand diag) (ErrCompilerLower diag)])]
+      [(ErrGenProgram diag) (ErrCompilerLower diag)])))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
@@ -24647,6 +24751,7 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-start))
+    (tc-agg-caches-reset!)
     ;; Generate declaration families before macro expansion (see
     ;; typecheck-compiler-program-with-paths for why).
     (match (gen-normalize-program-with-paths program paths entry-path)

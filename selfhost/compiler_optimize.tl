@@ -7614,6 +7614,19 @@
             outs
             sites)))]))
 
+;; True when the entry block has an explicit CFG predecessor (e.g. the
+;; tail-recursion-to-loop back edge jumps to the function entry block).
+(define (opt-ssa-entry-has-preds? [context : OptCfgContext]) : bool
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    (match (opt-cfg-index-id index (struct-get context entry-label))
+      [(OptSomeI64 id)
+        (let
+          [preds : OptCfgCsr (struct-get index preds)]
+          [offsets : (Array i64) (struct-get preds offsets)]
+          (> (- (array-ref offsets (+ id 1)) (array-ref offsets id)) 0))]
+      [(OptNoI64) false])))
+
 (define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
@@ -7631,25 +7644,58 @@
             func
             (let
               [context : OptCfgContext (opt-cfg-context-build blocks)]
-              [phi-state : OptSsaPhiInsertState
-                (opt-ssa-insert-phis facts context params frame blocks)]
-              (match phi-state
-                [(OptSsaPhiInsertState sites phi-next _)
-                  (opt-ssa-construct-materialized
-                    func
-                    name
-                    params
-                    ret-ty
-                    blocks
-                    context
-                    sites
-                    (opt-ssa-rename-function-blocks
-                      context
-                      params
-                      facts
-                      sites
-                      phi-next
-                      blocks))])))))]))
+              ;; A CFG edge into the entry block (the tail-recursion-to-loop
+              ;; back edge) cannot be represented in SSA: the entry block's
+              ;; initial values (parameters and prologue defs) arrive over the
+              ;; implicit function-entry edge, which has no predecessor block
+              ;; or label. A phi inserted at the entry block only sees the
+              ;; explicit predecessors, so renaming silently drops the
+              ;; first-iteration values (opt2 self-build miscompile: the
+              ;; emitted entry block of intern-fill-empty read the back-edge
+              ;; staging temps before their first write). Skip SSA
+              ;; construction for such functions; the non-SSA passes still
+              ;; run.
+              (if (opt-ssa-entry-has-preds? context)
+                func
+                (opt-ssa-construct-with-context
+                  func
+                  name
+                  params
+                  ret-ty
+                  frame
+                  blocks
+                  facts
+                  context))))))]))
+
+(define (opt-ssa-construct-with-context
+  [func : CompilerIrFunction]
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [facts : OptSsaFacts]
+  [context : OptCfgContext]) : CompilerIrFunction
+  (let
+    [phi-state : OptSsaPhiInsertState
+      (opt-ssa-insert-phis facts context params frame blocks)]
+    (match phi-state
+      [(OptSsaPhiInsertState sites phi-next _)
+        (opt-ssa-construct-materialized
+          func
+          name
+          params
+          ret-ty
+          blocks
+          context
+          sites
+          (opt-ssa-rename-function-blocks
+            context
+            params
+            facts
+            sites
+            phi-next
+            blocks))])))
 
 ;; --- conservative global value numbering / cross-block copies (#1349) -------
 ;;
@@ -7759,6 +7805,16 @@
           (hash-i64 (opt-unop-tag op))
           (hash-combine (opt-value-hash value) (opt-type-hash ty))))]))
 
+;; Key operands must hold a single unchanging value for the fact's lifetime.
+;; An `IrValueGlobal` operand is a hidden LOAD of a mutable global (the backend
+;; emits a rip-relative read at each use site), so an instruction using one is
+;; not a pure expression: reusing its result across an intervening store/call
+;; that mutates the global yields a stale value. The opt2 self-build miscompile
+;; was exactly this -- `ty-node-push` reused the pre-grow capacity address of
+;; `ty-node-pool-slots` after the grow call replaced the array, so the bounds
+;; check compared against the old capacity and aborted once the pool grew.
+;; `opt-copy-safe-source?` already encodes the safe operand set: vars
+;; (single-def under this pass's SSA gate) and unambiguous scalar literals.
 (define (opt-global-key-for-instr [instr : CompilerIrInstr]) : OptMaybeGlobalExprKey
   (match instr
     [(IrInstrMov _ src ty)
@@ -7766,13 +7822,21 @@
         (OptSomeGlobalExprKey (OptGlobalMovKey src ty))
         (OptNoGlobalExprKey))]
     [(IrInstrGep _ base offset ty)
-      (OptSomeGlobalExprKey (OptGlobalGepKey base offset ty))]
+      (if (and (opt-copy-safe-source? base) (opt-copy-safe-source? offset))
+        (OptSomeGlobalExprKey (OptGlobalGepKey base offset ty))
+        (OptNoGlobalExprKey))]
     [(IrInstrCast _ src from-ty to-ty)
-      (OptSomeGlobalExprKey (OptGlobalCastKey src from-ty to-ty))]
+      (if (opt-copy-safe-source? src)
+        (OptSomeGlobalExprKey (OptGlobalCastKey src from-ty to-ty))
+        (OptNoGlobalExprKey))]
     [(IrInstrBinOp _ op lhs rhs ty)
-      (OptSomeGlobalExprKey (OptGlobalBinKey op lhs rhs ty))]
+      (if (and (opt-copy-safe-source? lhs) (opt-copy-safe-source? rhs))
+        (OptSomeGlobalExprKey (OptGlobalBinKey op lhs rhs ty))
+        (OptNoGlobalExprKey))]
     [(IrInstrUnOp _ op src ty)
-      (OptSomeGlobalExprKey (OptGlobalUnKey op src ty))]
+      (if (opt-copy-safe-source? src)
+        (OptSomeGlobalExprKey (OptGlobalUnKey op src ty))
+        (OptNoGlobalExprKey))]
     [_ (OptNoGlobalExprKey)]))
 
 (define (opt-global-fact-available?
@@ -9698,6 +9762,11 @@
       (or
         (not (opt-used-contains loop-defs var))
         (opt-used-contains hoisted var))]
+    ;; A global operand is a hidden load of mutable state (the backend reads it
+    ;; rip-relative at the use site), so it is NOT loop-invariant: a store or
+    ;; call inside the loop can change it between iterations. Only literals are
+    ;; unconditionally invariant.
+    [(IrValueGlobal _) false]
     [_ true]))
 
 (define (opt-licm-values-invariant?
@@ -20464,6 +20533,14 @@
             (opt-gvn-pointer-params)
             (AstTyU8)
             (opt-gvn-gep-blocks))))]
+    [global-gep : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-global-value-number-function
+          (opt-gvn-function
+            "gvn_global_gep"
+            (opt-gvn-scalar-params)
+            (AstTyI64)
+            (opt-gvn-global-gep-call-blocks))))]
     (core/cond
       (not (= (opt-count-arith-blocks dominated) 1))
       1
@@ -20517,7 +20594,52 @@
       25
       (not (opt-gvn-scoped-nearest-dominator-ok?))
       26
+      ;; A Gep whose base reads a mutable global must survive in the dominated
+      ;; block: the call on the `grow` path may replace the global between the
+      ;; entry read and the `use` read (stale-capacity opt2 miscompile).
+      (not (= (opt-count-gep-label-blocks global-gep "use") 1))
+      27
+      (match (opt-global-key-for-instr
+        (IrInstrGep 9 (IrValueGlobal "pool") (IrValueI64 8) (AstTyI64)))
+        [(OptSomeGlobalExprKey _) true]
+        [(OptNoGlobalExprKey) false])
+      28
       42)))
+
+;; Regression fixture for the global-GVN stale-global-read miscompile: the
+;; entry block computes a Gep off the CURRENT value of mutable global `pool`,
+;; one branch calls a function that may replace `pool`, and the join block
+;; recomputes the same Gep. Forwarding the entry Gep into the join would read
+;; the pre-call array's capacity address (the opt2 self-build bounds abort in
+;; `ty-node-push` once the node pool grew).
+(define (opt-gvn-global-gep-call-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrGep 3 (IrValueGlobal "pool") (IrValueI64 8) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "grow" "use")
+            (IrInstrNil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "grow"
+        (compiler-ir-instr-cons
+          (IrInstrCall 5 "grow_pool" (IrCallArgsNil) (AstTyUnit))
+          (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "use"
+          (compiler-ir-instr-cons
+            (IrInstrGep 6 (IrValueGlobal "pool") (IrValueI64 8) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 7 (IrValueVar 6) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 7)))
+                (IrInstrNil)))))
+        (IrBlockNil)))))
 
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -21112,6 +21234,48 @@
     (AstTyI64)
     3
     (opt-ssa-construct-address-taken-blocks)))
+
+;; The tail-recursion-to-loop shape: the back edge targets the function ENTRY
+;; block and the latch reassigns the parameters. SSA construction must decline
+;; this function (a phi at the entry block cannot see the implicit
+;; function-entry edge that carries the initial parameter values).
+(define (opt-ssa-entry-backedge-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "index" (AstTyI64) 0)
+    (compiler-ir-param-cons (IrParam "count" (AstTyI64) 1) (IrParamNil))))
+
+(define (opt-ssa-entry-backedge-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 2 (IrBinLt) (IrValueVar 0) (IrValueVar 1) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 2) "body" "exit")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "body"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueVar 3) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "entry") (IrInstrNil)))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+            (IrInstrNil)))
+        (IrBlockNil)))))
+
+(define (opt-ssa-entry-backedge-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_entry_backedge"
+    (opt-ssa-entry-backedge-params)
+    (AstTyI64)
+    4
+    (opt-ssa-entry-backedge-blocks)))
 
 (define (opt-natural-loop-nested-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -21757,6 +21921,12 @@
       24
       (not (= (opt-count-load-label-blocks load-varying "loop") 1))
       25
+      ;; A mutable-global operand is a hidden load, never loop-invariant.
+      (opt-licm-value-invariant?
+        (i64-i64-map-with-capacity 4)
+        (i64-i64-map-with-capacity 4)
+        (IrValueGlobal "g"))
+      26
       42)))
 
 (define (opt-induction-params) : CompilerIrParamList
@@ -22561,6 +22731,9 @@
       (optimize-function-once (opt-ssa-construct-loop-function))]
     [pipeline-loop-blocks : CompilerIrBlockList
       (opt-function-blocks pipeline-loop)]
+    [entry-backedge : CompilerIrFunction (opt-ssa-entry-backedge-function)]
+    [entry-backedge-out : CompilerIrFunction
+      (opt-ssa-construct-function (opt-ssa-entry-backedge-function))]
     (core/cond
       (not (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
       1
@@ -22688,6 +22861,11 @@
       51
       (not (= (opt-count-mov-dst-blocks pipeline-loop-blocks 1) 0))
       52
+      ;; Entry-block back edge (tail-recursion-to-loop shape): SSA construction
+      ;; must return the function unchanged instead of inserting an entry phi
+      ;; that drops the first-iteration parameter values.
+      (not (opt-function-eq entry-backedge entry-backedge-out))
+      53
       42)))
 
 (define (compiler-optimize-cfg-self-test) : i64

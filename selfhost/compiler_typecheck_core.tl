@@ -793,6 +793,22 @@
           (tc-generated-decl-diag meta (tc-decl-diag template message)))]
       [_ (tc-diag-at-start message)])))
 
+(define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
+  (if (tc-located-error? message)
+    message
+    (match expr
+      [(AstExprSpanned _ span) (tc-located-error span message)]
+      [_ message])))
+
+(define (tc-expect-at-expr
+  [expr : AstExpr]
+  [actual : AstType]
+  [expected : AstType]
+  [message : String]) : ResultTcUnit
+  (if (tc-type-compatible? expected actual)
+    OkTcUnit
+    (ErrTcUnit (tc-locate-error-at-expr expr message))))
+
 (define (tc-empty-env) : TcTypeEnv
   TcTypeNil)
 
@@ -6619,7 +6635,8 @@
                         rest-params
                         lifetimes
                         next-subst)]
-                    [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)])]
+                    [(ErrTcLifetimeSubst message)
+                      (ErrTcLifetimeSubst (tc-locate-error-at-expr arg message))])]
                 [(ErrTcType message) (ErrTcLifetimeSubst message)]))]
           [(AstTypeNil) (ErrTcLifetimeSubst "typecheck: arity mismatch")]))]))
 
@@ -6912,7 +6929,8 @@
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr-with-expected-or-actual ctx env arg want)
                 [(OkTcType got)
-                  (match (tc-expect
+                  (match (tc-expect-at-expr
+                    arg
                     got
                     want
                     "typecheck: argument type mismatch")
@@ -6996,7 +7014,8 @@
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr-with-expected-or-actual ctx env arg want)
                 [(OkTcType got)
-                  (match (tc-expect
+                  (match (tc-expect-at-expr
+                    arg
                     got
                     want
                     "typecheck: argument type mismatch")
@@ -7123,7 +7142,7 @@
     [(OkTcType arg-ty)
       (if (tc-string-handle-type? arg-ty)
         OkTcUnit
-        (ErrTcUnit message))]
+        (ErrTcUnit (tc-locate-error-at-expr arg message)))]
     [(ErrTcType message) (ErrTcUnit message)]))
 
 (define (tc-check-exact-arg
@@ -7133,7 +7152,7 @@
   [want : AstType]
   [message : String]) : ResultTcUnit
   (match (tc-expr ctx env arg)
-    [(OkTcType arg-ty) (tc-expect arg-ty want message)]
+    [(OkTcType arg-ty) (tc-expect-at-expr arg arg-ty want message)]
     [(ErrTcType message) (ErrTcUnit message)]))
 
 (define (tc-one-string-handle-builtin-call
@@ -19260,10 +19279,16 @@
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr call-expr (macro-private-message name)))]
         [(NoneI64)
-          (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr
-              call-expr
-              (macro-missing-export-message name)))])]))
+          (match (compiler-symbols-lookup-value-in-module-id
+            (tc-context-symbols ctx)
+            (intern target-module)
+            (intern base))
+            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
+            [(NoneI64)
+              (ErrMacroCallDecl
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  (macro-missing-export-message name)))])])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -20257,12 +20282,12 @@
   [call-expr : AstExpr]) : bool
   (match (macro-call-callee-name func)
     [(TcSomeString name)
-      ;; A QUALIFIED call (`mod/x`) always resolves through the qualified path,
-      ;; which returns a macro decl OR a diagnostic (private/missing-export) --
-      ;; never "not a macro" -- so it must never be pre-filtered out. An
-      ;; UNQUALIFIED call only needs the precise (allocating) resolution when its
-      ;; name matches a declared macro or `when`/`unless`; otherwise it is a plain
-      ;; function call that the macro pass leaves untouched, so skip it cheaply.
+      ;; A QUALIFIED call (`mod/x`) may be an imported macro, a macro diagnostic,
+      ;; or a real value call that should fall through to ordinary typechecking.
+      ;; It still needs precise resolution. An UNQUALIFIED call only needs the
+      ;; precise (allocating) resolution when its name matches a declared macro or
+      ;; `when`/`unless`; otherwise it is a plain function call that the macro
+      ;; pass leaves untouched, so skip it cheaply.
       (if (or
         (tc-name-qualified? name)
         (tc-string-list-contains macro-expand-macro-names name))

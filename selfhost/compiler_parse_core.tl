@@ -5171,6 +5171,20 @@
           (set! ok false)))
       (and (= i n) (not last-was-dot)))))
 
+(define (parse-ast-dotted-import-default-alias [name : String]) : String
+  (let
+    [n : i64 (string-length name)]
+    [i : i64 0]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref name i) #.')
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring name start (- n start)))))
+
 (define (parse-ast-dotted-import-tail
   [module-name : String]
   [tail : SpannedSexpr]) : ResultAstDecl
@@ -5182,7 +5196,8 @@
           (AstImportModule)
           module-name
           (AstSomeModuleName module-name)
-          AstNoImportAlias)]
+          (AstSomeImportAlias
+            (parse-ast-dotted-import-default-alias module-name)))]
       [(SpSCons head-node _ _)
         (match (sp-node-get head-node)
           [(SpSSym head _)
@@ -5967,7 +5982,7 @@
           [_ false]))]
     [(ErrAstProgram _) false]))
 
-(define (compiler-parse-dotted-import-metadata-ok?) : bool
+(define (compiler-parse-dotted-import-explicit-alias-ok?) : bool
   (match (parse-ast-source "(import stdlib.core_macros :as core)")
     [(OkAstProgram (AstProgram decls-box))
       (let
@@ -5993,6 +6008,38 @@
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
+
+(define (compiler-parse-dotted-import-default-alias-ok?) : bool
+  (match (parse-ast-source "(import stdlib.core_macros)")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons
+              (AstDeclImport
+                (AstImportSpec
+                  (AstImportModule)
+                  module-path
+                  (AstSomeModuleName module-name)
+                  (AstSomeImportAlias alias)))
+              rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq module-path "stdlib.core_macros")
+                    (and
+                      (string-eq module-name "stdlib.core_macros")
+                      (string-eq alias "core_macros")))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-dotted-import-metadata-ok?) : bool
+  (and
+    (compiler-parse-dotted-import-explicit-alias-ok?)
+    (compiler-parse-dotted-import-default-alias-ok?)))
 
 (define (compiler-parse-dotted-import-errors-ok?) : bool
   (and

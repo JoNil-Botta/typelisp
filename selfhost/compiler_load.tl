@@ -35,6 +35,10 @@
   (CompilerLoadNoPath)
   (CompilerLoadSomePath String))
 
+(defenum CompilerLoadMaybeString
+  (CompilerLoadNoString)
+  (CompilerLoadSomeString String))
+
 (defenum ResultPkgResolve
   (OkPkgResolve String)
   (ErrPkgResolve String))
@@ -63,6 +67,10 @@
 (defenum ResultCompilerLoadModuleId
   (OkCompilerLoadModuleId String)
   (ErrCompilerLoadModuleId CompilerDiagnostic))
+
+(defenum ResultCompilerLoadAliasCheck
+  (OkCompilerLoadAliasCheck)
+  (ErrCompilerLoadAliasCheck CompilerDiagnostic))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -631,6 +639,58 @@
           [(AstDeclModule _) true]
           [_ (compiler-load-decl-list-has-module? rest)]))]))
 
+(define (compiler-load-dotted-import-alias-key
+  [module : String]
+  [alias : String]) : String
+  (string-append module (string-append "/" alias)))
+
+(define (compiler-load-duplicate-dotted-import-alias-loop
+  [decls : AstDeclList]
+  [current-module : String]
+  [seen : SymI64Env]) : CompilerLoadMaybeString
+  (match decls
+    [(AstDeclNil) (CompilerLoadNoString)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule name)
+            (compiler-load-duplicate-dotted-import-alias-loop
+              rest
+              (intern-str name)
+              seen)]
+          [(AstDeclImport
+              (AstImportSpec (AstImportModule) _ _ (AstSomeImportAlias alias)))
+            (let
+              [key : String
+                (compiler-load-dotted-import-alias-key current-module alias)]
+              (if (sym-i64-contains seen key)
+                (CompilerLoadSomeString alias)
+                (compiler-load-duplicate-dotted-import-alias-loop
+                  rest
+                  current-module
+                  (sym-i64-bind seen key 1))))]
+          [_
+            (compiler-load-duplicate-dotted-import-alias-loop
+              rest
+              current-module
+              seen)]))]))
+
+(define (compiler-load-check-dotted-import-aliases
+  [path : String]
+  [decls : AstDeclList]
+  [source-module : String]) : ResultCompilerLoadAliasCheck
+  (match (compiler-load-duplicate-dotted-import-alias-loop
+    decls
+    source-module
+    (sym-i64-empty))
+    [(CompilerLoadNoString) (OkCompilerLoadAliasCheck)]
+    [(CompilerLoadSomeString alias)
+      (ErrCompilerLoadAliasCheck
+        (compiler-diagnostic-at-start
+          path
+          (string-append "compiler-load: duplicate module import alias " alias)))]))
+
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
   [importer-path : String]
@@ -1004,6 +1064,7 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [source-module : String (compiler-load-decls-source-module decls)]
         (match (compiler-load-decls-module-id path decls)
           [(OkCompilerLoadModuleId module-id)
             (match (compiler-load-check-expected-module
@@ -1017,15 +1078,22 @@
                     AstDeclPathNil
                     AstDeclModuleNil
                     seen)
-                  (compiler-load-decls-with-module-and-roots-cfg-root
-                    decls
+                  (match (compiler-load-check-dotted-import-aliases
                     path
-                    module-id
-                    (compiler-load-decls-source-module decls)
-                    (sym-i64-bind seen module-id 1)
-                    stdlib-roots
-                    import-root
-                    cfgs))]
+                    decls
+                    source-module)
+                    [(OkCompilerLoadAliasCheck)
+                      (compiler-load-decls-with-module-and-roots-cfg-root
+                        decls
+                        path
+                        module-id
+                        source-module
+                        (sym-i64-bind seen module-id 1)
+                        stdlib-roots
+                        import-root
+                        cfgs)]
+                    [(ErrCompilerLoadAliasCheck diag)
+                      (ErrCompilerLoadWithPaths diag)]))]
               [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
           [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
 
@@ -2053,6 +2121,7 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [source-module : String (compiler-load-decls-source-module decls)]
         (match (compiler-load-decls-module-id path decls)
           [(OkCompilerLoadModuleId module-id)
             (match (compiler-load-check-expected-module
@@ -2066,16 +2135,23 @@
                     AstDeclPathNil
                     AstDeclModuleNil
                     seen)
-                  (compiler-load-package-decls-with-module-and-roots
-                    decls
+                  (match (compiler-load-check-dotted-import-aliases
                     path
-                    module-id
-                    (compiler-load-decls-source-module decls)
-                    (sym-i64-bind seen module-id 1)
-                    stdlib-roots
-                    manifest-dir
-                    deps
-                    cfgs))]
+                    decls
+                    source-module)
+                    [(OkCompilerLoadAliasCheck)
+                      (compiler-load-package-decls-with-module-and-roots
+                        decls
+                        path
+                        module-id
+                        source-module
+                        (sym-i64-bind seen module-id 1)
+                        stdlib-roots
+                        manifest-dir
+                        deps
+                        cfgs)]
+                    [(ErrCompilerLoadAliasCheck diag)
+                      (ErrCompilerLoadWithPaths diag)]))]
               [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
           [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
 
@@ -2542,6 +2618,20 @@
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
       [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
+  (match (compiler-load-source
+    "src/dup_alias.tl"
+    "(module alias.entry)
+(import pkg.one)
+(import other.one)
+(define (main) : i64 0)"
+    (sym-i64-empty))
+    [(ErrCompilerLoad diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "compiler-load: duplicate module import alias one")]
+    [(OkCompilerLoad _ _) false]))
 
 (define (compiler-load-dotted-import-resolution-ok?) : bool
   (and
@@ -4718,6 +4808,12 @@
       (return
         (begin
           (panic "compiler-load: import alias preservation smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-dotted-import-duplicate-alias-ok?)
+      (return
+        (begin
+          (panic "compiler-load: dotted import duplicate alias smoke mismatch")
           0)))
     (unless
       (compiler-load-dotted-import-resolution-ok?)

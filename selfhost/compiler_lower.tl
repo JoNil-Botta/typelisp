@@ -28728,6 +28728,25 @@
             (= (lower-test-functions-call-count functions "d/get") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-dotted-import-default-alias-source) : String
+  "(module pkg.data)
+(define (get) : i64 20)
+(export (value get))
+(module main)
+(import pkg.data)
+(define (main) : i64 (+ (data/get) 1))")
+
+(define (compiler-lower-dotted-import-default-alias-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-dotted-import-default-alias-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-functions-call-count functions "pkg.data/get") 0)
+            (= (lower-test-functions-call-count functions "data/get") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-module-function-returning-struct-source) : String
   "(module data)
 (defstruct Candidate (number i64))
@@ -31846,6 +31865,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-import-alias-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-dotted-import-default-alias-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-function-returning-struct-ok?)

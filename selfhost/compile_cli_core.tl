@@ -750,8 +750,9 @@
         ;; selfhost manifest -- the Windows CI OOM). The result is a
         ;; region-free i64 status, node pools grow in the persistent base
         ;; arena (#2357), and compiler-driver-reset-file-state! clears
-        ;; intern/pool state at the next entry before anything could read
-        ;; reclaimed region memory.
+        ;; transient pool/intern state at the next entry before anything could
+        ;; read reclaimed region memory. Session-cached prelude nodes and their
+        ;; intern ids stay live across entries (#2596).
         [status : i64
           (with-arena
             batch-entry
@@ -806,25 +807,27 @@
     [(ErrCompileCliBatchEntryList status) status]))
 
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
-  (match config
-    [(CompileCliBatchConfig
-        batch-path
-        has-target
-        target
-        stdlib-roots
-        cfg-names
-        backend-mode
-        opt-level)
-      (compile-cli-run-batch-from
-        (read-file batch-path)
-        0
-        1
-        has-target
-        target
-        stdlib-roots
-        cfg-names
-        backend-mode
-        opt-level)]))
+  (begin
+    (compiler-load-session-cache-enable!)
+    (match config
+      [(CompileCliBatchConfig
+          batch-path
+          has-target
+          target
+          stdlib-roots
+          cfg-names
+          backend-mode
+          opt-level)
+        (compile-cli-run-batch-from
+          (read-file batch-path)
+          0
+          1
+          has-target
+          target
+          stdlib-roots
+          cfg-names
+          backend-mode
+          opt-level)])))
 
 (define (compile-cli-run [count : i64]) : i64
   (match (compile-cli-dispatch count)

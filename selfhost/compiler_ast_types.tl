@@ -432,6 +432,9 @@
 (define (ast-node-pool-truncate! [mark : i64]) : unit
   (set! ast-node-pool-count mark))
 
+(define (ast-node-pool-reset-to! [mark : i64]) : unit
+  (ast-node-pool-truncate! mark))
+
 (define (ast-node-pool-reset!) : unit
   (ast-node-pool-truncate! 0))
 
@@ -832,6 +835,11 @@
   (begin
     (set! ty-node-pool-count mark)
     (ty-node-dedup-clear!)))
+
+(define (ty-node-pool-reset-to! [mark : i64]) : unit
+  (begin
+    (ty-node-pool-truncate! mark)
+    (set! ty-node-pool-exhausted false)))
 
 (define (ty-node-pool-reset!) : unit
   (begin

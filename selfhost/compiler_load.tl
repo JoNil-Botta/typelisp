@@ -19,6 +19,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/str_cat.tl")
+
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
   (ErrCompilerLoad CompilerDiagnostic))
@@ -71,6 +73,111 @@
 (defenum ResultCompilerLoadAliasCheck
   (OkCompilerLoadAliasCheck)
   (ErrCompilerLoadAliasCheck CompilerDiagnostic))
+
+(defenum CompilerLoadPreludeCacheLookup
+  (CompilerLoadPreludeCacheMiss)
+  (CompilerLoadPreludeCacheHit
+    AstDeclList
+    AstDeclPathList
+    AstDeclModuleList
+    SymI64Env))
+
+(defenum CompilerLoadPreludeCacheSlot
+  (CompilerLoadPreludeCacheEmpty)
+  (CompilerLoadPreludeCacheFull
+    String
+    AstDeclList
+    AstDeclPathList
+    AstDeclModuleList
+    SymI64Env))
+
+(define compiler-load-session-ast-floor : i64
+  0)
+
+(define compiler-load-session-ty-floor : i64
+  0)
+
+(define compiler-load-session-intern-floor : i64
+  0)
+
+(define compiler-load-session-cache-enabled : bool
+  false)
+
+(define (compiler-load-session-note-persistent!) : unit
+  (begin
+    (if (> (ast-node-pool-len) compiler-load-session-ast-floor)
+      (set! compiler-load-session-ast-floor (ast-node-pool-len))
+      unit)
+    (if (> (ty-node-pool-len) compiler-load-session-ty-floor)
+      (set! compiler-load-session-ty-floor (ty-node-pool-len))
+      unit)
+    (if (> (intern-pool-len) compiler-load-session-intern-floor)
+      (set! compiler-load-session-intern-floor (intern-pool-len))
+      unit)))
+
+(define (compiler-load-session-cache-enable!) : unit
+  (begin
+    (set! compiler-load-session-cache-enabled true)
+    (intern-persistent-storage-enable!)))
+
+(define (compiler-load-session-cache-enabled?) : bool
+  compiler-load-session-cache-enabled)
+
+(define (compiler-load-session-reset-pools!) : unit
+  (if compiler-load-session-cache-enabled
+    (begin
+      (ast-node-pool-reset-to! compiler-load-session-ast-floor)
+      (ty-node-pool-reset-to! compiler-load-session-ty-floor))
+    (begin
+      (ast-node-pool-reset!)
+      (ty-node-pool-reset!))))
+
+(define (compiler-load-session-reset-interns!) : unit
+  (if compiler-load-session-cache-enabled
+    (intern-reset-to! compiler-load-session-intern-floor)
+    (intern-reset!)))
+
+(define (compiler-load-roots-cache-key-from
+  [roots : StringVec]
+  [index : i64]
+  [count : i64]
+  [out : String]) : String
+  (if (>= index count)
+    out
+    (let
+      [root : String (string-vec-get roots index "")]
+      (compiler-load-roots-cache-key-from
+        roots
+        (+ index 1)
+        count
+        (str-cat out (int->string (string-length root)) ":" root ";")))))
+
+(define (compiler-load-roots-cache-key [roots : StringVec]) : String
+  (compiler-load-roots-cache-key-from roots 0 (string-vec-len roots) ""))
+
+(define (compiler-load-cfg-cache-key-from [cfgs : SymI64Env] [out : String]) : String
+  (match cfgs
+    [(SymI64Nil) out]
+    [(SymI64Bind key value rest)
+      (compiler-load-cfg-cache-key-from
+        (box-get rest)
+        (str-cat out (intern-str key) "=" (int->string value) ";"))]))
+
+(define (compiler-load-cfg-cache-key [cfgs : SymI64Env]) : String
+  (compiler-load-cfg-cache-key-from cfgs ""))
+
+(define (compiler-load-prelude-cache-key
+  [kind : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : String
+  (let
+    [effective-roots : StringVec (compiler-load-roots-with-env stdlib-roots)]
+    (str-cat
+      kind
+      "|roots:"
+      (compiler-load-roots-cache-key effective-roots)
+      "|cfg:"
+      (compiler-load-cfg-cache-key cfgs))))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))

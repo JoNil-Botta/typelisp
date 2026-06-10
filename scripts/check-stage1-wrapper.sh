@@ -985,7 +985,11 @@ assert_contains "$WORKDIR/fmt-no-manifest.stderr" "could not find typelisp.pkg"
 rm -rf "$FMT_NOPKG"
 
 echo "[host-action-cli] lint"
-assert_contains "$WORKDIR/help.stderr" "typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
+run_capture lint-help "$COMPILER" lint --help
+assert_empty "$WORKDIR/lint-help.stdout"
+assert_contains "$WORKDIR/lint-help.stderr" "Usage:"
+assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
+assert_contains "$WORKDIR/lint-help.stderr" "Summary:"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")
 run_expect_failure_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint

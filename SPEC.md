@@ -4602,61 +4602,65 @@ Option-like `(try expr)` propagation is tracked separately by #1979.
 ## 10. CLI
 
 ```
-typelisp <command> [file.tl] [options]
+Synopsis:
+  typelisp - A typed Lisp/Scheme dialect with x86_64 backend
+
+Usage:
+  typelisp <command> [options]
+  typelisp <command> --help
 
 Commands:
-  check             Run type checker
-  repl              Minimal stdio command loop
-  compile           Generate assembly (.s)
-  build <file.tl>   Compile, assemble, and link a native executable
-  run               Compile, assemble, link, and run binary
-  build             Build nearest typelisp.pkg artifact
-  fmt               Format source files
-  lint              Report lint findings
-  test              Run inline `(test ...)` items
+  typelisp build          Build a source file or package artifact
+  typelisp check          Type check a source file or package
+  typelisp clean          Remove build artifacts
+  typelisp compile        Generate assembly or IR
+  typelisp doc            Generate documentation or run doc tests
+  typelisp fmt            Format source files or a package
+  typelisp init           Scaffold a package in the current directory
+  typelisp lint           Lint source files or a package
+  typelisp lsp            Start stdio LSP diagnostics server
+  typelisp new            Scaffold a new package directory
+  typelisp repl           Start minimal stdio REPL
+  typelisp run            Compile, link, and run a source file
+  typelisp test           Run or check inline tests
 
-Options:
-  compile -o <file>       Write assembly to the given path
-  compile --emit-ir       Write the lowered and optimized IR instead of assembly
-  compile --target <target>
-  run --target <target>
-  build --target <target>
-  test --target <target>
-                          Select linux-x86_64 or windows-x86_64;
-                          linux-x86_64 is the default output target, while
-                          test defaults to the host target
-  compile --backend-mode <mode>
-  run --backend-mode <mode>
-  build --backend-mode <mode>
-                          Select scalar, avx2, or avx512 backend mode;
-                          scalar is the default, avx2 supports the first
-                          contiguous foreach map/zip subset, and avx512 is
-                          reserved until that backend lands
-  compile --cfg <name>
-                          Enable a conditional-compilation flag for `(cfg ...)`
-  test --check <file.tl>
-                          Type-check the generated inline test harness without
-                          assembling or running it
-  fmt [<file.tl>...] --check
-                          Report files that would change without writing them
-  fmt --manifest-path <file>
-                          Format every source in a package; without explicit
-                          files, fmt defaults to the nearest typelisp.pkg upward
-  lint [<file.tl>...] --check
-                          Exit non-zero when lint findings are present; default
-                          lint mode is warn-only
-  lint --manifest-path <file>
-                          Lint every source in a package; without explicit
-                          files, lint defaults to the nearest typelisp.pkg upward
-  build <file.tl> -o <exe>
-                          Write the native executable to the given path
-  build --manifest-path <file>
-                          Use an explicit package manifest path
-  build --profile dev|release
-                          Select package build profile; default release
-  build --release
-                          Alias for build --profile release
+Global Options:
+  --help, -h                     Show root or command help
+
+Common Command Options:
+  --target <target>              linux-x86_64 or windows-x86_64
+  --backend-mode <mode>          scalar, avx2, or avx512
+  --manifest-path <file>         Package manifest path
+  --stdlib-root <dir>            Search root for stdlib/... imports
+  --opt-level <0|1|2>            Select optimizer level
+  --cfg <name>                   Enable a compile-time cfg predicate name
+
+Environment:
+  TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
+
+Selected Command Forms:
+  typelisp compile <file.tl> [-o <file>] [--emit-ir]
+  typelisp compile --batch <input-output-list>
+  typelisp build <file.tl> [-o <exe>]
+  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release]
+  typelisp run <file.tl> [-- <args>...]
+  typelisp fmt [<file.tl>...] [--check]
+  typelisp lint [<file.tl>...] [--check]
+  typelisp test [<file.tl>] [--check]
 ```
+
+`typelisp <command> --help` is the source of truth for command-specific usage
+forms. `compile -o <file>` writes assembly or IR to the given path,
+`compile --emit-ir` emits the lowered and optimized IR instead of assembly, and
+`compile --batch <file>` reads input|output pairs in one compiler process.
+`build --profile dev|release` selects the package build profile, `build
+--release` aliases `--profile release`, and `build --manifest-path <file>` uses
+an explicit package manifest. `fmt --check` reports files that would change
+without writing them, while `lint --check` exits non-zero when lint findings are
+present. Without explicit files, `fmt` and `lint` default to the nearest
+`typelisp.pkg` upward. `test --check` type-checks generated inline test
+harnesses without assembling or running them; `test` defaults to the host target
+unless `--target <target>` is supplied.
 
 For source-file builds, the default executable path is the source path with the
 `.tl` extension removed on Linux and with `.exe` on Windows. Source-file

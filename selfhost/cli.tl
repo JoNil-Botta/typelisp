@@ -53,75 +53,52 @@
 ;; through selfhost entry points. The unified selfhost CLI presents the same
 ;; help surface as the published stage0 driver.
 (define (cli-help-text) : String
-  "typelisp â€” A typed Lisp/Scheme dialect with x86_64 backend
+  "Synopsis:
+    typelisp - A typed Lisp/Scheme dialect with x86_64 backend
 
 Usage:
-    typelisp lsp                            Start stdio LSP diagnostics server
-    typelisp repl                           Start minimal stdio REPL
-    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
-    typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
-    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
-    typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
-    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
-    typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
-    typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
-    typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...]
-    typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
-    typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
-    typelisp doc --test --batch <inputs.txt> [--stdlib-root <dir>...]
-    typelisp new [--lib] <name>    Scaffold a new package in <name>/
-    typelisp init [--lib] <name>   Scaffold a package in the current directory
+    typelisp <command> [options]
+    typelisp <command> --help
 
-    --emit-ir                      Emit intermediate representation
-    --link-lib <name>              Link a named native library for source build/run
-    --link-search <dir>            Add a native linker library search directory
-    --link-arg <arg>               Pass a raw native linker argument
-    --backend-mode <mode>          scalar, avx2, or avx512; avx2/avx512 support simple foreach maps
+Commands:
+    typelisp build          Build a source file or package artifact
+    typelisp check          Type check a source file or package
+    typelisp clean          Remove build artifacts
+    typelisp compile        Generate assembly or IR
+    typelisp doc            Generate documentation or run doc tests
+    typelisp fmt            Format source files or a package
+    typelisp init           Scaffold a package in the current directory
+    typelisp lint           Lint source files or a package
+    typelisp lsp            Start stdio LSP diagnostics server
+    typelisp new            Scaffold a new package directory
+    typelisp repl           Start minimal stdio REPL
+    typelisp run            Compile, link, and run a source file
+    typelisp test           Run or check inline tests
+
+Global Options:
+    --help, -h                     Show root or command help
+
+Common Command Options:
     --target <target>              linux-x86_64 or windows-x86_64
-    --manifest-path <file>         Package manifest for build/check/clean/fmt/lint/doc
-    --stdlib-root <dir>            Search root for stdlib/... imports before env/embedded fallback
+    --backend-mode <mode>          scalar, avx2, or avx512
+    --manifest-path <file>         Package manifest path
+    --stdlib-root <dir>            Search root for stdlib/... imports
+    --opt-level <0|1|2>            Select optimizer level
     --cfg <name>                   Enable a compile-time cfg predicate name
+
+Environment:
     TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
 
-Options for compile:
-    -o <file>                      Output assembly file
-    --batch <file>                 Read input|output pairs and compile them in one process
-Options for build:
-    -o <exe>                       Source build executable output path
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-    --profile dev|release          Package build profile (default release)
-    --release                      Alias for --profile release
-    --opt-level <0|1|2>          Package-build optimizer level (default 1; 0 skips it)
-Options for clean:
-    --dry-run                      List artifacts without deleting them
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-Options for check:
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-Options for fmt:
-    --check                        Report files that would change without writing them
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-Options for lint:
-    --check                        Exit non-zero when lint findings are present
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-Options for test:
-    --check                        Typecheck inline tests without running them
-    --batch <file>                 Read newline-separated inline-test input paths for --check
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
-    --opt-level <0|1|2>          Select selfhost test harness optimization
-Options for doc:
-    --test [<file.tl>...]          Check TypeLisp fenced examples in docs
-    --batch <file>                 Read newline-separated doc-test input paths
-    --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
+Run `typelisp <command> --help` for command-specific usage.
 ")
 
 (define (cli-build-help-text) : String
   "Usage:
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
     typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+
+Summary:
+    Build a source file or package artifact.
 
 Options:
     -o <exe>                       Source build executable output path
@@ -141,6 +118,9 @@ Options:
   "Usage:
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
 
+Summary:
+    Remove build artifacts for a source file or package.
+
 Options:
     --dry-run                      List artifacts without deleting them
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
@@ -149,6 +129,9 @@ Options:
 (define (cli-run-help-text) : String
   "Usage:
     typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
+
+Summary:
+    Compile, link, and run a source file.
 
 Options:
     --target <target>              linux-x86_64 or windows-x86_64
@@ -164,6 +147,9 @@ Options:
   "Usage:
     typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
 
+Summary:
+    Type check a source file or package.
+
 Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --stdlib-root <dir>            Search root for stdlib/... imports
@@ -172,6 +158,9 @@ Options:
 (define (cli-fmt-help-text) : String
   "Usage:
     typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+
+Summary:
+    Format source files or every source in a package.
 
 Options:
     --check                        Report files that would change without writing them
@@ -183,6 +172,9 @@ Options:
   "Usage:
     typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
 
+Summary:
+    Lint source files or every source in a package.
+
 Options:
     --check                        Exit non-zero when lint findings are present
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
@@ -193,6 +185,9 @@ Options:
   "Usage:
     typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
     typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...]
+
+Summary:
+    Run or typecheck inline `(test ...)` declarations.
 
 Options:
     --check                        Typecheck inline tests without running them
@@ -211,6 +206,9 @@ Options:
     typelisp doc --html <file.tl> [<imported.tl>...] <out.html>
     typelisp doc --load <file.tl> <out.md> [--stdlib-root <dir>...]
 
+Summary:
+    Generate documentation or check TypeLisp fenced examples.
+
 Options:
     -o <out.md>                    Output markdown path
     --test                         Check TypeLisp fenced examples in docs
@@ -222,6 +220,9 @@ Options:
   "Usage:
     typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
+
+Summary:
+    Generate assembly or an IR summary.
 
 Options:
     -o <file>                      Output assembly or IR file
@@ -238,9 +239,10 @@ Options:
   "Usage:
     typelisp repl
 
-Starts the TypeLisp REPL.
+Summary:
+    Start the TypeLisp REPL.
 
-REPL commands:
+REPL Commands:
     .help                          Show REPL command help
     .type <expr>                   Print the inferred type without running code
     .exit                          Exit the REPL
@@ -250,7 +252,8 @@ REPL commands:
   "Usage:
     typelisp lsp [--stdlib-root <dir>...]
 
-Starts the stdio LSP diagnostics server.
+Summary:
+    Start the stdio LSP diagnostics server.
 
 Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
@@ -260,6 +263,9 @@ Options:
   "Usage:
     typelisp new [--lib] <name>
 
+Summary:
+    Scaffold a new package directory.
+
 Options:
     --lib                          Scaffold a static library package
 ")
@@ -267,6 +273,9 @@ Options:
 (define (cli-init-help-text) : String
   "Usage:
     typelisp init [--lib] <name>
+
+Summary:
+    Scaffold a package in the current directory.
 
 Options:
     --lib                          Scaffold a static library package

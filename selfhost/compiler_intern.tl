@@ -120,42 +120,62 @@
 (define (intern-persistent-storage-disable!) : unit
   (set! intern-persistent-storage-enabled false))
 
-;: djb2 string hash over the raw bytes. Overflow wraps in i64; the result may be
+;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
+;: bucket placement, never the id a string gets (ids are insertion-ordered),
+;: so the function is free to change: byte-at-a-time djb2 was 18.6% of a
+;: stage2 self-compile profile before the marker memos and still ~8% after.
+;: Eight bytes are folded per step with a wrapping multiply; the byte tail is
+;: assembled into one final word. Overflow wraps in i64; the result may be
 ;: negative, which is fine -- the bucket mask keeps only the low bits.
-(define (intern-hash [s : String]) : i64
+(define (intern-hash-words [src : (Ptr u8)] [start : i64] [len : i64]) : i64
   (let
-    [len : i64 (string-length s)]
-    [h : i64 5381]
+    [h : i64 (+ 5381 len)]
     [i : i64 0]
+    [words : i64 (- len 7)]
     (begin
-      (while (< i len)
-        (begin
-          (set! h (+ (* h 33) (cast (string-ref s i) : i64)))
-          (set! i (+ i 1))))
-      h)))
-
-;: djb2 hash over a source slice without first allocating a substring.
-(define (intern-hash-slice [s : String] [start : i64] [len : i64]) : i64
-  (let
-    [src : (Ptr u8)
-      (unsafe
-        (string-data (& s)))]
-    [h : i64 5381]
-    [i : i64 0]
-    (begin
-      (while (< i len)
+      (while (< i words)
         (begin
           (set!
             h
-            (+
-              (* h 33)
-              (cast
+            (*
+              (bit-xor
+                h
                 (unsafe
-                  (ptr-read (ptr-offset src (+ start i))))
-                :
-                i64)))
-          (set! i (+ i 1))))
-      h)))
+                  (ptr-read (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
+              -7046029254386353131))
+          (set! i (+ i 8))))
+      (let
+        [tail : i64 0]
+        (begin
+          (while (< i len)
+            (begin
+              (set!
+                tail
+                (+
+                  (* tail 256)
+                  (cast
+                    (unsafe
+                      (ptr-read (ptr-offset src (+ start i))))
+                    :
+                    i64)))
+              (set! i (+ i 1))))
+          (set! h (* (bit-xor h tail) -7046029254386353131))
+          (bit-xor h (cast (shr (cast h : u64) 29) : i64)))))))
+
+(define (intern-hash [s : String]) : i64
+  (intern-hash-words
+    (unsafe
+      (string-data (& s)))
+    0
+    (string-length s)))
+
+;: Hash over a source slice without first allocating a substring.
+(define (intern-hash-slice [s : String] [start : i64] [len : i64]) : i64
+  (intern-hash-words
+    (unsafe
+      (string-data (& s)))
+    start
+    len))
 
 ;: Mask `hash` into `[0, capacity)`; capacity is a power of two.
 (define (intern-bucket [hash : i64] [capacity : i64]) : i64
@@ -581,10 +601,15 @@
       [slice-beta : i64 (intern-slice slice-source 6 4)]
       [slice-alpha-again : i64 (intern-slice slice-source 11 5)]
       [slice-qualified : i64 (intern-slice slice-source 17 8)]
+      [long-slice-source : String "xxmultiword-hash-namezz"]
+      [long-full : i64 (intern "multiword-hash-name")]
+      [long-slice : i64 (intern-slice long-slice-source 2 19)]
       [ok : bool
         (and
           (= slice-alpha slice-alpha-again)
           (not (= slice-alpha slice-beta))
+          (= long-full long-slice)
+          (string-eq (intern-str long-slice) "multiword-hash-name")
           (string-eq (intern-str slice-alpha) "alpha")
           (intern-qualified-metadata-case-ok?
             slice-qualified

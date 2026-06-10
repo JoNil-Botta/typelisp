@@ -5870,6 +5870,45 @@
         true
         true))))
 
+(define (compiler-backend-program-index-interns-bound-names-ok?) : bool
+  (begin
+    (intern-reset!)
+    (let
+      [fn-name : String "late_backend_index_fn"]
+      [extern-name : String "late_backend_index_ext"]
+      [extern-link : String "late_backend_index_link"]
+      [index : CompilerBackendProgramIndex
+        (compiler-backend-program-index-build
+          (compiler-ir-function-cons
+            (IrFunction fn-name IrParamNil (AstTyUnit) 0 IrBlockNil)
+            IrFunctionNil)
+          (compiler-ir-extern-cons
+            (IrExtern
+              extern-name
+              (ast-ty-func AstTypeNil (AstTyI64))
+              (AstExternAbiC)
+              extern-link
+              AstExternLinkInputNil
+              false)
+            IrExternNil))]
+      [fn-id : i64 (intern fn-name)]
+      [extern-id : i64 (intern extern-name)]
+      [extern-link-id : i64 (intern extern-link)]
+      (backend-and8
+        (compiler-backend-index-function-defines-id? index fn-id)
+        (compiler-backend-index-function-defines? index fn-name)
+        (compiler-backend-signature-unit-to-i64?
+          (compiler-backend-index-extern-signature-id index extern-id))
+        (compiler-backend-index-extern-references-id? index extern-id)
+        (compiler-backend-index-extern-references-id? index extern-link-id)
+        (string-eq
+          (compiler-backend-index-extern-link-symbol-id index extern-id)
+          extern-link)
+        (string-eq
+          (compiler-backend-index-extern-link-symbol-id index extern-link-id)
+          extern-link)
+        (compiler-backend-index-extern-references? index extern-link)))))
+
 (define (compiler-backend-profile-runtime-source) : String
   "(extern (tl_profile_alloc_total) : i64)
 (define (main) : i64 (tl_profile_alloc_total))")
@@ -6052,7 +6091,9 @@
                                         (compiler-backend-dispatch-variant-mode-ok?)
                                         (and
                                           (compiler-backend-user-symbol-cache-ok?)
-                                          (compiler-backend-program-index-id-maps-ok?)))))))))))))))))))))
+                                          (and
+                                            (compiler-backend-program-index-id-maps-ok?)
+                                            (compiler-backend-program-index-interns-bound-names-ok?))))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

@@ -512,12 +512,18 @@ intentionally observe backend gang width.
 Compiler-owned builtins are `print`, `print-bool`, `print-newline`,
 `make-array`, `array-ref`, `array-set!`,
 `array-length`/`length`; strings: `string-length`/`length`,
-`string-ref`/`char-at`, `string-eq`/`string=?`, `string-append`/`string-concat`,
-`substring`/`string-slice`, `string->int`, `int->string`; and `panic`/`error`.
+`string-ref`/`char-at`, `string-eq`/`string=?`, `substring`/`string-slice`,
+`string->int`, `int->string`; and `panic`/`error`.
 Array and string indexing is bounds-checked at runtime. File, stdin/stdout,
 argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 `stdlib/fs.tl`; import those modules to use `read-file`, `write-file`,
 `file-open`, `read-stdin-line`, `flush-stdout`, `fs-*`, and related APIs.
+For user-facing string concatenation, import `stdlib/str_cat.tl` and use
+`str-cat` for fixed-arity joins; use `stdlib/text_buf.tl` for incremental
+builders. `string-append`/`string-concat` are deprecated low-level
+compatibility primitives kept for legacy code and `str-cat` expansion. The
+staged lint rule is available with `typelisp lint --deprecated-string-concat`
+while the remaining in-tree migrations land.
 
 ### Memory and aliasing
 

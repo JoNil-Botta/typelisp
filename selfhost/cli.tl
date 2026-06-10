@@ -170,13 +170,14 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
 
 Options:
     --check                        Exit non-zero when lint findings are present
+    --deprecated-string-concat     Enable staged string concat deprecation lint
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")

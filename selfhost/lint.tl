@@ -13,7 +13,7 @@
 ;; dispatcher.
 ;;
 ;; Focused wrapper invocation:
-;;   typelisp run selfhost/lint.tl -- [<file.tl>...] [--check] [--manifest-path typelisp.pkg] [--stdlib-root <dir>]...
+;;   typelisp run selfhost/lint.tl -- [<file.tl>...] [--check] [--deprecated-string-concat] [--manifest-path typelisp.pkg] [--stdlib-root <dir>]...
 (import "../stdlib/io.tl")
 
 (import "lint_driver_core.tl")

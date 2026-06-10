@@ -2,7 +2,8 @@
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
 ;# findings. The rules flag deeply-nested `if` ladders, body-only nested `let` forms,
-;# nested success-path `if` return chains, and unit-branch return guards.
+;# nested success-path `if` return chains, unit-branch return guards, and
+;# deprecated user-facing string concatenation primitives.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -13,6 +14,8 @@
 (import "../stdlib/io.tl")
 
 (import "compiler_ast_types.tl")
+
+(import "lex.tl")
 
 ;: A single lint finding: stable rule id, human-readable message, rule-specific
 ;: depth metadata, and the source span of the flagged node (the `lint-no-span`
@@ -64,6 +67,15 @@
 (define (lint-rule-unit-if-guard-suggestion) : String
   "prefer when/unless for unit guard branches")
 
+(define (lint-rule-deprecated-string-concat-id) : String
+  "deprecated-string-concat")
+
+(define (lint-rule-deprecated-string-concat-message) : String
+  "deprecated string concatenation primitive: use str-cat for fixed arity or text_buf for incremental building")
+
+(define (lint-rule-deprecated-string-concat-suggestion) : String
+  "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -105,6 +117,12 @@
     (lint-rule-unit-if-guard-message)
     (lint-rule-unit-if-guard-suggestion)))
 
+(define (lint-rule-deprecated-string-concat) : LintRule
+  (LintRule
+    (lint-rule-deprecated-string-concat-id)
+    (lint-rule-deprecated-string-concat-message)
+    (lint-rule-deprecated-string-concat-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -117,7 +135,9 @@
       (lint-rule-nested-let)
       (lint-rule-cons
         (lint-rule-return-path-chain)
-        (lint-rule-cons (lint-rule-unit-if-guard) LintRuleNil)))))
+        (lint-rule-cons
+          (lint-rule-unit-if-guard)
+          (lint-rule-cons (lint-rule-deprecated-string-concat) LintRuleNil))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -373,6 +393,128 @@
     (lint-rule-unit-if-guard-id)
     1
     span))
+
+(define (lint-deprecated-string-concat-name? [name : String]) : bool
+  (or
+    (string-eq name "string-append")
+    (or
+      (string-eq name "string-concat")
+      (or
+        (string-eq name "string-concat3")
+        (or (string-eq name "string-concat4") (string-eq name "string-concat5"))))))
+
+(define (lint-deprecated-string-concat-loop-form? [name : String]) : bool
+  (or
+    (string-eq name "while")
+    (or (string-eq name "foreach") (string-eq name "spmd-reduce"))))
+
+(define (lint-token-name [tok : Token]) : String
+  (if (= (token-tag tok) (tag-sym))
+    (token-sym tok)
+    ""))
+
+(define (lint-deprecated-string-concat-depth [in-loop : bool] [in-chain : bool]) : i64
+  (if in-loop
+    2
+    (if in-chain
+      1
+      0)))
+
+(define (lint-deprecated-string-concat-finding
+  [in-loop : bool]
+  [in-chain : bool]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (core/cond
+      in-loop
+      "deprecated string concatenation in loop: use text_buf for incremental building"
+      in-chain
+      "deprecated string concatenation chain: use one str-cat call for fixed arity"
+      (lint-rule-message (lint-rule-deprecated-string-concat-id)))
+    (lint-rule-deprecated-string-concat-id)
+    (lint-deprecated-string-concat-depth in-loop in-chain)
+    span))
+
+(define (lint-deprecated-string-concat-token-span
+  [tok : SpannedToken]
+  [name : String]) : AstSourceSpan
+  (AstSourceSpan
+    (spanned-token-line tok)
+    (spanned-token-col tok)
+    (spanned-token-line tok)
+    (+ (spanned-token-col tok) (string-length name))))
+
+(define (lint-deprecated-string-concat-scan
+  [source : String]
+  [acc : LintFindings]) : LintFindings
+  (match (lex-spanned-result source)
+    [(ErrSpannedTokens _) acc]
+    [(OkSpannedTokens toks)
+      (let
+        [i : i64 0]
+        [done : bool false]
+        [depth : i64 0]
+        [loop-depth : i64 0]
+        [concat-depth : i64 0]
+        [stack-cap : i64 (+ (string-length source) 2)]
+        [loop-stack : (Array bool) (make-array bool stack-cap)]
+        [concat-stack : (Array bool) (make-array bool stack-cap)]
+        [findings : LintFindings acc]
+        (begin
+          (while (not done)
+            (begin
+              (let
+                [spanned : SpannedToken (array-ref toks i)]
+                [tok : Token (spanned-token-tok spanned)]
+                [tag : i64 (token-tag tok)]
+                (core/cond
+                  (= tag (tag-end))
+                  (set! done true)
+                  (= tag (tag-lparen))
+                  (let
+                    [head-spanned : SpannedToken (array-ref toks (+ i 1))]
+                    [head : Token (spanned-token-tok head-spanned)]
+                    [name : String (lint-token-name head)]
+                    [is-loop : bool
+                      (lint-deprecated-string-concat-loop-form? name)]
+                    [is-concat : bool
+                      (lint-deprecated-string-concat-name? name)]
+                    (begin
+                      (set! depth (+ depth 1))
+                      (array-set! loop-stack depth is-loop)
+                      (array-set! concat-stack depth is-concat)
+                      (if is-concat
+                        (set!
+                          findings
+                          (lint-findings-add
+                            (lint-deprecated-string-concat-finding
+                              (> loop-depth 0)
+                              (> concat-depth 0)
+                              (lint-deprecated-string-concat-token-span
+                                head-spanned
+                                name))
+                            findings))
+                        unit)
+                      (if is-loop
+                        (set! loop-depth (+ loop-depth 1))
+                        unit)
+                      (if is-concat
+                        (set! concat-depth (+ concat-depth 1))
+                        unit)))
+                  (= tag (tag-rparen))
+                  (if (> depth 0)
+                    (begin
+                      (if (array-ref loop-stack depth)
+                        (set! loop-depth (- loop-depth 1))
+                        unit)
+                      (if (array-ref concat-stack depth)
+                        (set! concat-depth (- concat-depth 1))
+                        unit)
+                      (set! depth (- depth 1)))
+                    unit)
+                  unit))
+              (set! i (+ i 1))))
+          findings))]))
 
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
@@ -1126,6 +1268,18 @@
         [decls : AstDeclList (box-get decls-box)]
         (lint-walk-decl-list decls threshold (lint-findings-empty)))]))
 
+(define (lint-program-with-deprecated-string-concat
+  [source : String]
+  [program : AstProgram]
+  [threshold : i64]) : LintFindings
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (lint-deprecated-string-concat-scan
+          source
+          (lint-walk-decl-list decls threshold (lint-findings-empty))))]))
+
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning
 ;: constructors; lint-ladder-length / lint-walk-expr take AstExpr, so wrap.
@@ -1143,6 +1297,27 @@
     [vx : i64 (ast-node-push (AstExprVar (intern "x")))]
     [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
     [unit-expr : i64 (ast-node-push (AstExprLiteral AstLitUnit))]
+    [string-append-source : String
+      "(define (main) : i64 (string-length (string-append \"a\" \"b\")))"]
+    [string-concat-source : String
+      "(define (main) : i64 (string-length (string-concat \"a\" \"b\")))"]
+    [string-concat5-source : String
+      "(define (main) : i64
+  (string-length (string-concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))"]
+    [nested-string-append-source : String
+      "(define (main) : i64
+  (string-length (string-append \"a\" (string-append \"b\" \"c\"))))"]
+    [loop-string-append-source : String
+      "(define (main) : i64
+  (let
+    [i : i64 0]
+    [out : String \"\"]
+    (begin
+      (while (< i 3)
+        (begin
+          (set! out (string-append out \"x\"))
+          (set! i (+ i 1))))
+      (string-length out))))"]
     [ladder3 : i64
       (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one)))]
     [ladder2 : i64 (ast-expr-if vx one (ast-expr-if vx one one))]
@@ -1440,6 +1615,72 @@
         "prefer when/unless for unit guard branches")
         unit
         (panic "lint: unit-if-guard suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-deprecated-string-concat-id))
+        "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
+        unit
+        (panic "lint: deprecated-string-concat suggestion should be registered"))
+      (if (=
+        (lint-findings-count
+          (lint-deprecated-string-concat-scan
+            string-append-source
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: string-append call should be flagged"))
+      (match (lint-findings-get
+        (lint-deprecated-string-concat-scan
+          string-concat-source
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (if (and
+            (= (struct-get finding depth) 0)
+            (string-eq
+              (struct-get finding rule-id)
+              (lint-rule-deprecated-string-concat-id)))
+            unit
+            (panic "lint: string-concat finding should carry default metadata"))]
+        [(LintNoFinding)
+          (panic "lint: string-concat call should produce a finding")])
+      (if (=
+        (lint-findings-count
+          (lint-deprecated-string-concat-scan
+            string-concat5-source
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: string-concat5 call should be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-deprecated-string-concat-scan
+            nested-string-append-source
+            (lint-findings-empty)))
+        2)
+        unit
+        (panic "lint: nested string append should produce two findings"))
+      (match (lint-findings-get
+        (lint-deprecated-string-concat-scan
+          nested-string-append-source
+          (lint-findings-empty))
+        1)
+        [(LintSomeFinding finding)
+          (if (= (struct-get finding depth) 1)
+            unit
+            (panic "lint: nested string append should carry chain depth"))]
+        [(LintNoFinding)
+          (panic "lint: nested string append should produce a chain finding")])
+      (match (lint-findings-get
+        (lint-deprecated-string-concat-scan
+          loop-string-append-source
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (if (= (struct-get finding depth) 2)
+            unit
+            (panic "lint: loop string append should carry loop depth"))]
+        [(LintNoFinding)
+          (panic "lint: loop string append should produce a finding")])
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

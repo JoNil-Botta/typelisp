@@ -13,6 +13,8 @@
 
 (import "../stdlib/string.tl")
 
+(import "../stdlib/hashmap.tl")
+
 (defenum SpecTemplate
   (SpecTemplate String AstParamList AstType AstExpr))
 
@@ -20,12 +22,11 @@
   (SpecTemplateNil)
   (SpecTemplateCons SpecTemplate (Box SpecTemplateList)))
 
-(defenum SpecCache
-  (SpecCacheNil)
-  (SpecCacheCons String String (Box SpecCache)))
-
+;; #2613: the specialization cache (key -> generated function name) is a
+;; generated StringStringMap; the former SpecCache linked list made every
+;; lookup a linear scan.
 (defenum SpecState
-  (SpecState AstDeclList SpecCache CtfeEnv))
+  (SpecState AstDeclList StringStringMap CtfeEnv))
 
 (defenum SpecValueList
   (SpecValueNil)
@@ -41,9 +42,6 @@
 
 (define (spec-template-cons [head : SpecTemplate] [rest : SpecTemplateList]) : SpecTemplateList
   (SpecTemplateCons head (box rest)))
-
-(define (spec-cache-cons [key : String] [name : String] [rest : SpecCache]) : SpecCache
-  (SpecCacheCons key name (box rest)))
 
 (define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
   (SpecValueCons head (box rest)))
@@ -309,13 +307,10 @@
                 (spec-collect-templates rest)))]
           [_ (spec-collect-templates rest)]))]))
 
-(define (spec-cache-lookup [cache : SpecCache] [key : String]) : SpecMaybeString
-  (match cache
-    [(SpecCacheNil) (SpecNoString)]
-    [(SpecCacheCons cached-key name rest)
-      (if (string-eq cached-key key)
-        (SpecSomeString name)
-        (spec-cache-lookup (box-get rest) key))]))
+(define (spec-cache-lookup [cache : StringStringMap] [key : String]) : SpecMaybeString
+  (match (string-string-map-get cache key)
+    [(StringStringMapFound name) (SpecSomeString name)]
+    [(StringStringMapMissing) (SpecNoString)]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
@@ -4679,7 +4674,10 @@
                                 [cached-state : SpecState
                                   (SpecState
                                     generated
-                                    (spec-cache-cons key generated-name cache)
+                                    (string-string-map-put
+                                      cache
+                                      key
+                                      generated-name)
                                     ctfe-env)]
                                 (match (spec-rewrite-expr
                                   (ast-node-get valued-body)
@@ -6578,7 +6576,7 @@
                   templates
                   (SpecState
                     AstDeclNil
-                    SpecCacheNil
+                    (string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))))
                   [(OkSpecDecls rewritten state)
@@ -6971,11 +6969,14 @@
             (AstTyBool)
             (AstExprLiteral (AstLitBool true)))
           SpecTemplateNil))]
-    [cache : SpecCache
-      (spec-cache-cons
+    [cache : StringStringMap
+      (string-string-map-put
+        (string-string-map-put
+          (string-string-map-with-capacity 8)
+          "two"
+          "generated-two")
         "one"
-        "generated-one"
-        (spec-cache-cons "two" "generated-two" SpecCacheNil))]
+        "generated-one")]
     [values : SpecValueList
       (spec-value-cons
         (CtfeI64 1)

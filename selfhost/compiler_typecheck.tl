@@ -919,6 +919,61 @@
         [(d/Some v) v]
         [d/None 0]))))")
 
+(define (compiler-typecheck-dotted-import-default-alias-source) : String
+  "(module pkg.data)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(export
+  (value get)
+  (type Maybe)
+  (variant None)
+  (variant Some)
+  (type Point)
+  (constructor Point)
+  (field Point x))
+(module main)
+(import pkg.data)
+(define (main) : i64
+  (+
+    (data/get)
+    (+
+      (let ([p : data/Point (data/Point 7)])
+        (struct-get p x))
+      (match (data/Some 3)
+        [(data/Some v) v]
+        [data/None 0]))))")
+
+(define (compiler-typecheck-dotted-import-default-alias-with-macro-source) : String
+  "(module pkg.data)
+(define (get) : i64 20)
+(export (value get))
+(module pkg.macros)
+(defmacro (identity [x : Expr]) : Expr x)
+(module main)
+(import pkg.data)
+(define (main) : i64 (+ (data/get) 1))")
+
+(define (compiler-typecheck-dotted-import-explicit-alias-collision-source) : String
+  "(module left.same)
+(define (get) : i64 20)
+(export (value get))
+(module right.same)
+(define (get) : i64 22)
+(export (value get))
+(module main)
+(import left.same as l)
+(import right.same as r)
+(define (main) : i64 (+ (l/get) (r/get)))")
+
+(define (compiler-typecheck-dotted-import-unqualified-source) : String
+  "(module pkg.data)
+(define (get) : i64 20)
+(export (value get))
+(module main)
+(import pkg.data)
+(define (main) : i64 (get))")
+
 (define (compiler-typecheck-import-alias-missing-source) : String
   "(module data)
 (define (get) : i64 20)
@@ -1837,6 +1892,23 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-import-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-dotted-import-default-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-dotted-import-default-alias-with-macro-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-dotted-import-explicit-alias-collision-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-dotted-import-unqualified-source)
+        "typecheck: unbound name get")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6033,6 +6105,20 @@
 (define (main) : i64
   (m/choose-helper false (macro-helper true)))")
 
+(define (compiler-typecheck-macro-dotted-import-default-alias-source) : String
+  "(module pkg.macros)
+(define (macro-helper [x : bool]) : bool (not x))
+(defmacro (choose-helper [condition : bool] [body : Expr]) : Expr
+  `(if (macro-helper ,condition)
+     ,body
+     0))
+(export (macro choose-helper))
+(module main)
+(import pkg.macros)
+(define (macro-helper [x : bool]) : i64 7)
+(define (main) : i64
+  (macros/choose-helper false (macro-helper true)))")
+
 (define (compiler-typecheck-macro-hygiene-imported-builtin-source) : String
   "(module macros)
 (defmacro (dyn-len [items : Expr]) : i64
@@ -6204,18 +6290,21 @@
               (compiler-typecheck-macro-hygiene-imported-definition-source))
             (and
               (compiler-typecheck-ok?
-                (compiler-typecheck-macro-hygiene-imported-builtin-source))
+                (compiler-typecheck-macro-dotted-import-default-alias-source))
               (and
                 (compiler-typecheck-ok?
-                  (compiler-typecheck-macro-hygiene-nested-source))
+                  (compiler-typecheck-macro-hygiene-imported-builtin-source))
                 (and
                   (compiler-typecheck-ok?
-                    (compiler-typecheck-macro-hygiene-splice-source))
+                    (compiler-typecheck-macro-hygiene-nested-source))
                   (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-macro-hygiene-unsafe-global-source)
-                      "typecheck: danger requires unsafe context")
-                    (compiler-typecheck-macro-ownership-tests-ok?)))))))))))
+                    (compiler-typecheck-ok?
+                      (compiler-typecheck-macro-hygiene-splice-source))
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-macro-hygiene-unsafe-global-source)
+                        "typecheck: danger requires unsafe context")
+                      (compiler-typecheck-macro-ownership-tests-ok?))))))))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

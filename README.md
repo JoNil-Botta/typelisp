@@ -257,13 +257,13 @@ used for ordinary TypeLisp declarations. C varargs externs can use a
 function-head declaration: bare `...` accepts any C ABI value tail and
 `[arg : ...T]` requires every variadic argument to have type `T`.
 
-The compiler still uses the legacy flat import model: imported
-definitions merge into one top-level namespace. The module direction is
-private-by-default modules with canonical identities, `(export ...)`, import
-aliases, and qualified names such as `math/add`; see `SPEC.md` section 4.4 for
-the specified migration contract. Macro exports/imports use the same module
-loader identities and path-resolution rules, with macro expansion happening
-before ordinary runtime typechecking.
+Dotted module imports bind a module alias and keep imported definitions out of
+the local unqualified namespace: `(import stdlib.string)` binds `string`, and
+`(import stdlib.core_macros as core)` binds `core`. Legacy path imports such as
+`(import "lib/util.tl")` keep the transitional flat behavior while that spelling
+is removed; see `SPEC.md` section 4.4 for the migration contract. Macro
+exports/imports use the same module loader identities and path-resolution rules,
+with macro expansion happening before ordinary runtime typechecking.
 
 Comptime layout queries such as `size-of`, `align-of`, and `offset-of` use
 ordinary aggregate layout. `(:repr c)` remains accepted on structs as

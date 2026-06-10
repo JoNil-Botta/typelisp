@@ -19279,10 +19279,16 @@
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr call-expr (macro-private-message name)))]
         [(NoneI64)
-          (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr
-              call-expr
-              (macro-missing-export-message name)))])]))
+          (match (compiler-symbols-lookup-value-in-module-id
+            (tc-context-symbols ctx)
+            (intern target-module)
+            (intern base))
+            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
+            [(NoneI64)
+              (ErrMacroCallDecl
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  (macro-missing-export-message name)))])])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -20276,12 +20282,12 @@
   [call-expr : AstExpr]) : bool
   (match (macro-call-callee-name func)
     [(TcSomeString name)
-      ;; A QUALIFIED call (`mod/x`) always resolves through the qualified path,
-      ;; which returns a macro decl OR a diagnostic (private/missing-export) --
-      ;; never "not a macro" -- so it must never be pre-filtered out. An
-      ;; UNQUALIFIED call only needs the precise (allocating) resolution when its
-      ;; name matches a declared macro or `when`/`unless`; otherwise it is a plain
-      ;; function call that the macro pass leaves untouched, so skip it cheaply.
+      ;; A QUALIFIED call (`mod/x`) may be an imported macro, a macro diagnostic,
+      ;; or a real value call that should fall through to ordinary typechecking.
+      ;; It still needs precise resolution. An UNQUALIFIED call only needs the
+      ;; precise (allocating) resolution when its name matches a declared macro or
+      ;; `when`/`unless`; otherwise it is a plain function call that the macro
+      ;; pass leaves untouched, so skip it cheaply.
       (if (or
         (tc-name-qualified? name)
         (tc-string-list-contains macro-expand-macro-names name))

@@ -524,20 +524,24 @@
 ;; equality (child ids included) exact structural equality. A cli.tl compile
 ;; previously pushed >8M nodes for a few thousand distinct types; hash-consing
 ;; collapses the pool by orders of magnitude, shrinking both the 40-byte-slot
-;; footprint and the pre-sized pool itself. The dedup table is a fixed
-;; open-addressing map from node hash to id (+1; 0 = empty), cleared on pool
-;; truncate/reset. If it ever passes half load, pushes fall back to plain
-;; appends -- only deduplication, never correctness, degrades.
+;; footprint and the pre-sized pool itself. The dedup table is an open-addressing
+;; map from node hash to id (+1; 0 = empty), cleared on pool truncate/reset. It
+;; starts small for Windows CI memory headroom and grows up to a fixed cap. If it
+;; ever passes half load at the cap, pushes fall back to plain appends -- only
+;; deduplication, never correctness, degrades.
 ;;
 ;; Equality is explicit field-wise matching, NOT a byte compare of the slots:
 ;; enum slot tails beyond a variant's payload are uninitialized, so a byte
 ;; compare would dedup nondeterministically and break the stage2 == stage3
 ;; fixpoint. String payloads (lifetime names) compare by content.
-(define ty-node-dedup-capacity : i64
+(define ty-node-dedup-max-capacity : i64
   262144)
 
+(define ty-node-dedup-capacity : i64
+  16384)
+
 (define ty-node-dedup-slots : (Array i64)
-  (make-array i64 262144))
+  (make-array i64 16384))
 
 (define ty-node-dedup-count : i64
   0)
@@ -551,6 +555,59 @@
           (array-set! ty-node-dedup-slots i 0)
           (set! i (+ i 1))))
       (set! ty-node-dedup-count 0))))
+
+(define (ty-node-dedup-reinsert!
+  [slots : (Array i64)]
+  [capacity : i64]
+  [id : i64]) : unit
+  (let
+    [mask : i64 (- capacity 1)]
+    [idx : i64 (bit-and (ty-node-hash-value (ty-node-get id)) mask)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (= (array-ref slots idx) 0)
+          (begin
+            (array-set! slots idx (+ id 1))
+            (set! done true))
+          (set! idx (bit-and (+ idx 1) mask))))
+      unit)))
+
+(define (ty-node-dedup-grow!) : bool
+  (if (>= ty-node-dedup-capacity ty-node-dedup-max-capacity)
+    false
+    (let
+      [old-slots : (Array i64) ty-node-dedup-slots]
+      [old-cap : i64 ty-node-dedup-capacity]
+      [doubled : i64 (* old-cap 2)]
+      [new-cap : i64
+        (if (> doubled ty-node-dedup-max-capacity)
+          ty-node-dedup-max-capacity
+          doubled)]
+      [prev-arena : i64 (arena-current)]
+      [new-slots : (Array i64)
+        (begin
+          (unsafe
+            (arena-set! node-pool-base-arena))
+          (let
+            [arr : (Array i64) (make-array i64 new-cap)]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              arr)))]
+      [i : i64 0]
+      (begin
+        (while (< i old-cap)
+          (let
+            [slot : i64 (array-ref old-slots i)]
+            (begin
+              (if (= slot 0)
+                unit
+                (ty-node-dedup-reinsert! new-slots new-cap (- slot 1)))
+              (set! i (+ i 1)))))
+        (set! ty-node-dedup-slots new-slots)
+        (set! ty-node-dedup-capacity new-cap)
+        true))))
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
   (match items
@@ -791,7 +848,9 @@
 ;: duplicate path does not churn the pool count or temporarily force growth.
 (define (ty-node-push [node : AstType]) : i64
   (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
-    (ty-node-push-raw node)
+    (if (ty-node-dedup-grow!)
+      (ty-node-push node)
+      (ty-node-push-raw node))
     (let
       [mask : i64 (- ty-node-dedup-capacity 1)]
       [idx : i64 (bit-and (ty-node-hash-value node) mask)]

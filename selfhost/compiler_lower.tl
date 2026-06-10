@@ -4175,9 +4175,15 @@
   [ctx : TcContext]
   [ty : AstType]
   [fallback : i64]) : i64
-  (match (tc-inline-aggregate-type-layout ctx ty)
-    [(OkTcLayoutInfo info) (tc-layout-info-align info)]
-    [(ErrTcLayoutInfo _) fallback]))
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name)
+      (tc-inline-aggregate-align-cached ctx (intern-str name) fallback)]
+    [(AstTyEnum name)
+      (tc-inline-aggregate-align-cached ctx (intern-str name) fallback)]
+    [_
+      (match (tc-inline-aggregate-type-layout ctx ty)
+        [(OkTcLayoutInfo info) (tc-layout-info-align info)]
+        [(ErrTcLayoutInfo _) fallback])]))
 
 (define (lower-type-size [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
@@ -8297,38 +8303,30 @@
           (let
             [env : SymI64Env (lower-bind-params params 1 captured-env)]
             [type-env : TcTypeEnv (tc-bind-params ctx captured-type-env params)]
-            (match (lower-copy-inline-aggregate-params
+            (match (lower-tail-expr
               ctx
               captured-state
               env
               type-env
-              params)
-              [(OkLowerEnv abi-state abi-env abi-type-env)
-                (match (lower-tail-expr
-                  ctx
-                  abi-state
-                  abi-env
-                  abi-type-env
-                  body
-                  ret-ty
-                  sret-var)
-                  [(OkLowerState final-state)
-                    (OkLowerFunction
-                      (compiler-ir-function-cons
-                        (IrFunction
-                          logical-name
-                          (if (>= sret-var 0)
-                            (lower-param-list-append-sret
-                              (lower-captured-param-list ctx params)
-                              sret-var)
-                            (lower-captured-param-list ctx params))
-                          ret-ty
-                          (lower-state-next-var final-state)
-                          (lower-state-build-function-blocks final-state))
-                        (lower-state-functions final-state))
-                      (lower-state-spans final-state))]
-                  [(ErrLowerState message) (ErrLowerFunction message)])]
-              [(ErrLowerEnv message) (ErrLowerFunction message)]))]
+              body
+              ret-ty
+              sret-var)
+              [(OkLowerState final-state)
+                (OkLowerFunction
+                  (compiler-ir-function-cons
+                    (IrFunction
+                      logical-name
+                      (if (>= sret-var 0)
+                        (lower-param-list-append-sret
+                          (lower-captured-param-list ctx params)
+                          sret-var)
+                        (lower-captured-param-list ctx params))
+                      ret-ty
+                      (lower-state-next-var final-state)
+                      (lower-state-build-function-blocks final-state))
+                    (lower-state-functions final-state))
+                  (lower-state-spans final-state))]
+              [(ErrLowerState message) (ErrLowerFunction message)]))]
         [(ErrLowerEnv message) (ErrLowerFunction message)]))))
 
 (define (lower-lambda-noncapturing
@@ -15674,10 +15672,12 @@
       (and
         (not (tc-type-eq resolved (AstTyF64)))
         (and
-          ;; #1867: an inline struct/enum value is a pointer to its inline
-          ;; storage; fill8 would replicate that pointer, not the aggregate's
-          ;; bytes. Such elements go through the byte-copy store loop instead.
-          (not (lower-type-inline-struct-or-enum? ctx resolved))
+          ;; #1867/#2386: memory-resident inline aggregates are pointers to
+          ;; storage, but a one-word register-resident aggregate is the word
+          ;; itself, so fill8 can replicate it directly.
+          (or
+            (not (lower-type-inline-struct-or-enum? ctx resolved))
+            (lower-type-register-resident? ctx resolved))
           (lower-init-default-share-safe? ctx resolved))))))
 
 (define (lower-make-array-zero-fill-supported? [ctx : TcContext] [ty : AstType]) : bool
@@ -22719,50 +22719,6 @@
         head
         (lower-param-list-append-sret (box-get rest) sret-var))]))
 
-(define (lower-copy-inline-aggregate-param
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [ty : AstType])
-  :
-  ResultLowerEnv
-  ;; #1867 Phase 4: the defensive per-param entry copy is redundant -- inline
-  ;; struct/enum are value types with no in-place mutation, and copies already
-  ;; happen at every escape site (construction, store, and the sret/arena
-  ;; return). So a read-only param can use the caller's storage directly.
-  (OkLowerEnv state env type-env))
-
-(define (lower-copy-inline-aggregate-params
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [params : AstParamList]) : ResultLowerEnv
-  (match params
-    [(AstParamNil) (OkLowerEnv state env type-env)]
-    [(AstParamCons param rest)
-      (let
-        [rest : AstParamList (box-get rest)]
-        (match param
-          [(AstParam name ty _)
-            (match (lower-copy-inline-aggregate-param
-              ctx
-              state
-              env
-              type-env
-              (intern-str name)
-              ty)
-              [(OkLowerEnv param-state param-env param-type-env)
-                (lower-copy-inline-aggregate-params
-                  ctx
-                  param-state
-                  param-env
-                  param-type-env
-                  rest)]
-              [(ErrLowerEnv message) (ErrLowerEnv message)])]))]))
-
 (define (lower-supported-function-param-type? [ctx : TcContext] [ty : AstType]) : bool
   (lower-supported-reference-type? ctx ty))
 
@@ -23069,38 +23025,23 @@
               params
               ret-ty
               state)
-            (match (lower-copy-inline-aggregate-params
-              ctx
-              state
-              env
-              type-env
-              params)
-              [(OkLowerEnv abi-state abi-env abi-type-env)
-                (match (lower-tail-expr
-                  ctx
-                  abi-state
-                  abi-env
-                  abi-type-env
-                  body
-                  ret-ty
-                  sret-var)
-                  [(OkLowerState final-state)
-                    (OkLowerFunction
-                      (compiler-ir-function-cons
-                        (IrFunction
-                          logical-name
-                          (if (>= sret-var 0)
-                            (lower-param-list-append-sret
-                              (lower-param-list ctx params 0)
-                              sret-var)
-                            (lower-param-list ctx params 0))
-                          ret-ty
-                          (lower-state-next-var final-state)
-                          (lower-state-build-function-blocks final-state))
-                        (lower-state-functions final-state))
-                      (lower-state-spans final-state))]
-                  [(ErrLowerState message) (ErrLowerFunction message)])]
-              [(ErrLowerEnv message) (ErrLowerFunction message)])))
+            (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
+              [(OkLowerState final-state)
+                (OkLowerFunction
+                  (compiler-ir-function-cons
+                    (IrFunction
+                      logical-name
+                      (if (>= sret-var 0)
+                        (lower-param-list-append-sret
+                          (lower-param-list ctx params 0)
+                          sret-var)
+                        (lower-param-list ctx params 0))
+                      ret-ty
+                      (lower-state-next-var final-state)
+                      (lower-state-build-function-blocks final-state))
+                    (lower-state-functions final-state))
+                  (lower-state-spans final-state))]
+              [(ErrLowerState message) (ErrLowerFunction message)])))
         (ErrLowerFunction
           (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 
@@ -25272,6 +25213,13 @@
   "(define (main [n : i64]) : i64
   (let
     [items : (Array String) (make-array String n)]
+    (array-length items)))")
+
+(define (compiler-lower-make-array-register-resident-fill8-source) : String
+  "(defstruct OneWord (value i64))
+(define (main [n : i64]) : i64
+  (let
+    [items : (Array OneWord) (make-array OneWord n)]
     (array-length items)))")
 
 ;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
@@ -29739,6 +29687,18 @@
               (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-make-array-register-resident-fill8-source)
+    (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (=
+            (lower-test-function-call-count functions "main" "tl_array_fill8")
+            1)])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -31824,6 +31784,9 @@
         (set! ok false))
       (if (compiler-lower-make-array-init-shape-ok?
         (compiler-lower-make-array-init-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-make-array-register-resident-fill8-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-runtime-helper-tests-ok?)

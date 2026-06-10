@@ -97,37 +97,17 @@ batch_check_stdout="$WORKDIR/check.batch.stdout"
 batch_check_stderr="$WORKDIR/check.batch.stderr"
 check_counts="$WORKDIR/check.counts.txt"
 
-echo "[inline-tests] check ($discovered_file_count file(s), one process per file)"
-# #2357: type-check one file per compiler process instead of one batched process
-# over the whole corpus. A single batched process accumulates the per-file working
-# set and peaks ~2.3GB across the corpus -- right at the memory ceiling of the CI
-# runner, which dies there with a VM-level SIGTERM (job exit 143) even though it
-# fits locally. The heaviest single file (build_cli_core/test_cli_core, which pull
-# in the whole compiler) peaks ~1.16GB, so a fresh process per file roughly halves
-# the peak and stays well under the ceiling. Output is concatenated in discovery
-# order so the per-file "typecheck passed: N" count lines parsed below are
-# identical to the old batched output.
-: > "$batch_check_stdout"
-: > "$batch_check_stderr"
-batch_check_status=0
-_chunk_list="$WORKDIR/check.chunk.list"
-_chunk_stdout="$WORKDIR/check.chunk.stdout"
-_chunk_stderr="$WORKDIR/check.chunk.stderr"
-while IFS= read -r _chunk_src; do
-    [ -n "$_chunk_src" ] || continue
-    printf '%s\n' "$_chunk_src" > "$_chunk_list"
-    if run_with_retry "$_chunk_stdout" "$_chunk_stderr" \
-        "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" test --check --batch "$_chunk_list" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
-        cat "$_chunk_stdout" >> "$batch_check_stdout"
-        cat "$_chunk_stderr" >> "$batch_check_stderr"
-    else
-        batch_check_status=$?
-        cat "$_chunk_stdout" >> "$batch_check_stdout"
-        cat "$_chunk_stderr" >> "$batch_check_stderr"
-        break
-    fi
-done < "$DISCOVERED"
+echo "[inline-tests] check ($discovered_file_count file(s), one batch process)"
+# #2609: `test --check --batch` scopes each entry in its own compiler arena and
+# resets per-file compiler state between entries, matching compile --batch. Keep
+# the verifier batched so CI exercises that bounded-memory path.
+if run_with_retry "$batch_check_stdout" "$batch_check_stderr" \
+    "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
+    "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
+    batch_check_status=0
+else
+    batch_check_status=$?
+fi
 if [ "$batch_check_status" -ne 0 ]; then
     echo "inline test batch typecheck failed" >&2
     show_streams "$batch_check_stdout" "$batch_check_stderr"

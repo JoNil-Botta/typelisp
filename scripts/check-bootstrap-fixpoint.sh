@@ -207,6 +207,44 @@ EOF
     )
     assert_contains "$WORKDIR/stage1-check-env-stdlib-root.stdout" "Type checking passed!"
 
+    CLI_ROOT="$WORKDIR/stage1-cli-stdlib"
+    mkdir -p "$CLI_ROOT"
+    cat > "$CLI_ROOT/string.tl" <<'EOF'
+(define (cli-root-sentinel) : i64 11)
+EOF
+    cat > "$NO_ROOT_DIR/cli-over-env.tl" <<'EOF'
+(import "stdlib/string.tl")
+(define (main) : i64 (cli-root-sentinel))
+EOF
+    (
+        cd "$NO_ROOT_DIR"
+        TYPELISP_STDLIB_ROOT="$ENV_ROOT"
+        export TYPELISP_STDLIB_ROOT
+        run_stage1_cli_capture \
+            stage1-check-cli-stdlib-root-over-env \
+            "$STAGE1_BIN" check cli-over-env.tl --stdlib-root "$CLI_ROOT"
+    )
+    assert_contains "$WORKDIR/stage1-check-cli-stdlib-root-over-env.stdout" "Type checking passed!"
+
+    LOCAL_SHADOW_DIR="$WORKDIR/stage1-local-stdlib-shadow"
+    mkdir -p "$LOCAL_SHADOW_DIR/stdlib"
+    cat > "$LOCAL_SHADOW_DIR/stdlib/string.tl" <<'EOF'
+(define (local-root-sentinel) : i64 13)
+EOF
+    cat > "$LOCAL_SHADOW_DIR/main.tl" <<'EOF'
+(import "stdlib/string.tl")
+(define (main) : i64 (local-root-sentinel))
+EOF
+    (
+        cd "$LOCAL_SHADOW_DIR"
+        TYPELISP_STDLIB_ROOT="$ENV_ROOT"
+        export TYPELISP_STDLIB_ROOT
+        run_stage1_cli_capture \
+            stage1-check-local-stdlib-shadow \
+            "$STAGE1_BIN" check main.tl --stdlib-root "$CLI_ROOT"
+    )
+    assert_contains "$WORKDIR/stage1-check-local-stdlib-shadow.stdout" "Type checking passed!"
+
     run_stage1_cli_expect_failure stage1-unknown-command "$STAGE1_BIN" definitely-not-a-command
     assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Unknown command: definitely-not-a-command"
     assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Usage:"

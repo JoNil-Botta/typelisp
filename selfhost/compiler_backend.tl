@@ -6116,13 +6116,20 @@
     [(IrExternCons _ rest)
       (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
 
+;; Intern the name (instead of intern-lookup) so EVERY indexed entry is
+;; reachable through the id map. The lookup-only form silently skipped names
+;; that were never interned (generated helper names), which forced the query
+;; side to keep an O(n) full-array string-scan fallback for every id-map miss.
+;; Negative queries -- every "is this callee a function?" probe for an extern
+;; or runtime helper -- paid that scan against all ~6.5k function names on
+;; each call site emitted (~16% of self-compile CPU in string-eq). With the
+;; build side interning, an id-map miss is a definitive "absent" and the scan
+;; is gone.
 (define (compiler-backend-program-index-bind-name
   [ids : I64I64Map]
   [name : String]
   [index : i64]) : I64I64Map
-  (match (intern-lookup name)
-    [(InternLookupFound name-id) (i64-i64-map-put ids name-id index)]
-    [(InternLookupMissing) ids]))
+  (i64-i64-map-put ids (intern name) index))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
@@ -6183,6 +6190,7 @@
               signatures
               (+ index 1)))])]))
 
+;; First pass: fill the side arrays and bind the LINK SYMBOLS only.
 (define (compiler-backend-program-index-extern-references-into
   [externs : CompilerIrExternList]
   [reference-ids : I64I64Map]
@@ -6193,22 +6201,40 @@
     [(IrExternNil) reference-ids]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _ provided)
+        [(IrExtern _ _ _ link-symbol _ provided)
           (begin
             (array-set! link-symbols index link-symbol)
             (array-set! provideds index provided)
             (compiler-backend-program-index-extern-references-into
               (box-get rest)
               (compiler-backend-program-index-bind-name
-                (compiler-backend-program-index-bind-name
-                  reference-ids
-                  extern-name
-                  index)
+                reference-ids
                 link-symbol
                 index)
               link-symbols
               provideds
               (+ index 1)))])]))
+
+;; Second pass: bind the extern NAMES after every link symbol, so a name
+;; binding always overwrites a link-symbol binding for the same spelling.
+;; This preserves the retired scan-fallback's priority (extern names were
+;; searched before link symbols) in the single reference map.
+(define (compiler-backend-program-index-extern-reference-names-into
+  [externs : CompilerIrExternList]
+  [reference-ids : I64I64Map]
+  [index : i64]) : I64I64Map
+  (match externs
+    [(IrExternNil) reference-ids]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name _ _ _ _ _)
+          (compiler-backend-program-index-extern-reference-names-into
+            (box-get rest)
+            (compiler-backend-program-index-bind-name
+              reference-ids
+              extern-name
+              index)
+            (+ index 1))])]))
 
 ;; #2386: the aggregate type name a register-group value carries (for the
 ;; type-name -> word-count map). Empty for non-aggregate types.
@@ -6310,11 +6336,14 @@
         extern-signatures
         0)]
     [extern-reference-ids : I64I64Map
-      (compiler-backend-program-index-extern-references-into
+      (compiler-backend-program-index-extern-reference-names-into
         externs
-        (i64-i64-map-with-capacity (+ (* extern-count 4) 1))
-        extern-link-symbols
-        extern-provided
+        (compiler-backend-program-index-extern-references-into
+          externs
+          (i64-i64-map-with-capacity (+ (* extern-count 4) 1))
+          extern-link-symbols
+          extern-provided
+          0)
         0)]
     [group-word-counts : StringI64Map
       (compiler-backend-collect-group-counts-functions
@@ -6350,75 +6379,34 @@
   [ty : AstType]) : bool
   (> (compiler-backend-group-word-count index ty) 1))
 
-(define (compiler-backend-index-find-name
-  [names : (Array String)]
-  [name : String]) : I64I64MapLookup
-  (let
-    [cursor : i64 (- (array-length names) 1)]
-    [out : I64I64MapLookup (I64I64MapMissing)]
-    [done : bool false]
-    (begin
-      (while (and (>= cursor 0) (not done))
-        (if (string-eq (array-ref names cursor) name)
-          (begin
-            (set! out (I64I64MapFound cursor))
-            (set! done true))
-          (set! cursor (- cursor 1))))
-      out)))
-
+;; Every indexed name is interned at index-build time (see
+;; compiler-backend-program-index-bind-name), so a name the intern table has
+;; never seen cannot be in the index, and an id-map miss is definitive. The
+;; extern-reference map binds both the extern name and its link symbol, so one
+;; map probe covers both spellings.
 (define (compiler-backend-index-function-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : I64I64MapLookup
   (match (intern-lookup name)
     [(InternLookupFound name-id)
-      (match (i64-i64-map-get (struct-get index functions) name-id)
-        [(I64I64MapFound slot) (I64I64MapFound slot)]
-        [(I64I64MapMissing)
-          (compiler-backend-index-find-name
-            (struct-get index function-names)
-            name)])]
-    [(InternLookupMissing)
-      (compiler-backend-index-find-name (struct-get index function-names) name)]))
+      (i64-i64-map-get (struct-get index functions) name-id)]
+    [(InternLookupMissing) (I64I64MapMissing)]))
 
 (define (compiler-backend-index-extern-signature-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : I64I64MapLookup
   (match (intern-lookup name)
     [(InternLookupFound name-id)
-      (match (i64-i64-map-get (struct-get index extern-signatures) name-id)
-        [(I64I64MapFound slot) (I64I64MapFound slot)]
-        [(I64I64MapMissing)
-          (compiler-backend-index-find-name
-            (struct-get index extern-names)
-            name)])]
-    [(InternLookupMissing)
-      (compiler-backend-index-find-name (struct-get index extern-names) name)]))
+      (i64-i64-map-get (struct-get index extern-signatures) name-id)]
+    [(InternLookupMissing) (I64I64MapMissing)]))
 
 (define (compiler-backend-index-extern-reference-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : I64I64MapLookup
   (match (intern-lookup name)
     [(InternLookupFound name-id)
-      (match (i64-i64-map-get (struct-get index extern-references) name-id)
-        [(I64I64MapFound slot) (I64I64MapFound slot)]
-        [(I64I64MapMissing)
-          (match (compiler-backend-index-find-name
-            (struct-get index extern-names)
-            name)
-            [(I64I64MapFound slot) (I64I64MapFound slot)]
-            [(I64I64MapMissing)
-              (compiler-backend-index-find-name
-                (struct-get index extern-link-symbols)
-                name)])])]
-    [(InternLookupMissing)
-      (match (compiler-backend-index-find-name
-        (struct-get index extern-names)
-        name)
-        [(I64I64MapFound slot) (I64I64MapFound slot)]
-        [(I64I64MapMissing)
-          (compiler-backend-index-find-name
-            (struct-get index extern-link-symbols)
-            name)])]))
+      (i64-i64-map-get (struct-get index extern-references) name-id)]
+    [(InternLookupMissing) (I64I64MapMissing)]))
 
 (define (compiler-backend-index-function-signature-id
   [index : CompilerBackendProgramIndex]

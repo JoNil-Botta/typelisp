@@ -4029,6 +4029,36 @@
   (OptBoundsNil)
   (OptBoundsCons OptBoundsFact (Box OptBoundsFacts)))
 
+(defenum OptObjectLengthFact
+  (OptObjectLengthNone)
+  (OptObjectLengthKnown i64 i64))
+
+(define (opt-bounds-length-uses-var? [length : CompilerIrValue] [var : i64]) : bool
+  (match length
+    [(IrValueVar id)
+      (if (< id 0)
+        (= (- (- 0 id) 1) var)
+        (= id var))]
+    [_ false]))
+
+(define (opt-object-length-lookup [fact : OptObjectLengthFact] [var : i64]) : OptMaybeI64
+  (match fact
+    [(OptObjectLengthKnown fact-var object-var)
+      (if (= fact-var var)
+        (OptSomeI64 object-var)
+        (OptNoI64))]
+    [(OptObjectLengthNone) (OptNoI64)]))
+
+(define (opt-bounds-length-value
+  [facts : OptObjectLengthFact]
+  [length : CompilerIrValue]) : CompilerIrValue
+  (match length
+    [(IrValueVar var)
+      (match (opt-object-length-lookup facts var)
+        [(OptSomeI64 object-var) (IrValueVar (- 0 (+ object-var 1)))]
+        [(OptNoI64) length])]
+    [_ length]))
+
 (define (opt-bounds-fact-eq
   [fact : OptBoundsFact]
   [index : CompilerIrValue]
@@ -4061,7 +4091,9 @@
 (define (opt-bounds-fact-uses-var? [fact : OptBoundsFact] [var : i64]) : bool
   (match fact
     [(OptBoundsFact index length)
-      (or (opt-value-is-var? index var) (opt-value-is-var? length var))]))
+      (or
+        (opt-value-is-var? index var)
+        (opt-bounds-length-uses-var? length var))]))
 
 (define (opt-bounds-invalidate-var [facts : OptBoundsFacts] [var : i64]) : OptBoundsFacts
   (match facts
@@ -4072,6 +4104,32 @@
         (if (opt-bounds-fact-uses-var? fact var)
           rest2
           (OptBoundsCons fact (box rest2))))]))
+
+(define (opt-object-length-invalidate-var
+  [fact : OptObjectLengthFact]
+  [var : i64]) : OptObjectLengthFact
+  (match fact
+    [(OptObjectLengthKnown length-var object-var)
+      (if (or (= length-var var) (= object-var var))
+        (OptObjectLengthNone)
+        fact)]
+    [(OptObjectLengthNone) fact]))
+
+(define (opt-object-length-bind
+  [fact : OptObjectLengthFact]
+  [length-var : i64]
+  [object-var : i64]) : OptObjectLengthFact
+  (OptObjectLengthKnown length-var object-var))
+
+(define (opt-bounds-object-length-slot?
+  [offset : CompilerIrValue]
+  [ty : AstType]) : bool
+  (match offset
+    [(IrValueI64 value)
+      (or
+        (and (= value 1) (opt-type-eq ty (AstTyI64)))
+        (and (= value 8) (opt-type-eq ty (AstTyU8))))]
+    [_ false]))
 
 (define (opt-bounds-update-facts
   [facts : OptBoundsFacts]
@@ -4118,10 +4176,129 @@
     [(IrInstrReturn _) (OptBoundsNil)]
     [(IrInstrPhi _ _ _) (OptBoundsNil)]
     [(IrInstrBoundsCheck _ _ _) facts]
-    ;; #2386: register-group ops define their dst -- invalidate any bounds fact.
     [(IrInstrPack dst _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrWord dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrTailCallIndirect _ _ _) (OptBoundsNil)]))
+
+(define (opt-bounds-instrs-with-object
+  [facts : OptBoundsFacts]
+  [lengths : OptObjectLengthFact]
+  [ptrs : OptObjectLengthFact]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrBoundsCheck index length _)
+          (let
+            [length-key : CompilerIrValue
+              (opt-bounds-length-value lengths length)]
+            (if (opt-bounds-contains facts index length-key)
+              (opt-bounds-instrs-with-object facts lengths ptrs (box-get rest))
+              (compiler-ir-instr-cons
+                instr
+                (opt-bounds-instrs-with-object
+                  (opt-bounds-add facts index length-key)
+                  lengths
+                  ptrs
+                  (box-get rest)))))]
+        [(IrInstrGep dst base offset ty)
+          (let
+            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+            [lengths2 : OptObjectLengthFact
+              (opt-object-length-invalidate-var lengths dst)]
+            [ptrs2 : OptObjectLengthFact
+              (opt-object-length-invalidate-var ptrs dst)]
+            [ptrs3 : OptObjectLengthFact
+              (if (opt-bounds-object-length-slot? offset ty)
+                (match base
+                  [(IrValueVar object-var)
+                    (opt-object-length-bind ptrs2 dst object-var)]
+                  [_ ptrs2])
+                ptrs2)]
+            (compiler-ir-instr-cons
+              instr
+              (opt-bounds-instrs-with-object
+                facts2
+                lengths2
+                ptrs3
+                (box-get rest))))]
+        [(IrInstrLoad dst src ty)
+          (let
+            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+            [lengths2 : OptObjectLengthFact
+              (opt-object-length-invalidate-var lengths dst)]
+            [ptrs2 : OptObjectLengthFact
+              (opt-object-length-invalidate-var ptrs dst)]
+            [lengths3 : OptObjectLengthFact
+              (if (opt-type-eq ty (AstTyI64))
+                (match src
+                  [(IrValueVar ptr-var)
+                    (match (opt-object-length-lookup ptrs2 ptr-var)
+                      [(OptSomeI64 object-var)
+                        (opt-object-length-bind lengths2 dst object-var)]
+                      [(OptNoI64) lengths2])]
+                  [_ lengths2])
+                lengths2)]
+            (compiler-ir-instr-cons
+              instr
+              (opt-bounds-instrs-with-object
+                facts2
+                lengths3
+                ptrs2
+                (box-get rest))))]
+        [(IrInstrCast dst src from-ty to-ty)
+          (let
+            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+            [lengths2 : OptObjectLengthFact
+              (opt-object-length-invalidate-var lengths dst)]
+            [ptrs2 : OptObjectLengthFact
+              (opt-object-length-invalidate-var ptrs dst)]
+            [lengths3 : OptObjectLengthFact
+              (if (and
+                (opt-type-eq from-ty (AstTyI64))
+                (opt-type-eq to-ty (AstTyU64)))
+                (match src
+                  [(IrValueVar length-var)
+                    (match (opt-object-length-lookup lengths2 length-var)
+                      [(OptSomeI64 object-var)
+                        (opt-object-length-bind lengths2 dst object-var)]
+                      [(OptNoI64) lengths2])]
+                  [_ lengths2])
+                lengths2)]
+            (compiler-ir-instr-cons
+              instr
+              (opt-bounds-instrs-with-object
+                facts2
+                lengths3
+                ptrs2
+                (box-get rest))))]
+        [_
+          (let
+            [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
+            (match next-facts
+              [(OptBoundsNil)
+                (compiler-ir-instr-cons
+                  instr
+                  (opt-bounds-instrs next-facts (box-get rest)))]
+              [_
+                (match (opt-instr-def-var instr)
+                  [(OptSomeI64 dst)
+                    (compiler-ir-instr-cons
+                      instr
+                      (opt-bounds-instrs-with-object
+                        next-facts
+                        (opt-object-length-invalidate-var lengths dst)
+                        (opt-object-length-invalidate-var ptrs dst)
+                        (box-get rest)))]
+                  [(OptNoI64)
+                    (compiler-ir-instr-cons
+                      instr
+                      (opt-bounds-instrs-with-object
+                        next-facts
+                        lengths
+                        ptrs
+                        (box-get rest)))])]))])]))
 
 (define (opt-bounds-instrs
   [facts : OptBoundsFacts]
@@ -4138,6 +4315,26 @@
               (opt-bounds-instrs
                 (opt-bounds-add facts index length)
                 (box-get rest))))]
+        [(IrInstrGep dst base offset ty)
+          (let
+            [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+            (if (opt-bounds-object-length-slot? offset ty)
+              (compiler-ir-instr-cons
+                instr
+                (opt-bounds-instrs-with-object
+                  next-facts
+                  (OptObjectLengthNone)
+                  (match base
+                    [(IrValueVar object-var)
+                      (opt-object-length-bind
+                        (OptObjectLengthNone)
+                        dst
+                        object-var)]
+                    [_ (OptObjectLengthNone)])
+                  (box-get rest)))
+              (compiler-ir-instr-cons
+                instr
+                (opt-bounds-instrs next-facts (box-get rest)))))]
         [_
           (compiler-ir-instr-cons
             instr

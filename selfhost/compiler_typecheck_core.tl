@@ -11613,6 +11613,56 @@
                   [(ErrTcInlineAggregateLayout _) fallback])))))]
       [(NoneI64) fallback])))
 
+;; #2609: same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
+;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
+;; layout here defeats the size/regword caches.
+(define tc-agg-align-cache : (Array i64)
+  (make-array i64 400000))
+
+(define tc-agg-align-cache-generation : i64
+  -1)
+
+(define (tc-agg-align-cache-ensure!) : unit
+  (if (= tc-agg-align-cache-generation (intern-generation))
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i 400000)
+          (begin
+            (array-set! tc-agg-align-cache i 0)
+            (set! i (+ i 1))))
+        (set! tc-agg-align-cache-generation (intern-generation))))))
+
+(define (tc-inline-aggregate-align-cached
+  [ctx : TcContext]
+  [name : String]
+  [fallback : i64]) : i64
+  (begin
+    (tc-agg-align-cache-ensure!)
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
+      [(SomeI64 handle)
+        (let
+          [key : i64 (tc-agg-size-cache-key handle)]
+          (if (< key 0)
+            (match (tc-inline-aggregate-layout-for ctx name)
+              [(OkTcInlineAggregateLayout layout)
+                (tc-inline-aggregate-layout-align layout)]
+              [(ErrTcInlineAggregateLayout _) fallback])
+            (let
+              [cached : i64 (array-ref tc-agg-align-cache key)]
+              (if (> cached 0)
+                (- cached 1)
+                (match (tc-inline-aggregate-layout-for ctx name)
+                  [(OkTcInlineAggregateLayout layout)
+                    (let
+                      [align : i64 (tc-inline-aggregate-layout-align layout)]
+                      (begin
+                        (array-set! tc-agg-align-cache key (+ align 1))
+                        align))]
+                  [(ErrTcInlineAggregateLayout _) fallback])))))]
+      [(NoneI64) fallback])))
+
 ;; #2386 (compile-time): memoize a bare aggregate's register-resident word count
 ;; (0 = not register-resident, else 1 or 2). Same arena-safe handle-indexed fixed
 ;; array as the size cache; this is the hot query for every aggregate construct /
@@ -11629,6 +11679,7 @@
 (define (tc-agg-caches-reset!) : unit
   (begin
     (set! tc-agg-size-cache-generation -1)
+    (set! tc-agg-align-cache-generation -1)
     (set! tc-agg-regwords-cache-generation -1)))
 
 (define (tc-agg-regwords-cache-ensure!) : unit

@@ -8,6 +8,8 @@
 
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "build_run_core.tl")
 
 (import "compiler_backend.tl")
@@ -2295,19 +2297,29 @@
         (print-string (tltest-batch-summary-line file-count test-count))
         0)]
     [(TestBatchPathCons source rest)
-      (match (tltest-check-file-source source roots backend-target)
-        [(ErrTestFileCheck status)
+      (let
+        ;; Match compile --batch: isolate each entry's load/harness/typecheck
+        ;; working set in a scratch arena, then clear global parser/type state
+        ;; before the next entry can observe reclaimed nodes or symbol handles.
+        [entry-result : i64
+          (with-arena
+            batch-entry
+            (begin
+              (compiler-driver-reset-file-state!)
+              (match (tltest-check-file-source source roots backend-target)
+                [(ErrTestFileCheck status) (- 0 status)]
+                [(OkTestFileCheck count) count])))]
+        (if (< entry-result 0)
           (begin
             (print-error (string-append "test: batch source failed: " source))
             (print-error "\n")
-            status)]
-        [(OkTestFileCheck count)
+            (- 0 entry-result))
           (tltest-run-batch-check-paths
             (box-get rest)
             roots
             backend-target
             (+ file-count 1)
-            (+ test-count count))])]))
+            (+ test-count entry-result))))]))
 
 (define (tltest-run-batch-check
   [paths : TestBatchPathList]

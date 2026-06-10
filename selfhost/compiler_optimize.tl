@@ -1209,6 +1209,8 @@
     [(IrInstrMaskReduce dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrTailMask dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrPack dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrWord dst _ _ _) (not (opt-used-contains set dst))]
     [_ false]))
 
 (define (opt-dce-instrs [set : I64I64Map] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -13973,6 +13975,8 @@
     [(IrInstrCast dst _ _ _) (>= dst np)]
     [(IrInstrBinOp dst _ _ _ _) (>= dst np)]
     [(IrInstrUnOp dst _ _ _) (>= dst np)]
+    [(IrInstrPack dst _ _) (>= dst np)]
+    [(IrInstrWord dst _ _ _) (>= dst np)]
     [(IrInstrCall dst _ _ _) (>= dst np)]
     [(IrInstrCallIndirect dst _ _ _) (>= dst np)]
     [(IrInstrCallIndirectC dst _ _ _) (>= dst np)]
@@ -17456,17 +17460,25 @@
       7
       42)))
 
-;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Return v1]`. `v0` is a dead
-;; pure temporary; `v1` is produced by a side-effecting call and used by the
-;; return, so DCE must drop only `v0`'s Mov (3 instrs -> 2).
+;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Pack v2 (unused), Return v1]`.
+;; `v0` and `v2` are dead pure temporaries; `v1` is produced by a side-effecting
+;; call and used by the return, so DCE must drop only the pure temporaries
+;; (4 instrs -> 2).
 (define (opt-dce-self-test-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 99) (AstTyI64))
     (compiler-ir-instr-cons
       (IrInstrCall 1 "noop" (IrCallArgsNil) (AstTyI64))
       (compiler-ir-instr-cons
-        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-        (IrInstrNil)))))
+        (IrInstrPack
+          2
+          (IrValueCons
+            (IrValueI64 7)
+            (box (IrValueCons (IrValueI64 9) (box IrValueNil))))
+          (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+          (IrInstrNil))))))
 
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
@@ -17480,17 +17492,23 @@
       (opt-dce-instrs
         (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) cleaned)
         cleaned)]
+    [unused-word-dead : bool
+      (opt-instr-dead?
+        (i64-i64-map-with-capacity 4)
+        (IrInstrWord 3 (IrValueVar 2) 0 (AstTyI64)))]
     (core/cond
       (not (opt-used-contains used 1))
       0
       (opt-used-contains used 0)
       1
-      (not (= (compiler-ir-instr-list-count instrs) 3))
+      (not (= (compiler-ir-instr-list-count instrs) 4))
       2
       (not (= (compiler-ir-instr-list-count cleaned) 2))
       3
       (not (= (compiler-ir-instr-list-count again) 2))
       4
+      (not unused-word-dead)
+      5
       42)))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
@@ -18684,6 +18702,58 @@
     (opt-inline-known-indirect-caller)
     (compiler-ir-function-cons (opt-inline-frame-callee) IrFunctionNil)))
 
+(define (opt-inline-pack-word-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_group_word"
+    (opt-inline-frame-params)
+    (AstTyI64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrPack
+            2
+            (IrValueCons
+              (IrValueVar 0)
+              (box (IrValueCons (IrValueVar 1) (box IrValueNil))))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrWord 3 (IrValueVar 2) 1 (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              IrInstrNil))))
+      IrBlockNil)))
+
+(define (opt-inline-pack-word-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 22) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "inline_group_word"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (opt-inline-pack-word-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-pack-word-caller)
+    (compiler-ir-function-cons (opt-inline-pack-word-callee) IrFunctionNil)))
+
 (define (opt-inline-level-functions [level : i64]) : CompilerIrFunctionList
   (opt-inline-program-functions (opt-inline-frame-functions) level))
 
@@ -19151,6 +19221,19 @@
           (= (opt-count-direct-call-name b-instrs "inline_mut_a") 1)
           (= (opt-count-direct-call-name b-instrs "inline_mut_b") 0))))))
 
+(define (compiler-optimize-inline-pack-word-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-pack-word-functions) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (=
+          (opt-count-direct-call-name
+            (opt-function-first-instrs main)
+            "inline_group_word")
+          0)]
+      [(OptNoFunction) false])))
+
 (define (compiler-optimize-inline-census-direct-ok?) : bool
   (let
     [functions : CompilerIrFunctionList (opt-inline-frame-functions)]
@@ -19341,9 +19424,11 @@
                     34
                     (not (compiler-optimize-inline-mutual-scc-refusal-ok?))
                     35
+                    (not (compiler-optimize-inline-pack-word-ok?))
+                    36
                     42))]
-              [(OptNoFunction) 36])))]
-      [(OptNoFunction) 37])))
+              [(OptNoFunction) 37])))]
+      [(OptNoFunction) 38])))
 
 (define (opt-block-list-has-label?
   [blocks : CompilerIrBlockList]

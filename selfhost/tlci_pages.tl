@@ -329,15 +329,13 @@
           [content-ok : bool
             (and
               (= (cast (tlci-pages-read-byte region 0) : i64) 17)
-              (and
-                (= (cast (tlci-pages-read-byte region 1) : i64) 34)
-                (= (cast (tlci-pages-read-byte region 2) : i64) 51)))]
+              (= (cast (tlci-pages-read-byte region 1) : i64) 34)
+              (= (cast (tlci-pages-read-byte region 2) : i64) 51))]
           [flags-ok : bool
             (and
               (not (struct-get region code))
-              (and
-                (struct-get region writable)
-                (not (struct-get region executable))))]
+              (struct-get region writable)
+              (not (struct-get region executable)))]
           [exec-rejected : bool
             (match (tlci-pages-protect-code-executable region)
               [(ErrTlciPageRegion _) true]
@@ -345,8 +343,7 @@
           [release-ok : bool (tlci-pages-test-release-ok? region)]
           (begin
             (tlci-pages-test-panic-if
-              (not
-                (and content-ok (and flags-ok (and exec-rejected release-ok))))
+              (not (and content-ok flags-ok exec-rejected release-ok))
               "tlci pages: data mapping failed")
             unit))])))
 
@@ -362,15 +359,13 @@
           [content-ok : bool
             (and
               (= (cast (tlci-pages-read-byte region 0) : i64) 195)
-              (and
-                (= (cast (tlci-pages-read-byte region 1) : i64) 144)
-                (= (cast (tlci-pages-read-byte region 2) : i64) 144)))]
+              (= (cast (tlci-pages-read-byte region 1) : i64) 144)
+              (= (cast (tlci-pages-read-byte region 2) : i64) 144))]
           [flags-ok : bool
             (and
               (struct-get region code)
-              (and
-                (not (struct-get region writable))
-                (struct-get region executable)))]
+              (not (struct-get region writable))
+              (struct-get region executable))]
           [copy-rejected : bool
             (match (tlci-pages-copy-from-array! region bytes)
               [(ErrTlciPageUnit _) true]
@@ -378,7 +373,6 @@
           [release-ok : bool (tlci-pages-test-release-ok? region)]
           (begin
             (tlci-pages-test-panic-if
-              (not
-                (and content-ok (and flags-ok (and copy-rejected release-ok))))
+              (not (and content-ok flags-ok copy-rejected release-ok))
               "tlci pages: code mapping failed")
             unit))])))

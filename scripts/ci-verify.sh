@@ -1,15 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-# ci-verify.sh - CI/local no-Rust compiler gate.
+# ci-verify.sh - the repository's CI verification gate.
 #
-# This script intentionally does not build the Rust compiler. It fetches the
-# published stage0 artifact when TYPELISP_BIN is unset and guards against
-# accidental cargo/rustc fallback by shadowing those commands with failing
-# shims. The seed performs the single compiler build of the flow: the
-# stage1->stage2->stage3 bootstrap fixpoint over selfhost/cli.tl. Every
-# remaining gate then runs on the freshly bootstrapped stage2 compiler (the
-# branch-built full CLI).
+# Fetches the published stage0 artifact when TYPELISP_BIN is unset. The seed
+# performs the single compiler build of the flow: the stage1->stage2->stage3
+# bootstrap fixpoint over selfhost/cli.tl. Every remaining gate then runs on
+# the freshly bootstrapped stage2 compiler (the branch-built full CLI).
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -20,7 +17,7 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-verify.sh
 
-Runs the repository's no-Rust verification gate.
+Runs the repository's CI verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
 TYPELISP_BIN is the seed compiler and performs the single compiler build of
 the flow: the bootstrap stage1->stage2->stage3 fixpoint over selfhost/cli.tl.
@@ -42,7 +39,7 @@ case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
     MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
     *)
-        echo "no-Rust stage0 verification is unsupported on this host: $(uname -s)" >&2
+        echo "CI verification is unsupported on this host: $(uname -s)" >&2
         exit 1
         ;;
 esac
@@ -75,19 +72,6 @@ ensure_executable() {
 
 ensure_executable "seed" "$SEED_TYPELISP_BIN"
 
-GUARD_DIR="$ROOT/target/no-rust-stage0-guard"
-rm -rf "$GUARD_DIR"
-mkdir -p "$GUARD_DIR"
-cat > "$GUARD_DIR/cargo" <<'EOF'
-#!/usr/bin/env sh
-echo "ERROR: no-Rust stage0 verification must not invoke cargo" >&2
-exit 127
-EOF
-cp "$GUARD_DIR/cargo" "$GUARD_DIR/rustc"
-chmod +x "$GUARD_DIR/cargo" "$GUARD_DIR/rustc"
-PATH="$GUARD_DIR:$PATH"
-export PATH
-
 run_gate() {
     label=$1
     shift
@@ -97,7 +81,7 @@ run_gate() {
         *) had_errexit=0 ;;
     esac
     echo
-    echo "[no-rust-stage0] START $label"
+    echo "[ci-verify] START $label"
     set +e
     "$@"
     status=$?
@@ -107,9 +91,9 @@ run_gate() {
     end=$(date +%s)
     elapsed=$((end - start))
     if [ "$status" -eq 0 ]; then
-        echo "[no-rust-stage0] PASS $label (${elapsed}s)"
+        echo "[ci-verify] PASS $label (${elapsed}s)"
     else
-        echo "[no-rust-stage0] FAIL $label (${elapsed}s, exit $status)" >&2
+        echo "[ci-verify] FAIL $label (${elapsed}s, exit $status)" >&2
     fi
     return "$status"
 }
@@ -126,10 +110,10 @@ required_gate_unavailable() {
     gate=$1
     shift
     echo >&2
-    echo "[no-rust-stage0] ERROR: CI must run every required gate; skipped gates hide compiler regressions." >&2
-    echo "[no-rust-stage0] ERROR: unable to run required gate: $gate" >&2
+    echo "[ci-verify] ERROR: CI must run every required gate; skipped gates hide compiler regressions." >&2
+    echo "[ci-verify] ERROR: unable to run required gate: $gate" >&2
     for detail in "$@"; do
-        echo "[no-rust-stage0]   $detail" >&2
+        echo "[ci-verify]   $detail" >&2
     done
     exit 1
 }
@@ -141,7 +125,7 @@ required_gate_unavailable() {
 
 stage2_safety_corpus_supported() {
     compiler=$1
-    probe_dir="$ROOT/target/no-rust-stage2-safety-probe"
+    probe_dir="$ROOT/target/ci-verify-safety-probe"
     rm -rf "$probe_dir"
     mkdir -p "$probe_dir"
     asm="$probe_dir/division_by_zero_trap.s"
@@ -153,20 +137,20 @@ stage2_safety_corpus_supported() {
         --stdlib-root "$ROOT/stdlib" \
         -o "$asm" \
         > "$probe_dir/compile.stdout" 2> "$probe_dir/compile.stderr"; then
-        echo "[no-rust-stage0] stage2 safety probe compile failed"
+        echo "[ci-verify] stage2 safety probe compile failed"
         sed 's/^/  /' "$probe_dir/compile.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/compile.stderr" >&2 || true
         return 1
     fi
     if ! as "$asm" -o "$obj" > "$probe_dir/assemble.stdout" 2> "$probe_dir/assemble.stderr"; then
-        echo "[no-rust-stage0] stage2 safety probe assemble failed"
+        echo "[ci-verify] stage2 safety probe assemble failed"
         sed 's/^/  /' "$probe_dir/assemble.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
         return 1
     fi
     if ! ld "$obj" -o "$bin" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
-        echo "[no-rust-stage0] stage2 safety probe link failed"
+        echo "[ci-verify] stage2 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/link.stderr" >&2 || true
         return 1
@@ -177,13 +161,13 @@ stage2_safety_corpus_supported() {
     probe_status=$?
     set -e
     if [ "$probe_status" -ne 135 ]; then
-        echo "[no-rust-stage0] stage2 safety probe expected guarded div-zero exit 135, got $probe_status"
+        echo "[ci-verify] stage2 safety probe expected guarded div-zero exit 135, got $probe_status"
         sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
         return 1
     fi
     if ! grep -F "tl: integer division or remainder error" "$probe_dir/run.stderr" >/dev/null; then
-        echo "[no-rust-stage0] stage2 safety probe missing guarded div-zero stderr" >&2
+        echo "[ci-verify] stage2 safety probe missing guarded div-zero stderr" >&2
         sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
         return 1
@@ -197,7 +181,7 @@ stage2_safety_corpus_supported() {
 # exceptions whose shell exit code is unstable under MSYS/Git Bash).
 stage2_can_compile_native_windows() {
     compiler=$1
-    probe_dir="$ROOT/target/no-rust-stage2-win-probe"
+    probe_dir="$ROOT/target/ci-verify-win-probe"
     rm -rf "$probe_dir"
     mkdir -p "$probe_dir"
     asm="$probe_dir/probe.s"
@@ -206,20 +190,20 @@ stage2_can_compile_native_windows() {
     if ! "$compiler" compile "$ROOT/tests/safety/integer_wrap_cast_defined.tl" \
         --target windows-x86_64 --stdlib-root "$ROOT/stdlib" -o "$asm" \
         > "$probe_dir/compile.out" 2>&1; then
-        echo "[no-rust-stage0] windows stage2 compile-native probe compile failed"
+        echo "[ci-verify] windows stage2 compile-native probe compile failed"
         sed 's/^/  /' "$probe_dir/compile.out" >&2 || true
         return 1
     fi
     if ! clang --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
         > "$probe_dir/asm.out" 2>&1; then
-        echo "[no-rust-stage0] windows stage2 compile-native probe assemble failed"
+        echo "[ci-verify] windows stage2 compile-native probe assemble failed"
         sed 's/^/  /' "$probe_dir/asm.out" >&2 || true
         return 1
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
         -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
         > "$probe_dir/link.out" 2>&1; then
-        echo "[no-rust-stage0] windows stage2 compile-native probe link failed"
+        echo "[ci-verify] windows stage2 compile-native probe link failed"
         sed 's/^/  /' "$probe_dir/link.out" >&2 || true
         return 1
     fi
@@ -228,24 +212,21 @@ stage2_can_compile_native_windows() {
     probe_status=$?
     set -e
     if [ "$probe_status" -ne 42 ]; then
-        echo "[no-rust-stage0] windows stage2 compile-native probe expected exit 42, got $probe_status"
+        echo "[ci-verify] windows stage2 compile-native probe expected exit 42, got $probe_status"
         return 1
     fi
     return 0
 }
 
-echo "[no-rust-stage0] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
-
-TYPELISP_NO_RUST_STAGE0=1
-export TYPELISP_NO_RUST_STAGE0
+echo "[ci-verify] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
 # The single compiler build of the flow: the seed bootstraps selfhost/cli.tl to
 # stage1, stage1 rebuilds it to stage2, and the stage2/stage3 fixpoint must
 # hold. Every gate below runs on the resulting stage2 compiler - the
 # branch-built full CLI - so the artifact under test is the one the bootstrap
 # just produced. Do not add per-gate compiler rebuilds here.
-STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-stage1.path"
-STAGE2_PATH_FILE="$ROOT/target/no-rust-stage0-stage2.path"
+STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
+STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
 rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE"
 TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
 TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$STAGE2_PATH_FILE
@@ -258,7 +239,7 @@ if [ ! -s "$STAGE2_PATH_FILE" ]; then
 fi
 STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
 ensure_executable "stage2" "$STAGE2_BIN"
-echo "[no-rust-stage0] every gate runs the freshly bootstrapped stage2 compiler: $STAGE2_BIN"
+echo "[ci-verify] every gate runs the freshly bootstrapped stage2 compiler: $STAGE2_BIN"
 
 # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
 # RUN a native program before the run-assert tiers below may execute. A failed
@@ -268,13 +249,13 @@ if [ "$HOST_OS" = linux ]; then
         required_gate_unavailable "Linux stage2 compile->as->ld->run probe" \
             "safety, integration, examples, SPMD, and stdlib run-assert tiers depend on this probe"
     fi
-    echo "[no-rust-stage0] stage2 compile->as->ld->run capability confirmed"
+    echo "[ci-verify] stage2 compile->as->ld->run capability confirmed"
 else
     if ! stage2_can_compile_native_windows "$STAGE2_BIN"; then
         required_gate_unavailable "Windows stage2 compile->clang->lld-link->run probe" \
             "safety, integration, and examples run-assert tiers depend on this probe"
     fi
-    echo "[no-rust-stage0] stage2 compile->clang->lld-link->run capability confirmed"
+    echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
 fi
 
 run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
@@ -312,9 +293,9 @@ if [ "$HOST_OS" = linux ]; then
         run_with_compiler "$STAGE2_BIN" "Linux instruction-count baseline" \
             env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" scripts/check-instruction-counts.sh
     else
-        echo "[no-rust-stage0] SKIP Linux instruction-count baseline: valgrind not found"
+        echo "[ci-verify] SKIP Linux instruction-count baseline: valgrind not found"
     fi
-    DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
+    DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
     export DOC_SITE_OUT
     run_with_compiler "$STAGE2_BIN" "stage2 docs Pages build path" scripts/verify-doc-site.sh
     unset DOC_SITE_OUT
@@ -323,12 +304,12 @@ if [ "$HOST_OS" = linux ]; then
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo
-    echo "[no-rust-stage0] Linux-only GNU as/ld gates are not Windows-applicable:"
-    echo "[no-rust-stage0]   host-action smoke, comptime specialization smoke,"
-    echo "[no-rust-stage0]   stdlib documentation, stdlib selfhost verifier,"
-    echo "[no-rust-stage0]   SPMD SIMD comparison, instruction counts, docs Pages build path,"
-    echo "[no-rust-stage0]   native link generated programs, selfhost external compiler corpus"
+    echo "[ci-verify] Linux-only GNU as/ld gates are not Windows-applicable:"
+    echo "[ci-verify]   host-action smoke, comptime specialization smoke,"
+    echo "[ci-verify]   stdlib documentation, stdlib selfhost verifier,"
+    echo "[ci-verify]   SPMD SIMD comparison, instruction counts, docs Pages build path,"
+    echo "[ci-verify]   native link generated programs, selfhost external compiler corpus"
 fi
 
 echo
-echo "no-Rust stage0 verification passed"
+echo "CI verification passed"

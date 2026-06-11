@@ -27,7 +27,7 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
@@ -1229,7 +1229,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 ran=$((ran + 1))
                 continue
@@ -1260,7 +1260,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 ran=$((ran + 1))
                 continue
@@ -1285,7 +1285,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     else
         if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 ran=$((ran + 1))
                 continue
@@ -1322,7 +1322,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! ld "$obj" $native_objs -o "$bin" $link_extra -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 ran=$((ran + 1))
                 continue
@@ -1354,7 +1354,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     esac
 
     if [ -n "$requires_symbol" ]; then
-        echo "[integration] NOTE: $name built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        echo "[integration] NOTE: $name built with the current compiler; once the stage0 compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"

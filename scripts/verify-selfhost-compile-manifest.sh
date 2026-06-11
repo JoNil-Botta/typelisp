@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-selfhost-compile-manifest.sh - no-Rust assembly compile manifest.
+# verify-selfhost-compile-manifest.sh - selfhost assembly compile manifest.
 #
 # The manifest lists TypeLisp sources whose generated assembly used to be
 # checked by Rust *_compile.rs harnesses. This runner compiles each entry with an
@@ -51,7 +51,7 @@ fi
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1

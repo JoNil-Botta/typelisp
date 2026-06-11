@@ -1,4 +1,4 @@
-# No-Rust selfhost compile manifest.
+# Selfhost compile manifest.
 #
 # Format:
 #   case|id|source|assembly|main-policy|direct

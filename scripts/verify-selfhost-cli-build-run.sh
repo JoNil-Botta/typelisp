@@ -4,7 +4,7 @@ set -eu
 # verify-selfhost-cli-build-run.sh - focused public build/run smoke for cli.tl.
 #
 # This is run against the freshly bootstrapped stage2 cli.tl binary in the
-# no-Rust gate (TYPELISP_BIN), so it verifies the branch's public
+# CI gate (TYPELISP_BIN), so it verifies the branch's public
 # `typelisp build` / `typelisp run` behavior instead of the already-published
 # seed compiler. The compiler itself is built once by the bootstrap fixpoint
 # gate; this smoke does not rebuild it.

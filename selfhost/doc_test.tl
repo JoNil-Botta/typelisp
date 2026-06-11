@@ -8,7 +8,7 @@
 ;;
 ;; The runner (#724/#1322) checks extracted examples through the in-memory
 ;; virtual-source loader/typechecker (`compiler-check-source`, #723), and runs
-;; `typelisp run` / `tl run` examples through the self-hosted no-Rust build/run
+;; `typelisp run` / `tl run` examples through the self-hosted build/run
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.

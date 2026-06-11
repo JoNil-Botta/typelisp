@@ -37,7 +37,7 @@ if [ "$#" -eq 1 ]; then
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published self-hosted
+    # Local-development fallback: fetch the published self-hosted
     # stage0 (CI passes a fetched/bootstrapped compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1

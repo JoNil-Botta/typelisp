@@ -39,7 +39,7 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
@@ -334,7 +334,7 @@ else
     IS_STAGE1_WRAPPER=0
 fi
 # The single-binary cli.tl stage0 shares the selfhost frontend with the stage1
-# wrapper, so its typecheck diagnostics use the selfhost wording (no Rust
+# wrapper, so its typecheck diagnostics use the selfhost wording (no legacy
 # `error[E0200]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
 # disabled) like the wrapper for those diagnostic-text branches, while keeping
 # legacy diagnostic expectations isolated to compatibility branches (#1327).

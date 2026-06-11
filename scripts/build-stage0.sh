@@ -6,7 +6,7 @@ set -eu
 # Given a seed compiler (the previously published stage0, fetched via
 # scripts/fetch-stage0.sh), compile selfhost/cli.tl to assembly and assemble +
 # link it into the next stage0 binary using the host toolchain (as/ld on Linux,
-# clang + MSVC link.exe on Windows). This is the no-Rust self-perpetuation step
+# clang + MSVC link.exe on Windows). This is the self-perpetuation step
 # used by .github/workflows/bootstrap-stage0.yml: each published stage0 builds
 # its successor.
 #

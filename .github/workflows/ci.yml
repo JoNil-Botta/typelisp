@@ -12,11 +12,10 @@ permissions:
   contents: read
 
 jobs:
-  # TypeLisp is self-hosted: there is no Rust compiler to build. The single
-  # verification flow fetches the published self-hosted stage0 (cli.tl), runs
-  # the one compiler build of the flow (the stage1->stage2->stage3 bootstrap
-  # fixpoint over selfhost/cli.tl), and then runs every gate on the resulting
-  # stage2 compiler.
+  # TypeLisp is self-hosted. The single verification flow fetches the published
+  # stage0 (cli.tl), runs the one compiler build of the flow (the
+  # stage1->stage2->stage3 bootstrap fixpoint over selfhost/cli.tl), and then
+  # runs every gate on the resulting stage2 compiler.
   # The gate is fail-closed: Linux and Windows must run every applicable gate.
   # Do not add skip flags; compiler/runtime capability changes should land first,
   # then a follow-up PR can use the new capability.

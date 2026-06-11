@@ -97,7 +97,7 @@ stdlib_run_fixture_binary() {
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
@@ -564,7 +564,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     if [ "$build_status" -ne 0 ]; then
         if should_skip_staged "$requires_symbol" "$stem.build.err" "$stem.build.out"; then
-            echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
+            echo "[stdlib] SKIP $fixture (awaiting stage0 compiler support for '$requires_symbol')"
             skipped=$((skipped + 1))
             continue
         fi
@@ -574,7 +574,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     fi
 
     if [ -n "$requires_symbol" ]; then
-        echo "[stdlib] NOTE: $fixture built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        echo "[stdlib] NOTE: $fixture built with the current compiler; once the stage0 compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     if [ "$got" -ne "$want" ]; then

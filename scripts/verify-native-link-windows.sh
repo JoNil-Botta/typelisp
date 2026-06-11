@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-native-link-windows.sh - Windows no-Rust native link
+# verify-native-link-windows.sh - Windows native link
 # smoke for compiler-owned MSVC link.exe discovery and lld-link fallback.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)

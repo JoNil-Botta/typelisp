@@ -114,7 +114,7 @@ download_asset() {
 # gone between delete and recreate, or a later asset has not finished uploading)
 # or a checksum mismatch (the asset and SHA256SUMS get read from different
 # republish generations). Re-fetching both together on a fresh attempt rides out
-# that window instead of failing the whole No-Rust gate.
+# that window instead of failing the whole CI gate.
 fetch_and_verify() {
     ASSET=
     ASSET_TMP=

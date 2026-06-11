@@ -7,7 +7,7 @@ set -eu
 # generator through a native compile/run path, which is Linux-only until the doc
 # command grows target selection. Keep this script separate from public CLI
 # smoke coverage because it sweeps every canonical stdlib module. In the Linux
-# no-Rust lane, this script is run with TYPELISP_BIN pointing at the selected
+# CI, this script is run with TYPELISP_BIN pointing at the selected
 # host-action CLI compiler so future stdlib borrowed-`str` signatures are parsed
 # by the selfhost doc/check path instead of the published seed compiler.
 
@@ -25,7 +25,7 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1

@@ -2649,6 +2649,28 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")))
 
+(define (compiler-backend-uniform-map-source [elem : String]) : String
+  (backend-cat5
+    "(define (fill [a : (Array "
+    elem
+    ")] [b : (Array "
+    elem
+    (backend-cat5
+      ")] [out : (Array "
+      elem
+      ")] [n : i64] [r : "
+      elem
+      "]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")))
+
+(define (compiler-backend-uniform-zip-source) : String
+  "(define (fill [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
+
 (define (compiler-backend-avx2-map-asm-contains?
   [elem : String]
   [move : String]
@@ -2683,6 +2705,92 @@
     (compiler-backend-avx2-map-asm-contains? "i32" "    vmovdqu " "    vpaddd ")
     (compiler-backend-avx2-map-asm-contains? "f64" "    vmovupd " "    vaddpd ")
     (compiler-backend-avx2-map-asm-contains? "f32" "    vmovups " "    vaddps ")))
+
+(define (compiler-backend-avx2-uniform-map-asm-contains?
+  [elem : String]
+  [move : String]
+  [op : String]
+  [broadcast : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-uniform-map-source elem)
+    (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx2)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vzeroupper\n")
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm broadcast)
+              (compiler-backend-string-contains? asm "%ymm")
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "vector/mask IR emission is not implemented"))
+              true
+              true)
+            true)]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx2-uniform-zip-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-uniform-zip-source)
+    (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx2)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vpbroadcastq %xmm0, ")
+              (compiler-backend-string-contains? asm "    vpmuludq ")
+              (compiler-backend-string-contains? asm "    vpsllq $32, ")
+              (compiler-backend-string-contains? asm "    vpaddq ")
+              (compiler-backend-string-contains? asm "    vmovdqu ")
+              (compiler-backend-string-contains? asm "%ymm")
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "vector/mask IR emission is not implemented"))
+              true)
+            true)]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx2-uniform-vector-map-ok?) : bool
+  (and
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "i64"
+      "    vmovdqu "
+      "    vpaddq "
+      "    vpbroadcastq %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "i32"
+      "    vmovdqu "
+      "    vpaddd "
+      "    vpbroadcastd %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "f64"
+      "    vmovupd "
+      "    vaddpd "
+      "    vbroadcastsd %xmm0, ")
+    (compiler-backend-avx2-uniform-map-asm-contains?
+      "f32"
+      "    vmovups "
+      "    vaddps "
+      "    vbroadcastss %xmm0, ")
+    (compiler-backend-avx2-uniform-zip-ok?)))
 
 (define (compiler-backend-avx512-masked-if-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -2784,6 +2892,92 @@
       "f32"
       "    vmovups "
       "    vaddps ")))
+
+(define (compiler-backend-avx512-uniform-map-asm-contains?
+  [elem : String]
+  [move : String]
+  [op : String]
+  [broadcast : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-uniform-map-source elem)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx512)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm broadcast)
+              (compiler-backend-string-contains? asm "%zmm")
+              (compiler-backend-string-contains? asm "%k")
+              (compiler-backend-string-contains? asm "tail_mask_")
+              (compiler-backend-string-contains? asm "}{z}")
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "vector/mask IR emission is not implemented")))
+            true)]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx512-uniform-zip-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-uniform-zip-source)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx512)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vpbroadcastq %rax, ")
+              (compiler-backend-string-contains? asm "    vpmullq ")
+              (compiler-backend-string-contains? asm "    vpaddq ")
+              (compiler-backend-string-contains? asm "    vmovdqu64 ")
+              (compiler-backend-string-contains? asm "%zmm")
+              (compiler-backend-string-contains? asm "%k")
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "vector/mask IR emission is not implemented"))
+              true)
+            true)]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx512-uniform-vector-map-ok?) : bool
+  (and
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "i64"
+      "    vmovdqu64 "
+      "    vpaddq "
+      "    vpbroadcastq %rax, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "i32"
+      "    vmovdqu32 "
+      "    vpaddd "
+      "    vpbroadcastd %eax, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "f64"
+      "    vmovupd "
+      "    vaddpd "
+      "    vbroadcastsd %xmm0, ")
+    (compiler-backend-avx512-uniform-map-asm-contains?
+      "f32"
+      "    vmovups "
+      "    vaddps "
+      "    vbroadcastss %xmm0, ")
+    (compiler-backend-avx512-uniform-zip-ok?)))
 
 (define (compiler-backend-avx2-reduce-asm-contains?
   [src : String]
@@ -3014,6 +3208,8 @@
   (and
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
+    (compiler-backend-avx2-uniform-vector-map-ok?)
+    (compiler-backend-avx512-uniform-vector-map-ok?)
     (compiler-backend-avx512-masked-if-ok?)
     (compiler-backend-avx2-vector-reduce-ok?)
     (compiler-backend-avx512-vector-reduce-ok?)

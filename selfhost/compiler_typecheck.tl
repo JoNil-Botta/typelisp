@@ -44,6 +44,7 @@
     [program : AstProgram (ast-program decls)]
     (begin
       (tc-clone-able-cache-reset!)
+      (macro-alias-cache-reset!)
       (match (build-compiler-symbols program)
         [(OkCompilerSymbols symbols)
           (match (build-compiler-registries program)

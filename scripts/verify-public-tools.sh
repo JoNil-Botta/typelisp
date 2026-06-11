@@ -1971,7 +1971,7 @@ assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 echo "[public-tools] package test discovery"
 TEST_PKG="$WORKDIR/package-test-pkg"
-mkdir -p "$TEST_PKG/src" "$TEST_PKG/tests/nested" \
+mkdir -p "$TEST_PKG/src" "$TEST_PKG/tests/format_golden" "$TEST_PKG/tests/nested" \
     "$TEST_PKG/tests/target/ignored" "$TEST_PKG/tests/vendor/child/src"
 cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
 (package
@@ -2002,6 +2002,10 @@ cat > "$TEST_PKG/tests/nested/more.tl" <<'EOF'
   (begin
     (assert-i64-eq (* 6 7) 42 "package nested tests dir")
     0))
+EOF
+cat > "$TEST_PKG/tests/format_golden/fixture.tl" <<'EOF'
+;; Package test discovery must not treat formatter fixtures as integration tests.
+(define fixture-value : i64 42)
 EOF
 cat > "$TEST_PKG/tests/target/ignored/fail.tl" <<'EOF'
 (define (main) : i64 9)

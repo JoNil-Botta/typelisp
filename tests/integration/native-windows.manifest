@@ -9,6 +9,7 @@ c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmar
 c_abi_win64_sret_return|tests/integration/c_abi_win64_sret_return.tl|42|-|-|benchmarks/c_abi_win64_sret_return/baseline.c
 c_abi_win64_aggregate_args|tests/integration/c_abi_win64_aggregate_args.tl|42|-|-|benchmarks/c_abi_win64_aggregate_args/baseline.c
 c_abi_win64_small_aggregate_float_mixed|tests/integration/c_abi_win64_small_aggregate_float_mixed.tl|42|-|-|benchmarks/c_abi_win64_small_aggregate_float_mixed/baseline.c
+c_abi_win64_nested_aggregate|tests/integration/c_abi_win64_nested_aggregate.tl|42|-|-|benchmarks/c_abi_win64_nested_aggregate/baseline.c
 c_abi_int8_struct|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi_int8_struct/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-

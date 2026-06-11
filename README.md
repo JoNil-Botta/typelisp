@@ -698,13 +698,10 @@ download the single host asset and install it as the command under
 
 To run the same stage0 verification gate used by CI, run
 `scripts/ci-verify.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset. On Linux, that gate uses the published compiler as the
-bootstrap seed, checks the stage0-to-stage1 bootstrap, then runs deterministic
-assembly and the toolchain capability gates through the freshly bootstrapped
-stage1 compiler directly. On Windows, the host-supported gates run against the
-published stage0 compiler and the gate also runs the native MSVC link smoke plus
-the stage2/stage3 Windows fixpoint when the seed has the required staged runtime
-symbols.
+`TYPELISP_BIN` is unset. The gate performs a single compiler build on every
+host: the published compiler seeds the stage1->stage2->stage3 bootstrap
+fixpoint over `selfhost/cli.tl`, and every remaining gate then runs on the
+freshly bootstrapped stage2 compiler (the branch-built full CLI).
 
 The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits
 and compares Linux assembly through `as` and `ld`; on Git Bash/MSYS/Cygwin for

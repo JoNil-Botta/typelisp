@@ -37,6 +37,9 @@ Options:
 
 Environment:
   TYPELISP_BIN                  Seed compiler when no argument is given
+  TYPELISP_IR_CHECK_COMPILER    Prebuilt compiler to measure with; skips the
+                                internal seed->stage1->stage2 builds (CI passes
+                                the bootstrap fixpoint stage2 here)
   TYPELISP_IR_CHECK_RUNS        Default --runs
   TYPELISP_IR_CHECK_BENCHMARKS  Default --benchmarks
   TYPELISP_IR_CHECK_BASELINE    Default --baseline
@@ -198,18 +201,36 @@ elif [ -n "${TYPELISP_BIN:-}" ]; then
 fi
 
 rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR/compiler/stage1" "$WORKDIR/compiler/stage2"
+mkdir -p "$WORKDIR"
 
-STAGE1_COMPILER="$WORKDIR/compiler/stage1/typelisp"
-CHECK_COMPILER="$WORKDIR/compiler/stage2/typelisp"
 MEASURE_OUT="$WORKDIR/measure"
 CURRENT="$WORKDIR/current.tsv"
 DIFF_OUT="$WORKDIR/diff.txt"
 
-echo "[ir-check] build current stage1 compiler for measurement: $STAGE1_COMPILER"
-scripts/build-stage0.sh "$SEED" "$STAGE1_COMPILER"
-echo "[ir-check] build current stage2 compiler for measurement: $CHECK_COMPILER"
-scripts/build-stage0.sh "$STAGE1_COMPILER" "$CHECK_COMPILER"
+# CI builds the compiler exactly once (the bootstrap fixpoint chain) and passes
+# its stage2 in via TYPELISP_IR_CHECK_COMPILER; the seed->stage1->stage2 builds
+# below are the standalone/local fallback only.
+PREBUILT_COMPILER=${TYPELISP_IR_CHECK_COMPILER:-}
+if [ -n "$PREBUILT_COMPILER" ]; then
+    case "$PREBUILT_COMPILER" in
+        /*) ;;
+        *) PREBUILT_COMPILER="$ROOT/$PREBUILT_COMPILER" ;;
+    esac
+    [ -x "$PREBUILT_COMPILER" ] || {
+        echo "TYPELISP_IR_CHECK_COMPILER is not executable: $PREBUILT_COMPILER" >&2
+        exit 1
+    }
+    CHECK_COMPILER=$PREBUILT_COMPILER
+    echo "[ir-check] measure with prebuilt stage2 compiler: $CHECK_COMPILER"
+else
+    mkdir -p "$WORKDIR/compiler/stage1" "$WORKDIR/compiler/stage2"
+    STAGE1_COMPILER="$WORKDIR/compiler/stage1/typelisp"
+    CHECK_COMPILER="$WORKDIR/compiler/stage2/typelisp"
+    echo "[ir-check] build current stage1 compiler for measurement: $STAGE1_COMPILER"
+    scripts/build-stage0.sh "$SEED" "$STAGE1_COMPILER"
+    echo "[ir-check] build current stage2 compiler for measurement: $CHECK_COMPILER"
+    scripts/build-stage0.sh "$STAGE1_COMPILER" "$CHECK_COMPILER"
+fi
 
 echo "[ir-check] measure instruction-count subset"
 measure_args=

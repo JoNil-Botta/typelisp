@@ -15,15 +15,18 @@
 
 (import "../stdlib/string.tl")
 
-;; TcTypeCache fields: ids map, values, unsafe flags, default-shadow map,
-;; scan-through, rest. `scan-through` is true for threshold-compaction caches
-;; created in the middle of function-body spines: marker-position scans
-;; (active region, return type, unsafe context, cleanup owners, lifetimes,
-;; lambda capture checks) must keep scanning the spine below such a cache,
-;; because the markers they look for can be buried more than a compaction
-;; window up (#2661 -- with-arena escape checking was silently disabled past
-;; 32 local binds). Explicit top-env/module caches keep scan-through false so
-;; those scans still terminate without walking the global env spine.
+;; TcTypeCache fields: ids map, values, unsafe flags, default-shadow flags,
+;; scan-through, rest. The default-shadow flag array parallels `values`: an
+;; entry's flag is 1 when its head-most binding sits above the first
+;; default-boundary marker (replaces the former whole-env shadows map).
+;; `scan-through` is true for threshold-compaction caches created in the
+;; middle of function-body spines: marker-position scans (active region,
+;; return type, unsafe context, cleanup owners, lifetimes, lambda capture
+;; checks) must keep scanning the spine below such a cache, because the
+;; markers they look for can be buried more than a compaction window up
+;; (#2661 -- with-arena escape checking was silently disabled past 32 local
+;; binds). Explicit top-env/module caches keep scan-through false so those
+;; scans still terminate without walking the global env spine.
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind i64 AstType (Box TcTypeEnv))
@@ -31,7 +34,7 @@
     I64I64Map
     (Array AstType)
     (Array i64)
-    I64I64Map
+    (Array i64)
     bool
     (Box TcTypeEnv)))
 
@@ -949,13 +952,25 @@
     8
     (* count 2)))
 
+;; Cache construction is the dominant i64 map workload of a self-compile
+;; (~16% of stage2 CPU before this change): the previous shape walked the
+;; spine FOUR times per compaction (entry count, shadow count, entry fill,
+;; shadow fill) and built a second whole-env map just to answer "is this
+;; default builtin shadowed?". Default-shadow membership is now a per-entry
+;; flag array parallel to `values`/`unsafe-flags`, computed during the single
+;; entry fill walk: an entry's flag is 1 when its head-most binding sits
+;; above the first default-boundary marker. Head-first walk order means a
+;; name bound both above and below the boundary keeps its head-most (above)
+;; occurrence, which matches the old any-occurrence-above map exactly.
 (define (tc-env-cache-add
   [ids : I64I64Map]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
+  [shadow-flags : (Array i64)]
   [name-id : i64]
   [ty : AstType]
-  [unsafe : bool]) : I64I64Map
+  [unsafe : bool]
+  [shadow : bool]) : I64I64Map
   (match (i64-i64-map-get ids name-id)
     [(I64I64MapFound _) ids]
     [(I64I64MapMissing)
@@ -969,68 +984,70 @@
             (if unsafe
               1
               0))
+          (array-set!
+            shadow-flags
+            next
+            (if shadow
+              1
+              0))
           (i64-i64-map-put ids name-id next)))]))
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
   [ids : I64I64Map]
   [values : (Array AstType)]
-  [unsafe-flags : (Array i64)]) : I64I64Map
+  [unsafe-flags : (Array i64)]
+  [shadow-flags : (Array i64)]
+  [above-boundary : bool]) : I64I64Map
   (match env
     [(TcTypeNil) ids]
     [(TcTypeBind name-id ty rest)
-      (tc-env-cache-fill
-        (box-get rest)
-        (tc-env-cache-add
-          ids
+      (let
+        ;; The boundary bind itself and everything below it are not default
+        ;; shadows.
+        [still-above : bool
+          (if above-boundary
+            (not (= name-id (tc-default-boundary-id)))
+            false)]
+        (tc-env-cache-fill
+          (box-get rest)
+          (tc-env-cache-add
+            ids
+            values
+            unsafe-flags
+            shadow-flags
+            name-id
+            ty
+            (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
+            still-above)
           values
           unsafe-flags
-          name-id
-          ty
-          (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
+          shadow-flags
+          still-above))]
+    [(TcTypeCache _ _ _ _ _ rest)
+      (tc-env-cache-fill
+        (box-get rest)
+        ids
         values
-        unsafe-flags)]
-    [(TcTypeCache _ _ _ _ _ rest)
-      (tc-env-cache-fill (box-get rest) ids values unsafe-flags)]))
-
-(define (tc-env-default-shadow-count [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeNil) 0]
-    [(TcTypeBind name-id _ rest)
-      (if (= name-id (tc-default-boundary-id))
-        0
-        (+ 1 (tc-env-default-shadow-count (box-get rest))))]
-    [(TcTypeCache _ _ _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
-
-(define (tc-env-default-shadow-fill [env : TcTypeEnv] [shadows : I64I64Map]) : I64I64Map
-  (match env
-    [(TcTypeNil) shadows]
-    [(TcTypeBind name-id _ rest)
-      (if (= name-id (tc-default-boundary-id))
-        shadows
-        (tc-env-default-shadow-fill
-          (box-get rest)
-          (i64-i64-map-put shadows name-id 1)))]
-    [(TcTypeCache _ _ _ _ _ rest)
-      (tc-env-default-shadow-fill (box-get rest) shadows)]))
+        unsafe-flags
+        shadow-flags
+        above-boundary)]))
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (let
     [count : i64 (tc-env-cache-count env)]
-    [shadow-count : i64 (tc-env-default-shadow-count env)]
     [values : (Array AstType) (make-array AstType count)]
     [unsafe-flags : (Array i64) (make-array i64 count)]
+    [shadow-flags : (Array i64) (make-array i64 count)]
     [ids : I64I64Map
       (tc-env-cache-fill
         env
         (i64-i64-map-with-capacity (tc-env-cache-capacity count))
         values
-        unsafe-flags)]
-    [shadows : I64I64Map
-      (tc-env-default-shadow-fill
-        env
-        (i64-i64-map-with-capacity (tc-env-cache-capacity shadow-count)))]
-    (TcTypeCache ids values unsafe-flags shadows scan-through (box env))))
+        unsafe-flags
+        shadow-flags
+        true)]
+    (TcTypeCache ids values unsafe-flags shadow-flags scan-through (box env))))
 
 ;; Explicit top-env/module caches: marker scans terminate here.
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
@@ -6395,17 +6412,24 @@
 (define (tc-region-arg-builtin-name? [name : String]) : bool
   (compiler-builtin-typecheck-region-arg-id? (tc-builtin-name-id name)))
 
-(define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
+(define (tc-default-builtin-unshadowed-scan-id?
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ shadows _ _)
-      (not (i64-i64-map-contains? shadows (tc-name-id name)))]
+    [(TcTypeCache ids _ _ shadow-flags _ _)
+      (match (i64-i64-map-get ids name-id)
+        [(I64I64MapFound index) (not (= (array-ref shadow-flags index) 1))]
+        [(I64I64MapMissing) true])]
     [(TcTypeBind key _ rest)
-      (if (= key (tc-name-id name))
+      (if (= key name-id)
         false
         (if (= key (tc-default-boundary-id))
           true
-          (tc-default-builtin-unshadowed-scan? (box-get rest) name)))]))
+          (tc-default-builtin-unshadowed-scan-id? (box-get rest) name-id)))]))
+
+(define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
+  (tc-default-builtin-unshadowed-scan-id? env (tc-name-id name)))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
   (if (tc-region-arg-builtin-name? name)

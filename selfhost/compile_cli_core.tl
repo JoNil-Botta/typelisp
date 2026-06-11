@@ -616,10 +616,12 @@
       [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
       (if emit-ir
         (compiler-driver-write-result
-          (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
+          (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
             input-path
+            target
             stdlib-roots
             opt-level
+            backend-mode
             cfgs)
           output-path)
         (if has-target

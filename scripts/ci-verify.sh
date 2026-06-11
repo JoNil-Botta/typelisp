@@ -521,6 +521,7 @@ if [ "$HOST_OS" = linux ]; then
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action smoke" scripts/check-stage1-wrapper.sh
     fi
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
+    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 codegen target parity" scripts/check-codegen-target-parity.sh
     run_with_compiler "$SEED_TYPELISP_BIN" "comptime-type specialization smoke" \
         env TYPELISP_BOOTSTRAP_SMOKE_STAGE1_BIN="$BOOTSTRAPPED_STAGE1" scripts/check-bootstrap-smoke.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
@@ -539,6 +540,7 @@ else
     # symbols, so the manifest still uses stage1 expectation mode.
     run_with_compiler "$SELFHOST_CLI_BIN" "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_with_compiler "$SELFHOST_CLI_BIN" "deterministic assembly" scripts/check-deterministic-asm.sh
+    run_with_compiler "$SELFHOST_CLI_BIN" "codegen target parity" scripts/check-codegen-target-parity.sh
     run_with_compiler "$SELFHOST_CLI_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
 
     # The Windows stage2 self-compile allocation ceiling (#1601) is fixed on

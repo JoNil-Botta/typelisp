@@ -23,8 +23,9 @@ Language direction:
   lifetimes. Safe TypeLisp should not have undefined behavior. Move-only
   aggregates, lexical immutable/mutable borrow checking, lifetime-parameterized
   aggregates, and scoped arenas are implemented; #182 remains the umbrella map,
-  with non-lexical lifetimes (#810) and `struct-set!` (#1521) as the main open
-  slices.
+  with non-lexical lifetimes (#810) as the main open slice. Struct field-place
+  mutation through `(set! (struct-get place field) value)` is implemented by
+  #1521.
 - Treat ISPC-style SPMD as the data-parallel model. The current source surface
   is in [SPEC.md section 5.15](SPEC.md); masked varying `if` is in flight
   (#2131, #2205, #2207) and the post-masked-if queue is tracked by #2548.
@@ -69,9 +70,10 @@ of imitating transitional patterns still present in the tree:
 - **Strings**: `str-cat` (single-allocation variadic concat, #2576) and
   `text_buf` are the blessed forms; user-facing `string-append`/
   `string-concat` chains are deprecated (#2573).
-- **Mutation**: in-place mutation is the direction — `struct-set!` (#1521)
-  and mutable box access (#2553); copy-on-update is transitional and hot
-  paths migrate once those land (#2575).
+- **Mutation**: in-place mutation is the direction: struct field-place
+  assignment uses `(set! (struct-get place field) value)` (#1521), and mutable
+  box access is tracked by #2553. Copy-on-update is transitional and hot paths
+  migrate once those land (#2575).
 - **Memory + threads**: per-thread default arenas plus a shared atomic arena
   for concurrent allocation (#2591, #2593). Thread safety follows the Rust
   model via structural checker classification — no traits (#2590): values
@@ -499,7 +501,7 @@ nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`,
 arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
 (`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
-struct field.
+struct field, and `(set! (struct-get place field) value)` writes one in place.
 
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
@@ -563,8 +565,10 @@ reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are mutable
 buffers reached through a live owner handle or an exclusive mutable reference;
-`array-set!` and `array-push!` reject immutable-reference receivers. Structs are
-read-only today because `struct-set!` is not implemented. The current IR/ABI may
+`array-set!` and `array-push!` reject immutable-reference receivers. Struct
+fields can be mutated in place with `(set! (struct-get place field) value)`
+when the receiver is an owned storage place or mutable reference; immutable
+reference receivers are rejected. The current IR/ABI may
 still carry aggregate values through pointer-shaped heap handles in positions
 not covered by the new layout-query contract. Heap allocation uses a
 backend-emitted `tl_alloc` bump allocator and allocations live until process
@@ -830,13 +834,13 @@ lockfile. These flags are rejected for source-file builds.
 Implemented: lexer, parser, type checker, IR lowering, optimizer, and working
 x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/unit,
 `if`/`while`/`begin`, local & global variables, direct and indirect calls,
-`cast`, enums + `match`, structs + field access, dynamic arrays, strings,
+`cast`, enums + `match`, structs + field access/mutation, dynamic arrays, strings,
 `extern`, multi-file modules, scalar `foreach`, an initial SIMD `foreach`
 map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (mutation of captured
-names, indirect/closure tail calls, `struct-set!`, general GC/free,
-non-lexical lifetimes, masked varying SPMD control flow, and
+names, indirect/closure tail calls, general GC/free, non-lexical lifetimes,
+masked varying SPMD control flow, and
 later public SPMD/SIMD cross-lane work). Raw pointer types and unsafe pointer
 operations are implemented, including local scalar address-of scratch pointers
 for FFI out-params. Broader C-string and address-of ergonomics remain follow-up

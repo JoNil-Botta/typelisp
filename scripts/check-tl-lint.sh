@@ -49,6 +49,8 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
 FILES="$WORKDIR/files.txt"
+CURRENT_SYNTAX_FILES="$WORKDIR/current-syntax-files.txt"
+FILTERED_FILES="$WORKDIR/files.filtered"
 ACTUAL="$WORKDIR/findings.actual"
 STDOUT="$WORKDIR/lint.stdout"
 STDERR="$WORKDIR/lint.stderr"
@@ -64,6 +66,41 @@ git ls-files '*.tl' \
     | grep -v '^tests/format_golden/' \
     | grep -v '^tests/safety/' \
     | sort > "$FILES"
+
+: > "$CURRENT_SYNTAX_FILES"
+
+# Some integration fixtures intentionally land in the same PR as parser support
+# for their source syntax. The seed lint pass runs before the branch compiler is
+# built; defer those files only when the selected compiler cannot parse the new
+# syntax. The later fresh-selfhost lint pass uses the branch compiler and covers
+# them normally.
+if grep -F -x 'tests/integration/struct_field_set.tl' "$FILES" >/dev/null 2>&1; then
+    printf '%s\n' 'tests/integration/struct_field_set.tl' >> "$CURRENT_SYNTAX_FILES"
+fi
+
+compiler_supports_struct_field_set_lint() {
+    probe="$WORKDIR/struct-field-set-probe.tl"
+    cat > "$probe" <<'EOF'
+(defstruct Pair
+  (x i64)
+  (y i64))
+
+(define (main) : i64
+  (let
+    [p : Pair (Pair 1 2)]
+    (begin
+      (set! (struct-get p x) 3)
+      (struct-get p x))))
+EOF
+    "$COMPILER" lint "$probe" > "$WORKDIR/struct-field-set-probe.stdout" 2> "$WORKDIR/struct-field-set-probe.stderr"
+}
+
+if [ -s "$CURRENT_SYNTAX_FILES" ] && ! compiler_supports_struct_field_set_lint; then
+    grep -F -x -v -f "$CURRENT_SYNTAX_FILES" "$FILES" > "$FILTERED_FILES"
+    mv "$FILTERED_FILES" "$FILES"
+    deferred_count=$(wc -l < "$CURRENT_SYNTAX_FILES" | tr -d ' ')
+    echo "Deferring TypeLisp lint for $deferred_count current-syntax file(s) until the fresh selfhost lint pass."
+fi
 
 if [ ! -s "$FILES" ]; then
     echo "no TypeLisp source files selected for lint check" >&2

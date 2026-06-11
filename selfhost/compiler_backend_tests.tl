@@ -339,21 +339,6 @@
 (define (main) : i64
   (calc 10 5))")
 
-(define (compiler-backend-param-register-source) : String
-  "(define (param_id [x : i64]) : i64
-  x)
-(define (main) : i64
-  (param_id 42))")
-
-(define (compiler-backend-emit-source-with-scalar-registers [src : String]) : ResultCompilerBackend
-  (begin
-    (compiler-backend-set-scalar-registers! true)
-    (let
-      [result : ResultCompilerBackend (compiler-backend-emit-source src)]
-      (begin
-        (compiler-backend-set-scalar-registers! false)
-        result))))
-
 (define (compiler-backend-callee-save-source) : String
   "(define (heavy
   [a : i64]
@@ -1903,20 +1888,6 @@
         (compiler-backend-string-contains? asm "    imulq %r8, %rax\n")
         (not (compiler-backend-string-contains? asm "%r12"))
         true
-        true)]
-    [(ErrCompilerBackend _) false]))
-
-(define (compiler-backend-param-register-home-ok?) : bool
-  (match (compiler-backend-emit-source-with-scalar-registers
-    (compiler-backend-param-register-source))
-    [(OkCompilerBackend asm)
-      (backend-and4
-        (or
-          (compiler-backend-string-contains? asm "_tl_param_id")
-          (compiler-backend-string-contains? asm "_tl_f"))
-        (compiler-backend-string-contains? asm "    movq %rdi, %r12\n")
-        (not
-          (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n"))
         true)]
     [(ErrCompilerBackend _) false]))
 
@@ -6152,9 +6123,7 @@
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (compiler-backend-enum-match-ok?)
-      (and
-        (compiler-backend-regalloc-ok?)
-        (compiler-backend-param-register-home-ok?))
+      (compiler-backend-regalloc-ok?)
       (compiler-backend-peephole-ok?)
       (compiler-backend-phi-parallel-copy-ok?)
       (and (compiler-backend-f64-ok?) (compiler-backend-f32-literal-binop-ok?))

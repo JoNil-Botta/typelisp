@@ -5627,6 +5627,31 @@
   "(defmacro (bad [x : bool]) : bool (expr-bool? x))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-defmacro-pure-string-source) : String
+  "(define (string-append [left : String] [right : String]) : String left)
+(defmacro (answer-name) : i64 (expr-var (string-append \"ans\" \"wer\")))
+(define answer : i64 42)
+(define (main) : i64 (answer-name))")
+
+(define (compiler-typecheck-defmacro-unsafe-source) : String
+  "(defmacro (bad) : bool (unsafe (expr-bool true)))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-defmacro-extern-source) : String
+  "(extern (read-file [path : String]) : String)
+(defmacro (bad) : Expr (read-file \"input.txt\"))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-defmacro-transitive-extern-source) : String
+  "(extern (raw-read) : String)
+(define (helper) : String (raw-read))
+(defmacro (bad) : Expr (helper))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-comptime-decl-unsafe-template-source) : String
+  "(comptime-decl (define (bad) : i64 (unsafe 1)))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-quote-source) : String
   "(define (mk [e : Expr]) : Expr `(if ,e true false))
 (define (body [xs : ExprList]) : Expr `(begin ,@xs))
@@ -5653,12 +5678,25 @@
 (define (compiler-typecheck-defmacro-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
+    (compiler-typecheck-ok? (compiler-typecheck-defmacro-pure-string-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-produced-mismatch-source)
       "typecheck: macro body produced type does not match declaration")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-body-type-source)
-      "typecheck: macro body must return Expr")))
+      "typecheck: macro body must return Expr")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-unsafe-source)
+      "typecheck: comptime purity rejects unsafe block; reference path: bad -> unsafe")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-extern-source)
+      "typecheck: comptime purity rejects extern reference read-file; reference path: bad -> read-file")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-transitive-extern-source)
+      "typecheck: comptime purity rejects extern reference raw-read; reference path: bad -> helper -> raw-read")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-decl-unsafe-template-source)
+      "typecheck: comptime purity rejects unsafe block; reference path: comptime-decl -> unsafe")))
 
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;; A macro call in an evaluated position is expanded before typechecking; the

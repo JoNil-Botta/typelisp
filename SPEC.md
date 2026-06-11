@@ -797,6 +797,39 @@ Typed expansion has three checks:
 3. The expanded expression is checked again by the ordinary typechecker as a
    safety net; failures are compiler or macro diagnostics with expansion spans.
 
+#### 3.7.2.1 Comptime purity for macros and generated declarations
+
+`defmacro` bodies and `comptime-decl`/`comptime-decls` generated declaration
+templates are safe compile-time TypeLisp. The checked comptime path is a
+deterministic transformer over compiler-owned syntax and metadata, not a way to
+perform host I/O or call target FFI during compilation.
+
+The purity rule is direct and transitive through helpers reachable from the
+macro body or generated template:
+
+- `(unsafe ...)` blocks, unsafe declarations, raw-pointer operations, low-level
+  FFI bridge forms, direct syscalls, process entry state, and host CPU queries
+  are rejected.
+- `extern` declarations and references are rejected, including helper calls that
+  reach an extern.
+- The host-facing stdlib module families `io`, `fs`, `process`, and `env` are
+  off-limits in comptime paths. This covers both explicit qualified module
+  references and imported helper bodies that reach their extern/unsafe
+  implementation. `random` helpers are not banned as a module family, but any
+  system-seeded or host-facing implementation path is rejected by the same
+  extern/unsafe rule.
+- Allocation through the active compiler arena is allowed. Pure CTFE-supported
+  helpers such as string equality/concatenation, string length, `int->string`,
+  layout/reflection queries, and the `Expr`/`ExprList`/`ExprClause` constructor
+  and inspector surface remain available.
+
+The rule applies to the comptime path, not to every runtime call of the same
+function. A helper that is safe along the macro/comptime call graph may remain
+runtime-callable elsewhere; a helper reached from a macro or generated template
+is rejected if that reachable body depends on unsafe, extern, or banned host
+facilities. Diagnostics should point at the offending reference and include the
+reachable reference path, for example `macro -> helper -> extern-name`.
+
 Expansion runs after parsing/import loading and before runtime typechecking.
 The expander resolves a list head in the macro namespace first; if no macro is
 found, the form is left for ordinary value-call checking. A module may not

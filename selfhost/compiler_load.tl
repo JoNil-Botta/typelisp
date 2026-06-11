@@ -3071,10 +3071,17 @@
       [(OkPkgResolve path) (string-eq path "stdlib/core_macros.tl")]
       [(ErrPkgResolve _) false])))
 
-(define (compiler-load-test-mkdir [path : String]) : bool
+(define (compiler-load-test-mkdir-direct [path : String]) : bool
   (match (try-mkdir-if-missing (& path))
     [(OkIoUnit) true]
     [(ErrIoUnit _) false]))
+
+(define (compiler-load-test-mkdir [path : String]) : bool
+  (if (compiler-load-string-prefix-at? path "target/" 0)
+    (and
+      (compiler-load-test-mkdir-direct "target")
+      (compiler-load-test-mkdir-direct path))
+    (compiler-load-test-mkdir-direct path)))
 
 (define (compiler-load-session-cache-common-dep-ok?) : bool
   (let

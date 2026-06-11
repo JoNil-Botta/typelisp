@@ -27,6 +27,8 @@
 
 (include-str compiler-embedded-stdlib-list "stdlib/list.tl")
 
+(include-str compiler-embedded-stdlib-math "stdlib/math.tl")
+
 (include-str compiler-embedded-stdlib-msvc "stdlib/msvc.tl")
 
 (include-str compiler-embedded-stdlib-process "stdlib/process.tl")
@@ -95,6 +97,8 @@
 
 (include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-math-api "stdlib/tests/math_api.tl")
+
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-process-borrowed-check "stdlib/tests/process_borrowed_check.tl")
@@ -151,6 +155,8 @@
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)
     (string-eq suffix "list.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)
+    (string-eq suffix "math.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-math)
     (string-eq suffix "msvc.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)
     (string-eq suffix "process.tl")
@@ -235,6 +241,8 @@
       compiler-embedded-stdlib-tests-json-parse-stringify)
     (string-eq suffix "tests/list_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-list-api)
+    (string-eq suffix "tests/math_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-math-api)
     (string-eq suffix "tests/process_api.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-process-api)

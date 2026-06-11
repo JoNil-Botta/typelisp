@@ -80,6 +80,10 @@ Coverage notes:
 - `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
   checks, primitive key equality predicates, known collision behavior, hash
   range normalization, and string edge cases.
+- `math_api.tl` covers the pure scalar `math.tl` helpers for `i64` and `f64`:
+  negative/zero/positive absolute values and sign predicates, min/max order,
+  clamp low/high/inside cases, reversed bounds, and explicit signed-min
+  fallback behavior for integer abs.
 - `hashmap_api.tl` covers the compatibility `StringI64Map`, generated
   `StringStringMap` and `I64I64Map` APIs, key descriptor identities, borrowed
   string-key wrappers, update-only, entry-or-insert, live mutable-entry helpers,

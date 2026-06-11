@@ -315,10 +315,12 @@ compile_windows_c_deps() {
 # Integration cases that are not Windows-applicable in this manifest
 # (kept covered on Linux via native-linux.manifest):
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
+#   c_abi_sysv_*              Linux System V C ABI fixtures
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
 arena_poison_stale_array_trap
+c_abi_sysv_register_aggregate_args
 EOF
 }
 

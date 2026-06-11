@@ -1760,10 +1760,9 @@ fixed function type.
 Metadata appears outside the function head after the return type:
 
 - `(:abi c)` selects the C ABI. Unknown ABI names are rejected.
-- `(:abi c-varargs fixed-count)` is the legacy metadata form for target C
-  varargs. The `fixed-count` value is the number of non-variadic leading
-  parameters in the declared extern signature. It remains accepted for
-  compatibility, but must not be combined with a function-head varargs marker.
+- The legacy `(:abi c-varargs fixed-count)` metadata form is retired. Use a
+  function-head `...` or `...T` varargs marker instead; the fixed argument count
+  is derived from the marker position.
 - `(:symbol "exact_name")` supplies the external linker symbol independently of
   the local TypeLisp name.
 - `(:link-lib "name")` adds a native library input for source `build`/`run`.
@@ -1779,8 +1778,8 @@ For bare-name external data declarations, metadata appears before the `:`:
 (define (main) : i64 (+ foreign-counter (foreign-add-ptr 35)))
 ```
 
-`c-varargs` is valid only for direct function extern declarations, not for bare
-external data values or raw function-pointer data symbols.
+Function-head varargs are valid only for direct function extern declarations,
+not for bare external data values or raw function-pointer data symbols.
 
 Extern link metadata strings must be non-empty. Link metadata may be repeated.
 Source `build`/`run` collects extern-owned link inputs from the source and its
@@ -1806,11 +1805,10 @@ Raw pointer signatures do not make the pointer safe: nullability, validity,
 aliasing, lifetime, mutability, and target ABI correctness remain the caller and
 callee's contract.
 
-For `c-varargs` externs, including function-head varargs declarations, the
-backend emits the extra platform call setup needed by the C ABI: SysV x86_64
-sets `%al` to the vector-register argument count, and Windows x64 duplicates
-variadic floating-point register arguments into the corresponding integer
-argument registers.
+For function-head varargs declarations, the backend emits the extra platform
+call setup needed by the C ABI: SysV x86_64 sets `%al` to the vector-register
+argument count, and Windows x64 duplicates variadic floating-point register
+arguments into the corresponding integer argument registers.
 
 Example:
 ```lisp test=check name=extern-declaration
@@ -5422,7 +5420,6 @@ extern-param  ::= "[" ident ":" type "]"
 extern-varargs ::= "..."
                 | "[" ident ":" "..." ident "]"
 extern-meta   ::= "(" ":abi" "c" ")"
-                | "(" ":abi" "c-varargs" integer ")"
                 | "(" ":symbol" string ")"
                 | "(" ":link-lib" string ")"
                 | "(" ":link-search" string ")"

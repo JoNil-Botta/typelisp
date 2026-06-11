@@ -6685,36 +6685,24 @@
     [(CompilerBackendSomeSignature param-types _) param-types]
     [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
 
-(define (compiler-backend-extern-varargs-fixed-count
-  [externs : CompilerIrExternList]
-  [name : String]) : i64
-  (match externs
-    [(IrExternNil) -1]
-    [(IrExternCons item rest)
-      (match item
-        [(IrExtern extern-name _ abi link-symbol _ _)
-          (if (or (string-eq name extern-name) (string-eq name link-symbol))
-            (match abi
-              [(AstExternAbiCVarargs fixed-count) fixed-count]
-              [(AstExternAbiCVarargsOpen fixed-count) fixed-count]
-              [(AstExternAbiCVarargsTyped fixed-count _) fixed-count]
-              [_ -1])
-            (compiler-backend-extern-varargs-fixed-count (box-get rest) name))])]))
+(define (compiler-backend-extern-fixed-param-count [ty : AstType]) : i64
+  (match ty
+    [(AstTyFunc args _) (compiler-backend-type-list-count args)]
+    [_ -1]))
 
-(define (compiler-backend-dynamic-extern-varargs-fixed-count
+(define (compiler-backend-extern-varargs-fixed-param-count
   [externs : CompilerIrExternList]
   [name : String]) : i64
   (match externs
     [(IrExternNil) -1]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ abi link-symbol _ _)
+        [(IrExtern extern-name ty abi link-symbol _ _)
           (if (or (string-eq name extern-name) (string-eq name link-symbol))
-            (match abi
-              [(AstExternAbiCVarargsOpen fixed-count) fixed-count]
-              [(AstExternAbiCVarargsTyped fixed-count _) fixed-count]
-              [_ -1])
-            (compiler-backend-dynamic-extern-varargs-fixed-count
+            (if (ast-extern-abi-c-varargs? abi)
+              (compiler-backend-extern-fixed-param-count ty)
+              -1)
+            (compiler-backend-extern-varargs-fixed-param-count
               (box-get rest)
               name))])]))
 
@@ -6786,7 +6774,7 @@
   [param-types : AstTypeList]) : String
   (let
     [fixed-count : i64
-      (compiler-backend-extern-varargs-fixed-count externs name)]
+      (compiler-backend-extern-varargs-fixed-param-count externs name)]
     (if (< fixed-count 0)
       ""
       (match target
@@ -6886,7 +6874,7 @@
     [param-types : AstTypeList
       (compiler-backend-call-param-types-index name index)]
     [fixed-count : i64
-      (compiler-backend-dynamic-extern-varargs-fixed-count externs name)]
+      (compiler-backend-extern-varargs-fixed-param-count externs name)]
     (if (< fixed-count 0)
       (if (=
         (compiler-backend-call-args-count args)

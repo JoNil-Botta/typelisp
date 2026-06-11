@@ -154,9 +154,8 @@
 
 (defenum AstExternAbi
   (AstExternAbiC)
-  (AstExternAbiCVarargs i64)
-  (AstExternAbiCVarargsOpen i64)
-  (AstExternAbiCVarargsTyped i64 AstType))
+  (AstExternAbiCVarargsOpen)
+  (AstExternAbiCVarargsTyped AstType))
 
 (defenum AstExternKind
   (AstExternValue)
@@ -1645,37 +1644,28 @@
 (define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
   (match abi
     [(AstExternAbiC) true]
-    [(AstExternAbiCVarargs _) true]
-    [(AstExternAbiCVarargsOpen _) true]
-    [(AstExternAbiCVarargsTyped _ _) true]))
+    [(AstExternAbiCVarargsOpen) true]
+    [(AstExternAbiCVarargsTyped _) true]))
 
 (define (ast-extern-abi-c-varargs? [abi : AstExternAbi]) : bool
   (match abi
     [(AstExternAbiC) false]
-    [(AstExternAbiCVarargs _) true]
-    [(AstExternAbiCVarargsOpen _) true]
-    [(AstExternAbiCVarargsTyped _ _) true]))
-
-(define (ast-extern-abi-varargs-fixed-count [abi : AstExternAbi]) : i64
-  (match abi
-    [(AstExternAbiC) 0]
-    [(AstExternAbiCVarargs fixed-count) fixed-count]
-    [(AstExternAbiCVarargsOpen fixed-count) fixed-count]
-    [(AstExternAbiCVarargsTyped fixed-count _) fixed-count]))
+    [(AstExternAbiCVarargsOpen) true]
+    [(AstExternAbiCVarargsTyped _) true]))
 
 (define (ast-extern-abi-c-varargs-open? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiCVarargsOpen _) true]
+    [(AstExternAbiCVarargsOpen) true]
     [_ false]))
 
 (define (ast-extern-abi-c-varargs-typed? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiCVarargsTyped _ _) true]
+    [(AstExternAbiCVarargsTyped _) true]
     [_ false]))
 
 (define (ast-extern-abi-varargs-tail-type [abi : AstExternAbi]) : AstType
   (match abi
-    [(AstExternAbiCVarargsTyped _ ty) ty]
+    [(AstExternAbiCVarargsTyped ty) ty]
     [_ (AstTyUnit)]))
 
 (define (ast-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
@@ -1879,20 +1869,13 @@
       (match b
         [(AstExternAbiC) true]
         [_ false])]
-    [(AstExternAbiCVarargs afixed)
+    [(AstExternAbiCVarargsOpen)
       (match b
-        [(AstExternAbiCVarargs bfixed) (= afixed bfixed)]
+        [(AstExternAbiCVarargsOpen) true]
         [_ false])]
-    [(AstExternAbiCVarargsOpen afixed)
+    [(AstExternAbiCVarargsTyped aty)
       (match b
-        [(AstExternAbiCVarargsOpen bfixed) (= afixed bfixed)]
-        [_ false])]
-    [(AstExternAbiCVarargsTyped afixed _)
-      (match b
-        [(AstExternAbiCVarargsTyped bfixed bty)
-          (and
-            (= afixed bfixed)
-            (ast-type-eq? (ast-extern-abi-varargs-tail-type a) bty))]
+        [(AstExternAbiCVarargsTyped bty) (ast-type-eq? aty bty)]
         [_ false])]))
 
 (define (ast-extern-link-input-eq?

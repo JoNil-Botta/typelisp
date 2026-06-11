@@ -14474,6 +14474,18 @@
               (set! i (+ i 1))))
           (IrCallArgsArray out)))]))
 
+(define (opt-inline-remap-value-list
+  [values : CompilerIrValueList]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) IrValueNil]
+    [(IrValueCons value rest)
+      (compiler-ir-value-cons
+        (opt-inline-remap-value value sa np base)
+        (opt-inline-remap-value-list (box-get rest) sa np base))]))
+
 (define (opt-inline-clone-instr
   [instr : CompilerIrInstr]
   [sa : CompilerIrCallArgs]
@@ -14514,6 +14526,22 @@
         (opt-inline-rebase-var dst np base)
         op
         (opt-inline-remap-value src sa np base)
+        (clone ty))]
+    ;; #2634: Pack/Word were made inline-eligible by #2629 without remap arms,
+    ;; so inlined register-group instructions kept their CALLEE-local var ids
+    ;; inside the caller -- the third opt2 self-build miscompile (the
+    ;; stage2/stage3 fixpoint diverged and no-regalloc builds bounds-aborted
+    ;; in intern-str on garbage ids).
+    [(IrInstrPack dst words ty)
+      (IrInstrPack
+        (opt-inline-rebase-var dst np base)
+        (opt-inline-remap-value-list words sa np base)
+        (clone ty))]
+    [(IrInstrWord dst src index ty)
+      (IrInstrWord
+        (opt-inline-rebase-var dst np base)
+        (opt-inline-remap-value src sa np base)
+        index
         (clone ty))]
     [(IrInstrBoundsCheck idx len msg)
       (IrInstrBoundsCheck
@@ -18991,28 +19019,35 @@
               IrInstrNil))))
       IrBlockNil)))
 
+;; The caller passes its args from vars 1/2 (NOT the callee's param ids 0/1)
+;; and uses a spacer var 0, so a missing remap of the inlined Pack/Word
+;; operands is observable: the cloned Pack must read vars 1/2 (the call
+;; arguments), never the callee-local 0/1 (#2634 regression -- the inliner
+;; cloned Pack/Word through its catch-all without remapping).
 (define (opt-inline-pack-word-caller) : CompilerIrFunction
   (IrFunction
     "main"
     IrParamNil
     (AstTyI64)
-    3
+    4
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
+          (IrInstrMov 0 (IrValueI64 99) (AstTyI64))
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueI64 22) (AstTyI64))
+            (IrInstrMov 1 (IrValueI64 20) (AstTyI64))
             (compiler-ir-instr-cons
-              (IrInstrCall
-                2
-                "inline_group_word"
-                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
-                (AstTyI64))
+              (IrInstrMov 2 (IrValueI64 22) (AstTyI64))
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
-                IrInstrNil)))))
+                (IrInstrCall
+                  3
+                  "inline_group_word"
+                  (IrCallArgsTwo (IrValueVar 1) (IrValueVar 2))
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  IrInstrNil))))))
       IrBlockNil)))
 
 (define (opt-inline-pack-word-functions) : CompilerIrFunctionList
@@ -19487,17 +19522,73 @@
           (= (opt-count-direct-call-name b-instrs "inline_mut_a") 1)
           (= (opt-count-direct-call-name b-instrs "inline_mut_b") 0))))))
 
+(define (opt-inline-pack-words-are-vars-1-2? [words : CompilerIrValueList]) : bool
+  (match words
+    [(IrValueCons a arest)
+      (match a
+        [(IrValueVar av)
+          (match (box-get arest)
+            [(IrValueCons b brest)
+              (match b
+                [(IrValueVar bv)
+                  (match (box-get brest)
+                    [(IrValueNil) (and (= av 1) (= bv 2))]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+;; True when the inlined body contains a Pack reading the CALLER's argument
+;; vars (1/2, remapped from the callee's params 0/1) and a Word whose source
+;; is that Pack's (rebased) destination.
+(define (opt-inline-pack-word-remap-ok-scan
+  [instrs : CompilerIrInstrList]
+  [pack-dst : i64]
+  [pack-ok : bool]
+  [word-ok : bool]) : bool
+  (match instrs
+    [(IrInstrNil) (and pack-ok word-ok)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPack dst words _)
+          (opt-inline-pack-word-remap-ok-scan
+            (box-get rest)
+            dst
+            (opt-inline-pack-words-are-vars-1-2? words)
+            word-ok)]
+        [(IrInstrWord _ src _ _)
+          (opt-inline-pack-word-remap-ok-scan
+            (box-get rest)
+            pack-dst
+            pack-ok
+            (match src
+              [(IrValueVar sv) (= sv pack-dst)]
+              [_ false]))]
+        [_
+          (opt-inline-pack-word-remap-ok-scan
+            (box-get rest)
+            pack-dst
+            pack-ok
+            word-ok)])]))
+
 (define (compiler-optimize-inline-pack-word-ok?) : bool
   (let
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions (opt-inline-pack-word-functions) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptSomeFunction main)
-        (=
-          (opt-count-direct-call-name
+        (and
+          (=
+            (opt-count-direct-call-name
+              (opt-function-first-instrs main)
+              "inline_group_word")
+            0)
+          (opt-inline-pack-word-remap-ok-scan
             (opt-function-first-instrs main)
-            "inline_group_word")
-          0)]
+            (- 0 1)
+            false
+            false))]
       [(OptNoFunction) false])))
 
 (define (compiler-optimize-inline-census-direct-ok?) : bool
@@ -23288,16 +23379,32 @@
           (OptSomeAliasKind (opt-alias-fact-kind fact))
           (opt-alias-lookup rest var)))]))
 
-;; Drop any binding for `var` (a redefined/escaped temporary).
-(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+(define (opt-alias-bound? [facts : OptAliasFacts] [var : i64]) : bool
+  (match facts
+    [(OptAliasNil) false]
+    [(OptAliasCons fact rest)
+      (if (= (opt-alias-fact-var fact) var)
+        true
+        (opt-alias-bound? (box-get rest) var))]))
+
+(define (opt-alias-remove-var-scan [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasNil) (OptAliasNil)]
     [(OptAliasCons fact rest)
       (let
         [rest : OptAliasFacts (box-get rest)]
         (if (= (opt-alias-fact-var fact) var)
-          (opt-alias-remove-var rest var)
-          (OptAliasCons fact (box (opt-alias-remove-var rest var)))))]))
+          (opt-alias-remove-var-scan rest var)
+          (OptAliasCons fact (box (opt-alias-remove-var-scan rest var)))))]))
+
+;; Drop any binding for `var` (a redefined/escaped temporary). Every bind goes
+;; through a remove first, but fresh destinations are the overwhelmingly common
+;; case (~4% of a stage2 self-compile was spent re-boxing the whole spine per
+;; bound instruction), so removal of an absent var returns the list unchanged.
+(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (if (opt-alias-bound? facts var)
+    (opt-alias-remove-var-scan facts var)
+    facts))
 
 ;; Bind `var` to `kind`, replacing any prior binding for that var.
 (define (opt-alias-bind
@@ -23482,15 +23589,25 @@
         (OptSomeI64 (opt-load-entry-var entry))
         (opt-load-table-lookup (box-get rest) key))]))
 
-(define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
+(define (opt-load-table-remove-key-scan
+  [table : OptLoadTable]
+  [key : OptLoadKey]) : OptLoadTable
   (match table
     [(OptLoadNil) (OptLoadNil)]
     [(OptLoadCons entry rest)
       (let
-        [tail : OptLoadTable (opt-load-table-remove-key (box-get rest) key)]
+        [tail : OptLoadTable
+          (opt-load-table-remove-key-scan (box-get rest) key)]
         (if (opt-load-key-eq (opt-load-entry-key entry) key)
           tail
           (OptLoadCons entry (box tail))))]))
+
+;; Removal of an absent key returns the table unchanged instead of re-boxing
+;; the whole spine (see opt-alias-remove-var).
+(define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
+  (match (opt-load-table-lookup table key)
+    [(OptSomeI64 _) (opt-load-table-remove-key-scan table key)]
+    [(OptNoI64) table]))
 
 (define (opt-load-table-bind
   [table : OptLoadTable]
@@ -23500,21 +23617,38 @@
     (OptLoadEntry key var)
     (box (opt-load-table-remove-key table key))))
 
-;; Drop entries whose address expression references `var`, or whose cached load
-;; result was `var`. The IR is not globally SSA, so any reused var id must make
-;; old load facts disappear before the new instruction is processed.
-(define (opt-load-table-invalidate-var [table : OptLoadTable] [var : i64]) : OptLoadTable
+(define (opt-load-table-mentions-var? [table : OptLoadTable] [var : i64]) : bool
+  (match table
+    [(OptLoadNil) false]
+    [(OptLoadCons entry rest)
+      (if (or
+        (= (opt-load-entry-var entry) var)
+        (opt-load-key-uses-var? (opt-load-entry-key entry) var))
+        true
+        (opt-load-table-mentions-var? (box-get rest) var))]))
+
+(define (opt-load-table-invalidate-var-scan [table : OptLoadTable] [var : i64]) : OptLoadTable
   (match table
     [(OptLoadNil) (OptLoadNil)]
     [(OptLoadCons entry rest)
       (let
         [rest2 : OptLoadTable
-          (opt-load-table-invalidate-var (box-get rest) var)]
+          (opt-load-table-invalidate-var-scan (box-get rest) var)]
         (if (or
           (= (opt-load-entry-var entry) var)
           (opt-load-key-uses-var? (opt-load-entry-key entry) var))
           rest2
           (OptLoadCons entry (box rest2))))]))
+
+;; Drop entries whose address expression references `var`, or whose cached load
+;; result was `var`. The IR is not globally SSA, so any reused var id must make
+;; old load facts disappear before the new instruction is processed. This runs
+;; for every defining instruction, so the no-match case returns the table
+;; unchanged instead of re-boxing the whole spine.
+(define (opt-load-table-invalidate-var [table : OptLoadTable] [var : i64]) : OptLoadTable
+  (if (opt-load-table-mentions-var? table var)
+    (opt-load-table-invalidate-var-scan table var)
+    table))
 
 (define (opt-load-cse-state-invalidate-def
   [state : OptLoadCseState]

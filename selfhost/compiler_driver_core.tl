@@ -1119,21 +1119,24 @@
     opt-level
     (compiler-cfg-empty)))
 
-(define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
+(define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
+  [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
   (match (compiler-load-file-with-paths-and-roots-cfg
     input-path
     (sym-i64-empty)
     stdlib-roots
-    (compiler-driver-target-cfgs (BackendTargetLinux) cfgs))
+    (compiler-driver-target-cfgs target cfgs))
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths-mode
         input-path
         (ast-program decls)
-        paths)
+        paths
+        (compiler-driver-lower-mode-for-target target mode))
         [(OkCompilerLower program spans)
           (compiler-driver-emit-ir-summary-lowered-with-level
             program
@@ -1141,6 +1144,19 @@
             opt-level)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+
+(define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
+  [input-path : String]
+  [stdlib-roots : StringVec]
+  [opt-level : i64]
+  [cfgs : SymI64Env]) : ResultCompilerDriver
+  (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+    input-path
+    (BackendTargetLinux)
+    stdlib-roots
+    opt-level
+    (BackendModeScalar)
+    cfgs))
 
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target input-path (BackendTargetLinux) false))

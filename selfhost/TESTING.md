@@ -103,6 +103,26 @@ have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
 symbol-table drivers.
 
+### Cross-Target Codegen Parity
+
+Use [`../scripts/check-codegen-target-parity.sh`](../scripts/check-codegen-target-parity.sh)
+to catch Linux/Windows drift before backend assembly. The script compiles a
+small non-target-cfg corpus with `compile --emit-ir` for `linux-x86_64` and
+`windows-x86_64` at opt levels 0, 1, and 2, then diffs the deterministic IR
+summaries. It also fails if target-specific tokens appear in
+`selfhost/compiler_optimize.tl`, keeping the optimizer target-independent. A
+separate target-cfg probe confirms that `compile --emit-ir --target` is actually
+honoring the requested target.
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/check-codegen-target-parity.sh
+```
+
+The corpus intentionally avoids C ABI fixtures, source-level target cfgs, and
+runtime-helper-heavy programs; use the backend smoke tests for ABI-required
+differences such as argument registers, shadow space, sret, stack probing, entry
+symbols, and runtime shims.
+
 ### Assembly size reports
 
 Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
@@ -486,6 +506,7 @@ TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
+TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
 scripts/ci-verify.sh
 ```
 

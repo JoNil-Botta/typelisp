@@ -342,12 +342,13 @@
 ;; The pool is process-global and reset per compile (see ast-node-pool-reset!),
 ;; reusing one backing array; AstNodeId values stay valid because the pool only
 ;; grows within a compile (callers truncate via ast-node-pool-mark/reset on parse
-;; error). See the typelisp-flat-ast-rewrite memory for the full design.
+;; error). #2604: start below the old 4M slot baseline while staying large enough
+;; for current selfhost-sized programs to avoid persistent growth arrays.
 ;; Two flat globals (array + count) rather than a reassigned struct: the hot
 ;; push/get paths are inlined everywhere, and a global-struct reassign in that
 ;; hot path tripped an opt2 miscompile. Plain mutable globals keep codegen simple.
 (define ast-node-pool-slots : (Array AstExpr)
-  (make-array AstExpr 4000000))
+  (make-array AstExpr 3145728))
 
 ;; #2357: the program (base) arena, captured at global-init while it is the
 ;; active arena (the pool make-array above proves an allocation has happened, so

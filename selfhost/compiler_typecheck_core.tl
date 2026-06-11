@@ -1640,9 +1640,27 @@
         (tc-fn1 (AstTyI64) (AstTyI64)))]
     (tc-bind e6 (tc-default-boundary-name) (AstTyUnit))))
 
+(define (tc-macro-expr-clause-type) : AstType
+  (AstTyVar (intern "ExprClause")))
+
+(define (tc-macro-expr-clause-list-type) : AstType
+  (AstTyVar (intern "ExprClauseList")))
+
+(define (tc-macro-expr-clause-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyVar name) (= name (intern "ExprClause"))]
+    [_ false]))
+
+(define (tc-macro-expr-clause-list-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyVar name) (= name (intern "ExprClauseList"))]
+    [_ false]))
+
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
     [expr : AstType (AstTyExpr)]
+    [clause : AstType (tc-macro-expr-clause-type)]
+    [clause-list : AstType (tc-macro-expr-clause-list-type)]
     [out : TcTypeEnv env]
     (begin
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
@@ -1669,6 +1687,32 @@
       (set!
         out
         (tc-bind out "expr-list-nth" (tc-fn2 (AstTyExprList) (AstTyI64) expr)))
+      (set! out (tc-bind out "expr-clause-first" (tc-fn1 clause expr)))
+      (set! out (tc-bind out "expr-clause-second" (tc-fn1 clause expr)))
+      (set!
+        out
+        (tc-bind out "expr-clause-list-empty?" (tc-fn1 clause-list (AstTyBool))))
+      (set!
+        out
+        (tc-bind out "expr-clause-list-length" (tc-fn1 clause-list (AstTyI64))))
+      (set!
+        out
+        (tc-bind out "expr-clause-list-head" (tc-fn1 clause-list clause)))
+      (set!
+        out
+        (tc-bind out "expr-clause-list-tail" (tc-fn1 clause-list clause-list)))
+      (set!
+        out
+        (tc-bind
+          out
+          "expr-clause-list-nth"
+          (tc-fn2 clause-list (AstTyI64) clause)))
+      (set!
+        out
+        (tc-bind
+          out
+          "expr-clause-list->expr-list"
+          (tc-fn1 clause-list (AstTyExprList))))
       out)))
 
 (define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
@@ -3335,11 +3379,16 @@
                 (tc-resolved-nominal-type canonical-name handle)]
               [(ErrTcString _) (tc-resolved-nominal-type lookup-name handle)])]
           [(NoneI64)
-            (if (string-eq name "Expr")
+            (core/cond
+              (string-eq name "Expr")
               (AstTyExpr)
-              (if (string-eq name "ExprList")
-                (AstTyExprList)
-                (AstTyVar (intern name))))]))]))
+              (string-eq name "ExprList")
+              (AstTyExprList)
+              (string-eq name "ExprClause")
+              (tc-macro-expr-clause-type)
+              (string-eq name "ExprClauseList")
+              (tc-macro-expr-clause-list-type)
+              (AstTyVar (intern name)))]))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
   (if (tc-type-needs-resolution? ty)
@@ -3501,7 +3550,9 @@
     [(AstTyVarArgs name _)
       (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
     [(AstTyVar name)
-      (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
+      (if (or (= name (intern "ExprClause")) (= name (intern "ExprClauseList")))
+        OkTcUnit
+        (ErrTcUnit (tc-source-type-policy-message (intern-str name))))]
     [_ OkTcUnit]))
 
 (define (tc-source-maybe-type-policy-ok
@@ -3798,6 +3849,7 @@
         (match (tc-source-expr-policy-ok ctx func)
           [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprBracketClause items) (tc-source-expr-list-policy-ok ctx items)]
     [(AstExprTypeLiteral ty) (tc-source-type-policy-ok ctx ty)]
     [(AstExprInit maybe-ty) (tc-source-maybe-type-policy-ok ctx maybe-ty)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
@@ -5044,15 +5096,20 @@
       (let
         [rest : AstMacroParamList (box-get rest)]
         (match param
-          [(AstMacroParam name _ variadic)
+          [(AstMacroParam name ty variadic)
             (tc-bind-macro-params
               ctx
               (tc-bind-id
                 env
                 name
-                (if variadic
-                  (AstTyExprList)
-                  (AstTyExpr)))
+                (if (tc-macro-expr-clause-type?
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                  (if variadic
+                    (tc-macro-expr-clause-list-type)
+                    (tc-macro-expr-clause-type))
+                  (if variadic
+                    (AstTyExprList)
+                    (AstTyExpr))))
               rest)]))]))
 
 (define (tc-ctfe-env-extend-macro-params
@@ -5071,11 +5128,23 @@
               (ctfe-env-extend
                 env
                 (intern-str name)
-                (if variadic
-                  (CtfeExprList AstExprNil)
-                  (CtfeExpr
-                    (ast-node-push (AstExprVar name))
-                    (tc-resolve-type ctx (tc-macro-signature-type ty)))))
+                (if (tc-macro-expr-clause-type?
+                  (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                  (if variadic
+                    (CtfeExprClauseList AstExprClauseNil)
+                    (CtfeExprClause
+                      (ast-expr-clause
+                        (ast-node-push
+                          (AstExprVar
+                            (intern (string-append (intern-str name) "$first"))))
+                        (ast-node-push
+                          (AstExprVar
+                            (intern (string-append (intern-str name) "$second")))))))
+                  (if variadic
+                    (CtfeExprList AstExprNil)
+                    (CtfeExpr
+                      (ast-node-push (AstExprVar name))
+                      (tc-resolve-type ctx (tc-macro-signature-type ty))))))
               rest)]))]))
 
 (define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
@@ -8158,6 +8227,8 @@
           (and
             (tc-ref-closure-local-uses-ok? func name bound)
             (tc-ref-closure-expr-list-local-uses-ok? args name bound))))]
+    [(AstExprBracketClause items)
+      (tc-ref-closure-expr-list-local-uses-ok? items name bound)]
     [(AstExprIf cond-box then-box else-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -9214,6 +9285,13 @@
                           [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
                   [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprBracketClause items)
+      (match (tc-spmd-expr-list ctx env spmd-env items)
+        [(OkTcSpmdExprListInfo info)
+          (match info
+            [(TcSpmdExprListInfo class next-env)
+              (tc-spmd-finish expr-ty class next-env)])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -9962,6 +10040,8 @@
         (or
           (tc-expr-uses-free-name? func name bound)
           (tc-expr-list-uses-free-name? args name bound)))]
+    [(AstExprBracketClause items)
+      (tc-expr-list-uses-free-name? items name bound)]
     [(AstExprTypeLiteral _) false]
     [(AstExprInit _) false]
     [(AstExprIf cond-box then-branch-box else-branch-box)
@@ -10345,6 +10425,8 @@
         (or
           (tc-expr-sets-free-name? func name bound)
           (tc-expr-list-sets-free-name? args name bound)))]
+    [(AstExprBracketClause items)
+      (tc-expr-list-sets-free-name? items name bound)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -14738,6 +14820,8 @@
         (match (tc-quasiquote-template-ok ctx env func)
           [(OkTcUnit) (tc-quasiquote-template-list-ok ctx env args)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprBracketClause items)
+      (tc-quasiquote-template-list-ok ctx env items)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -15273,6 +15357,9 @@
       (let
         [func : AstExpr (ast-node-get func-box)]
         (tc-call-or-array-length ctx env func args))]
+    [(AstExprBracketClause _)
+      (ErrTcType
+        "typecheck: bracket clause is only valid as an ExprClause macro operand")]
     [(AstExprWhile cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -15453,7 +15540,10 @@
                     (string-append
                       (tc-type-render (tc-resolve-type ctx ty))
                       " is compile-time only")))]
-              [(CtfeExprList _) (OkTcType (AstTyExprList))])]
+              [(CtfeExprList _) (OkTcType (AstTyExprList))]
+              [(CtfeExprClause _) (OkTcType (tc-macro-expr-clause-type))]
+              [(CtfeExprClauseList _)
+                (OkTcType (tc-macro-expr-clause-list-type))])]
           [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))]))]
     [(AstExprQuote _) (OkTcType (AstTyExpr))]
     [(AstExprQuasiquote template-box)
@@ -15714,11 +15804,16 @@
 (define (tc-macro-signature-type [ty : AstType]) : AstType
   (match ty
     [(AstTyVar name)
-      (if (= name (intern "Expr"))
+      (core/cond
+        (= name (intern "Expr"))
         (AstTyExpr)
-        (if (= name (intern "ExprList"))
-          (AstTyExprList)
-          ty))]
+        (= name (intern "ExprList"))
+        (AstTyExprList)
+        (= name (intern "ExprClause"))
+        (tc-macro-expr-clause-type)
+        (= name (intern "ExprClauseList"))
+        (tc-macro-expr-clause-list-type)
+        ty)]
     [_ ty]))
 
 (define (tc-check-defmacro-produced-type
@@ -16991,6 +17086,8 @@
               [(ErrTcTypeList _)
                 (tc-move-check-exprs ctx env locals loop-carried moved1 args)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprBracketClause items)
+      (tc-move-check-exprs ctx env locals loop-carried moved items)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -18193,6 +18290,8 @@
                       args)]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprBracketClause items)
+      (tc-borrow-check-exprs ctx env locals borrowed items)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -18671,6 +18770,14 @@
   (OkMacroCheck)
   (ErrMacroCheck CompilerDiagnostic))
 
+(defenum ResultMacroClause
+  (OkMacroClause AstExprClause)
+  (ErrMacroClause CompilerDiagnostic))
+
+(defenum ResultMacroClauseList
+  (OkMacroClauseList AstExprClauseList)
+  (ErrMacroClauseList CompilerDiagnostic))
+
 (defenum ResultMacroDecl
   (OkMacroDecl AstDecl)
   (ErrMacroDecl CompilerDiagnostic))
@@ -19049,6 +19156,9 @@
         (ast-expr-call
           (macro-hygiene-expr func env macro-name depth)
           (macro-hygiene-expr-list args env macro-name depth)))]
+    [(AstExprBracketClause items)
+      (ast-expr-bracket-clause
+        (macro-hygiene-expr-list items env macro-name depth))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
@@ -19887,6 +19997,86 @@
     (tc-type-render expected)
     (tc-cat3 ", got " (tc-type-render actual) "")))
 
+(define (macro-clause-shape-message) : String
+  "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
+
+(define (macro-clause-operand-mismatch-message [expected : AstType]) : String
+  (tc-cat3
+    "typecheck: macro operand type mismatch: expected "
+    (tc-type-render expected)
+    ", got bracket clause"))
+
+(define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
+  (match items
+    [(AstExprCons first rest1)
+      (let
+        [rest1 : AstExprList (box-get rest1)]
+        (match rest1
+          [(AstExprCons second rest2)
+            (match (box-get rest2)
+              [(AstExprNil) (OkMacroClause (ast-expr-clause first second))]
+              [_
+                (ErrMacroClause
+                  (ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))])]
+          [_
+            (ErrMacroClause
+              (ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))]))]
+    [_
+      (ErrMacroClause
+        (ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))]))
+
+(define (macro-expr-clause-from-arg [arg : AstExpr]) : ResultMacroClause
+  (match (ast-expr-unspan arg)
+    [(AstExprBracketClause items) (macro-expr-clause-from-items arg items)]
+    [_
+      (ErrMacroClause
+        (ctfe-diagnostic-at-expr
+          arg
+          "typecheck: ExprClause macro operand expects bracket syntax"))]))
+
+(define (macro-expr-clause-list-from-args [args : AstExprList]) : ResultMacroClauseList
+  (match args
+    [(AstExprNil) (OkMacroClauseList AstExprClauseNil)]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (macro-expr-clause-from-arg head-expr)
+          [(OkMacroClause clause)
+            (match (macro-expr-clause-list-from-args rest)
+              [(OkMacroClauseList clauses)
+                (OkMacroClauseList (ast-expr-clause-cons clause clauses))]
+              [(ErrMacroClauseList diag) (ErrMacroClauseList diag)])]
+          [(ErrMacroClause diag) (ErrMacroClauseList diag)]))]))
+
+(define (macro-check-ordinary-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [resolved-expected : AstType]
+  [arg : AstExpr]) : ResultMacroCheck
+  (if (tc-type-eq resolved-expected (AstTyExpr))
+    OkMacroCheck
+    (match (tc-expr ctx env arg)
+      [(OkTcType actual)
+        (if (tc-type-compatible? resolved-expected actual)
+          OkMacroCheck
+          (ErrMacroCheck
+            (tc-expr-diag
+              arg
+              (macro-operand-mismatch-message resolved-expected actual))))]
+      [(ErrTcType message)
+        (ErrMacroCheck
+          (tc-expr-diag
+            arg
+            (string-append
+              "typecheck: macro operand typecheck failed: "
+              message)))])))
+
+(define (macro-operand-bracket-clause? [arg : AstExpr]) : bool
+  (match (ast-expr-unspan arg)
+    [(AstExprBracketClause _) true]
+    [_ false]))
+
 (define (macro-check-operand
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -19895,23 +20085,17 @@
   (let
     [resolved-expected : AstType
       (tc-resolve-type ctx (tc-macro-signature-type expected))]
-    (if (tc-type-eq resolved-expected (AstTyExpr))
-      OkMacroCheck
-      (match (tc-expr ctx env arg)
-        [(OkTcType actual)
-          (if (tc-type-compatible? resolved-expected actual)
-            OkMacroCheck
-            (ErrMacroCheck
-              (tc-expr-diag
-                arg
-                (macro-operand-mismatch-message resolved-expected actual))))]
-        [(ErrTcType message)
-          (ErrMacroCheck
-            (tc-expr-diag
-              arg
-              (string-append
-                "typecheck: macro operand typecheck failed: "
-                message)))]))))
+    (core/cond
+      (tc-macro-expr-clause-type? resolved-expected)
+      (match (macro-expr-clause-from-arg arg)
+        [(OkMacroClause _) OkMacroCheck]
+        [(ErrMacroClause diag) (ErrMacroCheck diag)])
+      (macro-operand-bracket-clause? arg)
+      (ErrMacroCheck
+        (ctfe-diagnostic-at-expr
+          arg
+          (macro-clause-operand-mismatch-message resolved-expected)))
+      (macro-check-ordinary-operand ctx env resolved-expected arg))))
 
 (define (macro-check-variadic-operands
   [ctx : TcContext]
@@ -19927,6 +20111,52 @@
         (match (macro-check-operand ctx env expected head)
           [(OkMacroCheck) (macro-check-variadic-operands ctx env expected rest)]
           [(ErrMacroCheck diag) (ErrMacroCheck diag)]))]))
+
+(define (macro-param-expr-clause? [ctx : TcContext] [ty : AstType]) : bool
+  (tc-macro-expr-clause-type?
+    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+
+(define (macro-bind-variadic-param
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name : i64]
+  [ty : AstType]
+  [args : AstExprList]
+  [env : CtfeEnv]) : ResultMacroEnv
+  (if (macro-param-expr-clause? ctx ty)
+    (match (macro-expr-clause-list-from-args args)
+      [(OkMacroClauseList clauses)
+        (OkMacroEnv
+          (CtfeEnvCons (intern-str name) (CtfeExprClauseList clauses) (box env)))]
+      [(ErrMacroClauseList diag) (ErrMacroEnv diag)])
+    (match (macro-check-variadic-operands ctx type-env ty args)
+      [(OkMacroCheck)
+        (OkMacroEnv
+          (CtfeEnvCons (intern-str name) (CtfeExprList args) (box env)))]
+      [(ErrMacroCheck diag) (ErrMacroEnv diag)])))
+
+(define (macro-bind-fixed-param
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name : i64]
+  [ty : AstType]
+  [arg-id : i64]
+  [arg-expr : AstExpr]
+  [env : CtfeEnv]) : ResultMacroEnv
+  (if (macro-param-expr-clause? ctx ty)
+    (match (macro-expr-clause-from-arg arg-expr)
+      [(OkMacroClause clause)
+        (OkMacroEnv
+          (CtfeEnvCons (intern-str name) (CtfeExprClause clause) (box env)))]
+      [(ErrMacroClause diag) (ErrMacroEnv diag)])
+    (match (macro-check-operand ctx type-env ty arg-expr)
+      [(OkMacroCheck)
+        (OkMacroEnv
+          (CtfeEnvCons
+            (intern-str name)
+            (CtfeExpr arg-id (tc-resolve-type ctx (tc-macro-signature-type ty)))
+            (box env)))]
+      [(ErrMacroCheck diag) (ErrMacroEnv diag)])))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
@@ -19952,14 +20182,7 @@
         (match param
           [(AstMacroParam pname pty variadic)
             (if variadic
-              (match (macro-check-variadic-operands ctx type-env pty args)
-                [(OkMacroCheck)
-                  (OkMacroEnv
-                    (CtfeEnvCons
-                      (intern-str pname)
-                      (CtfeExprList args)
-                      (box env)))]
-                [(ErrMacroCheck diag) (ErrMacroEnv diag)])
+              (macro-bind-variadic-param ctx type-env pname pty args env)
               (match args
                 [(AstExprNil)
                   (ErrMacroEnv
@@ -19968,28 +20191,25 @@
                       "macro call has too few arguments"))]
                 [(AstExprCons arg rest-args)
                   (let
+                    [arg-expr : AstExpr (ast-node-get arg)]
                     [rest-args : AstExprList (box-get rest-args)]
-                    (match (macro-check-operand
+                    (match (macro-bind-fixed-param
                       ctx
                       type-env
+                      pname
                       pty
-                      (ast-node-get arg))
-                      [(OkMacroCheck)
+                      arg
+                      arg-expr
+                      env)
+                      [(OkMacroEnv next-env)
                         (macro-bind-params
                           ctx
                           type-env
                           rest-params
                           rest-args
-                          (CtfeEnvCons
-                            (intern-str pname)
-                            (CtfeExpr
-                              arg
-                              (tc-resolve-type
-                                ctx
-                                (tc-macro-signature-type pty)))
-                            (box env))
+                          next-env
                           call-expr)]
-                      [(ErrMacroCheck diag) (ErrMacroEnv diag)]))]))]))]))
+                      [(ErrMacroEnv diag) (ErrMacroEnv diag)]))]))]))]))
 
 ;; Run a macro transformer via CTFE and re-expand its produced form to a fixpoint.
 (define (macro-expand-call
@@ -20321,6 +20541,11 @@
                         [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
                     [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
             [(ErrMacroCallDecl diag) (ErrMacroExpr diag)]))]
+      [(AstExprBracketClause items)
+        (match (macro-expand-exprs ctx env decls depth items)
+          [(OkMacroExprList nitems)
+            (OkMacroExpr (ast-expr-bracket-clause nitems))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprBinary op left-box right-box)
         (let
           [left : AstExpr (ast-node-get left-box)]
@@ -20762,6 +20987,7 @@
           (macro-call-is-expandable? ctx decls func expr)
           (macro-expr-uses-macro? ctx decls func)
           (macro-exprs-use-macro? ctx decls args)))]
+    [(AstExprBracketClause items) (macro-exprs-use-macro? ctx decls items)]
     [(AstExprBinary _ l r)
       (or
         (macro-node-uses-macro? ctx decls l)
@@ -20943,6 +21169,7 @@
       (or
         (ctfe-node-has-type-literal? func-box)
         (ctfe-exprs-have-type-literal? args))]
+    [(AstExprBracketClause items) (ctfe-exprs-have-type-literal? items)]
     [(AstExprBinary _ l r)
       (or (ctfe-node-has-type-literal? l) (ctfe-node-has-type-literal? r))]
     [(AstExprUnary _ i) (ctfe-node-has-type-literal? i)]

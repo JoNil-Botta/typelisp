@@ -54,10 +54,10 @@ transitional surface:
   qualified short names once that migration lands (#2582/#2583). Linker
   symbols already carry module-qualified names.
 - **Core macro surface.** Bare prelude macros are canonical (#2581); `cond`
-  regains bracket arms `(cond [test expr] ... [else fallback])` as a
-  macro-owned surface and the flat call shape is removed in the same change
-  (#2578/#2579, reversing the #2490 retirement). Macros become
-  order-independent within a module (#2584).
+  regains bracket arms `(cond [test expr] ... [else fallback])` through the
+  macro-owned bracket operand surface (#2578), and the flat call shape is
+  removed when the core macro migrates (#2579, reversing the #2490 retirement).
+  Macros become order-independent within a module (#2584).
 - **Mutation.** In-place mutation arrives via `struct-set!` (#1521) and
   mutable box access (#2553); the move/borrow rules in sections 3.10 and
   4.6.2 are the contract it must satisfy.
@@ -677,8 +677,9 @@ V1 exclusions:
 
 - No source-level generic type constructors, generic functions, traits,
   `impl` blocks, trait objects, vtables, or runtime type-erased dispatch.
-- No runtime representation for `type`, `Expr`, `ExprList`, declaration
-  metadata, generated keys, or other comptime-only values.
+- No runtime representation for `type`, `Expr`, `ExprList`, `ExprClause`,
+  `ExprClauseList`, declaration metadata, generated keys, or other
+  comptime-only values.
 - No generated public Rust compiler product surface; this is a selfhost
   compiler feature.
 - No generated declaration kinds beyond `defstruct`, `defenum`, and `define`.
@@ -698,26 +699,42 @@ value and cannot be stored in variables, passed to functions, placed in fields,
 or called indirectly.
 
 Macro signatures use ordinary produced types, with `Expr` as an explicit
-wildcard capture. The operands received by the macro body are unevaluated code
-fragments of the single compiler-provided `Expr` type. An operand slot with an
-ordinary type states the type that the operand expression must produce at the
+wildcard capture and `ExprClause` as a bracket-clause capture. An ordinary
+operand slot states the type that the operand expression must produce at the
 call site. For example, a macro with type `(macro (bool bool) bool)` takes two
 operand expressions that must each typecheck as `bool` and produces an
 expression that must typecheck as `bool`. A fixed slot declared `Expr` accepts
-any operand expression without checking its produced type before expansion; the
-macro receives the syntax as an `Expr`, and ordinary typechecking validates the
-expanded expression afterward. A final slot may be variadic, written `T ...`;
-the macro body receives those remaining operands as an `ExprList`. For
-`Expr ...`, the remaining operands are captured without per-operand produced
-type checks.
-Macro bodies can inspect variadic captures with `expr-list-empty?`,
-`expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
+any ordinary operand expression without checking its produced type before
+expansion; the macro receives the syntax as an `Expr`, and ordinary
+typechecking validates the expanded expression afterward.
 
-`Expr` and `ExprList` are compile-time-only types. They are valid in macro
-bodies and explicit `(comptime ...)` helper code, but they have no runtime
-representation. The compiler tracks the checked produced type of each `Expr`
-internally; there is no source-level `Expr<T>` and no generic macro type
-parameter.
+A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
+`[first second]`, where `first` and `second` are ordinary expressions preserved
+as syntax. The bracket form is valid only in macro call operands; it is not a
+general expression, and ordinary calls or non-`ExprClause` macro slots reject it
+with a source-located diagnostic. Empty clauses, one-element clauses, and
+clauses with more than two elements are rejected.
+
+A final slot may be variadic, written `T ...`. For ordinary `T`, the macro body
+receives the remaining operands as an `ExprList`; for `Expr ...`, they are
+captured without per-operand produced-type checks. For `ExprClause ...`, every
+remaining operand must be a two-expression bracket clause and the macro body
+receives an `ExprClauseList`.
+
+Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
+`expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
+They can inspect clause captures with `expr-clause-first`,
+`expr-clause-second`, `expr-clause-list-empty?`,
+`expr-clause-list-length`, `expr-clause-list-head`,
+`expr-clause-list-tail`, and `expr-clause-list-nth`.
+`expr-clause-list->expr-list` converts a clause list back into a list of
+bracket-clause operand syntax for explicit splicing into recursive macro calls.
+
+`Expr`, `ExprList`, `ExprClause`, and `ExprClauseList` are compile-time-only
+types. They are valid in macro bodies and explicit `(comptime ...)` helper
+code, but they have no runtime representation. The compiler tracks the checked
+produced type of each `Expr` internally; there is no source-level `Expr<T>` and
+no generic macro type parameter.
 
 Macro bodies build expression values with quote forms. The reader accepts both
 prefix shorthand and the equivalent list-headed forms:
@@ -733,7 +750,9 @@ prefix shorthand and the equivalent list-headed forms:
 `quasiquote` produces an `Expr` while evaluating `unquote` operands as
 compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
 evaluates to an `ExprList` and splices that list into the surrounding template
-list. `unquote` and `unquote-splicing` outside quasiquote are rejected.
+list. Clause lists do not splice implicitly; use `expr-clause-list->expr-list`
+when a macro needs to splice generated bracket operands. `unquote` and
+`unquote-splicing` outside quasiquote are rejected.
 
 The source surface is:
 
@@ -744,21 +763,34 @@ The source surface is:
 (defmacro (all [first : bool] [rest : bool ...]) : bool
   ;; `first` is an Expr; `rest` is an ExprList.
   (fold-bool-and first rest))
+
+(defmacro (pick-first [arms : ExprClause ...]) : i64
+  (if (expr-clause-list-empty? arms)
+    (expr-int 0)
+    `(if ,(expr-clause-first (expr-clause-list-head arms))
+       ,(expr-clause-second (expr-clause-list-head arms))
+       (pick-first ,@(expr-clause-list->expr-list
+                       (expr-clause-list-tail arms))))))
 ```
 
 The canonical binding types for those declarations are `(macro (bool bool)
-bool)` and `(macro (bool bool ...) bool)`. The `defmacro` operand list names
-the macro body's compile-time parameters and their call-site produced types.
-Fixed operands bind as `Expr`; a variadic final operand binds as `ExprList`.
-The macro body must typecheck as `Expr`, and the produced fragment must
-post-expand typecheck as the declared result type.
+bool)`, `(macro (bool bool ...) bool)`, and
+`(macro (ExprClause ...) i64)`. The `defmacro` operand list names the macro
+body's compile-time parameters and their call-site produced types. Fixed
+ordinary operands bind as `Expr`, fixed `ExprClause` operands bind as
+`ExprClause`, variadic ordinary operands bind as `ExprList`, and variadic
+`ExprClause` operands bind as `ExprClauseList`. The macro body must typecheck
+as `Expr`, and the produced fragment must post-expand typecheck as the declared
+result type.
 
 Typed expansion has three checks:
 
 1. The macro call site is checked from the macro signature before expansion.
    Ordinary operand type errors are reported at the operand source span; `Expr`
-   operands are wildcard syntax captures and skip the produced-type check.
-2. The macro body is checked as compile-time TypeLisp over `Expr`/`ExprList`.
+   operands are wildcard syntax captures and skip the produced-type check;
+   `ExprClause` operands must use `[expr expr]` syntax.
+2. The macro body is checked as compile-time TypeLisp over the macro-only
+   syntax types.
 3. The expanded expression is checked again by the ordinary typechecker as a
    safety net; failures are compiler or macro diagnostics with expansion spans.
 
@@ -5289,7 +5321,10 @@ expr          ::= literal
                 | "(" "size-of" expr ")"
                 | "(" "align-of" expr ")"
                 | "(" "offset-of" expr ident ")"
-                | "(" expr expr* ")"          ; function call
+                | "(" expr call-operand* ")"  ; function or macro call
+
+call-operand  ::= expr
+                | "[" expr expr "]"            ; macro-only ExprClause operand
 
 borrow-expr   ::= "(" "&" borrow-place ")"
                 | "(" "&" ident borrow-place ")"
@@ -5319,6 +5354,7 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "String"
                 | "str"                               ; borrowed referent only
                 | "Expr" | "ExprList"               ; compile-time-only macro body values
+                | "ExprClause" | "ExprClauseList"   ; macro-only bracket operand values
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | ptr-type

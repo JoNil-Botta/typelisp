@@ -62,9 +62,10 @@ of imitating transitional patterns still present in the tree:
   end-state is qualified short names such as `str/append` (#2582, #2583).
 - **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
   `cond`) are canonical; qualified `core/` calls are transitional (#2581).
+  Macros support bracket operands for clause-shaped surfaces (#2578), and
   `cond` returns to bracket arms `(cond [test expr] ... [else fallback])`
-  once macros gain bracket operands; the flat call shape is transitional
-  (#2578, #2579). Macros become order-independent within a module (#2584).
+  when the core macro is migrated; the flat call shape is transitional (#2579).
+  Macros become order-independent within a module (#2584).
 - **Strings**: `str-cat` (single-allocation variadic concat, #2576) and
   `text_buf` are the blessed forms; user-facing `string-append`/
   `string-concat` chains are deprecated (#2573).

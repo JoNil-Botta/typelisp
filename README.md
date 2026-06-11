@@ -331,13 +331,15 @@ Assembly and object side artifacts use the same `target/<profile>/` directory.
 use a local path relative to that same package root, an absolute path, or the
 GitHub shorthand form shown above. `tag` and `branch` pins are also accepted,
 and the shorthand normalizes to
-`https://github.com/owner/repo.git#rev=commit`. Remote entries are fetched with
-`git` into `target/typelisp/git-deps/<alias>` below the declaring package root,
-then checked out detached at the requested `rev`, `tag`, or `branch` before the
-package graph consumes them. A pre-existing fetched root with `typelisp.pkg` is
-used as-is unless it has a `.git` directory, in which case the checkout is
-refreshed. Build-time lockfile replay and update-policy support remains future
-work.
+`https://github.com/owner/repo.git#rev=commit`. Remote entries are resolved
+through `typelisp.lock` and the package cache. When an existing lock entry
+matches the manifest alias, normalized URL, and requested `rev`/`tag`/`branch`
+pin, package builds replay the recorded commit as an exact `rev`; otherwise the
+requested pin is resolved and the lockfile is rewritten deterministically. A
+pre-existing legacy fetch root under `target/typelisp/git-deps/<alias>` with
+`typelisp.pkg` is used as-is unless it has a `.git` directory, in which case the
+checkout is refreshed. Explicit locked/update policy flags remain future work
+(#2665).
 
 Resolved remote package pins can be represented in `typelisp.lock`, a
 deterministic v1 S-expression lockfile:
@@ -357,17 +359,20 @@ Each dependency records its manifest alias, normalized URL, original pin
 kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. The selfhost
 lockfile helper parses this format with duplicate, missing-field, malformed,
 non-string, and unknown-version diagnostics, and emits entries in stable alias
-order. It does not invoke git or change build behavior yet.
+order. Package builds consume that model through `build_cli_core.tl`: matching
+entries pin remote dependencies to the recorded commit, missing or stale entries
+are refreshed from the manifest pin, and a deterministic lockfile is written
+when remote dependencies or a prior lockfile are present.
 
 Remote package cache helpers use a deterministic v1 layout under the package
 root at `target/typelisp/cache/packages/v1`. Cache entries are keyed by the
 normalized remote URL plus an exact `rev` commit pin; `tag` and `branch` pins
-must be resolved before they can be reused as cache entries. Each complete entry
-stores full metadata beside a completion marker so missing markers, partial
-writes, and metadata mismatches are treated as non-reusable. This helper layer
-does not invoke git or change build behavior yet. Staging finalization delegates
-to the stdlib rename helper; callers must handle unsupported or target-defined
-directory rename behavior as a failed, non-reusable staging attempt.
+must be resolved, either from `typelisp.lock` or from `git`, before they can be
+reused as cache entries. Complete entries with matching metadata, completion
+marker, and `typelisp.pkg` are reused without invoking `git`. Missing entries,
+partial writes, corrupt metadata, or stale marker state are fetched into a
+staging directory and finalized through the package-cache helpers; conflicting
+corrupt entries are preserved with a `.corrupt.N` suffix before replacement.
 
 The repository root is also a package. From a checkout, `typelisp build` builds
 the unified selfhost CLI from `selfhost/cli.tl` and writes
@@ -400,9 +405,9 @@ fallback behavior.
 Under the legacy loader, imported package definitions share the same flat
 top-level namespace as local modules, so duplicate value or type names fail
 through the existing duplicate definition diagnostics. The package slice still
-has no registry, version solving, lockfile replay, or workspace model;
-namespace isolation and qualified symbol lookup are specified for the selfhost
-module model in `SPEC.md`.
+has no registry, version solving, or workspace model (#2666); namespace
+isolation and qualified symbol lookup are specified for the selfhost module
+model in `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and

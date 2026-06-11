@@ -1037,6 +1037,11 @@
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (tltest-reach-mark-expr receiver names))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (tltest-reach-mark-expr value (tltest-reach-mark-expr receiver names)))]
     [(AstExprWithRegion _ body) (tltest-reach-mark-expr-list body names)]
     [(AstExprWithEscape scratch-box body)
       (let

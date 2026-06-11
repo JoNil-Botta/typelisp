@@ -58,9 +58,10 @@ transitional surface:
   macro-owned bracket operand surface (#2578), and the flat call shape is
   removed when the core macro migrates (#2579, reversing the #2490 retirement).
   Macros become order-independent within a module (#2584).
-- **Mutation.** In-place mutation arrives via `struct-set!` (#1521) and
-  mutable box access (#2553); the move/borrow rules in sections 3.10 and
-  4.6.2 are the contract it must satisfy.
+- **Mutation.** In-place struct field mutation is written as
+  `(set! (struct-get place field) value)` (#1521). Mutable box access remains
+  tracked by #2553; the move/borrow rules in sections 3.10 and 4.6.2 are the
+  contract mutation must satisfy.
 - **Memory and threads.** Each thread gets its own default arena; a shared
   atomic arena supports concurrent allocation (#2591/#2593). Thread safety
   extends the section 1.1 no-UB contract through structural checker
@@ -456,6 +457,8 @@ Examples:
 - Layout: fields stored sequentially with natural alignment per field. No tag word.
 - Constructor syntax: `(Point 10 20)` — a call-like expression.
 - Field access: `(struct-get p x)` — generates a GEP+load at the field's byte offset.
+- Field mutation: `(set! (struct-get place x) value)` writes one field in
+  place and returns `unit`.
 - Structs are heap-allocated when returned from functions (same rule as enums).
 - Not valid as global variables.
 
@@ -2445,6 +2448,9 @@ without moving it. In v1 these are limited to:
 - `array-set!` and `array-push!` on an owned array receiver or mutable
   reference receiver. These operations mutate the array storage and do not move
   the array handle; immutable-reference receivers are rejected.
+- Struct field-place assignment `(set! (struct-get place field) value)` on an
+  owned struct receiver or mutable-reference receiver. This mutates only the
+  selected field; immutable-reference receivers are rejected.
 
 Ordinary user-defined function parameters are by-value unless their type is a
 future reference type. Passing a `String`, array, tuple, struct, enum, or
@@ -2461,12 +2467,12 @@ reinitializes only that exact path after the receiver, index, and value have
 been checked. Reinitializing one element does not clear sibling moved paths; if
 it clears the final moved path for the root, the partial-root marker is removed.
 Dynamic-array elements, non-literal indexes, boxes, and unsupported path forms
-do not clear moved state. Struct field assignment remains deferred until
-`struct-set!` exists (#1521). `struct-get`, `tuple-ref`, and `array-ref` may copy
-out only copyable fields or elements, and may move out move-only fields/elements
-only where this tracked-path policy accepts the path. A consuming `match` is the
-enum exception: it moves the whole scrutinee first, then binds payload values
-owned by the selected arm.
+do not clear moved state. Struct field-place assignment reinitializes the
+selected tracked path when the receiver path is supported. `struct-get`,
+`tuple-ref`, and `array-ref` may copy out only copyable fields or elements, and
+may move out move-only fields/elements only where this tracked-path policy
+accepts the path. A consuming `match` is the enum exception: it moves the whole
+scrutinee first, then binds payload values owned by the selected arm.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
@@ -4639,10 +4645,10 @@ not the future safe reference/borrow model (#182), not a replacement for
   4.6.2. Explicit shared mutable aliases require future reference/borrow
   semantics rather than copying the array handle.
 - Struct and enum values are pointer-sized aggregate handles internally.
-  Structs are read-only at the source level today because `struct-set!` is not
-  implemented. Enum payloads are consumed by a by-value `match`; borrowing a
-  scrutinee for non-consuming pattern inspection is deferred to the borrow
-  checker.
+  Struct field-place assignment mutates selected fields in place through owned
+  storage places or mutable references. Enum payloads are consumed by a
+  by-value `match`; borrowing a scrutinee for non-consuming pattern inspection
+  is deferred to the borrow checker.
 - Returning an aggregate may heap-promote storage that would otherwise be
   frame-local. This is storage placement for safety; ownership transfer is still
   governed by the source-level move rules.
@@ -4687,7 +4693,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Local and global variables, `let`, `set!`.
 - `cast` with sign/zero extension and truncation.
 - Enums with pattern matching.
-- Structs with construction and field access.
+- Structs with construction, field access, and field-place assignment.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
   `string-eq`/`string=?`, `str-cat`, `substring`/`string-slice`,
@@ -4722,7 +4728,6 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Reference captures in lambdas | Implemented for local non-escaping immutable captures (#808/#2280); escaping closures still reject reference captures. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented; implement-or-reject decision tracked by #2552 |
 | Tail call optimization | Direct/self tail jumps implemented (#2506); indirect and closure tail calls tracked by #2363 |
-| `struct-set!` | Not implemented (#1521) |
 | Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
 | Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |

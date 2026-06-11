@@ -269,6 +269,7 @@
   (AstExprForeach i64 AstType i64 i64 i64)
   (AstExprSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64)
   (AstExprStructGet i64 i64)
+  (AstExprStructSet i64 i64 i64)
   (AstExprWithRegion String AstExprList)
   (AstExprWithEscape i64 AstExprList)
   (AstExprWithResource AstResourceBindingList AstExprList)
@@ -1235,6 +1236,12 @@
 (define (ast-expr-struct-get-id [target : i64] [field : i64]) : i64
   (ast-node-push (AstExprStructGet target field)))
 
+(define (ast-expr-struct-set [target : i64] [field : String] [value : i64]) : i64
+  (ast-node-push (AstExprStructSet target (intern field) value)))
+
+(define (ast-expr-struct-set-id [target : i64] [field : i64] [value : i64]) : i64
+  (ast-node-push (AstExprStructSet target field value)))
+
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExprWithEscape escape body)))
 
@@ -1567,6 +1574,7 @@
     [(AstExprMatch _ _) 22]
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]
+    [(AstExprStructSet _ _ _) 63]
     [(AstExprWithRegion _ _) 25]
     [(AstExprWithEscape _ _) 48]
     [(AstExprTypeLiteral _) 26]

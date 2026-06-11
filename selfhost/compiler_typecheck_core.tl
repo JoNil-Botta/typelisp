@@ -3975,6 +3975,11 @@
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (tc-source-expr-policy-ok ctx receiver))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (tc-source-expr-pair-policy-ok ctx receiver value))]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
     [(AstExprWithEscape scratch-box body)
       (let
@@ -8373,6 +8378,13 @@
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (tc-ref-closure-local-uses-ok? receiver name bound))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? receiver name bound)
+          (tc-ref-closure-local-uses-ok? value name bound)))]
     [(AstExprWithRegion _ body)
       (tc-ref-closure-expr-list-local-uses-ok? body name bound)]
     [(AstExprWithEscape scratch-box body)
@@ -8963,6 +8975,19 @@
                   [(ErrTcUnit message) (ErrTcUnit message)])]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env receiver)
+          [(OkTcUnit)
+            (match (tc-spmd-masked-if-expr ctx env spmd-env value)
+              [(OkTcUnit)
+                (match (tc-expr ctx env value)
+                  [(OkTcType ty) (tc-spmd-masked-if-lane-type-ok ty)]
+                  [(ErrTcType message) (ErrTcUnit message)])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprCall _ _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(AstExprSyscall _)
@@ -9459,6 +9484,40 @@
                                         value-env)]))])]
                           [(ErrTcSpmdExprInfo message)
                             (ErrTcSpmdExprInfo message)])])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (tc-spmd-expr ctx env spmd-env receiver)
+          [(OkTcSpmdExprInfo receiver-info)
+            (match receiver-info
+              [(TcSpmdExprInfo receiver-ty receiver-class receiver-env)
+                (match (tc-spmd-expr ctx env receiver-env value)
+                  [(OkTcSpmdExprInfo value-info)
+                    (match value-info
+                      [(TcSpmdExprInfo _ value-class value-env)
+                        (match (tc-struct-set-field-type
+                          ctx
+                          receiver-ty
+                          (intern-str field))
+                          [(OkTcType field-ty)
+                            (let
+                              [write-class : TcSpmdClass
+                                (tc-spmd-merge-class receiver-class value-class)]
+                              (if (and
+                                (tc-spmd-varying? write-class)
+                                (not
+                                  (tc-spmd-lane-type-supported?
+                                    (tc-type-strip-region field-ty))))
+                                (ErrTcSpmdExprInfo
+                                  (string-append
+                                    "typecheck: foreach varying struct field type is not supported: "
+                                    (tc-type-render
+                                      (tc-type-strip-region field-ty))))
+                                (tc-spmd-finish expr-ty TcSpmdUniform value-env)))]
+                          [(ErrTcType message) (ErrTcSpmdExprInfo message)])])]
                   [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprArrayPush array-box value-box)
@@ -10182,6 +10241,13 @@
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (tc-expr-uses-free-name? receiver name bound))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (tc-expr-uses-free-name? receiver name bound)
+          (tc-expr-uses-free-name? value name bound)))]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
     [(AstExprWithEscape scratch-box body)
       (let
@@ -10565,6 +10631,13 @@
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (tc-expr-sets-free-name? receiver name bound))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (tc-expr-sets-free-name? receiver name bound)
+          (tc-expr-sets-free-name? value name bound)))]
     [(AstExprWithRegion _ body) (tc-expr-list-sets-free-name? body name bound)]
     [(AstExprWithEscape scratch-box body)
       (let
@@ -14259,6 +14332,9 @@
     [(AstExprArraySet _ _ _)
       (ErrTcUnit
         "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+    [(AstExprStructSet _ _ _)
+      (ErrTcUnit
+        "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(AstExprArrayPush _ _)
       (ErrTcUnit
         "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
@@ -15030,6 +15106,63 @@
         [(ErrTcUnit message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-struct-set-field-type
+  [ctx : TcContext]
+  [receiver-ty : AstType]
+  [field : String]) : ResultTcType
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyStruct _) (tc-struct-get-result-type ctx receiver-ty field)]
+    [(AstTyStructArgs _ _) (tc-struct-get-result-type ctx receiver-ty field)]
+    [(AstTyMutRef _ _) (tc-struct-get-result-type ctx receiver-ty field)]
+    [(AstTyRef _ _)
+      (ErrTcType "typecheck: set! struct field requires mutable struct access")]
+    [_ (ErrTcType "typecheck: set! struct field requires struct")]))
+
+(define (tc-struct-field-mutation-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : AstExpr]
+  [field : String]
+  [value : AstExpr]) : ResultTcType
+  (match (tc-store-place-lifetime ctx env receiver)
+    [(OkTcString _)
+      (match (tc-expr ctx env receiver)
+        [(OkTcType receiver-ty)
+          (match (tc-struct-set-field-type ctx receiver-ty field)
+            [(OkTcType field-ty)
+              (match (tc-expr-with-expected-or-actual ctx env value field-ty)
+                [(OkTcType value-ty)
+                  (match (tc-expect
+                    value-ty
+                    field-ty
+                    "typecheck: struct field assignment type mismatch")
+                    [(OkTcUnit)
+                      (match (tc-ensure-cleanup-resource-not-stored-expr
+                        env
+                        value)
+                        [(OkTcUnit)
+                          (match (tc-ensure-region-value-can-flow-into
+                            env
+                            field-ty
+                            value-ty
+                            "struct field")
+                            [(OkTcUnit)
+                              (match (tc-ensure-reference-value-can-store-in-place
+                                ctx
+                                env
+                                receiver
+                                value-ty
+                                "struct field")
+                                [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                [(ErrTcUnit message) (ErrTcType message)])]
+                            [(ErrTcUnit message) (ErrTcType message)])]
+                        [(ErrTcUnit message) (ErrTcType message)])]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcString message) (ErrTcType message)]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner-box span)
@@ -15483,6 +15616,16 @@
           [(OkTcType receiver-ty)
             (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (tc-struct-field-mutation-value
+          ctx
+          env
+          receiver
+          (intern-str field)
+          value))]
     [(AstExprWithRegion region body)
       (let
         [region-env : TcTypeEnv (tc-push-region env region)]
@@ -16356,6 +16499,11 @@
         [(TcMoveNoIndex) (TcNoString)])]
     [(TcNoString) (TcNoString)]))
 
+(define (tc-move-struct-set-path [receiver : AstExpr] [field : String]) : TcMaybeString
+  (match (tc-move-direct-root-base-path receiver)
+    [(TcSomeString base) (TcSomeString (tc-move-path-append base field))]
+    [(TcNoString) (TcNoString)]))
+
 (define (tc-move-reinitialize-array-set-path
   [locals : TcMovedSet]
   [moved : TcMovedSet]
@@ -16364,6 +16512,21 @@
   (match (tc-move-array-set-path array index)
     [(TcSomeString path)
       (match (tc-move-root-projection-var array)
+        [(TcSomeString root)
+          (if (tc-moved-contains? locals root)
+            (tc-moved-remove-exact-path moved root path)
+            moved)]
+        [(TcNoString) moved])]
+    [(TcNoString) moved]))
+
+(define (tc-move-reinitialize-struct-set-path
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [receiver : AstExpr]
+  [field : String]) : TcMovedSet
+  (match (tc-move-struct-set-path receiver field)
+    [(TcSomeString path)
+      (match (tc-move-root-projection-var receiver)
         [(TcSomeString root)
           (if (tc-moved-contains? locals root)
             (tc-moved-remove-exact-path moved root path)
@@ -17231,6 +17394,22 @@
                   [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved receiver)
+          [(OkTcMove moved1)
+            (match (tc-move-check-expr ctx env locals loop-carried moved1 value)
+              [(OkTcMove moved2)
+                (OkTcMove
+                  (tc-move-reinitialize-struct-set-path
+                    locals
+                    moved2
+                    receiver
+                    (intern-str field)))]
+              [(ErrTcMove message) (ErrTcMove message)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -17740,6 +17919,20 @@
     [(TcSomeString root)
       (if (tc-moved-contains? locals root)
         (match (tc-move-array-set-path array index)
+          [(TcSomeString path) (tc-borrow-check-assign-conflict borrowed path)]
+          [(TcNoString) (tc-borrow-check-assign-conflict borrowed root)])
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
+
+(define (tc-borrow-check-struct-set-conflict
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [receiver : AstExpr]
+  [field : String]) : ResultTcUnit
+  (match (tc-move-root-projection-var receiver)
+    [(TcSomeString root)
+      (if (tc-moved-contains? locals root)
+        (match (tc-move-struct-set-path receiver field)
           [(TcSomeString path) (tc-borrow-check-assign-conflict borrowed path)]
           [(TcNoString) (tc-borrow-check-assign-conflict borrowed root)])
         OkTcUnit)]
@@ -18395,6 +18588,31 @@
                           [(OkTcUnit) (OkTcBorrowCheck borrowed4)]
                           [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
                       [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed receiver)
+          [(OkTcBorrowCheck borrowed1)
+            (match (tc-borrow-check-expr ctx env locals borrowed1 value)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-after-bind
+                  ctx
+                  env
+                  locals
+                  borrowed2
+                  value)
+                  [(OkTcBorrowCheck borrowed3)
+                    (match (tc-borrow-check-struct-set-conflict
+                      locals
+                      borrowed3
+                      receiver
+                      (intern-str field))
+                      [(OkTcUnit) (OkTcBorrowCheck borrowed3)]
+                      [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
@@ -19306,6 +19524,14 @@
         (ast-expr-struct-get
           (macro-hygiene-expr inner env macro-name depth)
           (intern-str field)))]
+    [(AstExprStructSet inner-box field value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (ast-expr-struct-set-id
+          (macro-hygiene-expr inner env macro-name depth)
+          field
+          (macro-hygiene-expr value env macro-name depth)))]
     [(AstExprWithRegion name body)
       (match (macro-hygiene-bind-name env macro-name depth name)
         [(MacroHygieneName nname body-env)
@@ -20697,6 +20923,17 @@
             [(OkMacroExpr ninner)
               (OkMacroExpr (ast-expr-struct-get-id ninner field))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprStructSet inner-box field value-box)
+        (let
+          [inner : AstExpr (ast-node-get inner-box)]
+          [value : AstExpr (ast-node-get value-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner)
+              (match (macro-expand-expr ctx env decls depth value)
+                [(OkMacroExpr nvalue)
+                  (OkMacroExpr (ast-expr-struct-set-id ninner field nvalue))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
       [(AstExprArrayRef array-box index-box)
         (let
           [array : AstExpr (ast-node-get array-box)]
@@ -21047,6 +21284,10 @@
         (macro-node-uses-macro? ctx decls e)
         (macro-node-uses-macro? ctx decls b))]
     [(AstExprStructGet i _) (macro-node-uses-macro? ctx decls i)]
+    [(AstExprStructSet i _ v)
+      (or
+        (macro-node-uses-macro? ctx decls i)
+        (macro-node-uses-macro? ctx decls v))]
     [(AstExprWithEscape i exprs)
       (or
         (macro-node-uses-macro? ctx decls i)
@@ -21217,6 +21458,8 @@
         (ctfe-node-has-type-literal? e)
         (ctfe-node-has-type-literal? b))]
     [(AstExprStructGet i _) (ctfe-node-has-type-literal? i)]
+    [(AstExprStructSet i _ v)
+      (or (ctfe-node-has-type-literal? i) (ctfe-node-has-type-literal? v))]
     [(AstExprWithRegion _ exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExprWithEscape i exprs)
       (or (ctfe-node-has-type-literal? i) (ctfe-exprs-have-type-literal? exprs))]

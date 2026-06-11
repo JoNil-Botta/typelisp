@@ -359,6 +359,7 @@
     [(AstExprSet _ _) true]
     [(AstExprArraySet _ _ _) true]
     [(AstExprArrayPush _ _) true]
+    [(AstExprStructSet _ _ _) true]
     [(AstExprBegin exprs) (lint-expr-list-has-side-effect? exprs)]
     [_ false]))
 
@@ -1386,6 +1387,11 @@
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (lint-walk-expr receiver threshold acc))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lint-walk-expr value threshold (lint-walk-expr receiver threshold acc)))]
     [(AstExprWithRegion _ body) (lint-walk-expr-list body threshold acc)]
     [(AstExprWithEscape scratch-box body)
       (let

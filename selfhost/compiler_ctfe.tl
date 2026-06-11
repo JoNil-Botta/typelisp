@@ -563,6 +563,7 @@
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) "spmd-reduce"]
     [(AstExprStructGet _ _) "struct-get"]
+    [(AstExprStructSet _ _ _) "set!"]
     [(AstExprWithRegion _ _) "with-arena"]
     [(AstExprWithEscape _ _) "with-escape"]
     [(AstExprWithResource _ _) "with"]
@@ -3725,6 +3726,20 @@
               (AstTyExpr)
               next-fuel)]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprStructSet inner-box field value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted-inner _ inner-fuel)
+            (match (ctfe-quote-expr value env inner-fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                (OkCtfeQuoteExpr
+                  (ast-expr-struct-set-id quoted-inner field quoted-value)
+                  (AstTyExpr)
+                  value-fuel)]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
     [(AstExprTupleRef tuple-expr-box index)
       (let
         [tuple-expr : AstExpr (ast-node-get tuple-expr-box)]
@@ -4661,6 +4676,20 @@
             (let
               [b-inner : AstExpr (ast-node-get b-inner-box)]
               (and (= a-field b-field) (ctfe-expr-eq a-inner b-inner)))]
+          [_ false]))]
+    [(AstExprStructSet a-inner-box a-field a-value-box)
+      (let
+        [a-inner : AstExpr (ast-node-get a-inner-box)]
+        [a-value : AstExpr (ast-node-get a-value-box)]
+        (match b
+          [(AstExprStructSet b-inner-box b-field b-value-box)
+            (let
+              [b-inner : AstExpr (ast-node-get b-inner-box)]
+              [b-value : AstExpr (ast-node-get b-value-box)]
+              (and
+                (= a-field b-field)
+                (ctfe-expr-eq a-inner b-inner)
+                (ctfe-expr-eq a-value b-value)))]
           [_ false]))]
     [(AstExprWithRegion a-name a-body)
       (match b

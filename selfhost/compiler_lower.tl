@@ -2255,6 +2255,17 @@
             (lower-clone-roots-expr ctx env decls able roots array)
             index)
           value))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-clone-roots-expr
+          ctx
+          env
+          decls
+          able
+          (lower-clone-roots-expr ctx env decls able roots receiver)
+          value))]
     [(AstExprArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -2914,6 +2925,15 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lower-reach-expr all-functions names state value))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-reach-expr
+          all-functions
+          names
+          (lower-reach-expr all-functions names state receiver)
+          value))]
     [(AstExprWithRegion _ exprs)
       (lower-reach-expr-list all-functions names state exprs)]
     [(AstExprWithEscape scratch-box exprs)
@@ -5821,6 +5841,7 @@
   [env : SymI64Env]
   [name : String]
   [place-ty : AstType]
+  [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (let
     [referent-ty : AstType (tc-borrow-referent-type place-ty)]
@@ -5828,13 +5849,20 @@
       [(SomeI64 id)
         (if (lower-borrow-place-value-reference? ctx referent-ty)
           (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))
-          (OkLowerExpr
-            (lower-borrow-copy-to-storage
-              ctx
-              state
-              (IrValueVar id)
-              referent-ty
-              result-ty)))]
+          (match (tc-type-strip-region (tc-resolve-type ctx result-ty))
+            [(AstTyMutRef _ _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: mutable borrow of by-value place requires writeback support"))]
+            [_
+              (OkLowerExpr
+                (lower-borrow-copy-to-storage
+                  ctx
+                  state
+                  (IrValueVar id)
+                  referent-ty
+                  result-ty))]))]
       [(NoneI64)
         (OkLowerExpr
           (LowerExpr
@@ -5869,6 +5897,7 @@
               env
               name
               place-ty
+              origin
               result-ty))])]
     [(ErrTcType message)
       (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
@@ -11252,6 +11281,7 @@
         [box-expr : AstExpr (ast-node-get box-expr-box)]
         (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
     [(AstExprSet _ _) (OkTcType (AstTyUnit))]
+    [(AstExprStructSet _ _ _) (OkTcType (AstTyUnit))]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-result-type-or-check
@@ -11749,6 +11779,19 @@
           receiver
           (intern-str field)
           expr-ty))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-struct-set
+          ctx
+          state
+          env
+          type-env
+          receiver
+          (intern-str field)
+          value
+          origin))]
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
@@ -16529,6 +16572,540 @@
         addr-state
         (IrInstrStorePtr elem-ptr value-ir elem-ir-ty)))))
 
+(define (lower-mutable-var-storage-address-id
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : i64]
+  [place-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (sym-i64-lookup-id env name)
+    [(SomeI64 local-id)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit-at-expr
+                allocated
+                (IrInstrAddrOf var-id local-id)
+                origin)
+              (IrValueVar var-id)
+              place-ty))])]
+    [(NoneI64)
+      (OkLowerExpr
+        (LowerExpr
+          state
+          (IrValueGlobalAddr (lower-resolve-name state (intern-str name)))
+          place-ty))]))
+
+(define (lower-mutable-var-address-id
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : i64]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-lookup-type-id (lower-state-type-cache state) env type-env name)
+    [(OkTcType place-ty)
+      (let
+        [resolved : AstType
+          (tc-type-strip-region (tc-resolve-type ctx place-ty))]
+        (match resolved
+          [(AstTyMutRef _ referent-ty)
+            (match (lower-var-id state env name place-ty)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr ref-state ref-value _)
+                    (OkLowerExpr
+                      (LowerExpr ref-state ref-value (ty-node-get referent-ty)))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+          [(AstTyRef _ _)
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                origin
+                "lower: set! struct field requires mutable struct access"))]
+          [_
+            (if (lower-borrow-place-value-reference? ctx place-ty)
+              (lower-var-id state env name place-ty)
+              (lower-mutable-var-storage-address-id
+                state
+                env
+                name
+                place-ty
+                origin))]))]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
+
+(define (lower-struct-field-address-from-place
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [receiver-ty : AstType]
+  [field : String]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(AstTyStruct struct-name)
+      (match (lower-struct-field-info ctx (intern-str struct-name) field)
+        [(OkLowerFieldInfo info)
+          (match info
+            [(LowerFieldInfo offset field-ty)
+              (match (lower-gep-byte state base offset)
+                [(LowerExpr ptr-state ptr _)
+                  (OkLowerExpr
+                    (LowerExpr ptr-state ptr (tc-type-without-regions field-ty)))])])]
+        [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+    [(AstTyStructArgs struct-name _)
+      (match (lower-struct-field-info ctx (intern-str struct-name) field)
+        [(OkLowerFieldInfo info)
+          (match info
+            [(LowerFieldInfo offset field-ty)
+              (match (lower-gep-byte state base offset)
+                [(LowerExpr ptr-state ptr _)
+                  (OkLowerExpr
+                    (LowerExpr ptr-state ptr (tc-type-without-regions field-ty)))])])]
+        [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+    [(AstTyMutRef _ referent-ty)
+      (match (lower-emit-load state base receiver-ty)
+        [(LowerExpr ref-state ref-value _)
+          (lower-struct-field-address-from-place
+            ctx
+            ref-state
+            ref-value
+            (ty-node-get referent-ty)
+            field
+            origin)])]
+    [(AstTyRef _ _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: set! struct field requires mutable struct access"))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: set! struct field requires struct"))]))
+
+(define (lower-tuple-field-address-from-place
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [tuple-ty : AstType]
+  [index : i64]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
+    [(AstTyTuple elem-tys)
+      (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+        [(OkLowerFieldInfo info)
+          (match info
+            [(LowerFieldInfo offset elem-ty)
+              (match (lower-gep-byte state base offset)
+                [(LowerExpr ptr-state ptr _)
+                  (OkLowerExpr
+                    (LowerExpr ptr-state ptr (tc-type-without-regions elem-ty)))])])]
+        [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+    [(AstTyMutRef _ referent-ty)
+      (match (lower-emit-load state base tuple-ty)
+        [(LowerExpr ref-state ref-value _)
+          (lower-tuple-field-address-from-place
+            ctx
+            ref-state
+            ref-value
+            (ty-node-get referent-ty)
+            index
+            origin)])]
+    [(AstTyRef _ _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: set! struct field requires mutable tuple access"))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: tuple-ref requires tuple place"))]))
+
+(define (lower-mutable-array-element-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arr : AstExpr]
+  [index : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    arr)
+    [(OkTcType arr-ty)
+      (match (tc-array-set-receiver ctx arr-ty)
+        [(OkTcArrayReceiver receiver)
+          (match receiver
+            [(TcArrayReceiver container-ty elem-ty)
+              (lower-borrow-array-element-address
+                ctx
+                state
+                env
+                type-env
+                arr
+                index
+                origin
+                (tc-type-without-regions elem-ty))])]
+        [(ErrTcArrayReceiver message)
+          (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
+
+(define (lower-mutable-place-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [place : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (ast-expr-unspan place)
+    [(AstExprVar name)
+      (lower-mutable-var-address-id ctx state env type-env name origin)]
+    [(AstExprStructGet receiver-box field)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        (match (lower-mutable-place-address
+          ctx
+          state
+          env
+          type-env
+          receiver
+          origin)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr receiver-state receiver-base receiver-ty)
+                (lower-struct-field-address-from-place
+                  ctx
+                  receiver-state
+                  receiver-base
+                  receiver-ty
+                  (intern-str field)
+                  origin)])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+    [(AstExprTupleRef tuple-box index)
+      (let
+        [tuple : AstExpr (ast-node-get tuple-box)]
+        (match (lower-mutable-place-address ctx state env type-env tuple origin)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr tuple-state tuple-base tuple-ty)
+                (lower-tuple-field-address-from-place
+                  ctx
+                  tuple-state
+                  tuple-base
+                  tuple-ty
+                  index
+                  origin)])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+    [(AstExprArrayRef arr-box index-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (lower-mutable-array-element-address
+          ctx
+          state
+          env
+          type-env
+          arr
+          index
+          origin))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: set! target must be a storage place"))]))
+
+(define (lower-struct-field-store-result
+  [ctx : TcContext]
+  [state : LowerState]
+  [field-ptr : CompilerIrValue]
+  [value-ir : CompilerIrValue]
+  [field-ir-ty : AstType]) : ResultLowerExpr
+  (if (= (lower-type-size ctx field-ir-ty) 0)
+    (OkLowerExpr (LowerExpr state IrValueUnit (AstTyUnit)))
+    (OkLowerExpr
+      (LowerExpr
+        (lower-store-inline-value-at-offset
+          ctx
+          state
+          field-ptr
+          0
+          value-ir
+          field-ir-ty
+          (lower-type-size ctx field-ir-ty))
+        IrValueUnit
+        (AstTyUnit)))))
+
+(define (lower-refresh-register-resident-root-after-store
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [place : AstExpr]
+  [origin : AstExpr]) : ResultLowerState
+  (match (tc-move-root-projection-var place)
+    [(TcSomeString root)
+      (match (sym-i64-lookup env root)
+        [(SomeI64 local-id)
+          (match (tc-lookup type-env root)
+            [(OkTcType root-ty)
+              (let
+                [resolved : AstType
+                  (tc-type-without-regions (tc-resolve-type ctx root-ty))]
+                (if (lower-type-register-resident? ctx resolved)
+                  (match (lower-state-alloc-var state)
+                    [(LowerAlloc addr-alloc addr-var)
+                      (match (lower-load-register-resident-from-ptr
+                        ctx
+                        (lower-state-emit-at-expr
+                          addr-alloc
+                          (IrInstrAddrOf addr-var local-id)
+                          origin)
+                        (IrValueVar addr-var)
+                        resolved)
+                        [(LowerExpr load-state loaded _)
+                          (OkLowerState
+                            (lower-state-emit-at-expr
+                              load-state
+                              (IrInstrMov local-id loaded resolved)
+                              origin))])])
+                  (OkLowerState state)))]
+            [(ErrTcType message)
+              (ErrLowerState (lower-diagnostic-at-expr origin message))])]
+        [(NoneI64) (OkLowerState state)])]
+    [(TcNoString) (OkLowerState state)]))
+
+(define (lower-register-resident-local-place?
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [receiver : AstExpr]
+  [receiver-ty : AstType]) : bool
+  (if (lower-type-register-resident? ctx receiver-ty)
+    (match (ast-expr-unspan receiver)
+      [(AstExprVar name)
+        (match (sym-i64-lookup-id env name)
+          [(SomeI64 _) true]
+          [(NoneI64) false])]
+      [_ false])
+    false))
+
+(define (lower-reload-register-resident-local-from-storage
+  [ctx : TcContext]
+  [state : LowerState]
+  [storage-ptr : CompilerIrValue]
+  [local-id : i64]
+  [receiver-ir-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-load-register-resident-from-ptr
+    ctx
+    state
+    storage-ptr
+    receiver-ir-ty)
+    [(LowerExpr load-state loaded _)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit-at-expr
+            load-state
+            (IrInstrMov local-id loaded receiver-ir-ty)
+            origin)
+          IrValueUnit
+          (AstTyUnit)))]))
+
+(define (lower-struct-set-register-resident-local
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [receiver : AstExpr]
+  [receiver-ty : AstType]
+  [field : String]
+  [field-ir-ty : AstType]
+  [value : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (ast-expr-unspan receiver)
+    [(AstExprVar name)
+      (match (sym-i64-lookup-id env name)
+        [(SomeI64 local-id)
+          (let
+            [receiver-ir-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx receiver-ty))]
+            [receiver-size : i64 (lower-type-size ctx receiver-ir-ty)]
+            (match (lower-reserve-inline-storage
+              state
+              (if (= receiver-size 0)
+                1
+                receiver-size)
+              receiver-ir-ty)
+              [(LowerExpr storage-state storage-ptr _)
+                (let
+                  [stored-root-state : LowerState
+                    (if (= receiver-size 0)
+                      storage-state
+                      (lower-store-inline-value-at-offset
+                        ctx
+                        storage-state
+                        storage-ptr
+                        0
+                        (IrValueVar local-id)
+                        receiver-ir-ty
+                        receiver-size))]
+                  (match (lower-struct-field-address-from-place
+                    ctx
+                    stored-root-state
+                    storage-ptr
+                    receiver-ir-ty
+                    field
+                    origin)
+                    [(OkLowerExpr place-lowered)
+                      (match place-lowered
+                        [(LowerExpr place-state field-ptr _)
+                          (match (lower-expr-expected
+                            ctx
+                            place-state
+                            env
+                            type-env
+                            value
+                            field-ir-ty
+                            value)
+                            [(OkLowerExpr value-lowered)
+                              (match value-lowered
+                                [(LowerExpr value-state value-ir _)
+                                  (match (lower-struct-field-store-result
+                                    ctx
+                                    value-state
+                                    field-ptr
+                                    value-ir
+                                    field-ir-ty)
+                                    [(OkLowerExpr stored-field)
+                                      (match stored-field
+                                        [(LowerExpr store-state _ _)
+                                          (lower-reload-register-resident-local-from-storage
+                                            ctx
+                                            store-state
+                                            storage-ptr
+                                            local-id
+                                            receiver-ir-ty
+                                            origin)])]
+                                    [(ErrLowerExpr message)
+                                      (ErrLowerExpr message)])])]
+                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)]))]))]
+        [(NoneI64)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              "lower: set! struct field requires local storage"))])]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: set! struct field requires local storage"))]))
+
+(define (lower-struct-set
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [receiver : AstExpr]
+  [field : String]
+  [value : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    receiver)
+    [(OkTcType receiver-ty)
+      (match (tc-struct-set-field-type ctx receiver-ty field)
+        [(OkTcType field-ty)
+          (let
+            [field-ir-ty : AstType (tc-type-without-regions field-ty)]
+            (if (lower-register-resident-local-place?
+              ctx
+              env
+              receiver
+              receiver-ty)
+              (lower-struct-set-register-resident-local
+                ctx
+                state
+                env
+                type-env
+                receiver
+                receiver-ty
+                field
+                field-ir-ty
+                value
+                origin)
+              (match (lower-mutable-place-address
+                ctx
+                state
+                env
+                type-env
+                receiver
+                origin)
+                [(OkLowerExpr place-lowered)
+                  (match place-lowered
+                    [(LowerExpr place-state place-ptr place-ty)
+                      (match (lower-struct-field-address-from-place
+                        ctx
+                        place-state
+                        place-ptr
+                        place-ty
+                        field
+                        origin)
+                        [(OkLowerExpr field-lowered)
+                          (match field-lowered
+                            [(LowerExpr field-state field-ptr _)
+                              (match (lower-expr-expected
+                                ctx
+                                field-state
+                                env
+                                type-env
+                                value
+                                field-ir-ty
+                                value)
+                                [(OkLowerExpr value-lowered)
+                                  (match value-lowered
+                                    [(LowerExpr value-state value-ir _)
+                                      (match (lower-struct-field-store-result
+                                        ctx
+                                        value-state
+                                        field-ptr
+                                        value-ir
+                                        field-ir-ty)
+                                        [(OkLowerExpr stored)
+                                          (match stored
+                                            [(LowerExpr store-state _ _)
+                                              (match (lower-refresh-register-resident-root-after-store
+                                                ctx
+                                                store-state
+                                                env
+                                                type-env
+                                                receiver
+                                                origin)
+                                                [(OkLowerState refreshed-state)
+                                                  (OkLowerExpr
+                                                    (LowerExpr
+                                                      refreshed-state
+                                                      IrValueUnit
+                                                      (AstTyUnit)))]
+                                                [(ErrLowerState message)
+                                                  (ErrLowerExpr message)])])]
+                                        [(ErrLowerExpr message)
+                                          (ErrLowerExpr message)])])]
+                                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])))]
+        [(ErrTcType message)
+          (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr receiver message))]))
+
 (define (lower-array-set
   [ctx : TcContext]
   [state : LowerState]
@@ -18317,6 +18894,13 @@
                 (lower-masked-vector-expr-lanes mode env type-env index value))]
             [LowerNoArrayVar -1])
           -1))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-masked-vector-lanes-merge
+          (lower-masked-vector-expr-lanes mode env type-env index receiver)
+          (lower-masked-vector-expr-lanes mode env type-env index value)))]
     [_ -1]))
 
 (define (lower-masked-vector-body-has-varying-if?
@@ -18417,6 +19001,23 @@
         (or
           (lower-masked-vector-body-has-varying-if? mode env type-env index arr)
           (lower-masked-vector-body-has-varying-if? mode env type-env index idx)
+          (lower-masked-vector-body-has-varying-if?
+            mode
+            env
+            type-env
+            index
+            value)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-masked-vector-body-has-varying-if?
+            mode
+            env
+            type-env
+            index
+            receiver)
           (lower-masked-vector-body-has-varying-if?
             mode
             env
@@ -18572,6 +19173,13 @@
                 (lower-array-var-list-add LowerArrayVarNil var idx-offset)]
               [LowerNoArrayVar LowerArrayVarNil])
             LowerArrayVarNil)
+          (lower-masked-vector-array-vars env type-env index value)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (lower-array-var-list-merge
+          (lower-masked-vector-array-vars env type-env index receiver)
           (lower-masked-vector-array-vars env type-env index value)))]
     [_ LowerArrayVarNil]))
 

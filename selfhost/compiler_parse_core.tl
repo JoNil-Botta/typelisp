@@ -2688,18 +2688,31 @@
 
 (define (parse-ast-set [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SpSCons name-node value-tail _)
-      (match (sp-node-get name-node)
-        [(SpSSym name _)
-          (match (sp-node-get value-tail)
-            [(SpSCons value end _)
-              (match (sp-node-get end)
-                [(SpSNil _)
-                  (match (parse-ast-expr dispatch (sp-node-get value))
-                    [(OkAstExpr parsed-value)
+    [(SpSCons target-node value-tail _)
+      (match (sp-node-get value-tail)
+        [(SpSCons value end _)
+          (match (sp-node-get end)
+            [(SpSNil _)
+              (match (parse-ast-expr dispatch (sp-node-get value))
+                [(OkAstExpr parsed-value)
+                  (match (sp-node-get target-node)
+                    [(SpSSym name _)
                       (OkAstExpr (ast-expr-set name parsed-value))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: malformed set!")])]
+                    [_
+                      (match (parse-ast-expr dispatch (sp-node-get target-node))
+                        [(OkAstExpr parsed-target)
+                          (match (ast-expr-unspan (ast-node-get parsed-target))
+                            [(AstExprStructGet receiver-box field)
+                              (OkAstExpr
+                                (ast-expr-struct-set-id
+                                  receiver-box
+                                  field
+                                  parsed-value))]
+                            [_
+                              (ErrAstExpr
+                                "parse: set! target must be a name or struct field place")])]
+                        [(ErrAstExpr message) (ErrAstExpr message)])])]
+                [(ErrAstExpr message) (ErrAstExpr message)])]
             [_ (ErrAstExpr "parse: malformed set!")])]
         [_ (ErrAstExpr "parse: malformed set!")])]
     [_ (ErrAstExpr "parse: malformed set!")]))

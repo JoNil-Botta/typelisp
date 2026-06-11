@@ -5030,6 +5030,22 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-struct-get-id rewritten field) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (spec-rewrite-expr receiver templates state)
+          [(OkSpecExpr rewritten-receiver receiver-state)
+            (match (spec-rewrite-expr value templates receiver-state)
+              [(OkSpecExpr rewritten-value value-state)
+                (OkSpecExpr
+                  (ast-expr-struct-set-id
+                    rewritten-receiver
+                    field
+                    rewritten-value)
+                  value-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-rewrite-expr-list body templates state)
         [(OkSpecExprList rewritten state2)
@@ -5565,6 +5581,21 @@
         (match (spec-substitute-values-expr receiver subs)
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-struct-get-id rewritten field))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (spec-substitute-values-expr receiver subs)
+          [(OkSpecSubExpr rewritten-receiver)
+            (match (spec-substitute-values-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-struct-set-id
+                    rewritten-receiver
+                    field
+                    rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-values-expr-list body subs)
@@ -6182,6 +6213,21 @@
         (match (spec-substitute-types-expr receiver subs)
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-struct-get-id rewritten field))]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprStructSet receiver-box field value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (match (spec-substitute-types-expr receiver subs)
+          [(OkSpecSubExpr rewritten-receiver)
+            (match (spec-substitute-types-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (OkSpecSubExpr
+                  (ast-expr-struct-set-id
+                    rewritten-receiver
+                    field
+                    rewritten-value))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-types-expr-list body subs)

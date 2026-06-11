@@ -526,13 +526,13 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
-    [(TcTypeCache _ _ _ _ _ rest) (lower-type-env-count (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ rest) (lower-type-env-count (box-get rest))]
     [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
 
 (define (lower-type-env-contains-reference? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (lower-type-env-contains-reference? (box-get rest))]
     [(TcTypeBind _ ty rest)
       (if (tc-type-contains-reference? ty)
@@ -566,7 +566,7 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (lower-type-cache-from-env-into (box-get rest) cache)]
     [(TcTypeBind name-id ty rest)
       (lower-type-cache-from-env-into
@@ -8707,7 +8707,7 @@
             (begin
               (set! result (OkLowerState cur-state))
               (set! done true))]
-          [(TcTypeCache _ _ _ _ _ rest) (set! cur-env (box-get rest))]
+          [(TcTypeCache _ _ _ _ _ _ rest) (set! cur-env (box-get rest))]
           [(TcTypeBind key ty rest)
             (begin
               (if (= key cleanup-marker-id)
@@ -8786,7 +8786,7 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (lower-emit-active-cleanups-with
         cleanup-marker-id
         state
@@ -10918,7 +10918,12 @@
                   (lower-let-bindings-type-env-fast
                     ctx
                     (sym-i64-bind-id env name-id 0)
-                    (tc-bind-id type-env name-id binding-ty)
+                    (tc-bind-c-abi-fnptr-if-needed-id
+                      ctx
+                      type-env
+                      name-id
+                      binding-ty
+                      init)
                     type-cache
                     rest)]
                 [(ErrTcType message) (ErrTcEnv message)]))]))]))
@@ -14308,6 +14313,46 @@
         origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
+(define (lower-indirect-c-abi-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [func-ty : AstType]
+  [func-value : CompilerIrValue]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
+    [(AstTyFunc param-types _)
+      (match (lower-c-abi-args-as
+        ctx
+        state
+        env
+        type-env
+        args
+        (tc-resolve-type-list ctx param-types))
+        [(OkLowerArgs args-state values)
+          (lower-indirect-c-abi-call-values
+            ctx
+            args-state
+            func-value
+            values
+            result-ty
+            origin)]
+        [(ErrLowerArgs message) (ErrLowerExpr message)])]
+    [_
+      (lower-indirect-call
+        ctx
+        state
+        env
+        type-env
+        func-ty
+        func-value
+        args
+        result-ty
+        origin)]))
+
 (define (lower-substring-call
   [ctx : TcContext]
   [state : LowerState]
@@ -15023,16 +15068,27 @@
             (match (tc-lookup type-env (intern-str raw-name))
               [(OkTcType fn-ty)
                 (if (lower-function-type? fn-ty)
-                  (lower-indirect-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    fn-ty
-                    (IrValueVar local-id)
-                    args
-                    result-ty
-                    origin)
+                  (if (tc-binding-c-abi-fnptr-id? type-env raw-name)
+                    (lower-indirect-c-abi-call
+                      ctx
+                      state
+                      env
+                      type-env
+                      fn-ty
+                      (IrValueVar local-id)
+                      args
+                      result-ty
+                      origin)
+                    (lower-indirect-call
+                      ctx
+                      state
+                      env
+                      type-env
+                      fn-ty
+                      (IrValueVar local-id)
+                      args
+                      result-ty
+                      origin))
                   (ErrLowerExpr
                     (lower-diagnostic-at-expr
                       func
@@ -15155,16 +15211,27 @@
           (match lowered-func
             [(LowerExpr func-state func-value func-ty)
               (if (lower-function-type? func-ty)
-                (lower-indirect-call
-                  ctx
-                  func-state
-                  env
-                  type-env
-                  func-ty
-                  func-value
-                  args
-                  result-ty
-                  origin)
+                (if (tc-expr-c-abi-fnptr? ctx type-env func)
+                  (lower-indirect-c-abi-call
+                    ctx
+                    func-state
+                    env
+                    type-env
+                    func-ty
+                    func-value
+                    args
+                    result-ty
+                    origin)
+                  (lower-indirect-call
+                    ctx
+                    func-state
+                    env
+                    type-env
+                    func-ty
+                    func-value
+                    args
+                    result-ty
+                    origin))
                 (ErrLowerExpr
                   (lower-diagnostic-at-expr
                     func
@@ -17704,7 +17771,12 @@
                           [(LowerAlloc allocated var-id)
                             (let
                               [next-type-env : TcTypeEnv
-                                (tc-bind-id type-env name-id binding-ty)]
+                                (tc-bind-c-abi-fnptr-if-needed-id
+                                  ctx
+                                  type-env
+                                  name-id
+                                  binding-ty
+                                  init)]
                               (lower-let-bindings
                                 ctx
                                 (lower-state-emit
@@ -29976,7 +30048,9 @@
 (extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
 (extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
 (define (main) : i64
-  (+ raw-value (+ (raw-fn 41) (direct-fn 1))))")
+  (let
+    [copied : (-> i64 i64) raw-fn]
+    (+ raw-value (+ (raw-fn 41) (+ (copied 40) (direct-fn 1))))))")
 
 (define (compiler-lower-extern-value-fnptr-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
@@ -29989,7 +30063,7 @@
             (= (lower-test-function-call-count functions "main" "raw-fn") 0)
             (= (lower-test-function-call-count functions "main" "direct-fn") 1)
             (= (lower-test-function-indirect-call-count functions "main") 0)
-            (= (lower-test-function-indirect-c-call-count functions "main") 1))])]
+            (= (lower-test-function-indirect-c-call-count functions "main") 2))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-global-source) : String

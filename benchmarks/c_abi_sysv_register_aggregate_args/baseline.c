@@ -23,6 +23,12 @@ int64_t tl_cabi_pair_score(Pair pair, int64_t salt) {
   return (pair.lo * 3) + (pair.hi * 5) + salt;
 }
 
+static int64_t tl_cabi_pair_score_indirect(Pair pair, int64_t salt) {
+  return (pair.lo * 2) + (pair.hi * 4) + salt;
+}
+
+int64_t (*tl_cabi_pair_score_ptr)(Pair, int64_t) = tl_cabi_pair_score_indirect;
+
 int64_t tl_cabi_outer_score(Outer outer) {
   return (outer.inner.x * 7) + outer.tail;
 }

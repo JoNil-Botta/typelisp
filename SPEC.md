@@ -1582,7 +1582,9 @@ parameters directly on the extern head and uses the return type after `:`; it is
 a direct external function declaration. The bare-name form declares an external
 data symbol whose value is loaded when the name is used. If that bare-name type
 is a function type, the loaded value is a raw C function pointer and calling the
-name emits an indirect C ABI call through the loaded pointer.
+name or a local copy of that value emits an indirect C ABI call through the
+loaded pointer. Raw C function-pointer values are ABI-distinct from ordinary
+TypeLisp function and closure descriptor values.
 
 The name is a TypeLisp identifier used for source lookup; it defaults to the
 target C ABI and uses the local name as the external linker symbol unless

@@ -2878,6 +2878,13 @@
   "(defenum ResultI64 (OkI64 i64))
 (extern (bad [count : i64] [value : ...ResultI64]) : i64 (:symbol \"bad\"))")
 
+(define (compiler-typecheck-extern-raw-fnptr-to-tl-param-source) : String
+  "(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(define (apply1 [f : (-> i64 i64)] [x : i64]) : i64 (f x))
+(define (main) : i64
+  (let [copied : (-> i64 i64) raw-fn]
+    (apply1 copied 41)))")
+
 (define (compiler-typecheck-extern-head-fixed-source) : String
   "(extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))
 (define (main) : i64
@@ -2895,7 +2902,10 @@
       "typecheck: argument type mismatch")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-head-varargs-tail-enum-source)
-      "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64")))
+      "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-raw-fnptr-to-tl-param-source)
+      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")))
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and

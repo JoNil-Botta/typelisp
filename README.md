@@ -254,7 +254,9 @@ separately, but source that needs recursive aggregates should use explicit
 `extern` defaults to the target C ABI with the linker symbol equal to the local
 name. Function-head externs are direct external functions. Bare-name externs are
 external data symbols; a bare function type is loaded as a raw C function
-pointer and called indirectly. `(:symbol "...")` can bind a local TypeLisp
+pointer and remains raw when copied to a local. Calls through such values use
+the C ABI, distinct from ordinary TypeLisp function or closure descriptor
+calls. `(:symbol "...")` can bind a local TypeLisp
 declaration to an exact foreign linker symbol without applying the `_tl_` prefix
 used for ordinary TypeLisp declarations. C varargs externs can use a
 function-head declaration: bare `...` accepts any C ABI value tail and

@@ -15,10 +15,12 @@
 
 (import "../stdlib/string.tl")
 
-;; TcTypeCache fields: ids map, values, unsafe flags, default-shadow flags,
-;; scan-through, rest. The default-shadow flag array parallels `values`: an
-;; entry's flag is 1 when its head-most binding sits above the first
-;; default-boundary marker (replaces the former whole-env shadows map).
+;; TcTypeCache fields: ids map, values, unsafe flags, raw C fnptr flags,
+;; default-shadow flags, scan-through, rest. The flag arrays parallel `values`:
+;; the raw C fnptr flag records whether the head-most binding is a raw C
+;; function pointer value, and the default-shadow flag is 1 when the head-most
+;; binding sits above the first default-boundary marker (replaces the former
+;; whole-env shadows map).
 ;; `scan-through` is true for threshold-compaction caches created in the
 ;; middle of function-body spines: marker-position scans (active region,
 ;; return type, unsafe context, cleanup owners, lifetimes, lambda capture
@@ -33,6 +35,7 @@
   (TcTypeCache
     I64I64Map
     (Array AstType)
+    (Array i64)
     (Array i64)
     (Array i64)
     bool
@@ -852,7 +855,7 @@
   [remaining : i64]) : bool
   (if (<= remaining 0)
     (match env
-      [(TcTypeCache _ _ _ _ _ _) true]
+      [(TcTypeCache _ _ _ _ _ _ _) true]
       [_ false])
     (match env
       [(TcTypeBind _ _ rest)
@@ -918,6 +921,94 @@
       name-id
       ty)))
 
+(define (tc-c-abi-fnptr-marker-name [name : String]) : String
+  (string-append " __tl_c_abi_fnptr:" name))
+
+(define tc-c-abi-fnptr-marker-id-cache : (Array i64)
+  (make-array i64 262144))
+
+(define tc-c-abi-fnptr-marker-id-cache-gens : (Array i64)
+  (make-array i64 262144))
+
+(define (tc-c-abi-fnptr-marker-id-uncached [name-id : i64]) : i64
+  (tc-name-id (tc-c-abi-fnptr-marker-name (intern-str name-id))))
+
+(define (tc-c-abi-fnptr-marker-id [name-id : i64]) : i64
+  (if (>= name-id 262144)
+    (tc-c-abi-fnptr-marker-id-uncached name-id)
+    (let
+      [gen : i64 (+ (intern-generation) 1)]
+      (if (= (array-ref tc-c-abi-fnptr-marker-id-cache-gens name-id) gen)
+        (array-ref tc-c-abi-fnptr-marker-id-cache name-id)
+        (let
+          [id : i64 (tc-c-abi-fnptr-marker-id-uncached name-id)]
+          (begin
+            (array-set! tc-c-abi-fnptr-marker-id-cache name-id id)
+            (array-set! tc-c-abi-fnptr-marker-id-cache-gens name-id gen)
+            id))))))
+
+(define (tc-bind-c-abi-fnptr-id
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (tc-env-compact-local-if-threshold
+    (tc-bind-raw-id
+      (tc-bind-raw-id env (tc-c-abi-fnptr-marker-id name-id) (AstTyUnit))
+      name-id
+      ty)))
+
+(define (tc-bind-c-abi-fnptr [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
+  (tc-bind-c-abi-fnptr-id env (tc-name-id name) ty))
+
+(define (tc-bind-unsafe-c-abi-fnptr-id
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (tc-env-compact-local-if-threshold
+    (tc-bind-raw-id
+      (tc-bind-raw-id
+        (tc-bind-raw-id env (tc-c-abi-fnptr-marker-id name-id) (AstTyUnit))
+        (tc-unsafe-decl-marker-id name-id)
+        (AstTyUnit))
+      name-id
+      ty)))
+
+(define (tc-c-abi-fnptr-marker-near-id?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (match env
+      [(TcTypeNil) false]
+      [(TcTypeCache _ _ _ _ _ _ rest)
+        (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
+      [(TcTypeBind key _ rest)
+        (core/cond
+          (= key (tc-c-abi-fnptr-marker-id name-id))
+          true
+          (= key name-id)
+          false
+          (tc-c-abi-fnptr-marker-near-id?
+            (box-get rest)
+            name-id
+            (- remaining 1)))])))
+
+(define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache ids _ _ c-abi-fnptr-flags _ _ _)
+      (match (i64-i64-map-get ids name-id)
+        [(I64I64MapFound index) (= (array-ref c-abi-fnptr-flags index) 1)]
+        [(I64I64MapMissing) false])]
+    [(TcTypeBind key _ rest)
+      (if (= key name-id)
+        (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
+        (tc-binding-c-abi-fnptr-id? (box-get rest) name-id))]))
+
+(define (tc-binding-c-abi-fnptr? [env : TcTypeEnv] [name : String]) : bool
+  (tc-binding-c-abi-fnptr-id? env (tc-name-id name)))
+
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeBind key _ _) (= key (tc-unsafe-decl-marker-id name-id))]
@@ -929,7 +1020,7 @@
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ unsafe-flags _ _ rest)
+    [(TcTypeCache ids _ unsafe-flags _ _ _ rest)
       (match (i64-i64-map-get ids name-id)
         [(I64I64MapFound index) (= (array-ref unsafe-flags index) 1)]
         [(I64I64MapMissing) false])]
@@ -945,7 +1036,7 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
-    [(TcTypeCache _ _ _ _ _ rest) (tc-env-cache-count (box-get rest))]))
+    [(TcTypeCache _ _ _ _ _ _ rest) (tc-env-cache-count (box-get rest))]))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -966,10 +1057,12 @@
   [ids : I64I64Map]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
+  [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [name-id : i64]
   [ty : AstType]
   [unsafe : bool]
+  [c-abi-fnptr : bool]
   [shadow : bool]) : I64I64Map
   (match (i64-i64-map-get ids name-id)
     [(I64I64MapFound _) ids]
@@ -985,6 +1078,12 @@
               1
               0))
           (array-set!
+            c-abi-fnptr-flags
+            next
+            (if c-abi-fnptr
+              1
+              0))
+          (array-set!
             shadow-flags
             next
             (if shadow
@@ -997,6 +1096,7 @@
   [ids : I64I64Map]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
+  [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : I64I64Map
   (match env
@@ -1015,21 +1115,25 @@
             ids
             values
             unsafe-flags
+            c-abi-fnptr-flags
             shadow-flags
             name-id
             ty
             (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
+            (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
             still-above)
           values
           unsafe-flags
+          c-abi-fnptr-flags
           shadow-flags
           still-above))]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-env-cache-fill
         (box-get rest)
         ids
         values
         unsafe-flags
+        c-abi-fnptr-flags
         shadow-flags
         above-boundary)]))
 
@@ -1038,6 +1142,7 @@
     [count : i64 (tc-env-cache-count env)]
     [values : (Array AstType) (make-array AstType count)]
     [unsafe-flags : (Array i64) (make-array i64 count)]
+    [c-abi-fnptr-flags : (Array i64) (make-array i64 count)]
     [shadow-flags : (Array i64) (make-array i64 count)]
     [ids : I64I64Map
       (tc-env-cache-fill
@@ -1045,9 +1150,17 @@
         (i64-i64-map-with-capacity (tc-env-cache-capacity count))
         values
         unsafe-flags
+        c-abi-fnptr-flags
         shadow-flags
         true)]
-    (TcTypeCache ids values unsafe-flags shadow-flags scan-through (box env))))
+    (TcTypeCache
+      ids
+      values
+      unsafe-flags
+      c-abi-fnptr-flags
+      shadow-flags
+      scan-through
+      (box env))))
 
 ;; Explicit top-env/module caches: marker scans terminate here.
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
@@ -1100,6 +1213,30 @@
     (tc-bind-unsafe
       env
       (compiler-symbol-module-key module (intern-str name))
+      ty)))
+
+(define (tc-bind-module-name-id-c-abi-fnptr
+  [env : TcTypeEnv]
+  [module : String]
+  [name : i64]
+  [ty : AstType]) : TcTypeEnv
+  (if (string-eq module "")
+    (tc-bind-c-abi-fnptr-id env name ty)
+    (tc-bind-c-abi-fnptr
+      env
+      (compiler-symbol-module-key module (intern-str name))
+      ty)))
+
+(define (tc-bind-module-name-unsafe-id-c-abi-fnptr
+  [env : TcTypeEnv]
+  [module : String]
+  [name : i64]
+  [ty : AstType]) : TcTypeEnv
+  (if (string-eq module "")
+    (tc-bind-unsafe-c-abi-fnptr-id env name ty)
+    (tc-bind-unsafe-c-abi-fnptr-id
+      env
+      (tc-name-id (compiler-symbol-module-key module (intern-str name)))
       ty)))
 
 (define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
@@ -1443,7 +1580,7 @@
 (define (tc-in-unsafe-scan? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-in-unsafe-scan? (box-get rest))
         false)]
@@ -1454,7 +1591,7 @@
 
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest) (tc-in-unsafe-scan? (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ rest) (tc-in-unsafe-scan? (box-get rest))]
     [_ (tc-in-unsafe-scan? env)]))
 
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
@@ -1464,7 +1601,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-current-return-type-scan (box-get rest))
         (ErrTcType "typecheck: try requires enclosing Result-like function"))]
@@ -1475,7 +1612,8 @@
 
 (define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
   (match env
-    [(TcTypeCache _ _ _ _ _ rest) (tc-current-return-type-scan (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ rest)
+      (tc-current-return-type-scan (box-get rest))]
     [_ (tc-current-return-type-scan env)]))
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
@@ -1720,7 +1858,7 @@
     [(TcTypeNil)
       (ErrTcType
         (string-append "typecheck: unbound name " (intern-str name-id)))]
-    [(TcTypeCache ids values _ _ _ rest)
+    [(TcTypeCache ids values _ _ _ _ rest)
       (match (i64-i64-map-get ids name-id)
         ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
         ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
@@ -1742,7 +1880,7 @@
     [(TcTypeNil)
       (ErrTcTypeUnsafe
         (string-append "typecheck: unbound name " (intern-str name-id)))]
-    [(TcTypeCache ids values unsafe-flags _ _ rest)
+    [(TcTypeCache ids values unsafe-flags _ _ _ rest)
       (match (i64-i64-map-get ids name-id)
         ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
         ;; value); the `unsafe-flags` i64 read below is scalar so the raw ptr path
@@ -1792,7 +1930,7 @@
   [name-id : i64]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup-id root name-id)]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-lookup-hygiene-global-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
@@ -1885,7 +2023,7 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) (tc-binding-unsafe-id? root name-id)]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
@@ -1901,7 +2039,7 @@
 (define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-active-region-scan (box-get rest))
         (TcNoString))]
@@ -1914,7 +2052,7 @@
 
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
-    [(TcTypeCache _ _ _ _ _ rest) (tc-active-region-scan (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ rest) (tc-active-region-scan (box-get rest))]
     [_ (tc-active-region-scan env)]))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
@@ -1956,13 +2094,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _ _ _) false]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-cleanup-owner-active-scan? (box-get rest) name)
         false)]
@@ -1973,14 +2111,14 @@
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-cleanup-owner-active-scan? (box-get rest) name)]
     [_ (tc-cleanup-owner-active-scan? env name)]))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-active-cleanup-owners-scan root (box-get rest))
         TcStringNil)]
@@ -2001,7 +2139,7 @@
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-active-cleanup-owners-scan env (box-get rest))]
     [_ (tc-active-cleanup-owners-scan env env)]))
 
@@ -2167,7 +2305,7 @@
 (define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-lifetime-visible-scan? (box-get rest) lifetime)
         false)]
@@ -2178,7 +2316,7 @@
 
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-lifetime-visible-scan? (box-get rest) lifetime)]
     [_ (tc-lifetime-visible-scan? env lifetime)]))
 
@@ -2199,7 +2337,7 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner
           (box-get rest)
@@ -2222,7 +2360,7 @@
   [target : String]
   [seen-target : bool]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-lifetime-outlives-binding-scan-inner
         (box-get rest)
         lifetime
@@ -2257,7 +2395,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _ scan-through rest)
+      [(TcTypeCache _ _ _ _ _ scan-through rest)
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner
             (box-get rest)
@@ -2282,7 +2420,7 @@
   [target-lifetime : String]
   [seen-target : bool]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-lifetime-outlives-lifetime-scan-inner
         (box-get rest)
         value-lifetime
@@ -2771,7 +2909,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _ scan-through rest)
+      [(TcTypeCache _ _ _ _ _ scan-through rest)
         (if scan-through
           (tc-region-outlives-or-matches-scan
             (box-get rest)
@@ -2805,7 +2943,7 @@
   [value-region : String]
   [target-region : String]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-region-outlives-or-matches-scan
         (box-get rest)
         value-region
@@ -4612,7 +4750,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-ptr-addr-of-local-lookup (box-get rest) name)]
     [(TcTypeBind key ty rest)
       (if (= key (tc-hygiene-global-boundary-id))
@@ -4724,7 +4862,7 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
-    [(TcTypeCache _ _ _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
     [(TcTypeBind name-id ty rest)
       (TcSpmdEnvBind
         (intern-str name-id)
@@ -4868,7 +5006,7 @@
 
 (define (tc-type-env-cache-head? [env : TcTypeEnv]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _) true]
+    [(TcTypeCache _ _ _ _ _ _ _) true]
     [_ false]))
 
 (define (tc-type-env-bind-many [env : TcTypeEnv] [count : i64]) : TcTypeEnv
@@ -5455,10 +5593,20 @@
               [(OkTcType ty)
                 (OkTcEnv (tc-bind-module-name-unsafe-id env module name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclExtern name _ _ _)
+          [(AstDeclExtern name kind _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
-                (OkTcEnv (tc-bind-module-name-unsafe-id env module name ty))]
+                (OkTcEnv
+                  (if (tc-extern-value-c-abi-fnptr?
+                    (tc-context-with-module ctx module)
+                    kind
+                    ty)
+                    (tc-bind-module-name-unsafe-id-c-abi-fnptr
+                      env
+                      module
+                      name
+                      ty)
+                    (tc-bind-module-name-unsafe-id env module name ty)))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
@@ -5477,9 +5625,16 @@
         [(OkTcType ty) (OkTcEnv (tc-bind-module-name-id env module name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefMacro _ _ _ _) (OkTcEnv env)]
-    [(AstDeclExtern name _ _ _)
+    [(AstDeclExtern name kind _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind-module-name-id env module name ty))]
+        [(OkTcType ty)
+          (OkTcEnv
+            (if (tc-extern-value-c-abi-fnptr?
+              (tc-context-with-module ctx module)
+              kind
+              ty)
+              (tc-bind-module-name-id-c-abi-fnptr env module name ty)
+              (tc-bind-module-name-id env module name ty)))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefEnum name cleanup variants)
       (let
@@ -5650,14 +5805,23 @@
                     (compiler-symbol-module-key alias (intern-str name))
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclExtern name _ _ _)
+          [(AstDeclExtern name kind _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv
-                  (tc-bind-unsafe
-                    env
-                    (compiler-symbol-module-key alias (intern-str name))
-                    ty))]
+                  (if (tc-extern-value-c-abi-fnptr?
+                    (tc-context-with-module ctx module)
+                    kind
+                    ty)
+                    (tc-bind-unsafe-c-abi-fnptr-id
+                      env
+                      (tc-name-id
+                        (compiler-symbol-module-key alias (intern-str name)))
+                      ty)
+                    (tc-bind-unsafe
+                      env
+                      (compiler-symbol-module-key alias (intern-str name))
+                      ty)))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
@@ -5687,14 +5851,22 @@
               (compiler-symbol-module-key alias (intern-str name))
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclExtern name _ _ _)
+    [(AstDeclExtern name kind _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
-              env
-              (compiler-symbol-module-key alias (intern-str name))
-              ty))]
+            (if (tc-extern-value-c-abi-fnptr?
+              (tc-context-with-module ctx module)
+              kind
+              ty)
+              (tc-bind-c-abi-fnptr
+                env
+                (compiler-symbol-module-key alias (intern-str name))
+                ty)
+              (tc-bind
+                env
+                (compiler-symbol-module-key alias (intern-str name))
+                ty)))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefEnum name cleanup variants)
       (let
@@ -5947,9 +6119,13 @@
             (match (tc-top-decl-type ctx inner)
               [(OkTcType ty) (OkTcEnv (tc-bind-unsafe-id env name ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
-          [(AstDeclExtern name _ _ _)
+          [(AstDeclExtern name kind _ _)
             (match (tc-top-decl-type ctx inner)
-              [(OkTcType ty) (OkTcEnv (tc-bind-unsafe-id env name ty))]
+              [(OkTcType ty)
+                (OkTcEnv
+                  (if (tc-extern-value-c-abi-fnptr? ctx kind ty)
+                    (tc-bind-unsafe-c-abi-fnptr-id env name ty)
+                    (tc-bind-unsafe-id env name ty)))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
@@ -5964,9 +6140,13 @@
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind-id env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
-    [(AstDeclExtern name _ _ _)
+    [(AstDeclExtern name kind _ _)
       (match (tc-top-decl-type ctx decl)
-        [(OkTcType ty) (OkTcEnv (tc-bind-id env name ty))]
+        [(OkTcType ty)
+          (OkTcEnv
+            (if (tc-extern-value-c-abi-fnptr? ctx kind ty)
+              (tc-bind-c-abi-fnptr-id env name ty)
+              (tc-bind-id env name ty)))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefEnum name cleanup variants)
       (let
@@ -6491,7 +6671,7 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ _ shadow-flags _ _)
+    [(TcTypeCache ids _ _ _ shadow-flags _ _)
       (match (i64-i64-map-get ids name-id)
         [(I64I64MapFound index) (not (= (array-ref shadow-flags index) 1))]
         [(I64I64MapMissing) true])]
@@ -6993,7 +7173,8 @@
             args
             resolved-params
             allow-region-args
-            (AstSomeType target))
+            (AstSomeType target)
+            false)
             [(OkTcUnit) (OkTcType target)]
             [(ErrTcUnit message) (ErrTcType message)]))]
       [(ErrTcLifetimeSubst message) (ErrTcType message)])))
@@ -7011,7 +7192,8 @@
   [params : AstTypeList]
   [ret : AstType]
   [lifetimes : AstLifetimeList]
-  [allow-region-args : bool]) : ResultTcType
+  [allow-region-args : bool]
+  [c-abi-args : bool]) : ResultTcType
   (match (tc-infer-call-lifetime-subst
     ctx
     env
@@ -7030,7 +7212,8 @@
           args
           resolved-params
           allow-region-args
-          (AstNoType))
+          (AstNoType)
+          c-abi-args)
           [(OkTcUnit) (OkTcType (tc-tag-active-region env resolved-ret))]
           [(ErrTcUnit message) (ErrTcType message)]))]
     [(ErrTcLifetimeSubst message) (ErrTcType message)]))
@@ -7074,6 +7257,103 @@
   (match (ast-expr-unspan func)
     [(AstExprVar name) (tc-call-extern-abi-for-name ctx (intern-str name))]
     [_ (TcNoExternAbi)]))
+
+(define (tc-c-abi-fnptr-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc _ _) true]
+    [_ false]))
+
+(define (tc-extern-value-c-abi-fnptr?
+  [ctx : TcContext]
+  [kind : AstExternKind]
+  [ty : AstType]) : bool
+  (match kind
+    [(AstExternValue) (tc-c-abi-fnptr-type? (tc-resolve-type ctx ty))]
+    [(AstExternFunction) false]))
+
+(define (tc-expr-list-last-c-abi-fnptr?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil) (tc-expr-c-abi-fnptr? ctx env expr)]
+          [_ (tc-expr-list-last-c-abi-fnptr? ctx env rest)]))]))
+
+(define (tc-hygiene-c-abi-fnptr-binding?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : bool
+  (match (tc-hygiene-global-decode name)
+    [(TcHygieneLegacyGlobal global-name)
+      (tc-binding-c-abi-fnptr-id? env (tc-name-id global-name))]
+    [(TcHygieneContextGlobal module global-name)
+      (match (tc-hygiene-definition-env ctx module)
+        [(OkTcEnv def-env)
+          (tc-binding-c-abi-fnptr-id? def-env (tc-name-id global-name))]
+        [(ErrTcEnv _) false])]))
+
+(define (tc-expr-c-abi-fnptr?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name)
+      (let
+        [text : String (intern-str name)]
+        (if (tc-hygiene-global-name? text)
+          (tc-hygiene-c-abi-fnptr-binding? ctx env text)
+          (tc-binding-c-abi-fnptr-id? env name)))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-expr-c-abi-fnptr? ctx env inner))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (match (tc-let-bindings-for-body ctx env bindings body)
+          [(OkTcEnv next-env) (tc-expr-c-abi-fnptr? ctx next-env body)]
+          [(ErrTcEnv _) false]))]
+    [(AstExprBegin exprs) (tc-expr-list-last-c-abi-fnptr? ctx env exprs)]
+    [(AstExprIf _ then-box else-box)
+      (let
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (and
+          (tc-expr-c-abi-fnptr? ctx env then-branch)
+          (tc-expr-c-abi-fnptr? ctx env else-branch)))]
+    [_ false]))
+
+(define (tc-bind-c-abi-fnptr-if-needed-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : AstType]
+  [init : AstExpr]) : TcTypeEnv
+  (if (and (tc-c-abi-fnptr-type? ty) (tc-expr-c-abi-fnptr? ctx env init))
+    (tc-bind-c-abi-fnptr-id env name ty)
+    (tc-bind-id env name ty)))
+
+(define (tc-raw-c-fnptr-flow-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected : AstType]
+  [c-abi-position : bool]) : ResultTcUnit
+  (if (and
+    (not c-abi-position)
+    (tc-c-abi-fnptr-type? expected)
+    (tc-expr-c-abi-fnptr? ctx env expr))
+    (ErrTcUnit
+      (tc-locate-error-at-expr
+        expr
+        "typecheck: raw C function pointer cannot be used as a TypeLisp function value"))
+    OkTcUnit))
 
 (define (tc-call-varargs-tail-args [args : AstExprList] [params : AstTypeList]) : ResultTcExprList
   (match params
@@ -7156,11 +7436,25 @@
       (if (tc-call-dynamic-c-varargs-abi? abi)
         (match (tc-call-extern-varargs-params ctx env args params abi)
           [(OkTcTypeList expanded-params)
-            (tc-call-function-type-normal ctx env func args expanded-params ret)]
+            (tc-call-function-type-normal
+              ctx
+              env
+              func
+              args
+              expanded-params
+              ret
+              true)]
           [(ErrTcTypeList message) (ErrTcType message)])
-        (tc-call-function-type-normal ctx env func args params ret))]
+        (tc-call-function-type-normal ctx env func args params ret true))]
     [(TcNoExternAbi)
-      (tc-call-function-type-normal ctx env func args params ret)]))
+      (tc-call-function-type-normal
+        ctx
+        env
+        func
+        args
+        params
+        ret
+        (tc-expr-c-abi-fnptr? ctx env func))]))
 
 (define (tc-call-function-type-normal
   [ctx : TcContext]
@@ -7168,7 +7462,8 @@
   [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
-  [ret : AstType]) : ResultTcType
+  [ret : AstType]
+  [c-abi-args : bool]) : ResultTcType
   (let
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func ctx env func)]
@@ -7193,7 +7488,8 @@
               args
               params
               allow-region-args
-              constructor-target)
+              constructor-target
+              c-abi-args)
               [(OkTcUnit)
                 (match constructor-target
                   [(AstSomeType target) (OkTcType target)]
@@ -7212,7 +7508,8 @@
                     params
                     allow-region-args
                     constructor-target
-                    arity-message)
+                    arity-message
+                    c-abi-args)
                     [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [_
@@ -7223,7 +7520,8 @@
                     params
                     ret
                     lifetimes
-                    allow-region-args)]))])))))
+                    allow-region-args
+                    c-abi-args)]))])))))
 
 (define (tc-check-call-args-with-message
   [ctx : TcContext]
@@ -7232,7 +7530,8 @@
   [params : AstTypeList]
   [allow-region-args : bool]
   [constructor-target : AstMaybeType]
-  [arity-message : String]) : ResultTcUnit
+  [arity-message : String]
+  [c-abi-args : bool]) : ResultTcUnit
   (match args
     [(AstExprNil)
       (match params
@@ -7255,43 +7554,53 @@
                     want
                     "typecheck: argument type mismatch")
                     [(OkTcUnit)
-                      (if (and
-                        (tc-type-contains-any-region got)
-                        (not allow-region-args)
-                        (not (tc-type-contains-reference? got)))
-                        (ErrTcUnit
-                          "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
-                        (match constructor-target
-                          [(AstSomeType target)
-                            (match (tc-ensure-cleanup-resource-not-stored-expr
-                              env
-                              arg)
-                              [(OkTcUnit)
-                                (match (tc-ensure-region-value-can-flow-into
+                      (match (tc-raw-c-fnptr-flow-ok
+                        ctx
+                        env
+                        arg
+                        want
+                        c-abi-args)
+                        [(OkTcUnit)
+                          (if (and
+                            (tc-type-contains-any-region got)
+                            (not allow-region-args)
+                            (not (tc-type-contains-reference? got)))
+                            (ErrTcUnit
+                              "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+                            (match constructor-target
+                              [(AstSomeType target)
+                                (match (tc-ensure-cleanup-resource-not-stored-expr
                                   env
-                                  target
-                                  got
-                                  "constructor result")
+                                  arg)
                                   [(OkTcUnit)
-                                    (tc-check-call-args-with-message
-                                      ctx
+                                    (match (tc-ensure-region-value-can-flow-into
                                       env
-                                      rest-args
-                                      rest-params
-                                      allow-region-args
-                                      constructor-target
-                                      arity-message)]
+                                      target
+                                      got
+                                      "constructor result")
+                                      [(OkTcUnit)
+                                        (tc-check-call-args-with-message
+                                          ctx
+                                          env
+                                          rest-args
+                                          rest-params
+                                          allow-region-args
+                                          constructor-target
+                                          arity-message
+                                          c-abi-args)]
+                                      [(ErrTcUnit message) (ErrTcUnit message)])]
                                   [(ErrTcUnit message) (ErrTcUnit message)])]
-                              [(ErrTcUnit message) (ErrTcUnit message)])]
-                          [(AstNoType)
-                            (tc-check-call-args-with-message
-                              ctx
-                              env
-                              rest-args
-                              rest-params
-                              allow-region-args
-                              constructor-target
-                              arity-message)]))]
+                              [(AstNoType)
+                                (tc-check-call-args-with-message
+                                  ctx
+                                  env
+                                  rest-args
+                                  rest-params
+                                  allow-region-args
+                                  constructor-target
+                                  arity-message
+                                  c-abi-args)]))]
+                        [(ErrTcUnit message) (ErrTcUnit message)])]
                     [(ErrTcUnit message) (ErrTcUnit message)])]
                 [(ErrTcType message) (ErrTcUnit message)]))]
           [(AstTypeNil) (ErrTcUnit arity-message)]))]))
@@ -7302,7 +7611,8 @@
   [args : AstExprList]
   [params : AstTypeList]
   [allow-region-args : bool]
-  [constructor-target : AstMaybeType]) : ResultTcUnit
+  [constructor-target : AstMaybeType]
+  [c-abi-args : bool]) : ResultTcUnit
   (tc-check-call-args-with-message
     ctx
     env
@@ -7310,7 +7620,8 @@
     params
     allow-region-args
     constructor-target
-    "typecheck: arity mismatch"))
+    "typecheck: arity mismatch"
+    c-abi-args))
 
 (define (tc-check-args
   [ctx : TcContext]
@@ -7381,7 +7692,8 @@
                     params
                     false
                     (AstNoType)
-                    (tc-call-arity-message func args params))
+                    (tc-call-arity-message func args params)
+                    (tc-expr-c-abi-fnptr? ctx env func))
                     [(OkTcUnit)
                       (OkTcType (tc-tag-active-region env (ty-node-get ret)))]
                     [(ErrTcUnit message) (ErrTcType message)])]
@@ -8015,13 +8327,18 @@
                                   [(OkTcUnit)
                                     (tc-let-bindings
                                       ctx
-                                      (tc-bind-id
-                                        env
-                                        name
-                                        (if (tc-type-contains-any-region
-                                          init-ty)
-                                          init-ty
-                                          resolved-want))
+                                      (let
+                                        [binding-ty : AstType
+                                          (if (tc-type-contains-any-region
+                                            init-ty)
+                                            init-ty
+                                            resolved-want)]
+                                        (tc-bind-c-abi-fnptr-if-needed-id
+                                          ctx
+                                          env
+                                          name
+                                          binding-ty
+                                          init))
                                       rest)]
                                   [(ErrTcUnit message) (ErrTcEnv message)])]
                               [(ErrTcUnit message) (ErrTcEnv message)])]
@@ -8038,7 +8355,12 @@
                             [(OkTcUnit)
                               (tc-let-bindings
                                 ctx
-                                (tc-bind-id env name init-ty)
+                                (tc-bind-c-abi-fnptr-if-needed-id
+                                  ctx
+                                  env
+                                  name
+                                  init-ty
+                                  init)
                                 rest)]
                             [(ErrTcUnit message) (ErrTcEnv message)])]
                         [(ErrTcUnit message) (ErrTcEnv message)])]
@@ -8050,7 +8372,7 @@
   [body : AstExpr]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
         false)]
@@ -8071,7 +8393,7 @@
   [params : AstParamList]
   [body : AstExpr]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-lambda-captures-reference-scan-root
         (box-get rest)
         (tc-param-bound-names params)
@@ -8622,13 +8944,18 @@
                                   [(OkTcUnit)
                                     (tc-let-bindings-for-body
                                       ctx
-                                      (tc-bind-id
-                                        env
-                                        name
-                                        (if (tc-type-contains-any-region
-                                          init-ty)
-                                          init-ty
-                                          resolved-want))
+                                      (let
+                                        [binding-ty : AstType
+                                          (if (tc-type-contains-any-region
+                                            init-ty)
+                                            init-ty
+                                            resolved-want)]
+                                        (tc-bind-c-abi-fnptr-if-needed-id
+                                          ctx
+                                          env
+                                          name
+                                          binding-ty
+                                          init))
                                       rest
                                       body)]
                                   [(ErrTcUnit message) (ErrTcEnv message)])]
@@ -8643,7 +8970,12 @@
                             [(OkTcUnit)
                               (tc-let-bindings-for-body
                                 ctx
-                                (tc-bind-id env name init-ty)
+                                (tc-bind-c-abi-fnptr-if-needed-id
+                                  ctx
+                                  env
+                                  name
+                                  init-ty
+                                  init)
                                 rest
                                 body)]
                             [(ErrTcUnit message) (ErrTcEnv message)])]
@@ -10970,7 +11302,7 @@
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
-    [(TcTypeCache _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through rest)
       (if scan-through
         (tc-check-lambda-region-captures-scan-root
           root
@@ -11034,7 +11366,7 @@
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (match env
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-check-lambda-region-captures-scan-root
         env
         (box-get rest)
@@ -16763,7 +17095,7 @@
   [body : AstExpr]) : TcMoveResult
   (match env
     [(TcTypeNil) (OkTcMove moved)]
-    [(TcTypeCache _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ rest)
       (tc-move-check-lambda-owner-captures-scan
         ctx
         root

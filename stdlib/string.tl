@@ -283,7 +283,9 @@
 (define (is-char-whitespace [c : char]) : bool
   (or
     (char-eq c #\space')
-    (or (char-eq c #\tab') (or (char-eq c #\newline') (char-eq c #\return')))))
+    (char-eq c #\tab')
+    (char-eq c #\newline')
+    (char-eq c #\return')))
 
 ;: Compare two chars for equality.
 (define (char-eq [a : char] [b : char]) : bool

@@ -196,8 +196,8 @@
           (count-floats toks)
           (if (and
             (= (sum-char-codes toks) 172)
-            (and
-              (lexer-recoverable-error-ok?)
-              (and (lexer-token-spans-ok?) (lexer-spanned-error-ok?))))
+            (lexer-recoverable-error-ok?)
+            (lexer-token-spans-ok?)
+            (lexer-spanned-error-ok?))
             (count-chars toks)
             0))))))

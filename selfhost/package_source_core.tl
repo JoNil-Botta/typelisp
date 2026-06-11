@@ -144,11 +144,10 @@
 (define (package-source-internal-dir? [name : String]) : bool
   (or
     (string-eq name "target")
-    (or
-      (string-eq name ".git")
-      (or
-        (string-eq name ".hg")
-        (or (string-eq name ".svn") (string-eq name ".jj"))))))
+    (string-eq name ".git")
+    (string-eq name ".hg")
+    (string-eq name ".svn")
+    (string-eq name ".jj")))
 
 (define (package-source-test-dir? [name : String]) : bool
   (string-eq name "tests"))
@@ -159,13 +158,10 @@
 (define (package-source-skip-dir-self-test?) : bool
   (and
     (package-source-skip-dir? "target")
-    (and
-      (package-source-skip-dir? ".git")
-      (and
-        (package-source-skip-dir? "tests")
-        (and
-          (not (package-source-skip-dir? "tests_extra"))
-          (not (package-source-skip-dir? "src")))))))
+    (package-source-skip-dir? ".git")
+    (package-source-skip-dir? "tests")
+    (not (package-source-skip-dir? "tests_extra"))
+    (not (package-source-skip-dir? "src"))))
 
 (test
   package-source-skips-package-test-directories

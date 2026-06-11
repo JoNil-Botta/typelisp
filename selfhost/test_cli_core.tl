@@ -206,7 +206,8 @@
 (define (tltest-backend-mode-valid? [value : String]) : bool
   (or
     (string-eq value "scalar")
-    (or (string-eq value "avx2") (string-eq value "avx512"))))
+    (string-eq value "avx2")
+    (string-eq value "avx512")))
 
 (define (tltest-parse-options
   [idx : i64]
@@ -1402,33 +1403,18 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 2)
-                (and
-                  (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
-                  (and
-                    (string-eq
-                      (tltest-decl-name-at harness-decls 1)
-                      "__tl_inline_test_0")
-                    (and
-                      (string-eq
-                        (tltest-decl-name-at harness-decls 2)
-                        "__tl_inline_test_1")
-                      (and
-                        (string-eq (tltest-decl-name-at harness-decls 3) "main")
-                        (and
-                          (string-eq
-                            (tltest-path-at harness-paths 0)
-                            "runtime.tl")
-                          (and
-                            (string-eq
-                              (tltest-path-at harness-paths 1)
-                              "one.tl")
-                            (and
-                              (string-eq
-                                (tltest-path-at harness-paths 2)
-                                "two.tl")
-                              (string-eq
-                                (tltest-path-at harness-paths 3)
-                                "driver.tl"))))))))))])])))
+                (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string-eq
+                  (tltest-decl-name-at harness-decls 1)
+                  "__tl_inline_test_0")
+                (string-eq
+                  (tltest-decl-name-at harness-decls 2)
+                  "__tl_inline_test_1")
+                (string-eq (tltest-decl-name-at harness-decls 3) "main")
+                (string-eq (tltest-path-at harness-paths 0) "runtime.tl")
+                (string-eq (tltest-path-at harness-paths 1) "one.tl")
+                (string-eq (tltest-path-at harness-paths 2) "two.tl")
+                (string-eq (tltest-path-at harness-paths 3) "driver.tl")))])])))
 
 (test
   test-cli-vector-builders-preserve-order
@@ -1527,15 +1513,12 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (and
-                  (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
-                  (and
-                    (string-eq (tltest-decl-name-at harness-decls 1) macro-name)
-                    (and
-                      (string-eq
-                        (tltest-decl-name-at harness-decls 2)
-                        "__tl_inline_test_0")
-                      (string-eq (tltest-decl-name-at harness-decls 3) "main"))))))])])))
+                (string-eq (tltest-decl-name-at harness-decls 0) helper-name)
+                (string-eq (tltest-decl-name-at harness-decls 1) macro-name)
+                (string-eq
+                  (tltest-decl-name-at harness-decls 2)
+                  "__tl_inline_test_0")
+                (string-eq (tltest-decl-name-at harness-decls 3) "main")))])])))
 
 (test
   test-cli-inline-harness-keeps-macro-quasiquote-deps
@@ -1765,22 +1748,18 @@
       [c : char (string-ref source idx)]
       (or
         (tltest-source-prefix-space? c)
-        (or (tltest-source-line-break? c) (= c #)'))))))
+        (tltest-source-line-break? c)
+        (= c #)')))))
 
 (define (tltest-inline-marker-at? [source : String] [idx : i64] [n : i64]) : bool
   (and
     (<= (+ idx 5) n)
-    (and
-      (= (string-ref source idx) #(')
-      (and
-        (= (string-ref source (+ idx 1)) #t')
-        (and
-          (= (string-ref source (+ idx 2)) #e')
-          (and
-            (= (string-ref source (+ idx 3)) #s')
-            (and
-              (= (string-ref source (+ idx 4)) #t')
-              (tltest-inline-marker-boundary? source (+ idx 5) n))))))))
+    (= (string-ref source idx) #(')
+    (= (string-ref source (+ idx 1)) #t')
+    (= (string-ref source (+ idx 2)) #e')
+    (= (string-ref source (+ idx 3)) #s')
+    (= (string-ref source (+ idx 4)) #t')
+    (tltest-inline-marker-boundary? source (+ idx 5) n)))
 
 (define (tltest-source-has-inline-tests-from
   [source : String]
@@ -1856,17 +1835,13 @@
         (tltest-package-integration-source?
           "repo/tests/diagnostics/backend/quote_runtime_value.tl"
           tests-prefix))
-      (and
-        (tltest-package-integration-source?
-          "repo/tests/integration/hello.tl"
-          tests-prefix)
-        (and
-          (tltest-package-integration-source?
-            "repo/tests/basic.tl"
-            tests-prefix)
-          (tltest-package-integration-source?
-            "repo/tests/diagnostics_extra/example.tl"
-            tests-prefix))))))
+      (tltest-package-integration-source?
+        "repo/tests/integration/hello.tl"
+        tests-prefix)
+      (tltest-package-integration-source? "repo/tests/basic.tl" tests-prefix)
+      (tltest-package-integration-source?
+        "repo/tests/diagnostics_extra/example.tl"
+        tests-prefix))))
 
 (test
   test-cli-package-integration-skips-diagnostics-fixtures

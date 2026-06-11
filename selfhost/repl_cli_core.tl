@@ -87,7 +87,7 @@
     false))
 
 (define (repl-space? [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
+  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
 
 (define (repl-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -116,9 +116,8 @@
     false
     (and
       (= (cast (string-ref text 0) : i64) 239)
-      (and
-        (= (cast (string-ref text 1) : i64) 187)
-        (= (cast (string-ref text 2) : i64) 191)))))
+      (= (cast (string-ref text 1) : i64) 187)
+      (= (cast (string-ref text 2) : i64) 191))))
 
 (define (repl-trim-leading-utf8-bom [text : String]) : String
   (if (repl-leading-utf8-bom? text)
@@ -572,7 +571,7 @@
   [in-string : bool]
   [escaped : bool]) : bool
   (if (>= idx len)
-    (and (not in-string) (and (= parens 0) (= brackets 0)))
+    (and (not in-string) (= parens 0) (= brackets 0))
     (let
       [c : char (string-ref text idx)]
       (core/cond

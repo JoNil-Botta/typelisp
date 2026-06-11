@@ -176,11 +176,9 @@
   [end-col : i64]) : bool
   (and
     (= (struct-get span start-line) start-line)
-    (and
-      (= (struct-get span start-col) start-col)
-      (and
-        (= (struct-get span end-line) end-line)
-        (= (struct-get span end-col) end-col)))))
+    (= (struct-get span start-col) start-col)
+    (= (struct-get span end-line) end-line)
+    (= (struct-get span end-col) end-col)))
 
 (define (fmt-source-position-at [src : String] [target : i64]) : FormatPosition
   (let
@@ -241,9 +239,7 @@
   (and (>= c #0') (<= c #9')))
 
 (define (fmt-is-hex-digit [c : char]) : bool
-  (or
-    (fmt-is-digit c)
-    (or (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F')))))
+  (or (fmt-is-digit c) (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F'))))
 
 (define (fmt-is-binary-digit [c : char]) : bool
   (or (= c #0') (= c #1')))
@@ -252,33 +248,27 @@
   (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
 
 (define (fmt-is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
+  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
 
 (define (fmt-is-symbol-punct [c : char]) : bool
   (or
     (= c #-')
-    (or
-      (= c #+')
-      (or
-        (= c #*')
-        (or
-          (= c #/')
-          (or
-            (= c #?')
-            (or
-              (= c #!')
-              (or
-                (= c #>')
-                (or
-                  (= c #<')
-                  (or
-                    (= c #=')
-                    (or
-                      (= c #_')
-                      (or (= c #$') (or (= c #.') (or (= c #%') (= c #&')))))))))))))))
+    (= c #+')
+    (= c #*')
+    (= c #/')
+    (= c #?')
+    (= c #!')
+    (= c #>')
+    (= c #<')
+    (= c #=')
+    (= c #_')
+    (= c #$')
+    (= c #.')
+    (= c #%')
+    (= c #&')))
 
 (define (fmt-is-symbol-char [c : char]) : bool
-  (or (fmt-is-alpha c) (or (fmt-is-digit c) (fmt-is-symbol-punct c))))
+  (or (fmt-is-alpha c) (fmt-is-digit c) (fmt-is-symbol-punct c)))
 
 (define (fmt-starts-number [src : String] [i : i64] [n : i64]) : bool
   (let
@@ -303,9 +293,7 @@
       (if (= (string-ref src digits-start) #0')
         (let
           [prefix : char (string-ref src (+ digits-start 1))]
-          (or
-            (= prefix #x')
-            (or (= prefix #X') (or (= prefix #b') (= prefix #B')))))
+          (or (= prefix #x') (= prefix #X') (= prefix #b') (= prefix #B')))
         false)
       false)))
 
@@ -319,9 +307,9 @@
 (define (fmt-starts-ellipsis [src : String] [i : i64] [n : i64]) : bool
   (and
     (< (+ i 2) n)
-    (and
-      (= (string-ref src i) #.')
-      (and (= (string-ref src (+ i 1)) #.') (= (string-ref src (+ i 2)) #.')))))
+    (= (string-ref src i) #.')
+    (= (string-ref src (+ i 1)) #.')
+    (= (string-ref src (+ i 2)) #.')))
 
 (define (fmt-scan-based-int-end
   [src : String]

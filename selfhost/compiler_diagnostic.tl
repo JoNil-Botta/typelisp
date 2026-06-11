@@ -532,13 +532,11 @@
       (compiler-diagnostic-from-source-error "input.tl" err)]
     (and
       (string-eq (compiler-diagnostic-path diag) "input.tl")
-      (and
-        (= (compiler-diagnostic-line diag) 4)
-        (and
-          (= (compiler-diagnostic-col diag) 5)
-          (string-eq
-            (compiler-diagnostic-message diag)
-            "lexer: unexpected character"))))))
+      (= (compiler-diagnostic-line diag) 4)
+      (= (compiler-diagnostic-col diag) 5)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "lexer: unexpected character"))))
 
 (define (compiler-diagnostic-rewrite-ok?) : bool
   (let
@@ -548,11 +546,9 @@
       (compiler-diagnostic-with-message moved "new message")]
     (and
       (string-eq (compiler-diagnostic-path rewritten) "new.tl")
-      (and
-        (= (compiler-diagnostic-line rewritten) 1)
-        (and
-          (= (compiler-diagnostic-col rewritten) 2)
-          (string-eq (compiler-diagnostic-message rewritten) "new message"))))))
+      (= (compiler-diagnostic-line rewritten) 1)
+      (= (compiler-diagnostic-col rewritten) 2)
+      (string-eq (compiler-diagnostic-message rewritten) "new message"))))
 
 (define (compiler-diagnostic-source-render-ok?) : bool
   (let
@@ -604,9 +600,8 @@
     [moved : CompilerDiagnostic (compiler-diagnostic-with-path diag "moved.tl")]
     (and
       (= (compiler-diagnostic-end-line moved) 2)
-      (and
-        (= (compiler-diagnostic-end-col moved) 9)
-        (string-eq (compiler-diagnostic-path moved) "moved.tl")))))
+      (= (compiler-diagnostic-end-col moved) 9)
+      (string-eq (compiler-diagnostic-path moved) "moved.tl"))))
 
 (define (compiler-diagnostic-metadata-ok?) : bool
   (let
@@ -636,23 +631,19 @@
               [rest-notes : CompilerDiagnosticNoteList (box-get rest-notes-box)]
               (and
                 (string-eq note "second note")
-                (and
-                  (match rest-notes
-                    [(CompilerDiagnosticNoteCons tail-note _)
-                      (string-eq tail-note "first note")]
-                    [CompilerDiagnosticNoteNil false])
-                  (and
-                    (match rest-labels
-                      [(CompilerDiagnosticLabelCons _ _)
-                        (string-eq
-                          (compiler-diagnostic-span-path
-                            (struct-get label span))
-                          "other.tl")]
-                      [CompilerDiagnosticLabelNil false])
-                    (match (compiler-diagnostic-code diag)
-                      [(CompilerDiagnosticSomeString code)
-                        (string-eq code "E1234")]
-                      [CompilerDiagnosticNoString false])))))]
+                (match rest-notes
+                  [(CompilerDiagnosticNoteCons tail-note _)
+                    (string-eq tail-note "first note")]
+                  [CompilerDiagnosticNoteNil false])
+                (match rest-labels
+                  [(CompilerDiagnosticLabelCons _ _)
+                    (string-eq
+                      (compiler-diagnostic-span-path (struct-get label span))
+                      "other.tl")]
+                  [CompilerDiagnosticLabelNil false])
+                (match (compiler-diagnostic-code diag)
+                  [(CompilerDiagnosticSomeString code) (string-eq code "E1234")]
+                  [CompilerDiagnosticNoString false])))]
           [CompilerDiagnosticNoteNil false])]
       [CompilerDiagnosticLabelNil false])))
 

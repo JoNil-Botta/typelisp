@@ -581,7 +581,8 @@
       (core/cond
         (or
           (string-eq command "help")
-          (or (string-eq command "--help") (string-eq command "-h")))
+          (string-eq command "--help")
+          (string-eq command "-h"))
         (CompileCliHelp)
         (string-eq command "compile")
         (compile-cli-command-action count)
@@ -659,7 +660,8 @@
     n
     (if (and
       (= (string-ref text line-end) #\return')
-      (and (< (+ line-end 1) n) (= (string-ref text (+ line-end 1)) #\newline')))
+      (< (+ line-end 1) n)
+      (= (string-ref text (+ line-end 1)) #\newline'))
       (+ line-end 2)
       (+ line-end 1))))
 

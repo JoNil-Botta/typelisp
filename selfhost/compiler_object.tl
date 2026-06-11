@@ -334,9 +334,8 @@
         [(ObjectSymbol found-name found-binding found-kind _)
           (if (and
             (string-eq found-name name)
-            (and
-              (compiler-object-symbol-binding-eq? found-binding binding)
-              (compiler-object-symbol-kind-eq? found-kind kind)))
+            (compiler-object-symbol-binding-eq? found-binding binding)
+            (compiler-object-symbol-kind-eq? found-kind kind))
             true
             (compiler-object-symbol-list-contains?
               (box-get rest)

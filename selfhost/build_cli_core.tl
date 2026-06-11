@@ -1034,25 +1034,23 @@
     (string-eq
       (build-package-output-dir-profile "root/app" "pkg" (BuildProfileRelease))
       "root/app/target/release")
-    (and
-      (string-eq
-        (build-package-asm-path-profile "root/app" "pkg" (BuildProfileDev))
-        "root/app/target/dev/pkg.s")
-      (and
-        (string-eq
-          (build-package-bin-path-profile
-            "root/app"
-            "pkg"
-            (BuildProfileRelease)
-            (BackendTargetWindows))
-          "root/app/target/release/pkg.exe")
-        (string-eq
-          (build-package-lib-path-profile
-            "root/app"
-            "pkg"
-            (BuildProfileRelease)
-            (BackendTargetLinux))
-          "root/app/target/release/libpkg.a")))))
+    (string-eq
+      (build-package-asm-path-profile "root/app" "pkg" (BuildProfileDev))
+      "root/app/target/dev/pkg.s")
+    (string-eq
+      (build-package-bin-path-profile
+        "root/app"
+        "pkg"
+        (BuildProfileRelease)
+        (BackendTargetWindows))
+      "root/app/target/release/pkg.exe")
+    (string-eq
+      (build-package-lib-path-profile
+        "root/app"
+        "pkg"
+        (BuildProfileRelease)
+        (BackendTargetLinux))
+      "root/app/target/release/libpkg.a")))
 
 (test
   build-package-path-layout-smoke
@@ -1210,11 +1208,9 @@
     [(OkPackageCachePinKind kind)
       (and
         (string-eq (struct-get entry alias) alias)
-        (and
-          (string-eq (struct-get entry url) (struct-get dep remote))
-          (and
-            (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
-            (string-eq (struct-get entry pin-value) (struct-get dep pin-value)))))]))
+        (string-eq (struct-get entry url) (struct-get dep remote))
+        (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
+        (string-eq (struct-get entry pin-value) (struct-get dep pin-value)))]))
 
 (define (build-package-lock-matching-entry
   [entries : PackageLockEntryList]
@@ -2362,11 +2358,10 @@
         (build-package-graph-test-link-arg first))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
-      (and
-        (string-eq
-          (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
-          "root/first/typelisp.pkg")
-        (source-tool-string-list-eq? libs expected)))))
+      (string-eq
+        (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
+        "root/first/typelisp.pkg")
+      (source-tool-string-list-eq? libs expected))))
 
 (define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
   (let

@@ -525,9 +525,7 @@
 (define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
   (let
     [n : i64 (string-length path)]
-    (if (and
-      (> n 2)
-      (and (= (string-ref path 0) #/') (= (string-ref path 2) #:')))
+    (if (and (> n 2) (= (string-ref path 0) #/') (= (string-ref path 2) #:'))
       (substring path 1 (- n 1))
       path)))
 
@@ -546,15 +544,14 @@
 (define (lsp-uri-safe-code? [code : i64]) : bool
   (or
     (and (>= code 65) (<= code 90))
-    (or
-      (and (>= code 97) (<= code 122))
-      (or
-        (and (>= code 48) (<= code 57))
-        (or
-          (= code 45)
-          (or
-            (= code 46)
-            (or (= code 95) (or (= code 126) (or (= code 47) (= code 58))))))))))
+    (and (>= code 97) (<= code 122))
+    (and (>= code 48) (<= code 57))
+    (= code 45)
+    (= code 46)
+    (= code 95)
+    (= code 126)
+    (= code 47)
+    (= code 58)))
 
 (define (lsp-percent-encode-path [path : String]) : String
   (let
@@ -717,9 +714,8 @@
     [(FoundLspDocument _ _ old-diagnostic-uri)
       (if (or
         (string-eq old-diagnostic-uri "")
-        (or
-          (string-eq old-diagnostic-uri uri)
-          (string-eq old-diagnostic-uri next-diagnostic-uri)))
+        (string-eq old-diagnostic-uri uri)
+        (string-eq old-diagnostic-uri next-diagnostic-uri))
         unit
         (lsp-publish-diagnostics old-diagnostic-uri JsonListNil))]
     [(MissingLspDocument) unit]))

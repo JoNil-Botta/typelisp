@@ -94,7 +94,7 @@
 
 ;: Return true for JSON whitespace scalar codes.
 (define (json-space-code? [code : i64]) : bool
-  (or (= code 32) (or (= code 10) (or (= code 13) (= code 9)))))
+  (or (= code 32) (= code 10) (= code 13) (= code 9)))
 
 ;: Return true for ASCII decimal digit scalar codes.
 (define (json-digit-code? [code : i64]) : bool
@@ -302,7 +302,7 @@
       (while (< i n)
         (let
           [code : i64 (json-char-code-at text i)]
-          (if (or (= code 34) (or (= code 92) (< code 32)))
+          (if (or (= code 34) (= code 92) (< code 32))
             (begin
               (set!
                 out

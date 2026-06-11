@@ -946,9 +946,8 @@
         true
         (and
           (> n 2)
-          (and
-            (fs-path-drive-qualified? path)
-            (fs-path-separator? (string-ref path 2))))))))
+          (fs-path-drive-qualified? path)
+          (fs-path-separator? (string-ref path 2)))))))
 
 ;: Render a reversed normalized path segment stack using `/` separators.
 (define (fs-path-segment-list-render [segments : FsPathSegmentList]) : String
@@ -993,9 +992,8 @@
     [drive-root : bool
       (and
         (> n 2)
-        (and
-          (fs-path-drive-qualified? path)
-          (fs-path-separator? (string-ref path 2))))]
+        (fs-path-drive-qualified? path)
+        (fs-path-separator? (string-ref path 2)))]
     [rooted : bool
       (if drive-root
         true
@@ -1052,11 +1050,9 @@
       true
       (and
         (> n 2)
-        (and
-          (char-eq (string-ref normalized 0) #.')
-          (and
-            (char-eq (string-ref normalized 1) #.')
-            (fs-path-separator? (string-ref normalized 2))))))))
+        (char-eq (string-ref normalized 0) #.')
+        (char-eq (string-ref normalized 1) #.')
+        (fs-path-separator? (string-ref normalized 2))))))
 
 ;: Return true when `path` is a non-empty relative suffix that stays below root.
 ;:

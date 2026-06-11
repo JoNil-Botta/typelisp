@@ -755,11 +755,9 @@
     [kind : i64 (compiler-symbol-handle-kind handle)]
     (or
       (= kind (compiler-symbol-kind-value-define))
-      (or
-        (= kind (compiler-symbol-kind-function-define))
-        (or
-          (= kind (compiler-symbol-kind-extern))
-          (= kind (compiler-symbol-kind-defdispatch)))))))
+      (= kind (compiler-symbol-kind-function-define))
+      (= kind (compiler-symbol-kind-extern))
+      (= kind (compiler-symbol-kind-defdispatch)))))
 
 (define (compiler-export-type-handle? [handle : i64]) : bool
   (let
@@ -3064,9 +3062,8 @@
     [(SomeI64 handle)
       (if (and
         (= (compiler-registry-handle-kind handle) want-kind)
-        (and
-          (= (compiler-registry-handle-owner-index handle) want-owner)
-          (= (compiler-registry-handle-child-index handle) want-child)))
+        (= (compiler-registry-handle-owner-index handle) want-owner)
+        (= (compiler-registry-handle-child-index handle) want-child))
         1
         0)]
     [(NoneI64) 0]))
@@ -3300,30 +3297,27 @@
     (compiler-symbols-duplicate-value-error-ok?
       (compiler-symbols-variant-function-collision-source)
       "Foo")
-    (and
-      (compiler-symbols-duplicate-value-error-ok?
-        (compiler-symbols-variant-define-collision-source)
-        "Foo")
-      (and
-        (compiler-symbols-duplicate-value-error-ok?
-          (compiler-symbols-variant-extern-collision-source)
-          "Foo")
-        (compiler-symbols-duplicate-value-error-ok?
-          (compiler-symbols-variant-struct-collision-source)
-          "Foo")))))
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-variant-define-collision-source)
+      "Foo")
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-variant-extern-collision-source)
+      "Foo")
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-variant-struct-collision-source)
+      "Foo")))
 
 (define (compiler-symbols-struct-value-collisions-ok?) : bool
   (and
     (compiler-symbols-duplicate-value-error-ok?
       (compiler-symbols-struct-function-collision-source)
       "Point")
-    (and
-      (compiler-symbols-duplicate-value-error-ok?
-        (compiler-symbols-struct-define-collision-source)
-        "Point")
-      (compiler-symbols-duplicate-value-error-ok?
-        (compiler-symbols-struct-extern-collision-source)
-        "Point"))))
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-struct-define-collision-source)
+      "Point")
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-struct-extern-collision-source)
+      "Point")))
 
 (define (compiler-registries-duplicate-variant-ok?) : bool
   (match (build-compiler-registries-from-source
@@ -3351,17 +3345,16 @@
             (compiler-symbol-kind-defmacro)
             0)
           1)
-        (and
-          (=
-            (compiler-symbols-miss-score
-              (compiler-symbols-lookup-value symbols "all"))
+        (=
+          (compiler-symbols-miss-score
+            (compiler-symbols-lookup-value symbols "all"))
+          1)
+        (=
+          (compiler-symbol-lookup-score
+            (compiler-symbols-lookup-value symbols "main")
+            (compiler-symbol-kind-function-define)
             1)
-          (=
-            (compiler-symbol-lookup-score
-              (compiler-symbols-lookup-value symbols "main")
-              (compiler-symbol-kind-function-define)
-              1)
-            1)))]
+          1))]
     [(ErrCompilerSymbols _) false]))
 
 (define (compiler-symbols-duplicate-macro-value-ok?) : bool
@@ -3381,9 +3374,8 @@
       (=
         (compiler-registry-handle-kind handle)
         (compiler-symbol-kind-enum-variant))
-      (and
-        (= (compiler-registry-handle-owner-index handle) 1234)
-        (= (compiler-registry-handle-child-index handle) 5)))))
+      (= (compiler-registry-handle-owner-index handle) 1234)
+      (= (compiler-registry-handle-child-index handle) 5))))
 
 (define (compiler-exports-valid-source) : String
   "(module data)
@@ -3562,23 +3554,22 @@
             (compiler-symbol-kind-defstruct)
             0)
           1)
-        (and
-          (=
-            (compiler-symbols-miss-score
-              (compiler-exports-lookup
-                exports
-                (compiler-export-kind-constructor)
-                "data"
-                "Opaque"))
-            1)
-          (=
-            (compiler-symbols-miss-score
-              (compiler-exports-lookup
-                exports
-                (compiler-export-kind-field)
-                "data"
-                "Opaque.value"))
-            1)))]
+        (=
+          (compiler-symbols-miss-score
+            (compiler-exports-lookup
+              exports
+              (compiler-export-kind-constructor)
+              "data"
+              "Opaque"))
+          1)
+        (=
+          (compiler-symbols-miss-score
+            (compiler-exports-lookup
+              exports
+              (compiler-export-kind-field)
+              "data"
+              "Opaque.value"))
+          1))]
     [(ErrCompilerExports _) false]))
 
 (define (compiler-exports-error-ok? [src : String] [want : String]) : bool
@@ -3637,40 +3628,31 @@
         (compiler-export-kind-value)
         "main"
         "answer"))
-    (and
-      (compiler-exports-error-ok?
-        "(import \"data.tl\" module data :as d)
+    (compiler-exports-error-ok?
+      "(import \"data.tl\" module data :as d)
 (export (value d/answer))
 (module data)
 (define answer : i64 1)"
-        (compiler-export-unknown-message
-          (compiler-export-kind-value)
-          ""
-          "d/answer"))
-      (compiler-exports-error-ok?
-        "(import \"data.tl\" module data :as d)
+      (compiler-export-unknown-message
+        (compiler-export-kind-value)
+        ""
+        "d/answer"))
+    (compiler-exports-error-ok?
+      "(import \"data.tl\" module data :as d)
 (export (value answer))
 (module data)
 (define answer : i64 1)"
-        (compiler-export-unknown-message
-          (compiler-export-kind-value)
-          ""
-          "answer")))))
+      (compiler-export-unknown-message (compiler-export-kind-value) "" "answer"))))
 
 (define (compiler-exports-tests-ok?) : bool
   (and
     (compiler-exports-valid-ok?)
-    (and
-      (compiler-exports-type-only-ok?)
-      (and
-        (compiler-exports-unknown-value-ok?)
-        (and
-          (compiler-exports-value-namespace-ok?)
-          (and
-            (compiler-exports-field-unknown-ok?)
-            (and
-              (compiler-exports-variant-namespace-ok?)
-              (compiler-exports-imported-alias-reject-ok?))))))))
+    (compiler-exports-type-only-ok?)
+    (compiler-exports-unknown-value-ok?)
+    (compiler-exports-value-namespace-ok?)
+    (compiler-exports-field-unknown-ok?)
+    (compiler-exports-variant-namespace-ok?)
+    (compiler-exports-imported-alias-reject-ok?)))
 
 (define (compiler-symbols-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -3691,14 +3673,13 @@
                     (compiler-symbol-kind-defstruct)
                     0)
                   1)
-                (and
-                  (=
-                    (compiler-symbol-lookup-score
-                      (compiler-symbols-lookup-type symbols "Maybe")
-                      (compiler-symbol-kind-defenum)
-                      1)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type symbols "Maybe")
+                    (compiler-symbol-kind-defenum)
                     1)
-                  (= (compiler-registries-smoke-score program registries) 8)))]
+                  1)
+                (= (compiler-registries-smoke-score program registries) 8))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
@@ -3727,68 +3708,58 @@
                     (compiler-symbol-kind-value-define)
                     0)
                   1)
-                (and
-                  (=
-                    (compiler-symbol-lookup-score
-                      (compiler-symbols-lookup-value symbols "right/same")
-                      (compiler-symbol-kind-value-define)
-                      3)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value symbols "right/same")
+                    (compiler-symbol-kind-value-define)
+                    3)
+                  1)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type symbols "left/Maybe")
+                    (compiler-symbol-kind-defenum)
                     1)
-                  (and
-                    (=
-                      (compiler-symbol-lookup-score
-                        (compiler-symbols-lookup-type symbols "left/Maybe")
-                        (compiler-symbol-kind-defenum)
-                        1)
-                      1)
-                    (and
-                      (=
-                        (compiler-symbol-lookup-score
-                          (compiler-symbols-lookup-type symbols "right/Point")
-                          (compiler-symbol-kind-defstruct)
-                          5)
-                        1)
-                      (and
-                        (=
-                          (compiler-registry-lookup-score
-                            (compiler-registries-lookup-variant
-                              registries
-                              "left/None")
-                            (compiler-symbol-kind-enum-variant)
-                            1
-                            0)
-                          1)
-                        (and
-                          (=
-                            (compiler-registry-lookup-score
-                              (compiler-registries-lookup-variant
-                                registries
-                                "right/Some")
-                              (compiler-symbol-kind-enum-variant)
-                              4
-                              1)
-                            1)
-                          (and
-                            (=
-                              (compiler-registry-lookup-score
-                                (compiler-registries-lookup-struct-field
-                                  registries
-                                  "left/Point"
-                                  "x")
-                                (compiler-symbol-kind-struct-field)
-                                2
-                                0)
-                              1)
-                            (=
-                              (compiler-registry-lookup-score
-                                (compiler-registries-lookup-struct-field
-                                  registries
-                                  "right/Point"
-                                  "x")
-                                (compiler-symbol-kind-struct-field)
-                                5
-                                0)
-                              1))))))))]
+                  1)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type symbols "right/Point")
+                    (compiler-symbol-kind-defstruct)
+                    5)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-variant registries "left/None")
+                    (compiler-symbol-kind-enum-variant)
+                    1
+                    0)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-variant registries "right/Some")
+                    (compiler-symbol-kind-enum-variant)
+                    4
+                    1)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-struct-field
+                      registries
+                      "left/Point"
+                      "x")
+                    (compiler-symbol-kind-struct-field)
+                    2
+                    0)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-struct-field
+                      registries
+                      "right/Point"
+                      "x")
+                    (compiler-symbol-kind-struct-field)
+                    5
+                    0)
+                  1))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
@@ -3809,47 +3780,44 @@
                     (compiler-symbol-kind-value-define)
                     0)
                   1)
-                (and
-                  (=
-                    (compiler-symbol-lookup-score
-                      (compiler-symbols-lookup-value-in-module-id
-                        symbols
-                        (intern "right")
-                        (intern "same"))
-                      (compiler-symbol-kind-value-define)
-                      3)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value-in-module-id
+                      symbols
+                      (intern "right")
+                      (intern "same"))
+                    (compiler-symbol-kind-value-define)
+                    3)
+                  1)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type-in-module-id
+                      symbols
+                      (intern "left")
+                      (intern "Maybe"))
+                    (compiler-symbol-kind-defenum)
                     1)
-                  (and
-                    (=
-                      (compiler-symbol-lookup-score
-                        (compiler-symbols-lookup-type-in-module-id
-                          symbols
-                          (intern "left")
-                          (intern "Maybe"))
-                        (compiler-symbol-kind-defenum)
-                        1)
-                      1)
-                    (and
-                      (=
-                        (compiler-registry-lookup-score
-                          (compiler-registries-lookup-variant-id
-                            registries
-                            (intern "right/Some"))
-                          (compiler-symbol-kind-enum-variant)
-                          4
-                          1)
-                        1)
-                      (=
-                        (compiler-registry-lookup-score
-                          (compiler-registries-lookup-field-in-module-id
-                            registries
-                            (intern "left")
-                            (intern "Point")
-                            (intern "x"))
-                          (compiler-symbol-kind-struct-field)
-                          2
-                          0)
-                        1)))))]
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-variant-id
+                      registries
+                      (intern "right/Some"))
+                    (compiler-symbol-kind-enum-variant)
+                    4
+                    1)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-field-in-module-id
+                      registries
+                      (intern "left")
+                      (intern "Point")
+                      (intern "x"))
+                    (compiler-symbol-kind-struct-field)
+                    2
+                    0)
+                  1))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
@@ -3911,45 +3879,39 @@
                     (compiler-symbol-kind-function-define)
                     1)
                   1)
-                (and
-                  (=
-                    (compiler-symbol-lookup-score
-                      (compiler-symbols-lookup-macro symbols "d/all")
-                      (compiler-symbol-kind-defmacro)
-                      2)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-macro symbols "d/all")
+                    (compiler-symbol-kind-defmacro)
+                    2)
+                  1)
+                (=
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-macro symbols "all"))
+                  1)
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type symbols "d/Point")
+                    (compiler-symbol-kind-defstruct)
+                    4)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-variant registries "d/Some")
+                    (compiler-symbol-kind-enum-variant)
+                    3
                     1)
-                  (and
-                    (=
-                      (compiler-symbols-miss-score
-                        (compiler-symbols-lookup-macro symbols "all"))
-                      1)
-                    (and
-                      (=
-                        (compiler-symbol-lookup-score
-                          (compiler-symbols-lookup-type symbols "d/Point")
-                          (compiler-symbol-kind-defstruct)
-                          4)
-                        1)
-                      (and
-                        (=
-                          (compiler-registry-lookup-score
-                            (compiler-registries-lookup-variant
-                              registries
-                              "d/Some")
-                            (compiler-symbol-kind-enum-variant)
-                            3
-                            1)
-                          1)
-                        (=
-                          (compiler-registry-lookup-score
-                            (compiler-registries-lookup-struct-field
-                              registries
-                              "d/Point"
-                              "x")
-                            (compiler-symbol-kind-struct-field)
-                            4
-                            0)
-                          1))))))]
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-struct-field
+                      registries
+                      "d/Point"
+                      "x")
+                    (compiler-symbol-kind-struct-field)
+                    4
+                    0)
+                  1))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))

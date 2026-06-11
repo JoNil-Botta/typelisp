@@ -201,122 +201,95 @@
   (and
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-tuple-return-ok-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-reference-fixed-return-ok-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-reference-tuple-local-escape-source)
-          "typecheck: reference value would escape lexical scope")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-reference-fixed-local-escape-source)
-            "typecheck: reference value would escape lexical scope")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-tuple-arena-escape-source)
-              "typecheck: region-tagged value cannot escape with-arena 'phase'")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-fixed-arena-escape-source)
-              "typecheck: region-tagged value cannot escape with-arena 'phase'")))))))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-fixed-return-ok-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-tuple-local-escape-source)
+      "typecheck: reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-fixed-local-escape-source)
+      "typecheck: reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-tuple-arena-escape-source)
+      "typecheck: region-tagged value cannot escape with-arena 'phase'")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-fixed-arena-escape-source)
+      "typecheck: region-tagged value cannot escape with-arena 'phase'")))
 
 (define (compiler-typecheck-reference-dyn-array-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-dyn-array-init-ok-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-reference-dyn-array-push-read-ok-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-zero-make-array-recursive-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-reference-dyn-array-push-escape-source)
-            "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-dyn-array-make-reject-source)
-              "typecheck: init unsupported type (& n i64)")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-dyn-array-hidden-source)
-              "typecheck: make-array element type is not supported")))))))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-dyn-array-push-read-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-zero-make-array-recursive-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-dyn-array-push-escape-source)
+      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-dyn-array-make-reject-source)
+      "typecheck: init unsupported type (& n i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-dyn-array-hidden-source)
+      "typecheck: make-array element type is not supported")))
 
 (define (compiler-typecheck-reference-lambda-capture-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-lambda-immediate-ok-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-reference-lambda-local-ok-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-reference-lambda-while-ok-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-reference-lambda-nested-ok-source))
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-reference-lambda-inner-arena-ok-source))
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-reference-lambda-local-return-source)
-                "typecheck: reference-capturing closure value would escape lexical scope")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-lambda-store-source)
-                  "typecheck: reference-capturing closure value would escape lexical scope")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-reference-lambda-pass-unknown-source)
-                    "typecheck: reference-capturing closure value would escape lexical scope")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-reference-lambda-assign-source)
-                      "typecheck: reference-capturing closure value would escape lexical scope")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-reference-lambda-inner-arena-return-source)
-                        "typecheck: reference-capturing closure value would escape lexical scope")
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-reference-lambda-mutable-reject-source)
-                        "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope"))))))))))))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-local-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-while-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-nested-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-inner-arena-ok-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-local-return-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-store-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-pass-unknown-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-assign-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-inner-arena-return-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-mutable-reject-source)
+      "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")))
 
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reference-nested-local-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-reference-inner-let-escape-source)
-        "typecheck: reference value would escape lexical scope")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-reference-outer-assignment-escape-source)
-          "typecheck: cannot store reference into longer-lived binding; reference value would escape lexical scope")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-reference-container-escape-source)
-            "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-reference-array-push-ok-source))
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-reference-array-push-escape-source)
-                "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-arena-store-escape-source)
-                  "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-reference-lambda-capture-source)
-                    "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
-                  (and
-                    (compiler-typecheck-reference-lambda-capture-tests-ok?)
-                    (and
-                      (compiler-typecheck-reference-return-container-tests-ok?)
-                      (compiler-typecheck-reference-dyn-array-tests-ok?))))))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-inner-let-escape-source)
+      "typecheck: reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-outer-assignment-escape-source)
+      "typecheck: cannot store reference into longer-lived binding; reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-container-escape-source)
+      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+    (compiler-typecheck-ok? (compiler-typecheck-reference-array-push-ok-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-array-push-escape-source)
+      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-arena-store-escape-source)
+      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-lambda-capture-source)
+      "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
+    (compiler-typecheck-reference-lambda-capture-tests-ok?)
+    (compiler-typecheck-reference-return-container-tests-ok?)
+    (compiler-typecheck-reference-dyn-array-tests-ok?)))
 
 (define (compiler-typecheck-macro-alias-cache-collision-ok?) : bool
   (begin

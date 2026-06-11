@@ -447,12 +447,11 @@
 (define (compiler-object-elf-image-supported? [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-elf-sections-supported? (struct-get image sections))
-    (and
-      (compiler-object-elf-relocation-list-supported?
-        (struct-get image relocations))
-      (compiler-object-elf-relocation-sites-known?
-        image
-        (struct-get image relocations)))))
+    (compiler-object-elf-relocation-list-supported?
+      (struct-get image relocations))
+    (compiler-object-elf-relocation-sites-known?
+      image
+      (struct-get image relocations))))
 
 (define (compiler-object-elf-relocation-count
   [relocs : CompilerObjectRelocationList]
@@ -1340,23 +1339,16 @@
             (*
               compiler-object-elf-section-header-size
               compiler-object-elf-section-count)))
-        (and
-          (= (cast (string-ref obj 0) : i64) 0x7f)
-          (and
-            (= (cast (string-ref obj 1) : i64) 0x45)
-            (and
-              (= (compiler-object-elf-u16-at obj 18) 62)
-              (and
-                (=
-                  (compiler-object-elf-u16-at obj 58)
-                  compiler-object-elf-section-header-size)
-                (and
-                  (=
-                    (compiler-object-elf-u16-at obj 60)
-                    compiler-object-elf-section-count)
-                  (and
-                    (compiler-object-elf-contains? obj ".rela.data")
-                    (and
-                      (compiler-object-elf-contains? obj "_tl_message")
-                      (compiler-object-elf-contains? obj "foreign_exact")))))))))]
+        (= (cast (string-ref obj 0) : i64) 0x7f)
+        (= (cast (string-ref obj 1) : i64) 0x45)
+        (= (compiler-object-elf-u16-at obj 18) 62)
+        (=
+          (compiler-object-elf-u16-at obj 58)
+          compiler-object-elf-section-header-size)
+        (=
+          (compiler-object-elf-u16-at obj 60)
+          compiler-object-elf-section-count)
+        (compiler-object-elf-contains? obj ".rela.data")
+        (compiler-object-elf-contains? obj "_tl_message")
+        (compiler-object-elf-contains? obj "foreign_exact"))]
     [(ErrCompilerObjectElf _) false]))

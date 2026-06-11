@@ -91,11 +91,9 @@
 (define (chooser-has-utf8-bom? [text : String]) : bool
   (and
     (>= (string-length text) 3)
-    (and
-      (= (chooser-char-code-at text 0) 239)
-      (and
-        (= (chooser-char-code-at text 1) 187)
-        (= (chooser-char-code-at text 2) 191)))))
+    (= (chooser-char-code-at text 0) 239)
+    (= (chooser-char-code-at text 1) 187)
+    (= (chooser-char-code-at text 2) 191)))
 
 (define (chooser-strip-utf8-bom [text : String]) : String
   (if (chooser-has-utf8-bom? text)
@@ -193,7 +191,8 @@
 (define (pr-check-state-complete? [state : String]) : bool
   (or
     (string-eq state "SUCCESS")
-    (or (string-eq state "FAILURE") (string-eq state "ERROR"))))
+    (string-eq state "FAILURE")
+    (string-eq state "ERROR")))
 
 ;: Return true when a rollup entry is complete. Unknown entries do not block so
 ;: a missing check shape is treated like no checks rather than a pending check.

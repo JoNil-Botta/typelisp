@@ -202,13 +202,10 @@
 (define (doc-site-output-reserved? [output : String]) : bool
   (or
     (string-eq output "index.html")
-    (or
-      (string-eq output "readme.html")
-      (or
-        (string-eq output "spec.html")
-        (or
-          (string-eq output "stdlib.html")
-          (string-eq output "typelisp-docs.css"))))))
+    (string-eq output "readme.html")
+    (string-eq output "spec.html")
+    (string-eq output "stdlib.html")
+    (string-eq output "typelisp-docs.css")))
 
 (define (doc-site-output-list-has-duplicate? [modules : DocSiteModuleList]) : bool
   (match modules
@@ -216,11 +213,10 @@
     [(DocSiteModuleCons module rest)
       (or
         (doc-site-output-reserved? (doc-site-module-output module))
-        (or
-          (doc-site-output-in-list?
-            (doc-site-module-output module)
-            (box-get rest))
-          (doc-site-output-list-has-duplicate? (box-get rest))))]))
+        (doc-site-output-in-list?
+          (doc-site-module-output module)
+          (box-get rest))
+        (doc-site-output-list-has-duplicate? (box-get rest)))]))
 
 (define (doc-site-expected-manifest-size? [modules : DocSiteModuleList]) : bool
   (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))

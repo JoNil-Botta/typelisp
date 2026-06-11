@@ -165,7 +165,7 @@
     [_ ""]))
 
 (define (doc-test-space? [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
+  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
 
 (define (doc-test-inline-space? [c : char]) : bool
   (or (= c #\space') (= c #\tab')))
@@ -509,7 +509,7 @@
         true
         (let
           [c : char (string-ref text head-len)]
-          (or (doc-test-space? c) (or (= c #(') (= c #)'))))))
+          (or (doc-test-space? c) (= c #(') (= c #)')))))
     false))
 
 (define (doc-test-supported-item-declaration? [line : String]) : bool
@@ -523,11 +523,9 @@
               (substring trimmed 1 (- (string-length trimmed) 1)))]
           (or
             (doc-test-starts-with-form-head? rest "define")
-            (or
-              (doc-test-starts-with-form-head? rest "extern")
-              (or
-                (doc-test-starts-with-form-head? rest "defenum")
-                (doc-test-starts-with-form-head? rest "defstruct")))))
+            (doc-test-starts-with-form-head? rest "extern")
+            (doc-test-starts-with-form-head? rest "defenum")
+            (doc-test-starts-with-form-head? rest "defstruct")))
         false)
       false)))
 
@@ -1109,13 +1107,9 @@
     [uncoded-rendered : String (doc-test-public-diagnostic-render uncoded)]
     (and
       (doc-test-string-contains? parse-rendered "error[E0100]:")
-      (and
-        (doc-test-string-contains? typecheck-rendered "error[E0200]:")
-        (and
-          (doc-test-string-contains?
-            uncoded-rendered
-            "error: docs/plain.tl:5:6:")
-          (not (doc-test-string-contains? uncoded-rendered "E0200")))))))
+      (doc-test-string-contains? typecheck-rendered "error[E0200]:")
+      (doc-test-string-contains? uncoded-rendered "error: docs/plain.tl:5:6:")
+      (not (doc-test-string-contains? uncoded-rendered "E0200")))))
 
 (define (doc-test-unexpected-error-message
   [index : i64]
@@ -1196,7 +1190,8 @@
       (while (< i n)
         (if (and
           (= (string-ref text i) #\return')
-          (and (< (+ i 1) n) (= (string-ref text (+ i 1)) #\newline')))
+          (< (+ i 1) n)
+          (= (string-ref text (+ i 1)) #\newline'))
           (begin
             (set! out (string-append out "\n"))
             (set! i (+ i 2)))

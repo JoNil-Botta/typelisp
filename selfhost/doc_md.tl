@@ -119,9 +119,8 @@
   [second : String]) : bool
   (and
     (= (md-string-list-count items) 2)
-    (and
-      (md-string-list-ref-eq? items 0 first)
-      (md-string-list-ref-eq? items 1 second))))
+    (md-string-list-ref-eq? items 0 first)
+    (md-string-list-ref-eq? items 1 second)))
 
 (define (md-table-row-list-count [items : MdTableRowList]) : i64
   (match items
@@ -241,7 +240,8 @@
         [(MdCodeFence actual-lang actual-meta actual-body)
           (and
             (string-eq actual-lang lang)
-            (and (string-eq actual-meta meta) (string-eq actual-body body)))]
+            (string-eq actual-meta meta)
+            (string-eq actual-body body))]
         [_ false])]
     [(MdNoBlock) false]))
 
@@ -395,9 +395,8 @@
     [n : i64 (string-length trimmed)]
     (and
       (>= n 2)
-      (and
-        (or (= (string-ref trimmed 0) #-') (= (string-ref trimmed 0) #*'))
-        (md-inline-space? (string-ref trimmed 1))))))
+      (or (= (string-ref trimmed 0) #-') (= (string-ref trimmed 0) #*'))
+      (md-inline-space? (string-ref trimmed 1)))))
 
 (define (md-bullet-text [line : String]) : String
   (let
@@ -482,7 +481,7 @@
       false)))
 
 (define (md-table-delimiter-char? [c : char]) : bool
-  (or (= c #|') (or (= c #-') (or (= c #:') (or (= c #\space') (= c #\tab'))))))
+  (or (= c #|') (= c #-') (= c #:') (= c #\space') (= c #\tab')))
 
 (define (md-table-delimiter? [line : String]) : bool
   (let
@@ -559,15 +558,12 @@
     [line : String (md-line-at src pos n)]
     (or
       (md-blank-line? line)
-      (or
-        (> (md-heading-level line) 0)
-        (or
-          (md-code-fence-start? line)
-          (or
-            (md-table-start-at? src pos n)
-            (or
-              (md-blockquote-start? line)
-              (or (md-bullet-start? line) (md-numbered-start? line)))))))))
+      (> (md-heading-level line) 0)
+      (md-code-fence-start? line)
+      (md-table-start-at? src pos n)
+      (md-blockquote-start? line)
+      (md-bullet-start? line)
+      (md-numbered-start? line))))
 
 (define (md-scan-code-fence [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let

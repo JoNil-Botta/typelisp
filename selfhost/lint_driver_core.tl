@@ -193,7 +193,7 @@
     0))
 
 (define (selfhost-lint-space? [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
+  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
 
 (define (selfhost-lint-prefix-at?
   [source : String]
@@ -303,9 +303,8 @@
   [span : AstSourceSpan]) : bool
   (or
     (selfhost-lint-form-origin? source span "cond")
-    (or
-      (selfhost-lint-form-origin? source span "when")
-      (selfhost-lint-form-origin? source span "unless"))))
+    (selfhost-lint-form-origin? source span "when")
+    (selfhost-lint-form-origin? source span "unless")))
 
 (define (selfhost-lint-filter-derived-origins-from
   [source : String]
@@ -688,6 +687,31 @@
       [b : i64 (+ a 1)]
       (+ a b))))")
 
+(define (selfhost-lint-cascading-and-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a (and b c)))")
+
+(define (selfhost-lint-cascading-or-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (or (or a b) c))")
+
+(define (selfhost-lint-cascading-core-and-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (core/and a (and b c)))")
+
+(define (selfhost-lint-flat-and-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a b c))")
+
+(define (selfhost-lint-mixed-and-or-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a (or b c)))")
+
+(define (selfhost-lint-suppressed-cascading-and-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  ;; lint-allow: cascading-and-or
+  (and a (and b c)))")
+
 (define (selfhost-lint-two-findings-source) : String
   "(define (first [x : i64]) : i64
   (if (= x 0)
@@ -725,11 +749,10 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 5)
-          (and
-            (> (struct-get fspan start-line) 0)
-            (string-eq
-              (struct-get finding rule-id)
-              (lint-rule-nested-if-ladder-id)))))]
+          (> (struct-get fspan start-line) 0)
+          (string-eq
+            (struct-get finding rule-id)
+            (lint-rule-nested-if-ladder-id))))]
     [(LintNoFinding) false]))
 
 (define (selfhost-lint-nested-let-finding-ok? [findings : LintFindings]) : bool
@@ -749,11 +772,10 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 3)
-          (and
-            (> (struct-get fspan start-line) 0)
-            (string-eq
-              (struct-get finding rule-id)
-              (lint-rule-return-path-chain-id)))))]
+          (> (struct-get fspan start-line) 0)
+          (string-eq
+            (struct-get finding rule-id)
+            (lint-rule-return-path-chain-id))))]
     [(LintNoFinding) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : LintFindings]) : bool
@@ -763,11 +785,24 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 1)
-          (and
-            (> (struct-get fspan start-line) 0)
-            (string-eq
-              (struct-get finding rule-id)
-              (lint-rule-unit-if-guard-id)))))]
+          (> (struct-get fspan start-line) 0)
+          (string-eq (struct-get finding rule-id) (lint-rule-unit-if-guard-id))))]
+    [(LintNoFinding) false]))
+
+(define (selfhost-lint-cascading-and-or-finding-ok?
+  [findings : LintFindings]
+  [message : String]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintSomeFinding finding)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get finding depth) 3)
+          (> (struct-get fspan start-line) 0)
+          (string-eq
+            (struct-get finding rule-id)
+            (lint-rule-cascading-and-or-id))
+          (string-eq (struct-get finding message) message)))]
     [(LintNoFinding) false]))
 
 (define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
@@ -813,6 +848,21 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-two-findings-source)
         (string-vec-new))]
+    [cascading-and-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-cascading-and-source)
+        (string-vec-new))]
+    [cascading-or-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-cascading-or-source)
+        (string-vec-new))]
+    [cascading-core-and-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-cascading-core-and-source)
+        (string-vec-new))]
     (core/cond
       (not (= (lint-findings-count reported) 1))
       1
@@ -834,6 +884,44 @@
       18
       (not (selfhost-lint-render-order-ok? two-reported))
       19
+      (not (= (lint-findings-count cascading-and-reported) 1))
+      20
+      (not
+        (selfhost-lint-cascading-and-or-finding-ok?
+          cascading-and-reported
+          "cascading and: prefer flat n-ary form (and a b c)"))
+      21
+      (not (= (lint-findings-count cascading-or-reported) 1))
+      22
+      (not
+        (selfhost-lint-cascading-and-or-finding-ok?
+          cascading-or-reported
+          "cascading or: prefer flat n-ary form (or a b c)"))
+      23
+      (not (= (lint-findings-count cascading-core-and-reported) 1))
+      24
+      (not
+        (selfhost-lint-cascading-and-or-finding-ok?
+          cascading-core-and-reported
+          "cascading and: prefer flat n-ary form (core/and a b c)"))
+      25
+      (not
+        (=
+          (selfhost-lint-source-finding-count (selfhost-lint-flat-and-source))
+          0))
+      26
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-mixed-and-or-source))
+          0))
+      27
+      (not
+        (=
+          (selfhost-lint-source-finding-count
+            (selfhost-lint-suppressed-cascading-and-source))
+          0))
+      28
       (not
         (=
           (selfhost-lint-source-finding-count

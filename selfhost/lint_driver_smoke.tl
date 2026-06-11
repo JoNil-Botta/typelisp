@@ -50,11 +50,10 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) depth)
-          (and
-            (> (struct-get fspan start-line) 0)
-            (string-eq
-              (struct-get finding rule-id)
-              (lint-rule-deprecated-string-concat-id)))))]
+          (> (struct-get fspan start-line) 0)
+          (string-eq
+            (struct-get finding rule-id)
+            (lint-rule-deprecated-string-concat-id))))]
     [(LintNoFinding) false]))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64

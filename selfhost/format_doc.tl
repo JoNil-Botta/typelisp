@@ -380,7 +380,8 @@
     [broken : String (render-doc-width doc 4)]
     (and
       (string-eq flat "a b c")
-      (and (string-eq broken "a\n    b\n    c") (= (flat-width doc) 5)))))
+      (string-eq broken "a\n    b\n    c")
+      (= (flat-width doc) 5))))
 
 (define (format-doc-repeat-text [count : i64]) : Doc
   (let
@@ -457,7 +458,8 @@
     [plain-ok : bool
       (and
         (= (format-doc-seq-len-or-negative doc) 64)
-        (and (= (string-length rendered) 64) (= (flat-width doc) 64)))]
+        (= (string-length rendered) 64)
+        (= (flat-width doc) 64))]
     [flow-ok : bool
       (and
         (string-eq flat-flow (format-doc-repeat-soft-flat 16))
@@ -466,7 +468,7 @@
       (and
         (= (format-doc-seq-len-or-negative right-doc) 31)
         (string-eq right-broken-flow (format-doc-repeat-soft-broken 16)))]
-    (and plain-ok (and flow-ok right-ok))))
+    (and plain-ok flow-ok right-ok)))
 
 (define (format-doc-seq-branching-ok?) : bool
   (let
@@ -479,13 +481,10 @@
     [with-z : Doc (doc-append (doc-text "z") tail)]
     (and
       (string-eq (render-doc-width base 80) "ab")
-      (and
-        (string-eq (render-doc-width with-c 80) "abc")
-        (and
-          (string-eq (render-doc-width with-d 80) "abd")
-          (and
-            (string-eq (render-doc-width with-a 80) "abcd")
-            (string-eq (render-doc-width with-z 80) "zbcd")))))))
+      (string-eq (render-doc-width with-c 80) "abc")
+      (string-eq (render-doc-width with-d 80) "abd")
+      (string-eq (render-doc-width with-a 80) "abcd")
+      (string-eq (render-doc-width with-z 80) "zbcd"))))
 
 (define (format-doc-self-test) : i64
   (let

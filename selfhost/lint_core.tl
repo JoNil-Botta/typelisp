@@ -76,6 +76,15 @@
 (define (lint-rule-deprecated-string-concat-suggestion) : String
   "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
 
+(define (lint-rule-cascading-and-or-id) : String
+  "cascading-and-or")
+
+(define (lint-rule-cascading-and-or-message) : String
+  "cascading and/or: prefer one flat n-ary macro call")
+
+(define (lint-rule-cascading-and-or-suggestion) : String
+  "flatten same-operator and/or operands, e.g. (and a b c)")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -123,6 +132,12 @@
     (lint-rule-deprecated-string-concat-message)
     (lint-rule-deprecated-string-concat-suggestion)))
 
+(define (lint-rule-cascading-and-or) : LintRule
+  (LintRule
+    (lint-rule-cascading-and-or-id)
+    (lint-rule-cascading-and-or-message)
+    (lint-rule-cascading-and-or-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleCons rule (box rest)))
 
@@ -137,7 +152,9 @@
         (lint-rule-return-path-chain)
         (lint-rule-cons
           (lint-rule-unit-if-guard)
-          (lint-rule-cons (lint-rule-deprecated-string-concat) LintRuleNil))))))
+          (lint-rule-cons
+            (lint-rule-deprecated-string-concat)
+            (lint-rule-cons (lint-rule-cascading-and-or) LintRuleNil)))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -397,16 +414,16 @@
 (define (lint-deprecated-string-concat-name? [name : String]) : bool
   (or
     (string-eq name "string-append")
-    (or
-      (string-eq name "string-concat")
-      (or
-        (string-eq name "string-concat3")
-        (or (string-eq name "string-concat4") (string-eq name "string-concat5"))))))
+    (string-eq name "string-concat")
+    (string-eq name "string-concat3")
+    (string-eq name "string-concat4")
+    (string-eq name "string-concat5")))
 
 (define (lint-deprecated-string-concat-loop-form? [name : String]) : bool
   (or
     (string-eq name "while")
-    (or (string-eq name "foreach") (string-eq name "spmd-reduce"))))
+    (string-eq name "foreach")
+    (string-eq name "spmd-reduce")))
 
 (define (lint-token-name [tok : Token]) : String
   (if (= (token-tag tok) (tag-sym))
@@ -433,6 +450,218 @@
       (lint-rule-message (lint-rule-deprecated-string-concat-id)))
     (lint-rule-deprecated-string-concat-id)
     (lint-deprecated-string-concat-depth in-loop in-chain)
+    span))
+
+(define (lint-and-or-op-name [name : String]) : String
+  (core/cond
+    (or (string-eq name "and") (string-eq name "core/and"))
+    "and"
+    (or (string-eq name "or") (string-eq name "core/or"))
+    "or"
+    ""))
+
+(define (lint-and-or-func-op [func : AstExpr]) : String
+  (match func
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-and-or-func-op inner))]
+    [(AstExprVar name) (lint-and-or-op-name (intern-str name))]
+    [_ ""]))
+
+(define (lint-literal-render [lit : AstLiteral]) : String
+  (match lit
+    [(AstLitInt value) (int->string value)]
+    [(AstLitFloat value) value]
+    [(AstLitBool value)
+      (if value
+        "true"
+        "false")]
+    [(AstLitString value) (string-append "\"" (string-append value "\""))]
+    [(AstLitUnit) "unit"]
+    [_ "<expr>"]))
+
+(define (lint-bin-op-render [op : AstBinOp]) : String
+  (match op
+    [(AstBinAdd) "+"]
+    [(AstBinSub) "-"]
+    [(AstBinMul) "*"]
+    [(AstBinDiv) "/"]
+    [(AstBinMod) "%"]
+    [(AstBinEq) "="]
+    [(AstBinNe) "!="]
+    [(AstBinLt) "<"]
+    [(AstBinLe) "<="]
+    [(AstBinGt) ">"]
+    [(AstBinGe) ">="]
+    [(AstBinAnd) "and"]
+    [(AstBinOr) "or"]
+    [(AstBinBitAnd) "bit-and"]
+    [(AstBinBitOr) "bit-or"]
+    [(AstBinBitXor) "bit-xor"]
+    [(AstBinShl) "shl"]
+    [(AstBinShr) "shr"]))
+
+(define (lint-un-op-render [op : AstUnOp]) : String
+  (match op
+    [(AstUnNeg) "-"]
+    [(AstUnNot) "not"]
+    [(AstUnBitNot) "bit-not"]))
+
+(define (lint-render-args-join [head : String] [tail : String]) : String
+  (if (string-eq tail "")
+    head
+    (string-append head (string-append " " tail))))
+
+(define (lint-expr-list-render [exprs : AstExprList]) : String
+  (match exprs
+    [(AstExprNil) ""]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (lint-render-args-join
+          (lint-expr-render head-expr)
+          (lint-expr-list-render rest)))]))
+
+(define (lint-parenthesized-call-render [callee : String] [args : String]) : String
+  (if (string-eq args "")
+    (string-append "(" (string-append callee ")"))
+    (string-append
+      "("
+      (string-append callee (string-append " " (string-append args ")"))))))
+
+(define (lint-expr-render [expr : AstExpr]) : String
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-expr-render inner))]
+    [(AstExprVar name) (intern-str name)]
+    [(AstExprLiteral lit) (lint-literal-render lit)]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (lint-parenthesized-call-render
+          (lint-expr-render func)
+          (lint-expr-list-render args)))]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (lint-parenthesized-call-render
+          (lint-bin-op-render op)
+          (lint-render-args-join
+            (lint-expr-render left)
+            (lint-expr-render right))))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-parenthesized-call-render
+          (lint-un-op-render op)
+          (lint-expr-render inner)))]
+    [_ "<expr>"]))
+
+(define (lint-and-or-call-kind? [op : String] [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-and-or-call-kind? op inner))]
+    [(AstExprCall func-box _)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (string-eq (lint-and-or-func-op func) op))]
+    [_ false]))
+
+(define (lint-and-or-args-have-kind? [op : String] [args : AstExprList]) : bool
+  (match args
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (if (lint-and-or-call-kind? op head-expr)
+          true
+          (lint-and-or-args-have-kind? op rest)))]))
+
+(define (lint-cascading-and-or-flat-arg-render [op : String] [expr : AstExpr]) : String
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-cascading-and-or-flat-arg-render op inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (if (string-eq (lint-and-or-func-op func) op)
+          (lint-cascading-and-or-flat-args-render op args)
+          (lint-expr-render expr)))]
+    [_ (lint-expr-render expr)]))
+
+(define (lint-cascading-and-or-flat-args-render
+  [op : String]
+  [args : AstExprList]) : String
+  (match args
+    [(AstExprNil) ""]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (lint-render-args-join
+          (lint-cascading-and-or-flat-arg-render op head-expr)
+          (lint-cascading-and-or-flat-args-render op rest)))]))
+
+(define (lint-cascading-and-or-flat-arg-count [op : String] [expr : AstExpr]) : i64
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-cascading-and-or-flat-arg-count op inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (if (string-eq (lint-and-or-func-op func) op)
+          (lint-cascading-and-or-flat-arg-count-list op args)
+          1))]
+    [_ 1]))
+
+(define (lint-cascading-and-or-flat-arg-count-list
+  [op : String]
+  [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) 0]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (+
+          (lint-cascading-and-or-flat-arg-count op head-expr)
+          (lint-cascading-and-or-flat-arg-count-list op rest)))]))
+
+(define (lint-cascading-and-or-flat-call
+  [callee : String]
+  [op : String]
+  [args : AstExprList]) : String
+  (lint-parenthesized-call-render
+    callee
+    (lint-cascading-and-or-flat-args-render op args)))
+
+(define (lint-cascading-and-or-finding
+  [op : String]
+  [callee : String]
+  [args : AstExprList]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string-append
+      "cascading "
+      (string-append
+        op
+        (string-append
+          ": prefer flat n-ary form "
+          (lint-cascading-and-or-flat-call callee op args))))
+    (lint-rule-cascading-and-or-id)
+    (lint-cascading-and-or-flat-arg-count-list op args)
     span))
 
 (define (lint-deprecated-string-concat-token-span
@@ -766,7 +995,8 @@
     (core/cond
       (and
         then-unit
-        (and (not else-unit) (or else-return (and cond-not else-side-effect))))
+        (not else-unit)
+        (or else-return (and cond-not else-side-effect)))
       (lint-walk-unit-if-guard-branch
         else-branch
         tail-return-path
@@ -774,7 +1004,7 @@
         (lint-findings-add
           (lint-unit-if-guard-finding true span)
           (lint-walk-expr cond threshold acc)))
-      (and else-unit (and (not then-unit) then-return))
+      (and else-unit (not then-unit) then-return)
       (lint-walk-unit-if-guard-branch
         then-branch
         tail-return-path
@@ -885,6 +1115,10 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (lint-walk-tail-let bindings body span threshold acc))]
+          [(AstExprCall func-box args)
+            (let
+              [func : AstExpr (ast-node-get func-box)]
+              (lint-walk-call func args span threshold acc))]
           [_ (lint-walk-tail-expr inner threshold acc)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
@@ -936,6 +1170,61 @@
         (lint-walk-tail-expr inner threshold acc))]
     [_ (lint-walk-expr expr threshold acc)]))
 
+(define (lint-walk-and-or-skip-expr
+  [op : String]
+  [expr : AstExpr]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (if (lint-and-or-call-kind? op inner)
+          (lint-walk-and-or-skip-expr op inner threshold acc)
+          (lint-walk-expr expr threshold acc)))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (if (string-eq (lint-and-or-func-op func) op)
+          (lint-walk-and-or-skip-args op args threshold acc)
+          (lint-walk-expr expr threshold acc)))]
+    [_ (lint-walk-expr expr threshold acc)]))
+
+(define (lint-walk-and-or-skip-args
+  [op : String]
+  [args : AstExprList]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (match args
+    [(AstExprNil) acc]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (lint-walk-and-or-skip-args
+          op
+          rest
+          threshold
+          (lint-walk-and-or-skip-expr op head-expr threshold acc)))]))
+
+(define (lint-walk-call
+  [func : AstExpr]
+  [args : AstExprList]
+  [span : AstSourceSpan]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [op : String (lint-and-or-func-op func)]
+    (if (and (not (string-eq op "")) (lint-and-or-args-have-kind? op args))
+      (lint-walk-and-or-skip-args
+        op
+        args
+        threshold
+        (lint-findings-add
+          (lint-cascading-and-or-finding op (lint-expr-render func) args span)
+          (lint-walk-expr func threshold acc)))
+      (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc)))))
+
 ;: Walk `expr`, flagging each maximal nested-`if` ladder of length >=
 ;: `threshold` exactly once and recursing into all sub-expressions. A ladder
 ;: head's finding span comes from the enclosing `AstExprSpanned` wrapper.
@@ -962,6 +1251,10 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (lint-walk-let bindings body span threshold acc))]
+          [(AstExprCall func-box args)
+            (let
+              [func : AstExpr (ast-node-get func-box)]
+              (lint-walk-call func args span threshold acc))]
           [_ (lint-walk-expr inner threshold acc)]))]
     [(AstExprLiteral _) acc]
     [(AstExprVar _) acc]
@@ -979,7 +1272,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc)))]
+        (lint-walk-call func args (lint-no-span) threshold acc))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       ;; A directly-reached (unspanned) `if`: no wrapper span, so the finding
       ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
@@ -1292,9 +1585,20 @@
 (define (lint-test-walk-tail [e : i64] [threshold : i64] [acc : LintFindings]) : LintFindings
   (lint-walk-tail-expr (ast-node-get e) threshold acc))
 
+(define (lint-test-var [name : String]) : i64
+  (ast-node-push (AstExprVar (intern name))))
+
+(define (lint-test-expr-list2 [a : i64] [b : i64]) : AstExprList
+  (ast-expr-cons a (ast-expr-cons b AstExprNil)))
+
+(define (lint-test-expr-list3 [a : i64] [b : i64] [c : i64]) : AstExprList
+  (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c AstExprNil))))
+
 (define (compiler-lint-self-test) : i64
   (let
-    [vx : i64 (ast-node-push (AstExprVar (intern "x")))]
+    [vx : i64 (lint-test-var "x")]
+    [vy : i64 (lint-test-var "y")]
+    [vz : i64 (lint-test-var "z")]
     [one : i64 (ast-node-push (AstExprLiteral (AstLitInt 1)))]
     [unit-expr : i64 (ast-node-push (AstExprLiteral AstLitUnit))]
     [ladder3 : i64
@@ -1350,6 +1654,25 @@
     [spanned : i64 (ast-expr-spanned ladder3 (AstSourceSpan 7 3 9 4))]
     [spanned-nested-let : i64
       (ast-expr-spanned nested-let (AstSourceSpan 11 5 15 6))]
+    [and-callee : i64 (lint-test-var "and")]
+    [or-callee : i64 (lint-test-var "or")]
+    [core-and-callee : i64 (lint-test-var "core/and")]
+    [and-yz : i64 (ast-expr-call and-callee (lint-test-expr-list2 vy vz))]
+    [and-xy : i64 (ast-expr-call and-callee (lint-test-expr-list2 vx vy))]
+    [or-yz : i64 (ast-expr-call or-callee (lint-test-expr-list2 vy vz))]
+    [or-xy : i64 (ast-expr-call or-callee (lint-test-expr-list2 vx vy))]
+    [and-cascade : i64
+      (ast-expr-call and-callee (lint-test-expr-list2 vx and-yz))]
+    [or-cascade : i64 (ast-expr-call or-callee (lint-test-expr-list2 or-xy vz))]
+    [flat-and : i64 (ast-expr-call and-callee (lint-test-expr-list3 vx vy vz))]
+    [mixed-and-or : i64
+      (ast-expr-call and-callee (lint-test-expr-list2 vx or-yz))]
+    [core-and-cascade : i64
+      (ast-expr-call core-and-callee (lint-test-expr-list2 vx and-yz))]
+    [double-and-cascade : i64
+      (ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
+    [spanned-and-cascade : i64
+      (ast-expr-spanned and-cascade (AstSourceSpan 21 7 21 30))]
     (begin
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)
@@ -1551,6 +1874,87 @@
               (panic "lint: nested-let finding should carry rule id and span")))]
         [(LintNoFinding)
           (panic "lint: spanned nested let should produce a finding")])
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            and-cascade
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: nested and should be flagged once"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            or-cascade
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: nested or should be flagged once"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            flat-and
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: flat and should not be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            mixed-and-or
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: mixed and/or should not be flagged"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            double-and-cascade
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: one maximal and cascade should produce one finding"))
+      (match (lint-findings-get
+        (lint-test-walk
+          spanned-and-cascade
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 21)
+              (= (struct-get finding depth) 3)
+              (string-eq
+                (struct-get finding rule-id)
+                (lint-rule-cascading-and-or-id))
+              (string-eq
+                (struct-get finding message)
+                "cascading and: prefer flat n-ary form (and x y z)"))
+              unit
+              (panic "lint: cascading-and-or finding metadata mismatch")))]
+        [(LintNoFinding)
+          (panic "lint: spanned and cascade should produce a finding")])
+      (match (lint-findings-get
+        (lint-test-walk
+          core-and-cascade
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (if (string-eq
+            (struct-get finding message)
+            "cascading and: prefer flat n-ary form (core/and x y z)")
+            unit
+            (panic "lint: core/and cascade should preserve callee spelling"))]
+        [(LintNoFinding)
+          (panic "lint: core/and cascade should produce a finding")])
       (if (string-eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
         "prefer cond (value/guard ladders) or match (variant dispatch)")
@@ -1567,13 +1971,12 @@
             (string-eq
               (struct-get rule rule-id)
               (lint-rule-nested-if-ladder-id))
-            (and
-              (string-eq
-                (struct-get rule message)
-                (lint-rule-nested-if-ladder-message))
-              (string-eq
-                (struct-get rule suggestion)
-                (lint-rule-nested-if-ladder-suggestion))))
+            (string-eq
+              (struct-get rule message)
+              (lint-rule-nested-if-ladder-message))
+            (string-eq
+              (struct-get rule suggestion)
+              (lint-rule-nested-if-ladder-suggestion)))
             unit
             (panic
               "lint: nested-if-ladder registry entry should match metadata"))]
@@ -1599,6 +2002,11 @@
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
         unit
         (panic "lint: deprecated-string-concat suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-cascading-and-or-id))
+        "flatten same-operator and/or operands, e.g. (and a b c)")
+        unit
+        (panic "lint: cascading-and-or suggestion should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

@@ -27,9 +27,9 @@
 (define (host-plan-target-valid? [value : String]) : bool
   (or
     (string-eq value "linux-x86_64")
-    (or
-      (string-eq value "linux_x86_64")
-      (or (string-eq value "windows-x86_64") (string-eq value "windows_x86_64")))))
+    (string-eq value "linux_x86_64")
+    (string-eq value "windows-x86_64")
+    (string-eq value "windows_x86_64")))
 
 (define (host-plan-default-target) : String
   (if (string-eq (env-path-separator) ";")
@@ -39,9 +39,12 @@
 (define (host-plan-backend-mode-valid? [value : String]) : bool
   (or
     (string-eq value "scalar")
-    (or (string-eq value "avx2") (string-eq value "avx512"))))
+    (string-eq value "avx2")
+    (string-eq value "avx512")))
 
 (define (host-plan-opt-level-valid? [value : String]) : bool
   (or
     (string-eq value "0")
-    (or (string-eq value "1") (or (string-eq value "2") (string-eq value "3")))))
+    (string-eq value "1")
+    (string-eq value "2")
+    (string-eq value "3")))

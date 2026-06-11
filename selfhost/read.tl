@@ -218,7 +218,9 @@
 (define (read-prefix-tag? [t : i64]) : bool
   (or
     (= t (tag-quote))
-    (or (= t (tag-backtick)) (or (= t (tag-comma)) (= t (tag-comma-at))))))
+    (= t (tag-backtick))
+    (= t (tag-comma))
+    (= t (tag-comma-at))))
 
 (define (read-prefix-symbol [t : i64]) : String
   (core/cond

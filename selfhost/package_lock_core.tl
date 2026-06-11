@@ -96,9 +96,10 @@
     [code : i64 (cast c : i64)]
     (or
       (and (>= code 48) (<= code 57))
-      (or
-        (and (>= code 65) (<= code 90))
-        (or (and (>= code 97) (<= code 122)) (or (= code 45) (= code 95)))))))
+      (and (>= code 65) (<= code 90))
+      (and (>= code 97) (<= code 122))
+      (= code 45)
+      (= code 95))))
 
 (define (package-lock-alias-token-valid? [value : String]) : bool
   (let
@@ -605,13 +606,10 @@
   [commit : String]) : bool
   (and
     (string-eq (struct-get entry alias) alias)
-    (and
-      (string-eq (struct-get entry url) url)
-      (and
-        (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
-        (and
-          (string-eq (struct-get entry pin-value) pin-value)
-          (string-eq (struct-get entry commit) commit))))))
+    (string-eq (struct-get entry url) url)
+    (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
+    (string-eq (struct-get entry pin-value) pin-value)
+    (string-eq (struct-get entry commit) commit)))
 
 (define (package-lock-list-has-entry?
   [entries : PackageLockEntryList]
@@ -633,23 +631,21 @@
         [entries : PackageLockEntryList (struct-get lock entries)]
         (and
           (string-eq (struct-get lock version) package-lock-version)
-          (and
-            (= (package-lock-entry-list-count entries) 2)
-            (and
-              (package-lock-list-has-entry?
-                entries
-                "alpha"
-                "https://github.com/owner/alpha.git"
-                (PackageCachePinBranch)
-                "main"
-                "1111111111111111111111111111111111111111")
-              (package-lock-list-has-entry?
-                entries
-                "zeta"
-                "https://github.com/owner/zeta.git"
-                (PackageCachePinRev)
-                "abcdef0123456789abcdef0123456789abcdef01"
-                "abcdef0123456789abcdef0123456789abcdef01")))))]))
+          (= (package-lock-entry-list-count entries) 2)
+          (package-lock-list-has-entry?
+            entries
+            "alpha"
+            "https://github.com/owner/alpha.git"
+            (PackageCachePinBranch)
+            "main"
+            "1111111111111111111111111111111111111111")
+          (package-lock-list-has-entry?
+            entries
+            "zeta"
+            "https://github.com/owner/zeta.git"
+            (PackageCachePinRev)
+            "abcdef0123456789abcdef0123456789abcdef01"
+            "abcdef0123456789abcdef0123456789abcdef01")))]))
 
 (define (package-lock-emit-stable-ok?) : bool
   (match (package-lock-parse (package-lock-valid-source))
@@ -668,21 +664,20 @@
             [entries : PackageLockEntryList (struct-get again entries)]
             (and
               (= (package-lock-entry-list-count entries) 2)
-              (and
-                (package-lock-list-has-entry?
-                  entries
-                  "alpha"
-                  "https://github.com/owner/alpha.git"
-                  (PackageCachePinBranch)
-                  "main"
-                  "1111111111111111111111111111111111111111")
-                (package-lock-list-has-entry?
-                  entries
-                  "zeta"
-                  "https://github.com/owner/zeta.git"
-                  (PackageCachePinRev)
-                  "abcdef0123456789abcdef0123456789abcdef01"
-                  "abcdef0123456789abcdef0123456789abcdef01"))))])]))
+              (package-lock-list-has-entry?
+                entries
+                "alpha"
+                "https://github.com/owner/alpha.git"
+                (PackageCachePinBranch)
+                "main"
+                "1111111111111111111111111111111111111111")
+              (package-lock-list-has-entry?
+                entries
+                "zeta"
+                "https://github.com/owner/zeta.git"
+                (PackageCachePinRev)
+                "abcdef0123456789abcdef0123456789abcdef01"
+                "abcdef0123456789abcdef0123456789abcdef01")))])]))
 
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
   (match (package-lock-parse source)
@@ -694,28 +689,25 @@
     (package-lock-parse-rejects?
       "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"dup\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"dup\") (url \"u\") (pin (tag \"v1\")) (commit \"b\"))))"
       "package-lock: duplicate dependency alias `dup`")
-    (and
-      (package-lock-parse-rejects?
-        "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (rev \"a\")))))"
-        "package-lock: dependency missing required field `commit`")
-      (and
-        (package-lock-parse-rejects?
-          "(typelisp-lock (version \"v1\") (dependencies (dependency (alias a) (url \"u\") (pin (rev \"a\")) (commit \"a\"))))"
-          "package-lock: field `alias` must have a string value")
-        (and
-          (package-lock-parse-rejects?
-            "(typelisp-lock (version \"v2\") (dependencies))"
-            "package-lock: unsupported version `v2`")
-          (package-lock-parse-rejects?
-            "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (sha \"a\")) (commit \"a\"))))"
-            "package-lock: pin kind must be `rev`, `tag`, or `branch`"))))))
+    (package-lock-parse-rejects?
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (rev \"a\")))))"
+      "package-lock: dependency missing required field `commit`")
+    (package-lock-parse-rejects?
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias a) (url \"u\") (pin (rev \"a\")) (commit \"a\"))))"
+      "package-lock: field `alias` must have a string value")
+    (package-lock-parse-rejects?
+      "(typelisp-lock (version \"v2\") (dependencies))"
+      "package-lock: unsupported version `v2`")
+    (package-lock-parse-rejects?
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (sha \"a\")) (commit \"a\"))))"
+      "package-lock: pin kind must be `rev`, `tag`, or `branch`")))
 
 (define (package-lock-self-test-ok?) : bool
   (and
     (package-lock-valid-parse-ok?)
-    (and
-      (package-lock-emit-stable-ok?)
-      (and (package-lock-round-trip-ok?) (package-lock-rejections-ok?)))))
+    (package-lock-emit-stable-ok?)
+    (package-lock-round-trip-ok?)
+    (package-lock-rejections-ok?)))
 
 (define (package-lock-self-test) : i64
   (if (package-lock-self-test-ok?)

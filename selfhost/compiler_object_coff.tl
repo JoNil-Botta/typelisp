@@ -459,9 +459,8 @@
           [(ObjectX64Branch true-target false-target)
             (and
               (>= (compiler-object-coff-symbol-index image true-target) 0)
-              (and
-                (>= (compiler-object-coff-symbol-index image false-target) 0)
-                tail-ok))]
+              (>= (compiler-object-coff-symbol-index image false-target) 0)
+              tail-ok)]
           [(ObjectX64LoadRip target)
             (and
               (>= (compiler-object-coff-symbol-index image target) 0)
@@ -502,16 +501,13 @@
 (define (compiler-object-coff-image-supported? [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-coff-sections-supported? (struct-get image sections))
-    (and
-      (compiler-object-coff-relocation-list-supported?
-        (struct-get image relocations))
-      (and
-        (compiler-object-coff-relocation-sites-known?
-          image
-          (struct-get image relocations))
-        (and
-          (compiler-object-coff-text-targets-known? image)
-          (compiler-object-coff-text-relocation-count-matches? image))))))
+    (compiler-object-coff-relocation-list-supported?
+      (struct-get image relocations))
+    (compiler-object-coff-relocation-sites-known?
+      image
+      (struct-get image relocations))
+    (compiler-object-coff-text-targets-known? image)
+    (compiler-object-coff-text-relocation-count-matches? image)))
 
 (define (compiler-object-coff-header-size) : i64
   (+
@@ -1299,23 +1295,14 @@
         (=
           (compiler-object-coff-u16-at obj 0)
           compiler-object-coff-machine-amd64)
-        (and
-          (= (compiler-object-coff-u16-at obj 2) 4)
-          (and
-            (> (compiler-object-coff-u32-at obj 8) 0)
-            (and
-              (= (compiler-object-coff-u32-at obj 12) 5)
-              (and
-                (= (compiler-object-coff-u32-at obj (+ 60 16)) 16)
-                (and
-                  (= (compiler-object-coff-u16-at obj (+ 60 32)) 1)
-                  (and
-                    (compiler-object-coff-contains? obj ".rdata")
-                    (and
-                      (compiler-object-coff-contains? obj "foreign_exact")
-                      (compiler-object-coff-contains?
-                        obj
-                        "long_rodata_label_name")))))))))]
+        (= (compiler-object-coff-u16-at obj 2) 4)
+        (> (compiler-object-coff-u32-at obj 8) 0)
+        (= (compiler-object-coff-u32-at obj 12) 5)
+        (= (compiler-object-coff-u32-at obj (+ 60 16)) 16)
+        (= (compiler-object-coff-u16-at obj (+ 60 32)) 1)
+        (compiler-object-coff-contains? obj ".rdata")
+        (compiler-object-coff-contains? obj "foreign_exact")
+        (compiler-object-coff-contains? obj "long_rodata_label_name"))]
     [(ErrCompilerObjectCoff _) false]))
 
 (define (compiler-object-coff-text-smoke-instrs) : CompilerObjectX64InstrList
@@ -1476,60 +1463,29 @@
     [entry : i64 (+ base (* index compiler-object-coff-relocation-size))]
     (and
       (= (compiler-object-coff-u32-at obj entry) offset)
-      (and
-        (= (compiler-object-coff-u32-at obj (+ entry 4)) symbol-index)
-        (= (compiler-object-coff-u16-at obj (+ entry 8)) reloc-type)))))
+      (= (compiler-object-coff-u32-at obj (+ entry 4)) symbol-index)
+      (= (compiler-object-coff-u16-at obj (+ entry 8)) reloc-type))))
 
 (define (compiler-object-coff-text-smoke-bytes-ok?
   [obj : String]
   [text-ptr : i64]) : bool
   (and
     (= (compiler-object-coff-u8-at obj text-ptr) 0x48)
-    (and
-      (= (compiler-object-coff-u8-at obj (+ text-ptr 1)) 0x8b)
-      (and
-        (= (compiler-object-coff-u8-at obj (+ text-ptr 2)) 0x05)
-        (and
-          (= (compiler-object-coff-u8-at obj (+ text-ptr 7)) 0x48)
-          (and
-            (= (compiler-object-coff-u8-at obj (+ text-ptr 8)) 0x8d)
-            (and
-              (= (compiler-object-coff-u8-at obj (+ text-ptr 14)) 0x48)
-              (and
-                (= (compiler-object-coff-u8-at obj (+ text-ptr 15)) 0x89)
-                (and
-                  (= (compiler-object-coff-u8-at obj (+ text-ptr 21)) 0xe8)
-                  (and
-                    (= (compiler-object-coff-u8-at obj (+ text-ptr 26)) 0xe9)
-                    (and
-                      (= (compiler-object-coff-u8-at obj (+ text-ptr 31)) 0xe9)
-                      (and
-                        (=
-                          (compiler-object-coff-u8-at obj (+ text-ptr 36))
-                          0x48)
-                        (and
-                          (=
-                            (compiler-object-coff-u8-at obj (+ text-ptr 37))
-                            0x85)
-                          (and
-                            (=
-                              (compiler-object-coff-u8-at obj (+ text-ptr 38))
-                              0xc0)
-                            (and
-                              (=
-                                (compiler-object-coff-u8-at obj (+ text-ptr 39))
-                                0x0f)
-                              (and
-                                (=
-                                  (compiler-object-coff-u8-at
-                                    obj
-                                    (+ text-ptr 40))
-                                  0x85)
-                                (=
-                                  (compiler-object-coff-u8-at
-                                    obj
-                                    (+ text-ptr 45))
-                                  0xe9)))))))))))))))))
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 1)) 0x8b)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 2)) 0x05)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 7)) 0x48)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 8)) 0x8d)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 14)) 0x48)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 15)) 0x89)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 21)) 0xe8)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 26)) 0xe9)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 31)) 0xe9)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 36)) 0x48)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 37)) 0x85)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 38)) 0xc0)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 39)) 0x0f)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 40)) 0x85)
+    (= (compiler-object-coff-u8-at obj (+ text-ptr 45)) 0xe9)))
 
 (define (compiler-object-coff-text-smoke-relocs-ok?
   [image : CompilerObjectImage]
@@ -1545,61 +1501,55 @@
         3
         (compiler-object-coff-symbol-index image "_tl_answer")
         rel32)
-      (and
-        (compiler-object-coff-reloc-entry-ok?
-          obj
-          reloc-ptr
-          1
-          10
-          (compiler-object-coff-symbol-index image "_tl_slot")
-          rel32)
-        (and
-          (compiler-object-coff-reloc-entry-ok?
-            obj
-            reloc-ptr
-            2
-            17
-            (compiler-object-coff-symbol-index image "_tl_slot")
-            rel32)
-          (and
-            (compiler-object-coff-reloc-entry-ok?
-              obj
-              reloc-ptr
-              3
-              22
-              (compiler-object-coff-symbol-index image "foreign_exact")
-              rel32)
-            (and
-              (compiler-object-coff-reloc-entry-ok?
-                obj
-                reloc-ptr
-                4
-                27
-                (compiler-object-coff-symbol-index image "_tl_done")
-                rel32)
-              (and
-                (compiler-object-coff-reloc-entry-ok?
-                  obj
-                  reloc-ptr
-                  5
-                  32
-                  (compiler-object-coff-symbol-index image "_tl_done")
-                  rel32)
-                (and
-                  (compiler-object-coff-reloc-entry-ok?
-                    obj
-                    reloc-ptr
-                    6
-                    41
-                    (compiler-object-coff-symbol-index image "_tl_true")
-                    rel32)
-                  (compiler-object-coff-reloc-entry-ok?
-                    obj
-                    reloc-ptr
-                    7
-                    46
-                    (compiler-object-coff-symbol-index image "_tl_false")
-                    rel32))))))))))
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        1
+        10
+        (compiler-object-coff-symbol-index image "_tl_slot")
+        rel32)
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        2
+        17
+        (compiler-object-coff-symbol-index image "_tl_slot")
+        rel32)
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        3
+        22
+        (compiler-object-coff-symbol-index image "foreign_exact")
+        rel32)
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        4
+        27
+        (compiler-object-coff-symbol-index image "_tl_done")
+        rel32)
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        5
+        32
+        (compiler-object-coff-symbol-index image "_tl_done")
+        rel32)
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        6
+        41
+        (compiler-object-coff-symbol-index image "_tl_true")
+        rel32)
+      (compiler-object-coff-reloc-entry-ok?
+        obj
+        reloc-ptr
+        7
+        46
+        (compiler-object-coff-symbol-index image "_tl_false")
+        rel32))))
 
 (define (compiler-object-coff-text-smoke-ok?) : bool
   (let
@@ -1616,14 +1566,8 @@
             (compiler-object-coff-u16-at obj (+ text-header 32))]
           (and
             (= text-size 50)
-            (and
-              (= text-ptr (compiler-object-coff-header-size))
-              (and
-                (= reloc-count 8)
-                (and
-                  (compiler-object-coff-text-smoke-bytes-ok? obj text-ptr)
-                  (compiler-object-coff-text-smoke-relocs-ok?
-                    image
-                    obj
-                    reloc-ptr))))))]
+            (= text-ptr (compiler-object-coff-header-size))
+            (= reloc-count 8)
+            (compiler-object-coff-text-smoke-bytes-ok? obj text-ptr)
+            (compiler-object-coff-text-smoke-relocs-ok? image obj reloc-ptr)))]
       [(ErrCompilerObjectCoff _) false])))

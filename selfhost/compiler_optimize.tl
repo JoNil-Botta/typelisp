@@ -211,7 +211,7 @@
   (if (= (string-length value) 1)
     (let
       [c : char (string-ref value 0)]
-      (if (or (= c #0') (or (= c #1') (= c #2')))
+      (if (or (= c #0') (= c #1') (= c #2'))
         (OkCompilerOptimizeLevel (string->int value))
         (ErrCompilerOptimizeLevel)))
     (ErrCompilerOptimizeLevel)))
@@ -1731,9 +1731,8 @@
     [(IrInstrSelect _ mask on-true on-false _ _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs mask)
-        (or
-          (opt-aggregate-value-has-pointer? base ptrs on-true)
-          (opt-aggregate-value-has-pointer? base ptrs on-false)))]
+        (opt-aggregate-value-has-pointer? base ptrs on-true)
+        (opt-aggregate-value-has-pointer? base ptrs on-false))]
     [(IrInstrVectorLoad _ vector-base index _ _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs vector-base)
@@ -1741,23 +1740,19 @@
     [(IrInstrVectorStore vector-base index value _ _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs vector-base)
-        (or
-          (opt-aggregate-value-has-pointer? base ptrs index)
-          (opt-aggregate-value-has-pointer? base ptrs value)))]
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs value))]
     [(IrInstrPredicatedStore store-base index value mask _ _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs store-base)
-        (or
-          (opt-aggregate-value-has-pointer? base ptrs index)
-          (or
-            (opt-aggregate-value-has-pointer? base ptrs value)
-            (opt-aggregate-value-has-pointer? base ptrs mask))))]
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs value)
+        (opt-aggregate-value-has-pointer? base ptrs mask))]
     [(IrInstrPredicatedLoad _ load-base index mask _ _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs load-base)
-        (or
-          (opt-aggregate-value-has-pointer? base ptrs index)
-          (opt-aggregate-value-has-pointer? base ptrs mask)))]
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs mask))]
     [(IrInstrTailMask _ index length _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs index)
@@ -1846,9 +1841,7 @@
       (if (not seen-alloc)
         (match (opt-aggregate-direct-alloc instr)
           [(OptSomeAggregateAlloc dst alloc-ty alloc-size)
-            (if (and
-              (= dst base)
-              (and (= alloc-size size) (opt-type-eq alloc-ty ty)))
+            (if (and (= dst base) (= alloc-size size) (opt-type-eq alloc-ty ty))
               (opt-aggregate-scan-instrs
                 base
                 ty
@@ -2345,7 +2338,8 @@
     [(OptAggregateFieldCons fact-base fact-offset value fact-ty rest)
       (if (and
         (= fact-base base)
-        (and (= fact-offset offset) (opt-type-eq fact-ty ty)))
+        (= fact-offset offset)
+        (opt-type-eq fact-ty ty))
         (OptSomeAggregateStoredValue value fact-ty)
         (opt-aggregate-field-facts-lookup (box-get rest) base offset ty))]))
 
@@ -2433,9 +2427,8 @@
     [(OptSomeAggregateLocation base offset)
       (if (and
         (opt-aggregate-scalar-replace-type? ty)
-        (and
-          (opt-copy-safe-source? value)
-          (not (opt-aggregate-value-is-candidate-pointer? candidates value))))
+        (opt-copy-safe-source? value)
+        (not (opt-aggregate-value-is-candidate-pointer? candidates value)))
         (OptAggregateSroaResult
           (opt-aggregate-field-facts-bind facts base offset value ty)
           instr)
@@ -3081,7 +3074,7 @@
     [(IrInstrMov ad av aty)
       (match b
         [(IrInstrMov bd bv bty)
-          (and (= ad bd) (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+          (and (= ad bd) (opt-value-eq av bv) (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrAlloc ad aty)
       (match b
@@ -3096,203 +3089,190 @@
         [(IrInstrGep bd bbase boffset bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq abase bbase)
-              (and (opt-value-eq aoffset boffset) (opt-type-eq aty bty))))]
+            (opt-value-eq abase bbase)
+            (opt-value-eq aoffset boffset)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrLoad ad av aty)
       (match b
         [(IrInstrLoad bd bv bty)
-          (and (= ad bd) (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+          (and (= ad bd) (opt-value-eq av bv) (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrStorePtr aptr av aty)
       (match b
         [(IrInstrStorePtr bptr bv bty)
           (and
             (opt-value-eq aptr bptr)
-            (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+            (opt-value-eq av bv)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrCopyBytes adst asrc asize)
       (match b
         [(IrInstrCopyBytes bdst bsrc bsize)
           (and
             (= asize bsize)
-            (and (opt-value-eq adst bdst) (opt-value-eq asrc bsrc)))]
+            (opt-value-eq adst bdst)
+            (opt-value-eq asrc bsrc))]
         [_ false])]
     [(IrInstrCast ad av afrom ato)
       (match b
         [(IrInstrCast bd bv bfrom bto)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq av bv)
-              (and (opt-type-eq afrom bfrom) (opt-type-eq ato bto))))]
+            (opt-value-eq av bv)
+            (opt-type-eq afrom bfrom)
+            (opt-type-eq ato bto))]
         [_ false])]
     [(IrInstrBinOp ad aop al ar aty)
       (match b
         [(IrInstrBinOp bd bop bl br bty)
           (and
             (= ad bd)
-            (and
-              (opt-binop-eq aop bop)
-              (and
-                (opt-value-eq al bl)
-                (and (opt-value-eq ar br) (opt-type-eq aty bty)))))]
+            (opt-binop-eq aop bop)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrUnOp ad aop av aty)
       (match b
         [(IrInstrUnOp bd bop bv bty)
           (and
             (= ad bd)
-            (and
-              (opt-unop-eq aop bop)
-              (and (opt-value-eq av bv) (opt-type-eq aty bty))))]
+            (opt-unop-eq aop bop)
+            (opt-value-eq av bv)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrLaneId ad alanes aty)
       (match b
         [(IrInstrLaneId bd blanes bty)
-          (and (= ad bd) (and (= alanes blanes) (opt-type-eq aty bty)))]
+          (and (= ad bd) (= alanes blanes) (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrSplat ad av alanes aty)
       (match b
         [(IrInstrSplat bd bv blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq av bv)
-              (and (= alanes blanes) (opt-type-eq aty bty))))]
+            (opt-value-eq av bv)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrVectorBinOp ad aop al ar alanes aty)
       (match b
         [(IrInstrVectorBinOp bd bop bl br blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-binop-eq aop bop)
-              (and
-                (opt-value-eq al bl)
-                (and
-                  (opt-value-eq ar br)
-                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+            (opt-binop-eq aop bop)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrVectorReduce ad aop av alanes aty)
       (match b
         [(IrInstrVectorReduce bd bop bv blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-vector-reduce-eq aop bop)
-              (and
-                (opt-value-eq av bv)
-                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+            (opt-vector-reduce-eq aop bop)
+            (opt-value-eq av bv)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrVectorCompare ad aop al ar alanes aty)
       (match b
         [(IrInstrVectorCompare bd bop bl br blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-binop-eq aop bop)
-              (and
-                (opt-value-eq al bl)
-                (and
-                  (opt-value-eq ar br)
-                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+            (opt-binop-eq aop bop)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrMaskBinOp ad aop al ar alanes)
       (match b
         [(IrInstrMaskBinOp bd bop bl br blanes)
           (and
             (= ad bd)
-            (and
-              (opt-mask-binop-eq aop bop)
-              (and
-                (opt-value-eq al bl)
-                (and (opt-value-eq ar br) (= alanes blanes)))))]
+            (opt-mask-binop-eq aop bop)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (= alanes blanes))]
         [_ false])]
     [(IrInstrMaskNot ad av alanes)
       (match b
         [(IrInstrMaskNot bd bv blanes)
-          (and (= ad bd) (and (opt-value-eq av bv) (= alanes blanes)))]
+          (and (= ad bd) (opt-value-eq av bv) (= alanes blanes))]
         [_ false])]
     [(IrInstrMaskReduce ad aop av alanes)
       (match b
         [(IrInstrMaskReduce bd bop bv blanes)
           (and
             (= ad bd)
-            (and
-              (opt-mask-reduce-eq aop bop)
-              (and (opt-value-eq av bv) (= alanes blanes))))]
+            (opt-mask-reduce-eq aop bop)
+            (opt-value-eq av bv)
+            (= alanes blanes))]
         [_ false])]
     [(IrInstrSelect ad amask at af alanes aty)
       (match b
         [(IrInstrSelect bd bmask bt bf blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq amask bmask)
-              (and
-                (opt-value-eq at bt)
-                (and
-                  (opt-value-eq af bf)
-                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+            (opt-value-eq amask bmask)
+            (opt-value-eq at bt)
+            (opt-value-eq af bf)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrVectorLoad ad abase aindex alanes aty)
       (match b
         [(IrInstrVectorLoad bd bbase bindex blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq abase bbase)
-              (and
-                (opt-value-eq aindex bindex)
-                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+            (opt-value-eq abase bbase)
+            (opt-value-eq aindex bindex)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrVectorStore abase aindex av alanes aty)
       (match b
         [(IrInstrVectorStore bbase bindex bv blanes bty)
           (and
             (opt-value-eq abase bbase)
-            (and
-              (opt-value-eq aindex bindex)
-              (and
-                (opt-value-eq av bv)
-                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+            (opt-value-eq aindex bindex)
+            (opt-value-eq av bv)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrPredicatedStore abase aindex av amask alanes aty)
       (match b
         [(IrInstrPredicatedStore bbase bindex bv bmask blanes bty)
           (and
             (opt-value-eq abase bbase)
-            (and
-              (opt-value-eq aindex bindex)
-              (and
-                (opt-value-eq av bv)
-                (and
-                  (opt-value-eq amask bmask)
-                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+            (opt-value-eq aindex bindex)
+            (opt-value-eq av bv)
+            (opt-value-eq amask bmask)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrPredicatedLoad ad abase aindex amask alanes aty)
       (match b
         [(IrInstrPredicatedLoad bd bbase bindex bmask blanes bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq abase bbase)
-              (and
-                (opt-value-eq aindex bindex)
-                (and
-                  (opt-value-eq amask bmask)
-                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+            (opt-value-eq abase bbase)
+            (opt-value-eq aindex bindex)
+            (opt-value-eq amask bmask)
+            (= alanes blanes)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrTailMask ad aindex alength alanes)
       (match b
         [(IrInstrTailMask bd bindex blength blanes)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq aindex bindex)
-              (and (opt-value-eq alength blength) (= alanes blanes))))]
+            (opt-value-eq aindex bindex)
+            (opt-value-eq alength blength)
+            (= alanes blanes))]
         [_ false])]
     [(IrInstrEntryArgc ad)
       (match b
@@ -3311,9 +3291,9 @@
         [(IrInstrCpuId bd bleaf bsubleaf breg)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq aleaf bleaf)
-              (and (opt-value-eq asubleaf bsubleaf) (= areg breg))))]
+            (opt-value-eq aleaf bleaf)
+            (opt-value-eq asubleaf bsubleaf)
+            (= areg breg))]
         [_ false])]
     [(IrInstrXgetbv ad aindex)
       (match b
@@ -3329,55 +3309,59 @@
         [(IrInstrCall bd bname bargs bty)
           (and
             (= ad bd)
-            (and
-              (string-eq aname bname)
-              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
+            (string-eq aname bname)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrCallIndirect ad afunc aargs aty)
       (match b
         [(IrInstrCallIndirect bd bfunc bargs bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq afunc bfunc)
-              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
+            (opt-value-eq afunc bfunc)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrCallIndirectC ad afunc aargs aty)
       (match b
         [(IrInstrCallIndirectC bd bfunc bargs bty)
           (and
             (= ad bd)
-            (and
-              (opt-value-eq afunc bfunc)
-              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
+            (opt-value-eq afunc bfunc)
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
           (and
             (string-eq aname bname)
-            (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty)))]
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrTailCallIndirect afunc aargs aty)
       (match b
         [(IrInstrTailCallIndirect bfunc bargs bty)
           (and
             (opt-value-eq afunc bfunc)
-            (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty)))]
+            (opt-call-args-eq aargs bargs)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrStore aname av aty)
       (match b
         [(IrInstrStore bname bv bty)
           (and
             (string-eq aname bname)
-            (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+            (opt-value-eq av bv)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrBoundsCheck aindex alength alabel)
       (match b
         [(IrInstrBoundsCheck bindex blength blabel)
           (and
             (opt-value-eq aindex bindex)
-            (and (opt-value-eq alength blength) (string-eq alabel blabel)))]
+            (opt-value-eq alength blength)
+            (string-eq alabel blabel))]
         [_ false])]
     [(IrInstrJump alabel)
       (match b
@@ -3386,7 +3370,7 @@
     [(IrInstrBranch av at bt)
       (match b
         [(IrInstrBranch bv af bf)
-          (and (string-eq at af) (and (string-eq bt bf) (opt-value-eq av bv)))]
+          (and (string-eq at af) (string-eq bt bf) (opt-value-eq av bv))]
         [_ false])]
     [(IrInstrReturn av)
       (match b
@@ -3397,21 +3381,25 @@
         [(IrInstrPhi bd binputs bty)
           (and
             (= ad bd)
-            (and (opt-phi-input-list-eq ainputs binputs) (opt-type-eq aty bty)))]
+            (opt-phi-input-list-eq ainputs binputs)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrPack ad awords aty)
       (match b
         [(IrInstrPack bd bwords bty)
           (and
             (= ad bd)
-            (and (opt-value-list-eq awords bwords) (opt-type-eq aty bty)))]
+            (opt-value-list-eq awords bwords)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(IrInstrWord ad asrc ai aty)
       (match b
         [(IrInstrWord bd bsrc bi bty)
           (and
             (= ad bd)
-            (and (opt-value-eq asrc bsrc) (and (= ai bi) (opt-type-eq aty bty))))]
+            (opt-value-eq asrc bsrc)
+            (= ai bi)
+            (opt-type-eq aty bty))]
         [_ false])]))
 
 (define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
@@ -3462,7 +3450,7 @@
     [(IrParam aname aty aid)
       (match b
         [(IrParam bname bty bid)
-          (and (string-eq aname bname) (and (= aid bid) (opt-type-eq aty bty)))])]))
+          (and (string-eq aname bname) (= aid bid) (opt-type-eq aty bty))])]))
 
 (define (opt-param-list-eq [a : CompilerIrParamList] [b : CompilerIrParamList]) : bool
   (match a
@@ -3485,13 +3473,10 @@
         [(IrFunction bname bparams bret bframe bblocks)
           (and
             (string-eq aname bname)
-            (and
-              (= aframe bframe)
-              (and
-                (opt-param-list-eq aparams bparams)
-                (and
-                  (opt-type-eq aret bret)
-                  (opt-block-list-eq ablocks bblocks)))))])]))
+            (= aframe bframe)
+            (opt-param-list-eq aparams bparams)
+            (opt-type-eq aret bret)
+            (opt-block-list-eq ablocks bblocks))])]))
 
 (define (opt-function-list-eq
   [a : CompilerIrFunctionList]
@@ -3516,7 +3501,8 @@
         [(IrGlobal bname bty bvalue)
           (and
             (string-eq aname bname)
-            (and (opt-type-eq aty bty) (opt-value-eq avalue bvalue)))])]))
+            (opt-type-eq aty bty)
+            (opt-value-eq avalue bvalue))])]))
 
 (define (opt-global-list-eq
   [a : CompilerIrGlobalList]
@@ -3541,15 +3527,11 @@
         [(IrExtern bname bty babi bsymbol blinks bprovided)
           (and
             (string-eq aname bname)
-            (and
-              (opt-type-eq aty bty)
-              (and
-                (ast-extern-abi-eq? aabi babi)
-                (and
-                  (string-eq asymbol bsymbol)
-                  (and
-                    (ast-extern-link-input-list-eq? alinks blinks)
-                    (= aprovided bprovided))))))])]))
+            (opt-type-eq aty bty)
+            (ast-extern-abi-eq? aabi babi)
+            (string-eq asymbol bsymbol)
+            (ast-extern-link-input-list-eq? alinks blinks)
+            (= aprovided bprovided))])]))
 
 (define (opt-extern-list-eq
   [a : CompilerIrExternList]
@@ -3574,18 +3556,15 @@
         [(IrProgram bglobals bfunctions bexterns)
           (and
             (opt-global-list-eq aglobals bglobals)
-            (and
-              (opt-function-list-eq afunctions bfunctions)
-              (opt-extern-list-eq aexterns bexterns)))])]))
+            (opt-function-list-eq afunctions bfunctions)
+            (opt-extern-list-eq aexterns bexterns))])]))
 
 (define (opt-expr-key-eq [a : OptExprKey] [b : OptExprKey]) : bool
   (match a
     [(OptBinKey opa la ra)
       (match b
         [(OptBinKey opb lb rb)
-          (and
-            (opt-binop-eq opa opb)
-            (and (opt-value-eq la lb) (opt-value-eq ra rb)))]
+          (and (opt-binop-eq opa opb) (opt-value-eq la lb) (opt-value-eq ra rb))]
         [(OptUnKey _ _) false])]
     [(OptUnKey opa va)
       (match b
@@ -5476,7 +5455,8 @@
           (begin
             (if (and
               (!= id entry-id)
-              (and (>= new-idom 0) (!= (array-ref idom id) new-idom)))
+              (>= new-idom 0)
+              (!= (array-ref idom id) new-idom))
               (begin
                 (array-set! idom id new-idom)
                 (set! changed true))
@@ -5509,7 +5489,8 @@
           (begin
             (if (and
               (array-ref (struct-get index reachable) id)
-              (and (>= parent 0) (!= parent id)))
+              (>= parent 0)
+              (!= parent id))
               (array-set!
                 rows
                 parent
@@ -5600,8 +5581,10 @@
     [index : OptCfgIndex (struct-get info index)]
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and
-      (and (>= dominator-id 0) (< dominator-id count))
-      (and (>= label-id 0) (< label-id count)))
+      (>= dominator-id 0)
+      (< dominator-id count)
+      (>= label-id 0)
+      (< label-id count))
       (if (and
         (array-ref (struct-get index reachable) dominator-id)
         (array-ref (struct-get index reachable) label-id))
@@ -5611,8 +5594,10 @@
           [label-tin : i64 (array-ref (struct-get info tin) label-id)]
           [label-tout : i64 (array-ref (struct-get info tout) label-id)]
           (and
-            (and (>= dom-tin 0) (>= label-tin 0))
-            (and (<= dom-tin label-tin) (<= label-tout dom-tout))))
+            (>= dom-tin 0)
+            (>= label-tin 0)
+            (<= dom-tin label-tin)
+            (<= label-tout dom-tout)))
         false)
       false)))
 
@@ -5624,8 +5609,10 @@
     [index : OptCfgIndex (struct-get info index)]
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and
-      (and (>= dominator-id 0) (< dominator-id count))
-      (and (>= label-id 0) (< label-id count)))
+      (>= dominator-id 0)
+      (< dominator-id count)
+      (>= label-id 0)
+      (< label-id count))
       (if (and
         (array-ref (struct-get index reachable) dominator-id)
         (array-ref (struct-get index reachable) label-id))
@@ -5814,14 +5801,13 @@
                 label)]
             (if (and
               (opt-label-contains reachable block-label)
-              (and
-                (opt-cfg-frontier-has-pred?
-                  doms
-                  label
-                  (opt-label-intersection
-                    (opt-pred-map-lookup pred-map block-label)
-                    reachable))
-                (not (opt-dom-strict-dominates? doms label block-label))))
+              (opt-cfg-frontier-has-pred?
+                doms
+                label
+                (opt-label-intersection
+                  (opt-pred-map-lookup pred-map block-label)
+                  reachable))
+              (not (opt-dom-strict-dominates? doms label block-label)))
               (opt-label-add tail block-label)
               tail))])]
     [(IrBlockArray seq)
@@ -6797,11 +6783,10 @@
     [(OptSsaFacts counts bad types)
       (and
         (> (opt-ssa-count counts var) 1)
-        (and
-          (not (opt-used-contains bad var))
-          (match (opt-ssa-var-type-lookup types var)
-            [(OptSomeAstType _) true]
-            [(OptNoAstType) false])))]))
+        (not (opt-used-contains bad var))
+        (match (opt-ssa-var-type-lookup types var)
+          [(OptSomeAstType _) true]
+          [(OptNoAstType) false]))]))
 
 (define (opt-ssa-any-candidate-types?
   [facts : OptSsaFacts]
@@ -7594,9 +7579,8 @@
         [next-state : OptSsaRenameState
           (if (and
             (not (= child-id parent-id))
-            (and
-              (array-ref (struct-get index reachable) child-id)
-              (= (array-ref idom child-id) parent-id)))
+            (array-ref (struct-get index reachable) child-id)
+            (= (array-ref idom child-id) parent-id))
             (opt-ssa-rename-id context blocks facts sites child-id env state)
             state)]
         (opt-ssa-rename-children
@@ -7947,30 +7931,30 @@
         [(OptGlobalGepKey bbase boff bty)
           (and
             (opt-value-eq abase bbase)
-            (and (opt-value-eq aoff boff) (opt-type-eq aty bty)))]
+            (opt-value-eq aoff boff)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(OptGlobalCastKey av afrom ato)
       (match b
         [(OptGlobalCastKey bv bfrom bto)
           (and
             (opt-value-eq av bv)
-            (and (opt-type-eq afrom bfrom) (opt-type-eq ato bto)))]
+            (opt-type-eq afrom bfrom)
+            (opt-type-eq ato bto))]
         [_ false])]
     [(OptGlobalBinKey aop al ar aty)
       (match b
         [(OptGlobalBinKey bop bl br bty)
           (and
             (opt-binop-eq aop bop)
-            (and
-              (opt-value-eq al bl)
-              (and (opt-value-eq ar br) (opt-type-eq aty bty))))]
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (opt-type-eq aty bty))]
         [_ false])]
     [(OptGlobalUnKey aop av aty)
       (match b
         [(OptGlobalUnKey bop bv bty)
-          (and
-            (opt-unop-eq aop bop)
-            (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+          (and (opt-unop-eq aop bop) (opt-value-eq av bv) (opt-type-eq aty bty))]
         [_ false])]))
 
 (define (opt-global-expr-key-hash [key : OptGlobalExprKey]) : i64
@@ -8713,14 +8697,13 @@
         [(OptGlobalExprFact fact-key fact-dst def-block-id def-pos)
           (if (and
             (not (= fact-dst dst))
-            (and
-              (opt-global-expr-key-eq fact-key key)
-              (opt-global-fact-available?
-                def-block-id
-                def-pos
-                use-block-id
-                use-pos
-                doms)))
+            (opt-global-expr-key-eq fact-key key)
+            (opt-global-fact-available?
+              def-block-id
+              def-pos
+              use-block-id
+              use-pos
+              doms))
             (IrSomeValue (IrValueVar fact-dst))
             (opt-global-expr-lookup-list
               (box-get rest)
@@ -9454,9 +9437,8 @@
             (box-get rest))]
         (if (and
           (opt-label-contains reachable pred)
-          (and
-            (not (opt-label-contains body pred))
-            (not (opt-dom-dominates? doms header pred))))
+          (not (opt-label-contains body pred))
+          (not (opt-dom-dominates? doms header pred)))
           (opt-label-add tail pred)
           tail))]))
 
@@ -9813,13 +9795,12 @@
             body)]
         (if (and
           (> (opt-label-count outside) 0)
-          (and
-            (not
-              (opt-loop-preheaders-existing-safe-preheader?
-                (struct-get context pred-map)
-                header
-                outside))
-            (opt-loop-preheaders-header-compatible? blocks header outside)))
+          (not
+            (opt-loop-preheaders-existing-safe-preheader?
+              (struct-get context pred-map)
+              header
+              outside))
+          (opt-loop-preheaders-header-compatible? blocks header outside))
           (let
             [preheader : String
               (opt-loop-preheaders-fresh-label blocks header 0)]
@@ -10020,17 +10001,14 @@
     [(IrInstrGep dst base offset _)
       (and
         memory-safe?
-        (and
-          (opt-gvn-stable-var? sources dst)
-          (opt-licm-values-invariant? loop-defs hoisted base offset)))]
+        (opt-gvn-stable-var? sources dst)
+        (opt-licm-values-invariant? loop-defs hoisted base offset))]
     [(IrInstrLoad dst src _)
       (and
         memory-safe?
-        (and
-          (opt-gvn-stable-var? sources dst)
-          (and
-            (opt-gvn-value-stable? sources src)
-            (opt-licm-value-invariant? loop-defs hoisted src))))]
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-value-stable? sources src)
+        (opt-licm-value-invariant? loop-defs hoisted src))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -10490,7 +10468,8 @@
     [(IrInstrBinOp dst op lhs rhs instr-ty)
       (if (and
         (= dst next-var)
-        (and (opt-type-eq instr-ty ty) (opt-induction-i64-type? ty)))
+        (opt-type-eq instr-ty ty)
+        (opt-induction-i64-type? ty))
         (opt-induction-step-from-binop op lhs rhs phi-var)
         (OptNoI64))]
     [_ (OptNoI64)]))
@@ -10718,9 +10697,9 @@
 (define (opt-induction-scale-ok? [step : i64] [scale : i64]) : bool
   (and
     (not (= scale 0))
-    (and
-      (not (= scale 1))
-      (and (opt-induction-small-const? step) (opt-induction-small-const? scale)))))
+    (not (= scale 1))
+    (opt-induction-small-const? step)
+    (opt-induction-small-const? scale)))
 
 (define (opt-induction-mul-scale
   [lhs : CompilerIrValue]
@@ -10877,11 +10856,10 @@
             [(IrInstrGep _ instr-base offset instr-ty)
               (and
                 (opt-type-eq instr-ty ty)
-                (and
-                  (opt-value-eq instr-base base)
-                  (match offset
-                    [(IrValueVar offset-var) (= offset-var phi-var)]
-                    [_ false])))]
+                (opt-value-eq instr-base base)
+                (match offset
+                  [(IrValueVar offset-var) (= offset-var phi-var)]
+                  [_ false]))]
             [_ false])])]))
 
 (define (opt-induction-rewrite-instr
@@ -12311,9 +12289,8 @@
     [(IrInstrBinOp dst _ l r _)
       (and
         (opt-gvn-stable-var? sources dst)
-        (and
-          (opt-gvn-value-stable? sources l)
-          (opt-gvn-value-stable? sources r)))]
+        (opt-gvn-value-stable? sources l)
+        (opt-gvn-value-stable? sources r))]
     [(IrInstrUnOp dst _ v _)
       (and (opt-gvn-stable-var? sources dst) (opt-gvn-value-stable? sources v))]
     [_ false]))
@@ -13871,11 +13848,9 @@
   [callee-name : String]) : bool
   (and
     (= (opt-inline-census-refcount census callee-name) 1)
-    (and
-      (not (opt-inline-census-address-taken? census callee-name))
-      (and
-        (not (string-eq callee-name "main"))
-        (not (string-eq caller-name callee-name))))))
+    (not (opt-inline-census-address-taken? census callee-name))
+    (not (string-eq callee-name "main"))
+    (not (string-eq caller-name callee-name))))
 
 (define (opt-callgraph-callee-count [graph : OptCallGraph] [from-slot : i64]) : i64
   (if (or (< from-slot 0) (>= from-slot (struct-get graph count)))
@@ -13888,11 +13863,9 @@
   [to-slot : i64]) : bool
   (if (or
     (< from-slot 0)
-    (or
-      (< to-slot 0)
-      (or
-        (>= from-slot (struct-get graph count))
-        (>= to-slot (struct-get graph count)))))
+    (< to-slot 0)
+    (>= from-slot (struct-get graph count))
+    (>= to-slot (struct-get graph count)))
     false
     (opt-slot-list-contains?
       (array-ref (struct-get graph edges) from-slot)
@@ -16473,9 +16446,8 @@
       [(CompilerOptimizedProgram _ optimized-spans)
         (and
           (= (compiler-source-spans-instr-count optimized-spans) 1)
-          (and
-            (opt-span-lookup-missing? optimized-spans "main" dead)
-            (opt-span-lookup-ok? optimized-spans "main" live 31 5)))])))
+          (opt-span-lookup-missing? optimized-spans "main" dead)
+          (opt-span-lookup-ok? optimized-spans "main" live 31 5))])))
 
 (define (compiler-optimize-spans-fold-ok?) : bool
   (let
@@ -16649,15 +16621,11 @@
 (define (compiler-optimize-spans-self-test) : i64
   (if (and
     (compiler-optimize-spans-dce-ok?)
-    (and
-      (compiler-optimize-spans-fold-ok?)
-      (and
-        (compiler-optimize-spans-cse-ok?)
-        (and
-          (compiler-optimize-spans-inline-callee-ok?)
-          (and
-            (compiler-optimize-spans-inline-fallback-ok?)
-            (compiler-optimize-spans-non-inline-call-ok?))))))
+    (compiler-optimize-spans-fold-ok?)
+    (compiler-optimize-spans-cse-ok?)
+    (compiler-optimize-spans-inline-callee-ok?)
+    (compiler-optimize-spans-inline-fallback-ok?)
+    (compiler-optimize-spans-non-inline-call-ok?))
     42
     1))
 
@@ -16823,17 +16791,12 @@
             [(OptAggregateAllocCandidate base ty size ptrs accesses)
               (and
                 (= base 1)
-                (and
-                  (= size 16)
-                  (and
-                    (opt-type-eq ty (AstTyStruct (intern "Pair")))
-                    (and
-                      (= (opt-aggregate-pointer-list-count ptrs) 3)
-                      (and
-                        (= (opt-aggregate-access-list-count accesses) 3)
-                        (and
-                          (= (opt-aggregate-access-list-store-count accesses) 2)
-                          (= (opt-aggregate-access-list-load-count accesses) 1)))))))])]
+                (= size 16)
+                (opt-type-eq ty (AstTyStruct (intern "Pair")))
+                (= (opt-aggregate-pointer-list-count ptrs) 3)
+                (= (opt-aggregate-access-list-count accesses) 3)
+                (= (opt-aggregate-access-list-store-count accesses) 2)
+                (= (opt-aggregate-access-list-load-count accesses) 1))])]
         [_ false])]
     [_ false]))
 
@@ -18471,31 +18434,19 @@
 (define (compiler-optimize-level-policy-ok?) : bool
   (and
     (= (compiler-optimize-default-level) 1)
-    (and
-      (compiler-optimize-level-valid? 0)
-      (and
-        (compiler-optimize-level-valid? 1)
-        (and
-          (compiler-optimize-level-valid? 2)
-          (and
-            (not (compiler-optimize-level-valid? 3))
-            (and
-              (not (compiler-optimize-level-valid? (- 0 1)))
-              (and
-                (not (compiler-optimize-level-valid? 4))
-                (and
-                  (opt-level-parse-ok? "0" 0)
-                  (and
-                    (opt-level-parse-ok? "1" 1)
-                    (and
-                      (opt-level-parse-ok? "2" 2)
-                      (and
-                        (opt-level-parse-err? "3")
-                        (and
-                          (opt-level-parse-err? "")
-                          (and
-                            (opt-level-parse-err? "4")
-                            (opt-level-parse-err? "10")))))))))))))))
+    (compiler-optimize-level-valid? 0)
+    (compiler-optimize-level-valid? 1)
+    (compiler-optimize-level-valid? 2)
+    (not (compiler-optimize-level-valid? 3))
+    (not (compiler-optimize-level-valid? (- 0 1)))
+    (not (compiler-optimize-level-valid? 4))
+    (opt-level-parse-ok? "0" 0)
+    (opt-level-parse-ok? "1" 1)
+    (opt-level-parse-ok? "2" 2)
+    (opt-level-parse-err? "3")
+    (opt-level-parse-err? "")
+    (opt-level-parse-err? "4")
+    (opt-level-parse-err? "10")))
 
 (define (compiler-optimize-level-program-ok?) : bool
   (let
@@ -18599,17 +18550,12 @@
     [no-main-functions : CompilerIrFunctionList (opt-program-functions no-main)]
     (and
       (= (compiler-ir-function-list-count level0-functions) 4)
-      (and
-        (= (compiler-ir-function-list-count level1-functions) 3)
-        (and
-          (opt-function-list-defines? level1-functions "main")
-          (and
-            (opt-function-list-defines? level1-functions "helper")
-            (and
-              (opt-function-list-defines? level1-functions "callback-target")
-              (and
-                (not (opt-function-list-defines? level1-functions "dead"))
-                (= (compiler-ir-function-list-count no-main-functions) 2)))))))))
+      (= (compiler-ir-function-list-count level1-functions) 3)
+      (opt-function-list-defines? level1-functions "main")
+      (opt-function-list-defines? level1-functions "helper")
+      (opt-function-list-defines? level1-functions "callback-target")
+      (not (opt-function-list-defines? level1-functions "dead"))
+      (= (compiler-ir-function-list-count no-main-functions) 2))))
 
 (define (compiler-optimize-global-dce-self-test) : i64
   (if (compiler-optimize-global-dce-ok?)
@@ -18791,7 +18737,7 @@
   (let
     [left-pos : i64 (opt-scc-order-position result left)]
     [right-pos : i64 (opt-scc-order-position result right)]
-    (and (>= left-pos 0) (and (>= right-pos 0) (< left-pos right-pos)))))
+    (and (>= left-pos 0) (>= right-pos 0) (< left-pos right-pos))))
 
 (define (opt-scc-self-recursive-functions) : CompilerIrFunctionList
   (compiler-ir-function-cons
@@ -19437,9 +19383,8 @@
       (opt-inline-function-instrs (opt-inline-level-functions 2) "main")]
     (and
       (= (opt-count-direct-call-name level0 "inline_add") 1)
-      (and
-        (= (opt-count-direct-call-name level1 "inline_add") 1)
-        (= (opt-count-direct-call-name level2 "inline_add") 0)))))
+      (= (opt-count-direct-call-name level1 "inline_add") 1)
+      (= (opt-count-direct-call-name level2 "inline_add") 0))))
 
 (define (compiler-optimize-inline-self-recursive-ok?) : bool
   (let
@@ -19498,13 +19443,10 @@
       (opt-inline-function-instrs optimized "inline_mid")]
     (and
       (= (opt-count-direct-call-name main-instrs "inline_mid") 0)
-      (and
-        (= (opt-count-direct-call-name main-instrs "inline_add") 0)
-        (and
-          (= (opt-inline-count-binop-dst main-instrs 4) 1)
-          (and
-            (= (opt-count-direct-call-name mid-instrs "inline_add") 0)
-            (= (opt-inline-count-binop-dst mid-instrs 3) 1)))))))
+      (= (opt-count-direct-call-name main-instrs "inline_add") 0)
+      (= (opt-inline-count-binop-dst main-instrs 4) 1)
+      (= (opt-count-direct-call-name mid-instrs "inline_add") 0)
+      (= (opt-inline-count-binop-dst mid-instrs 3) 1))))
 
 (define (compiler-optimize-inline-mutual-scc-refusal-ok?) : bool
   (let
@@ -19516,11 +19458,9 @@
       (opt-inline-function-instrs optimized "inline_mut_b")]
     (and
       (= (opt-count-direct-call-name a-instrs "inline_mut_b") 1)
-      (and
-        (= (opt-count-direct-call-name a-instrs "inline_mut_a") 0)
-        (and
-          (= (opt-count-direct-call-name b-instrs "inline_mut_a") 1)
-          (= (opt-count-direct-call-name b-instrs "inline_mut_b") 0))))))
+      (= (opt-count-direct-call-name a-instrs "inline_mut_a") 0)
+      (= (opt-count-direct-call-name b-instrs "inline_mut_a") 1)
+      (= (opt-count-direct-call-name b-instrs "inline_mut_b") 0))))
 
 (define (opt-inline-pack-words-are-vars-1-2? [words : CompilerIrValueList]) : bool
   (match words
@@ -19598,9 +19538,8 @@
     [census : OptInlineCensus (opt-inline-census-build index functions)]
     (and
       (= (opt-inline-census-refcount census "inline_add") 1)
-      (and
-        (not (opt-inline-census-address-taken? census "inline_add"))
-        (opt-inline-census-absorbable? census "main" "inline_add")))))
+      (not (opt-inline-census-address-taken? census "inline_add"))
+      (opt-inline-census-absorbable? census "main" "inline_add"))))
 
 (define (compiler-optimize-inline-census-address-ok?) : bool
   (let
@@ -19614,31 +19553,17 @@
 (define (compiler-optimize-inline-cost-model-ok?) : bool
   (and
     (opt-inline-value-constant? (IrValueI64 7))
-    (and
-      (not (opt-inline-value-constant? (IrValueVar 7)))
-      (and
-        (=
-          (opt-inline-args-const-count
-            (IrCallArgsTwo (IrValueI64 1) (IrValueVar 2)))
-          1)
-        (and
-          (opt-inline-cost-inline? 8 0 0 false 64 0)
-          (and
-            (not (opt-inline-cost-inline? 10 3 0 false 10 0))
-            (and
-              (opt-inline-cost-inline? 10 3 0 true 10 0)
-              (and
-                (not
-                  (opt-inline-cost-inline?
-                    1
-                    1
-                    0
-                    true
-                    (opt-heavy-pass-block-limit)
-                    0))
-                (and
-                  (not (opt-inline-cost-inline? 1 1 0 true 80 32))
-                  (opt-inline-cost-inline? 8 1 8 false 10 0))))))))))
+    (not (opt-inline-value-constant? (IrValueVar 7)))
+    (=
+      (opt-inline-args-const-count
+        (IrCallArgsTwo (IrValueI64 1) (IrValueVar 2)))
+      1)
+    (opt-inline-cost-inline? 8 0 0 false 64 0)
+    (not (opt-inline-cost-inline? 10 3 0 false 10 0))
+    (opt-inline-cost-inline? 10 3 0 true 10 0)
+    (not (opt-inline-cost-inline? 1 1 0 true (opt-heavy-pass-block-limit) 0))
+    (not (opt-inline-cost-inline? 1 1 0 true 80 32))
+    (opt-inline-cost-inline? 8 1 8 false 10 0)))
 
 (define (compiler-optimize-inline-self-test) : i64
   (let
@@ -21364,20 +21289,13 @@
 (define (opt-cfg-fallthrough-prune-ok? [blocks : CompilerIrBlockList]) : bool
   (and
     (= (compiler-ir-block-list-count blocks) 3)
-    (and
-      (opt-block-list-has-label? blocks "entry")
-      (and
-        (opt-block-list-has-label? blocks "reachable-empty")
-        (and
-          (opt-block-list-has-label? blocks "exit")
-          (and
-            (not (opt-block-list-has-label? blocks "dead-empty"))
-            (and
-              (not (opt-block-list-has-label? blocks "dead-exit"))
-              (and
-                (opt-cfg-successor-targets-known? blocks)
-                (opt-verify-ok?
-                  (opt-verify-function (opt-cfg-test-function blocks)))))))))))
+    (opt-block-list-has-label? blocks "entry")
+    (opt-block-list-has-label? blocks "reachable-empty")
+    (opt-block-list-has-label? blocks "exit")
+    (not (opt-block-list-has-label? blocks "dead-empty"))
+    (not (opt-block-list-has-label? blocks "dead-exit"))
+    (opt-cfg-successor-targets-known? blocks)
+    (opt-verify-ok? (opt-verify-function (opt-cfg-test-function blocks)))))
 
 (define (opt-ssa-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))

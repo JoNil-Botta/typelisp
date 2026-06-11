@@ -28,9 +28,8 @@
     (score-bool
       (and
         (= (array-length (struct-get (array-ref bags 0) items)) 1)
-        (and
-          (= (array-ref (struct-get (array-ref bags 0) items) 0) 7)
-          (= (array-length (struct-get (array-ref bags 1) items)) 0))))))
+        (= (array-ref (struct-get (array-ref bags 0) items) 0) 7)
+        (= (array-length (struct-get (array-ref bags 1) items)) 0)))))
 
 (define (main) : i64
   (let

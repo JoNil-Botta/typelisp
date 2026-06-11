@@ -114,14 +114,12 @@
             (=
               (token-sym-id (array-ref toks 1))
               (token-sym-id (array-ref toks 2)))
-            (and
-              (not
-                (=
-                  (token-sym-id (array-ref toks 1))
-                  (token-sym-id (array-ref toks 3))))
-              (and
-                (string-eq (token-sym (array-ref toks 1)) "x")
-                (string-eq (token-sym (array-ref toks 3)) "y"))))
+            (not
+              (=
+                (token-sym-id (array-ref toks 1))
+                (token-sym-id (array-ref toks 3))))
+            (string-eq (token-sym (array-ref toks 1)) "x")
+            (string-eq (token-sym (array-ref toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
       [(ErrTokens e) (lexer-assert-true false e)])))
 

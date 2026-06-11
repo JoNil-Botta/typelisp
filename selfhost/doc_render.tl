@@ -36,7 +36,7 @@
   (and (>= c #0') (<= c #9')))
 
 (define (doc-render-anchor-char? [c : char]) : bool
-  (or (doc-render-alpha? c) (or (doc-render-digit? c) (or (= c #-') (= c #_')))))
+  (or (doc-render-alpha? c) (doc-render-digit? c) (= c #-') (= c #_')))
 
 (define (doc-render-anchor [name : String]) : String
   (let

@@ -82,7 +82,7 @@
   (and (>= c #0') (<= c #9')))
 
 (define (is-hex-digit [c : char]) : bool
-  (or (is-digit c) (or (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F')))))
+  (or (is-digit c) (and (>= c #a') (<= c #f')) (and (>= c #A') (<= c #F'))))
 
 (define (is-binary-digit [c : char]) : bool
   (or (= c #0') (= c #1')))
@@ -111,25 +111,19 @@
 (define (is-symbol-punct [c : char]) : bool
   (or
     (= c #-')
-    (or
-      (= c #+')
-      (or
-        (= c #*')
-        (or
-          (= c #/')
-          (or
-            (= c #?')
-            (or
-              (= c #!')
-              (or
-                (= c #>')
-                (or
-                  (= c #<')
-                  (or
-                    (= c #=')
-                    (or
-                      (= c #&')
-                      (or (= c #:') (or (= c #_') (or (= c #.') (= c #%')))))))))))))))
+    (= c #+')
+    (= c #*')
+    (= c #/')
+    (= c #?')
+    (= c #!')
+    (= c #>')
+    (= c #<')
+    (= c #=')
+    (= c #&')
+    (= c #:')
+    (= c #_')
+    (= c #.')
+    (= c #%')))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -167,7 +161,7 @@
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
+  (or (= c #\space') (= c #\tab') (= c #\newline') (= c #\return')))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start` in
 ;; `src`. `n` is the source length. The bounds check is kept outside the
@@ -231,9 +225,7 @@
       (if (= (string-ref src digits-start) #0')
         (let
           [prefix : char (string-ref src (+ digits-start 1))]
-          (or
-            (= prefix #x')
-            (or (= prefix #X') (or (= prefix #b') (= prefix #B')))))
+          (or (= prefix #x') (= prefix #X') (= prefix #b') (= prefix #B')))
         false)
       false)))
 
@@ -1120,11 +1112,9 @@
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 1)) (tag-sym))
-        (and
-          (string-eq (token-sym (array-ref toks 1)) "&")
-          (and
-            (= (token-tag (array-ref toks 6)) (tag-sym))
-            (string-eq (token-sym (array-ref toks 6)) "&mut"))))]
+        (string-eq (token-sym (array-ref toks 1)) "&")
+        (= (token-tag (array-ref toks 6)) (tag-sym))
+        (string-eq (token-sym (array-ref toks 6)) "&mut"))]
     [(ErrTokens _) false]))
 
 (define (lex-float-token-ok?) : bool
@@ -1140,11 +1130,9 @@
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 1)) (tag-int))
-        (and
-          (= (token-int (array-ref toks 1)) -1)
-          (and
-            (= (token-tag (array-ref toks 2)) (tag-sym))
-            (string-eq (token-sym (array-ref toks 2)) "-"))))]
+        (= (token-int (array-ref toks 1)) -1)
+        (= (token-tag (array-ref toks 2)) (tag-sym))
+        (string-eq (token-sym (array-ref toks 2)) "-"))]
     [(ErrTokens _) false]))
 
 (define (lex-token-int-eq? [toks : (Array Token)] [idx : i64] [value : i64]) : bool
@@ -1157,15 +1145,11 @@
     [(OkTokens toks)
       (and
         (lex-token-int-eq? toks 1 42)
-        (and
-          (lex-token-int-eq? toks 2 42)
-          (and
-            (lex-token-int-eq? toks 3 -42)
-            (and
-              (lex-token-int-eq? toks 4 42)
-              (and
-                (lex-token-int-eq? toks 5 -42)
-                (= (token-tag (array-ref toks 7)) (tag-end)))))))]
+        (lex-token-int-eq? toks 2 42)
+        (lex-token-int-eq? toks 3 -42)
+        (lex-token-int-eq? toks 4 42)
+        (lex-token-int-eq? toks 5 -42)
+        (= (token-tag (array-ref toks 7)) (tag-end)))]
     [(ErrTokens _) false]))
 
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
@@ -1235,9 +1219,8 @@
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 0)) (tag-char))
-        (and
-          (= (token-char (array-ref toks 0)) want)
-          (= (token-tag (array-ref toks 1)) (tag-end))))]
+        (= (token-char (array-ref toks 0)) want)
+        (= (token-tag (array-ref toks 1)) (tag-end)))]
     [(ErrTokens _) false]))
 
 (define (lex-char-literals-ok?) : bool
@@ -1245,21 +1228,14 @@
     [slash : String (lex-backslash-text)]
     (and
       (lex-one-char-ok? "x" #x')
-      (and
-        (lex-one-char-ok? (string-append slash "n") #\newline')
-        (and
-          (lex-one-char-ok? (string-append slash "t") #\tab')
-          (and
-            (lex-one-char-ok? (string-append slash "0") #\nul')
-            (and
-              (lex-one-char-ok? (string-append slash "space") #\space')
-              (and
-                (lex-one-char-ok? (string-append slash "newline") #\newline')
-                (and
-                  (lex-one-char-ok? (string-append slash "tab") #\tab')
-                  (and
-                    (lex-one-char-ok? (string-append slash "return") #\return')
-                    (lex-one-char-ok? (string-append slash "nul") #\nul')))))))))))
+      (lex-one-char-ok? (string-append slash "n") #\newline')
+      (lex-one-char-ok? (string-append slash "t") #\tab')
+      (lex-one-char-ok? (string-append slash "0") #\nul')
+      (lex-one-char-ok? (string-append slash "space") #\space')
+      (lex-one-char-ok? (string-append slash "newline") #\newline')
+      (lex-one-char-ok? (string-append slash "tab") #\tab')
+      (lex-one-char-ok? (string-append slash "return") #\return')
+      (lex-one-char-ok? (string-append slash "nul") #\nul'))))
 
 (define (lex-error-ok?
   [src : String]
@@ -1281,9 +1257,8 @@
 (define (lex-prefixed-int-errors-ok?) : bool
   (and
     (lex-error-ok? "0x" 1 1 "lexer: malformed integer literal")
-    (and
-      (lex-error-ok? "0xg" 1 1 "lexer: malformed integer literal")
-      (lex-error-ok? "0b102" 1 1 "lexer: malformed integer literal"))))
+    (lex-error-ok? "0xg" 1 1 "lexer: malformed integer literal")
+    (lex-error-ok? "0b102" 1 1 "lexer: malformed integer literal")))
 
 (define (lex-check-prefixed-int-ok?) : bool
   (match (lex-check "(0x2a -0b101010)")
@@ -1303,9 +1278,8 @@
     [toks : (Array Token) (lex src)]
     (and
       (= (token-tag (array-ref toks 0)) (tag-str))
-      (and
-        (string-eq (token-str (array-ref toks 0)) expected)
-        (= (token-tag (array-ref toks 1)) (tag-end))))))
+      (string-eq (token-str (array-ref toks 0)) expected)
+      (= (token-tag (array-ref toks 1)) (tag-end)))))
 
 (define (lex-escaped-quote-source-inner) : String
   (string-append
@@ -1331,32 +1305,25 @@
     [quote : String (lex-quote-text)]
     (and
       (lex-string-token-ok? (lex-string-source "hello\\nworld") "hello\nworld")
-      (and
-        (lex-string-token-ok?
-          (lex-string-source (lex-escaped-quote-source-inner))
-          (string-append
-            "say "
-            (string-append quote (string-append "hi" quote))))
-        (and
-          (lex-string-token-ok?
-            (lex-string-source (string-append slash slash))
-            slash)
-          (lex-string-token-ok?
-            (lex-string-source (lex-backslash-quote-source-inner))
-            (string-append slash quote)))))))
+      (lex-string-token-ok?
+        (lex-string-source (lex-escaped-quote-source-inner))
+        (string-append "say " (string-append quote (string-append "hi" quote))))
+      (lex-string-token-ok?
+        (lex-string-source (string-append slash slash))
+        slash)
+      (lex-string-token-ok?
+        (lex-string-source (lex-backslash-quote-source-inner))
+        (string-append slash quote)))))
 
 (define (lex-quote-prefix-tokens-ok?) : bool
   (match (lex-result "`(if ,x ,@xs)")
     [(OkTokens toks)
       (and
         (= (token-tag (array-ref toks 0)) (tag-backtick))
-        (and
-          (= (token-tag (array-ref toks 3)) (tag-comma))
-          (and
-            (= (token-tag (array-ref toks 5)) (tag-comma-at))
-            (and
-              (= (token-tag (array-ref toks 7)) (tag-rparen))
-              (= (token-tag (array-ref toks 8)) (tag-end))))))]
+        (= (token-tag (array-ref toks 3)) (tag-comma))
+        (= (token-tag (array-ref toks 5)) (tag-comma-at))
+        (= (token-tag (array-ref toks 7)) (tag-rparen))
+        (= (token-tag (array-ref toks 8)) (tag-end)))]
     [(ErrTokens _) false]))
 
 (define (lex-span-positions-ok? [s : (Array SpannedToken)]) : bool

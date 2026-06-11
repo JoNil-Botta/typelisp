@@ -94,6 +94,14 @@ of imitating transitional patterns still present in the tree:
   codegen'd once into archives but re-typechecked per consumer until
   signature metadata exists; in-process session caching is the accepted
   compile-speed direction (#2596).
+- **Comptime execution**: the public macro/comptime surface is stdlib-owned
+  `Expr`/reflection data (#2647/#2653). Source stdlib overrides
+  (`--stdlib-root`) execute through CTFE, while the embedded stdlib executes
+  compiled comptime code from an embedded `stdlib.tlci`; both paths must produce
+  byte-identical expansions (#2658). Comptime code is pure safe TypeLisp with no
+  `unsafe`, `extern`, or host I/O (#2648), bounded by deterministic fuel
+  (#2656). Every package emits a `tlci` compile-time interface carrying
+  signature metadata and macro code when present (#2651, #2655, #2659).
 
 Transitional states in the current tree — do **not** imitate them in new
 code: path imports, `core.`-qualified macro calls, module-name-prefixed

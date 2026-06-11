@@ -58,6 +58,17 @@ transitional surface:
   macro-owned bracket operand surface (#2578), and the flat call shape is
   removed when the core macro migrates (#2579, reversing the #2490 retirement).
   Macros become order-independent within a module (#2584).
+- **Comptime execution.** The public macro/comptime surface is ordinary
+  stdlib-owned `Expr` and reflection data pinned as compiler-verified well-known
+  types (#2647/#2653). A source stdlib selected with `--stdlib-root` executes
+  macro/comptime code through CTFE; the embedded stdlib executes the same source
+  as compiled code from an embedded `stdlib.tlci`, and the differential gate
+  requires byte-identical expansions (#2658). Comptime code is pure safe
+  TypeLisp with no `unsafe`, `extern`, or host I/O (#2648), and compiled
+  comptime carries deterministic fuel checks equivalent to the CTFE fuel limit
+  (#2656). Each package emits a `tlci` compile-time interface containing
+  signature metadata and macro code when present; `lib<name>.a` remains the
+  runtime half (#2651, #2655, #2659). The umbrella map is #2645.
 - **Mutation.** In-place struct field mutation is written as
   `(set! (struct-get place field) value)` (#1521). Mutable box access remains
   tracked by #2553; the move/borrow rules in sections 3.10 and 4.6.2 are the

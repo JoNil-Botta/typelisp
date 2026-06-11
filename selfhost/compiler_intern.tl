@@ -18,6 +18,18 @@
 ;; IDs are assigned in INSERTION (parse) order, independent of the hash function,
 ;; so the emitted output is identical regardless of the probe's hash -- the hash
 ;; only affects bucket placement, never the id a string gets.
+;: Local arena hooks keep this module import-free while letting persistent
+;: intern entries survive scoped compile arenas.
+(extern (intern-arena-make) : i64 (:symbol "tl_arena_make"))
+
+(extern (intern-arena-current) : i64 (:symbol "tl_arena_current"))
+
+(unsafe
+  (extern (intern-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set")))
+
+(unsafe
+  (extern (intern-arena-destroy [arg0 : i64]) : unit (:symbol "tl_arena_destroy")))
+
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 (define (intern-capacity) : i64
   262144)
@@ -47,6 +59,9 @@
 
 (define intern-pool-count : i64
   0)
+
+(define (intern-pool-len) : i64
+  intern-pool-count)
 
 (define intern-map-slots : (Array InternSlot)
   (make-array InternSlot 262144))
@@ -92,6 +107,18 @@
 
 (define intern-slice-cache3-ready : bool
   false)
+
+(define intern-persistent-arena : i64
+  (intern-arena-current))
+
+(define intern-persistent-storage-enabled : bool
+  false)
+
+(define (intern-persistent-storage-enable!) : unit
+  (set! intern-persistent-storage-enabled true))
+
+(define (intern-persistent-storage-disable!) : unit
+  (set! intern-persistent-storage-enabled false))
 
 ;: djb2 string hash over the raw bytes. Overflow wraps in i64; the result may be
 ;: negative, which is fine -- the bucket mask keeps only the low bits.
@@ -154,6 +181,29 @@
           (set! i (+ i 1))))
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+
+(define (intern-persistent-substring [text : String] [start : i64] [len : i64]) : String
+  (let
+    [prev-arena : i64 (intern-arena-current)]
+    (if (= prev-arena intern-persistent-arena)
+      (intern-substring text start len)
+      (let
+        [out : String
+          (begin
+            (unsafe
+              (intern-arena-set intern-persistent-arena))
+            (let
+              [copied : String (intern-substring text start len)]
+              (begin
+                (unsafe
+                  (intern-arena-set prev-arena))
+                copied)))]
+        out))))
+
+(define (intern-persistent-copy [text : String]) : String
+  (if (= (intern-arena-current) intern-persistent-arena)
+    text
+    (intern-persistent-substring text 0 (string-length text))))
 
 (define (intern-string-slice-eq?
   [name : String]
@@ -225,6 +275,54 @@
       (array-set! intern-map-slots index (InternEmpty))
       (intern-fill-empty (+ index 1) count))))
 
+(define (intern-reset-slice-cache!) : unit
+  (begin
+    (set! intern-slice-cache0-ready false)
+    (set! intern-slice-cache1-ready false)
+    (set! intern-slice-cache2-ready false)
+    (set! intern-slice-cache3-ready false)))
+
+(define (intern-map-insert-existing-from
+  [name : String]
+  [id : i64]
+  [hash : i64]
+  [cursor : i64]
+  [steps : i64]
+  [capacity : i64]) : unit
+  (if (>= steps capacity)
+    unit
+    (match (array-ref intern-map-slots cursor)
+      [(InternEmpty)
+        (array-set! intern-map-slots cursor (InternUsed name id hash))]
+      [_
+        (intern-map-insert-existing-from
+          name
+          id
+          hash
+          (intern-bucket (+ cursor 1) capacity)
+          (+ steps 1)
+          capacity)])))
+
+(define (intern-map-insert-existing! [id : i64]) : unit
+  (let
+    [name : String (array-ref intern-pool-slots id)]
+    [hash : i64 (intern-hash name)]
+    [capacity : i64 (array-length intern-map-slots)]
+    (intern-map-insert-existing-from
+      name
+      id
+      hash
+      (intern-bucket hash capacity)
+      0
+      capacity)))
+
+(define (intern-map-rebuild-prefix [index : i64] [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (intern-map-insert-existing! index)
+      (intern-map-rebuild-prefix (+ index 1) count))))
+
 ;: Reset the intern table for a fresh compile and (re)initialize the dedup slots
 ;: to Empty. `make-array` does not produce valid `Empty` enum slots, so the fill
 ;: is mandatory before the first probe; this runs it once (idempotent).
@@ -232,10 +330,16 @@
   (begin
     (set! intern-pool-count 0)
     (intern-fill-empty 0 (array-length intern-map-slots))
-    (set! intern-slice-cache0-ready false)
-    (set! intern-slice-cache1-ready false)
-    (set! intern-slice-cache2-ready false)
-    (set! intern-slice-cache3-ready false)
+    (intern-reset-slice-cache!)
+    (set! intern-reset-generation (+ intern-reset-generation 1))
+    (set! intern-map-ready true)))
+
+(define (intern-reset-to! [mark : i64]) : unit
+  (begin
+    (set! intern-pool-count mark)
+    (intern-fill-empty 0 (array-length intern-map-slots))
+    (intern-map-rebuild-prefix 0 mark)
+    (intern-reset-slice-cache!)
     (set! intern-reset-generation (+ intern-reset-generation 1))
     (set! intern-map-ready true)))
 
@@ -301,12 +405,19 @@
           (match (array-ref intern-map-slots cursor)
             [(InternEmpty)
               (let
+                [persistent-name : String
+                  (if intern-persistent-storage-enabled
+                    (intern-persistent-copy name)
+                    name)]
                 [id : i64 intern-pool-count]
                 (begin
-                  (array-set! intern-pool-slots id name)
-                  (array-set! intern-map-slots cursor (InternUsed name id hash))
+                  (array-set! intern-pool-slots id persistent-name)
+                  (array-set!
+                    intern-map-slots
+                    cursor
+                    (InternUsed persistent-name id hash))
                   (set! intern-pool-count (+ id 1))
-                  (intern-record-qualified-metadata id name)
+                  (intern-record-qualified-metadata id persistent-name)
                   (set! out id)
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
@@ -345,7 +456,10 @@
               (match (array-ref intern-map-slots cursor)
                 [(InternEmpty)
                   (let
-                    [name : String (intern-substring text start len)]
+                    [name : String
+                      (if intern-persistent-storage-enabled
+                        (intern-persistent-substring text start len)
+                        (intern-substring text start len))]
                     [id : i64 intern-pool-count]
                     (begin
                       (array-set! intern-pool-slots id name)
@@ -486,6 +600,64 @@
         (intern-reset!)
         ok))))
 
+(define (intern-persistent-arena-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (intern-persistent-storage-enable!)
+    (let
+      [home : i64 (intern-arena-current)]
+      [scratch : i64 (intern-arena-make)]
+      [id : i64
+        (begin
+          (unsafe
+            (intern-arena-set scratch))
+          (let
+            [name : String (intern-substring "persist/entry" 0 13)]
+            [stored : i64 (intern name)]
+            (begin
+              (unsafe
+                (intern-arena-set home))
+              (unsafe
+                (intern-arena-destroy scratch))
+              stored)))]
+      [again : i64 (intern "persist/entry")]
+      [ok : bool
+        (and
+          (= id again)
+          (and
+            (string-eq (intern-str id) "persist/entry")
+            (intern-qualified-metadata-case-ok? id true 7 "persist" "entry")))]
+      (begin
+        (intern-reset!)
+        (intern-persistent-storage-disable!)
+        ok))))
+
+(define (intern-reset-to-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (intern-persistent-storage-enable!)
+    (let
+      [kept : i64 (intern "keep/name")]
+      [plain : i64 (intern "plain")]
+      [mark : i64 (intern-pool-len)]
+      [_drop : i64 (intern "drop/name")]
+      [ok : bool true]
+      (begin
+        (intern-reset-to! mark)
+        (unless (= (intern-pool-len) mark) (set! ok false))
+        (unless (= (intern "keep/name") kept) (set! ok false))
+        (unless (= (intern "plain") plain) (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok? kept true 4 "keep" "name")
+          (set! ok false))
+        (match (intern-lookup "drop/name")
+          [(InternLookupMissing) unit]
+          [(InternLookupFound _) (set! ok false)])
+        (unless (= (intern "drop/name") mark) (set! ok false))
+        (intern-reset!)
+        (intern-persistent-storage-disable!)
+        ok))))
+
 (define (intern-qualified-metadata-tests-ok?) : bool
   (begin
     (intern-reset!)
@@ -496,44 +668,30 @@
       [leading : i64 (intern "/name")]
       [trailing : i64 (intern "module/")]
       [slash : i64 (intern "/")]
-      [ok : bool
-        (and
-          (intern-qualified-metadata-case-ok? plain false -1 "" "name")
-          (and
-            (= (intern-qualified-base-id plain) plain)
-            (and
-              (= (intern-qualified-module-id plain) -1)
-              (and
-                (intern-qualified-metadata-case-ok?
-                  qualified
-                  true
-                  6
-                  "module"
-                  "name")
-                (and
-                  (intern-qualified-metadata-case-ok?
-                    nested
-                    true
-                    7
-                    "pkg/sub"
-                    "name")
-                  (and
-                    (intern-qualified-metadata-case-ok?
-                      leading
-                      true
-                      0
-                      ""
-                      "name")
-                    (and
-                      (intern-qualified-metadata-case-ok?
-                        trailing
-                        true
-                        6
-                        "module"
-                        "")
-                      (and
-                        (intern-qualified-metadata-case-ok? slash true 0 "" "")
-                        (intern-slice-tests-ok?)))))))))]
+      [ok : bool true]
       (begin
+        (unless
+          (intern-qualified-metadata-case-ok? plain false -1 "" "name")
+          (set! ok false))
+        (unless (= (intern-qualified-base-id plain) plain) (set! ok false))
+        (unless (= (intern-qualified-module-id plain) -1) (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok? qualified true 6 "module" "name")
+          (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok? nested true 7 "pkg/sub" "name")
+          (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok? leading true 0 "" "name")
+          (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok? trailing true 6 "module" "")
+          (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok? slash true 0 "" "")
+          (set! ok false))
+        (unless (intern-slice-tests-ok?) (set! ok false))
+        (unless (intern-persistent-arena-tests-ok?) (set! ok false))
+        (unless (intern-reset-to-tests-ok?) (set! ok false))
         (intern-reset!)
         ok))))

@@ -2299,8 +2299,10 @@
     [(TestBatchPathCons source rest)
       (let
         ;; Match compile --batch: isolate each entry's load/harness/typecheck
-        ;; working set in a scratch arena, then clear global parser/type state
-        ;; before the next entry can observe reclaimed nodes or symbol handles.
+        ;; working set in a scratch arena, then clear transient parser/type and
+        ;; intern state before the next entry can observe reclaimed nodes.
+        ;; Session-cached prelude nodes and their intern ids stay live across
+        ;; entries (#2596).
         [entry-result : i64
           (with-arena
             batch-entry
@@ -2325,13 +2327,15 @@
   [paths : TestBatchPathList]
   [target : String]
   [roots : StringVec]) : i64
-  (match (source-tool-target target)
-    [(ErrSourceToolTarget _)
-      (begin
-        (print-error (tltest-unknown-target target))
-        1)]
-    [(OkSourceToolTarget backend-target)
-      (tltest-run-batch-check-paths paths roots backend-target 0 0)]))
+  (begin
+    (compiler-load-session-cache-enable!)
+    (match (source-tool-target target)
+      [(ErrSourceToolTarget _)
+        (begin
+          (print-error (tltest-unknown-target target))
+          1)]
+      [(OkSourceToolTarget backend-target)
+        (tltest-run-batch-check-paths paths roots backend-target 0 0)])))
 
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config

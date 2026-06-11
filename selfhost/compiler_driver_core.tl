@@ -33,15 +33,104 @@
   (OkCompilerDriverLowered CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerDriverLowered CompilerDiagnostic))
 
+(define compiler-driver-runtime-prelude-cache-capacity : i64
+  16)
+
+(define compiler-driver-runtime-prelude-cache : (Array
+  CompilerLoadPreludeCacheSlot)
+  (make-array CompilerLoadPreludeCacheSlot 16))
+
+(define compiler-driver-runtime-prelude-cache-ready : bool
+  false)
+
+(define (compiler-driver-runtime-prelude-cache-fill! [index : i64]) : unit
+  (if (>= index compiler-driver-runtime-prelude-cache-capacity)
+    unit
+    (begin
+      (array-set!
+        compiler-driver-runtime-prelude-cache
+        index
+        (CompilerLoadPreludeCacheEmpty))
+      (compiler-driver-runtime-prelude-cache-fill! (+ index 1)))))
+
+(define (compiler-driver-runtime-prelude-cache-ensure!) : unit
+  (if compiler-driver-runtime-prelude-cache-ready
+    unit
+    (begin
+      (compiler-driver-runtime-prelude-cache-fill! 0)
+      (set! compiler-driver-runtime-prelude-cache-ready true))))
+
+(define (compiler-driver-runtime-prelude-cache-lookup-from
+  [key : String]
+  [index : i64]) : CompilerLoadPreludeCacheLookup
+  (if (>= index compiler-driver-runtime-prelude-cache-capacity)
+    (CompilerLoadPreludeCacheMiss)
+    (match (array-ref compiler-driver-runtime-prelude-cache index)
+      [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
+      [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
+        (if (string-eq slot-key key)
+          (CompilerLoadPreludeCacheHit decls paths modules seen)
+          (compiler-driver-runtime-prelude-cache-lookup-from key (+ index 1)))])))
+
+(define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
+  (begin
+    (compiler-driver-runtime-prelude-cache-ensure!)
+    (compiler-driver-runtime-prelude-cache-lookup-from key 0)))
+
+(define (compiler-driver-runtime-prelude-cache-store-at
+  [key : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : SymI64Env]
+  [index : i64]) : unit
+  (if (>= index compiler-driver-runtime-prelude-cache-capacity)
+    unit
+    (match (array-ref compiler-driver-runtime-prelude-cache index)
+      [(CompilerLoadPreludeCacheEmpty)
+        (array-set!
+          compiler-driver-runtime-prelude-cache
+          index
+          (CompilerLoadPreludeCacheFull key decls paths modules seen))]
+      [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
+        (if (string-eq slot-key key)
+          (array-set!
+            compiler-driver-runtime-prelude-cache
+            index
+            (CompilerLoadPreludeCacheFull key decls paths modules seen))
+          (compiler-driver-runtime-prelude-cache-store-at
+            key
+            decls
+            paths
+            modules
+            seen
+            (+ index 1)))])))
+
+(define (compiler-driver-runtime-prelude-cache-store
+  [key : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : SymI64Env]) : unit
+  (begin
+    (compiler-driver-runtime-prelude-cache-ensure!)
+    (compiler-driver-runtime-prelude-cache-store-at
+      key
+      decls
+      paths
+      modules
+      seen
+      0)
+    (compiler-load-session-note-persistent!)))
+
 (define (compiler-driver-ty-node-pool-exhausted-diagnostic
   [input-path : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start input-path (ty-node-pool-exhausted-message)))
 
 (define (compiler-driver-reset-file-state!) : unit
   (begin
-    (ast-node-pool-reset!)
-    (ty-node-pool-reset!)
-    (intern-reset!)
+    (compiler-load-session-reset-pools!)
+    (compiler-load-session-reset-interns!)
     (compiler-builtin-reset!)))
 
 (cfg
@@ -457,7 +546,7 @@
 ;;     calls via the prelude fallback in `macro-call-decl`.
 ;; Loading the prelude first lets the entry's own (possibly transitive) imports
 ;; dedup against it before the decls/paths/modules are concatenated.
-(define (compiler-driver-load-runtime-prelude
+(define (compiler-driver-load-runtime-prelude-cold
   [stdlib-roots : StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg
@@ -488,6 +577,52 @@
             macro-seen)]
         [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
+(define (compiler-driver-load-runtime-prelude-cache-miss
+  [key : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [prev-arena : i64 (arena-current)]
+    [loaded : ResultCompilerLoadWithPaths
+      (begin
+        (unsafe
+          (arena-set! node-pool-base-arena))
+        (let
+          [persistent-key : String (string-copy-borrowed (& key))]
+          [cold : ResultCompilerLoadWithPaths
+            (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
+          (begin
+            (match cold
+              [(OkCompilerLoadWithPaths decls paths modules seen)
+                (compiler-driver-runtime-prelude-cache-store
+                  persistent-key
+                  decls
+                  paths
+                  modules
+                  seen)]
+              [(ErrCompilerLoadWithPaths _) unit])
+            (unsafe
+              (arena-set! prev-arena))
+            cold)))]
+    loaded))
+
+(define (compiler-driver-load-runtime-prelude
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (if (compiler-load-session-cache-enabled?)
+    (let
+      [key : String
+        (compiler-load-prelude-cache-key "runtime-prelude" stdlib-roots cfgs)]
+      (match (compiler-driver-runtime-prelude-cache-lookup key)
+        [(CompilerLoadPreludeCacheHit decls paths modules seen)
+          (OkCompilerLoadWithPaths decls paths modules seen)]
+        [(CompilerLoadPreludeCacheMiss)
+          (compiler-driver-load-runtime-prelude-cache-miss
+            key
+            stdlib-roots
+            cfgs)]))
+    (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)))
 
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]

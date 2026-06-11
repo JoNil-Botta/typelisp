@@ -45,9 +45,7 @@
     diag))
 
 (define (compiler-check-reset-pools!) : unit
-  (begin
-    (ast-node-pool-reset!)
-    (ty-node-pool-reset!)))
+  (compiler-load-session-reset-pools!))
 
 (define (compiler-check-program-with-paths
   [path : String]

@@ -18,7 +18,8 @@
 (import "../stdlib/str_cat.tl")
 
 ;; TcTypeCache fields: ids map, values, unsafe flags, raw C fnptr flags,
-;; default-shadow flags, scan-through, rest. The flag arrays parallel `values`:
+;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
+;; parallel `values`:
 ;; the raw C fnptr flag records whether the head-most binding is a raw C
 ;; function pointer value, and the default-shadow flag is 1 when the head-most
 ;; binding sits above the first default-boundary marker (replaces the former
@@ -30,7 +31,10 @@
 ;; markers they look for can be buried more than a compaction window up
 ;; (#2661 -- with-arena escape checking was silently disabled past 32 local
 ;; binds). Explicit top-env/module caches keep scan-through false so those
-;; scans still terminate without walking the global env spine.
+;; scans still terminate without walking the global env spine. Full caches are
+;; authoritative on miss. Partial local caches cover only the compaction prefix;
+;; their `rest` keeps the full spine for marker scans, while `below` skips the
+;; covered prefix for lookup miss fall-through.
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind i64 AstType (Box TcTypeEnv))
@@ -41,6 +45,8 @@
     (Array i64)
     (Array i64)
     bool
+    bool
+    (Box TcTypeEnv)
     (Box TcTypeEnv)))
 
 (defenum TcContext
@@ -846,6 +852,9 @@
 (define (tc-local-cache-threshold) : i64
   32)
 
+(define (tc-local-cache-partial-layer-cap) : i64
+  8)
+
 (define (tc-name-id [name : String]) : i64
   (intern name))
 
@@ -865,16 +874,38 @@
   [remaining : i64]) : bool
   (if (<= remaining 0)
     (match env
-      [(TcTypeCache _ _ _ _ _ _ _) true]
+      [(TcTypeCache _ _ _ _ _ _ _ _ _) true]
       [_ false])
     (match env
       [(TcTypeBind _ _ rest)
         (tc-env-uncached-prefix-reaches-cache? (box-get rest) (- remaining 1))]
       [_ false])))
 
+(define (tc-env-after-prefix [env : TcTypeEnv] [remaining : i64]) : TcTypeEnv
+  (if (<= remaining 0)
+    env
+    (match env
+      [(TcTypeBind _ _ rest)
+        (tc-env-after-prefix (box-get rest) (- remaining 1))]
+      [_ env])))
+
+(define (tc-env-partial-layer-depth [env : TcTypeEnv]) : i64
+  (match env
+    [(TcTypeCache _ _ _ _ _ _ partial _ below)
+      (if partial
+        (+ 1 (tc-env-partial-layer-depth (box-get below)))
+        0)]
+    [_ 0]))
+
 (define (tc-env-compact-local-if-threshold [env : TcTypeEnv]) : TcTypeEnv
   (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
-    (tc-env-with-local-cache env)
+    (let
+      [below : TcTypeEnv (tc-env-after-prefix env (tc-local-cache-threshold))]
+      (if (>=
+        (tc-env-partial-layer-depth below)
+        (tc-local-cache-partial-layer-cap))
+        (tc-env-with-full-local-cache env)
+        (tc-env-with-local-cache env)))
     env))
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
@@ -991,7 +1022,7 @@
     false
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _ _ _ rest)
+      [(TcTypeCache _ _ _ _ _ _ _ rest _)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
       [(TcTypeBind key _ rest)
         (core/cond
@@ -1007,10 +1038,13 @@
 (define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ _ c-abi-fnptr-flags _ _ _)
+    [(TcTypeCache ids _ _ c-abi-fnptr-flags _ _ partial _ below)
       (match (i64-i64-map-get ids name-id)
         [(I64I64MapFound index) (= (array-ref c-abi-fnptr-flags index) 1)]
-        [(I64I64MapMissing) false])]
+        [(I64I64MapMissing)
+          (if partial
+            (tc-binding-c-abi-fnptr-id? (box-get below) name-id)
+            false)])]
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
@@ -1030,10 +1064,13 @@
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ unsafe-flags _ _ _ rest)
+    [(TcTypeCache ids _ unsafe-flags _ _ _ partial _ below)
       (match (i64-i64-map-get ids name-id)
         [(I64I64MapFound index) (= (array-ref unsafe-flags index) 1)]
-        [(I64I64MapMissing) false])]
+        [(I64I64MapMissing)
+          (if partial
+            (tc-binding-unsafe-id? (box-get below) name-id)
+            false)])]
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
@@ -1046,7 +1083,15 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
-    [(TcTypeCache _ _ _ _ _ _ rest) (tc-env-cache-count (box-get rest))]))
+    [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-env-cache-count (box-get rest))]))
+
+(define (tc-env-cache-count-prefix [env : TcTypeEnv] [remaining : i64]) : i64
+  (if (<= remaining 0)
+    0
+    (match env
+      [(TcTypeBind _ _ rest)
+        (+ 1 (tc-env-cache-count-prefix (box-get rest) (- remaining 1)))]
+      [_ 0])))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -1137,7 +1182,7 @@
           c-abi-fnptr-flags
           shadow-flags
           still-above))]
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-env-cache-fill
         (box-get rest)
         ids
@@ -1146,6 +1191,46 @@
         c-abi-fnptr-flags
         shadow-flags
         above-boundary)]))
+
+(define (tc-env-cache-fill-prefix
+  [env : TcTypeEnv]
+  [remaining : i64]
+  [ids : I64I64Map]
+  [values : (Array AstType)]
+  [unsafe-flags : (Array i64)]
+  [c-abi-fnptr-flags : (Array i64)]
+  [shadow-flags : (Array i64)]
+  [above-boundary : bool]) : I64I64Map
+  (if (<= remaining 0)
+    ids
+    (match env
+      [(TcTypeBind name-id ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [still-above : bool
+            (if above-boundary
+              (not (= name-id (tc-default-boundary-id)))
+              false)]
+          (tc-env-cache-fill-prefix
+            rest-env
+            (- remaining 1)
+            (tc-env-cache-add
+              ids
+              values
+              unsafe-flags
+              c-abi-fnptr-flags
+              shadow-flags
+              name-id
+              ty
+              (tc-binding-unsafe-marker-head-id? rest-env name-id)
+              (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+              still-above)
+            values
+            unsafe-flags
+            c-abi-fnptr-flags
+            shadow-flags
+            still-above))]
+      [_ ids])))
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (let
@@ -1170,16 +1255,51 @@
       c-abi-fnptr-flags
       shadow-flags
       scan-through
+      false
+      (box env)
       (box env))))
+
+(define (tc-env-with-partial-local-cache [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [count : i64 (tc-env-cache-count-prefix env (tc-local-cache-threshold))]
+    [values : (Array AstType) (make-array AstType count)]
+    [unsafe-flags : (Array i64) (make-array i64 count)]
+    [c-abi-fnptr-flags : (Array i64) (make-array i64 count)]
+    [shadow-flags : (Array i64) (make-array i64 count)]
+    [ids : I64I64Map
+      (tc-env-cache-fill-prefix
+        env
+        (tc-local-cache-threshold)
+        (i64-i64-map-with-capacity (tc-env-cache-capacity count))
+        values
+        unsafe-flags
+        c-abi-fnptr-flags
+        shadow-flags
+        true)]
+    (TcTypeCache
+      ids
+      values
+      unsafe-flags
+      c-abi-fnptr-flags
+      shadow-flags
+      true
+      true
+      (box env)
+      (box (tc-env-after-prefix env (tc-local-cache-threshold))))))
 
 ;; Explicit top-env/module caches: marker scans terminate here.
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-cache-mode env false))
 
-;; Threshold-compaction caches inside function-body spines: marker scans keep
-;; scanning below (#2661).
-(define (tc-env-with-local-cache [env : TcTypeEnv]) : TcTypeEnv
+;; Depth-cap fallback for function-body spines: full but still scan-through.
+(define (tc-env-with-full-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-cache-mode env true))
+
+;; Threshold-compaction caches inside function-body spines: partial lookup
+;; cache for the newest bind window; marker scans keep scanning the full spine
+;; (#2661).
+(define (tc-env-with-local-cache [env : TcTypeEnv]) : TcTypeEnv
+  (tc-env-with-partial-local-cache env))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
@@ -1590,7 +1710,7 @@
 (define (tc-in-unsafe-scan? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-in-unsafe-scan? (box-get rest))
         false)]
@@ -1601,7 +1721,7 @@
 
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest) (tc-in-unsafe-scan? (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-in-unsafe-scan? (box-get rest))]
     [_ (tc-in-unsafe-scan? env)]))
 
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
@@ -1611,7 +1731,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-current-return-type-scan (box-get rest))
         (ErrTcType "typecheck: try requires enclosing Result-like function"))]
@@ -1622,7 +1742,7 @@
 
 (define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-current-return-type-scan (box-get rest))]
     [_ (tc-current-return-type-scan env)]))
 
@@ -1865,15 +1985,17 @@
     [(TcTypeNil)
       (ErrTcType
         (string-append "typecheck: unbound name " (intern-str name-id)))]
-    [(TcTypeCache ids values _ _ _ _ rest)
+    [(TcTypeCache ids values _ _ _ _ partial _ below)
       (match (i64-i64-map-get ids name-id)
         ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
         ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
         ;; element stride, reading garbage.
         [(I64I64MapFound index) (OkTcType (array-ref values index))]
         [(I64I64MapMissing)
-          (ErrTcType
-            (string-append "typecheck: unbound name " (intern-str name-id)))])]
+          (if partial
+            (tc-lookup-id (box-get below) name-id)
+            (ErrTcType
+              (string-append "typecheck: unbound name " (intern-str name-id))))])]
     [(TcTypeBind key ty rest)
       (if (= key name-id)
         (OkTcType ty)
@@ -1887,7 +2009,7 @@
     [(TcTypeNil)
       (ErrTcTypeUnsafe
         (string-append "typecheck: unbound name " (intern-str name-id)))]
-    [(TcTypeCache ids values unsafe-flags _ _ _ rest)
+    [(TcTypeCache ids values unsafe-flags _ _ _ partial _ below)
       (match (i64-i64-map-get ids name-id)
         ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
         ;; value); the `unsafe-flags` i64 read below is scalar so the raw ptr path
@@ -1903,8 +2025,10 @@
                     index)))
               1))]
         [(I64I64MapMissing)
-          (ErrTcTypeUnsafe
-            (string-append "typecheck: unbound name " (intern-str name-id)))])]
+          (if partial
+            (tc-lookup-unsafe-id (box-get below) name-id)
+            (ErrTcTypeUnsafe
+              (string-append "typecheck: unbound name " (intern-str name-id))))])]
     [(TcTypeBind key ty rest)
       (if (= key name-id)
         (OkTcTypeUnsafe
@@ -1937,7 +2061,7 @@
   [name-id : i64]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup-id root name-id)]
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-lookup-hygiene-global-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
@@ -2030,7 +2154,7 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) (tc-binding-unsafe-id? root name-id)]
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
@@ -2046,7 +2170,7 @@
 (define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-active-region-scan (box-get rest))
         (TcNoString))]
@@ -2059,7 +2183,7 @@
 
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest) (tc-active-region-scan (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-active-region-scan (box-get rest))]
     [_ (tc-active-region-scan env)]))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
@@ -2101,13 +2225,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ _ _) false]
+    [(TcTypeCache _ _ _ _ _ _ _ _ _) false]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-cleanup-owner-active-scan? (box-get rest) name)
         false)]
@@ -2118,14 +2242,14 @@
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-cleanup-owner-active-scan? (box-get rest) name)]
     [_ (tc-cleanup-owner-active-scan? env name)]))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-active-cleanup-owners-scan root (box-get rest))
         TcStringNil)]
@@ -2146,7 +2270,7 @@
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-active-cleanup-owners-scan env (box-get rest))]
     [_ (tc-active-cleanup-owners-scan env env)]))
 
@@ -2312,7 +2436,7 @@
 (define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lifetime-visible-scan? (box-get rest) lifetime)
         false)]
@@ -2323,7 +2447,7 @@
 
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-visible-scan? (box-get rest) lifetime)]
     [_ (tc-lifetime-visible-scan? env lifetime)]))
 
@@ -2344,7 +2468,7 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner
           (box-get rest)
@@ -2367,7 +2491,7 @@
   [target : String]
   [seen-target : bool]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-outlives-binding-scan-inner
         (box-get rest)
         lifetime
@@ -2402,7 +2526,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _ _ scan-through rest)
+      [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner
             (box-get rest)
@@ -2427,7 +2551,7 @@
   [target-lifetime : String]
   [seen-target : bool]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-outlives-lifetime-scan-inner
         (box-get rest)
         value-lifetime
@@ -2916,7 +3040,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ _ _ scan-through rest)
+      [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-region-outlives-or-matches-scan
             (box-get rest)
@@ -2950,7 +3074,7 @@
   [value-region : String]
   [target-region : String]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-region-outlives-or-matches-scan
         (box-get rest)
         value-region
@@ -5025,7 +5149,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")]
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-ptr-addr-of-local-lookup (box-get rest) name)]
     [(TcTypeBind key ty rest)
       (if (= key (tc-hygiene-global-boundary-id))
@@ -5137,7 +5261,8 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
-    [(TcTypeCache _ _ _ _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-spmd-env-from-type-env (box-get rest))]
     [(TcTypeBind name-id ty rest)
       (TcSpmdEnvBind
         (intern-str name-id)
@@ -5281,7 +5406,12 @@
 
 (define (tc-type-env-cache-head? [env : TcTypeEnv]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ _) true]
+    [(TcTypeCache _ _ _ _ _ _ _ _ _) true]
+    [_ false]))
+
+(define (tc-type-env-cache-partial-head? [env : TcTypeEnv]) : bool
+  (match env
+    [(TcTypeCache _ _ _ _ _ _ partial _ _) partial]
     [_ false]))
 
 (define (tc-type-env-bind-many [env : TcTypeEnv] [count : i64]) : TcTypeEnv
@@ -5343,6 +5473,67 @@
       (tc-type-env-cache-head? cached)
       (not (tc-default-builtin-unshadowed? cached "string-length")))))
 
+(define (tc-type-env-local-cache-partial-layer-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache (tc-bind (tc-empty-env) "global" (AstTyString)))]
+    [layer1 : TcTypeEnv (tc-type-env-bind-many base (tc-local-cache-threshold))]
+    [older-shadow : TcTypeEnv (tc-bind layer1 "shadow" (AstTyI64))]
+    [layer2 : TcTypeEnv
+      (tc-type-env-bind-many older-shadow (- (tc-local-cache-threshold) 1))]
+    [newer-shadow : TcTypeEnv (tc-bind layer2 "shadow" (AstTyBool))]
+    [layer3 : TcTypeEnv
+      (tc-type-env-bind-many newer-shadow (- (tc-local-cache-threshold) 1))]
+    (and
+      (tc-type-env-cache-partial-head? layer1)
+      (tc-type-env-cache-partial-head? layer2)
+      (tc-type-env-cache-partial-head? layer3)
+      (= (tc-env-partial-layer-depth layer3) 3)
+      (match (tc-lookup layer3 "global")
+        [(OkTcType (AstTyString)) true]
+        [_ false])
+      (match (tc-lookup layer2 "shadow")
+        [(OkTcType (AstTyI64)) true]
+        [_ false])
+      (match (tc-lookup layer3 "shadow")
+        [(OkTcType (AstTyBool)) true]
+        [_ false]))))
+
+(define (tc-type-env-local-cache-default-shadow-partial-miss-smoke?) : bool
+  (let
+    [base : TcTypeEnv (tc-env-with-cache (tc-default-env))]
+    [shadowed : TcTypeEnv
+      (tc-bind base "string-length" (tc-fn1 (AstTyI64) (AstTyI64)))]
+    [shadow-layer : TcTypeEnv
+      (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
+    [miss-layer : TcTypeEnv
+      (tc-type-env-bind-many shadow-layer (tc-local-cache-threshold))]
+    [clear-layer : TcTypeEnv
+      (tc-type-env-bind-many base (tc-local-cache-threshold))]
+    (and
+      (tc-type-env-cache-partial-head? shadow-layer)
+      (tc-type-env-cache-partial-head? miss-layer)
+      (tc-type-env-cache-partial-head? clear-layer)
+      (not (tc-default-builtin-unshadowed? shadow-layer "string-length"))
+      (not (tc-default-builtin-unshadowed? miss-layer "string-length"))
+      (tc-default-builtin-unshadowed? clear-layer "string-length"))))
+
+(define (tc-type-env-local-cache-depth-cap-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache (tc-bind (tc-empty-env) "global" (AstTyString)))]
+    [deep : TcTypeEnv
+      (tc-type-env-bind-many
+        base
+        (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))]
+    (and
+      (tc-type-env-cache-head? deep)
+      (not (tc-type-env-cache-partial-head? deep))
+      (= (tc-env-partial-layer-depth deep) 0)
+      (match (tc-lookup deep "global")
+        [(OkTcType (AstTyString)) true]
+        [_ false]))))
+
 ;; #2661: markers buried below MORE THAN ONE compaction window. The behavior
 ;; smoke above only crosses one threshold, so the head cache is unwrapped and
 ;; the markers are reached by the plain bind walk; with two stacked
@@ -5385,6 +5576,9 @@
   (and
     (tc-type-env-local-cache-behavior-smoke?)
     (tc-type-env-local-cache-default-shadow-smoke?)
+    (tc-type-env-local-cache-partial-layer-smoke?)
+    (tc-type-env-local-cache-default-shadow-partial-miss-smoke?)
+    (tc-type-env-local-cache-depth-cap-smoke?)
     (tc-type-env-local-cache-deep-scan-smoke?)))
 
 (define (tc-spmd-env-box-smoke?) : bool
@@ -6946,10 +7140,13 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache ids _ _ _ shadow-flags _ _)
+    [(TcTypeCache ids _ _ _ shadow-flags _ partial _ below)
       (match (i64-i64-map-get ids name-id)
         [(I64I64MapFound index) (not (= (array-ref shadow-flags index) 1))]
-        [(I64I64MapMissing) true])]
+        [(I64I64MapMissing)
+          (if partial
+            (tc-default-builtin-unshadowed-scan-id? (box-get below) name-id)
+            true)])]
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         false
@@ -8785,7 +8982,7 @@
   [body : AstExpr]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
         false)]
@@ -8806,7 +9003,7 @@
   [params : AstParamList]
   [body : AstExpr]) : bool
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-lambda-captures-reference-scan-root
         (box-get rest)
         (tc-param-bound-names params)
@@ -11715,7 +11912,7 @@
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
-    [(TcTypeCache _ _ _ _ _ scan-through rest)
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-check-lambda-region-captures-scan-root
           root
@@ -11779,7 +11976,7 @@
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (match env
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-check-lambda-region-captures-scan-root
         env
         (box-get rest)
@@ -18679,7 +18876,7 @@
   [body : AstExpr]) : TcMoveResult
   (match env
     [(TcTypeNil) (OkTcMove moved)]
-    [(TcTypeCache _ _ _ _ _ _ rest)
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-move-check-lambda-owner-captures-scan
         ctx
         root

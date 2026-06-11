@@ -2534,6 +2534,52 @@
             [(ErrAstExpr message) (ErrAstExprList message)])])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
 
+(define (parse-ast-call-bracket-clause
+  [dispatch : SymI64Env]
+  [s : SpannedSexpr]
+  [items : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch items)
+    [(OkAstExprList parsed-items)
+      (OkAstExpr (ast-expr-wrap-span (ast-expr-bracket-clause parsed-items) s))]
+    [(ErrAstExprList message) (ErrAstExpr message)]))
+
+(define (parse-ast-call-arg-maybe [dispatch : SymI64Env] [head : SpannedSexpr]) : ResultAstMaybeExpr
+  (match head
+    [(SpSBracketList items _)
+      (match (parse-ast-call-bracket-clause dispatch head (sp-node-get items))
+        [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
+        [(ErrAstExpr message) (ErrAstMaybeExpr message)])]
+    [(SpSCons op-node cfg-rest _)
+      (match (sp-node-get op-node)
+        [(SpSSym op _)
+          (if (string-eq op "cfg")
+            (parse-ast-cfg-expr-maybe dispatch (sp-node-get cfg-rest))
+            (match (parse-ast-expr dispatch head)
+              [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
+              [(ErrAstExpr message) (ErrAstMaybeExpr message)]))]
+        [_
+          (match (parse-ast-expr dispatch head)
+            [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
+            [(ErrAstExpr message) (ErrAstMaybeExpr message)])])]
+    [_
+      (match (parse-ast-expr dispatch head)
+        [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
+        [(ErrAstExpr message) (ErrAstMaybeExpr message)])]))
+
+(define (parse-ast-call-arg-list [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExprList
+  (match s
+    [(SpSNil _) (OkAstExprList AstExprNil)]
+    [(SpSCons head tail _)
+      (match (parse-ast-call-arg-maybe dispatch (sp-node-get head))
+        [(OkAstSomeExpr parsed-head)
+          (match (parse-ast-call-arg-list dispatch (sp-node-get tail))
+            [(OkAstExprList parsed-tail)
+              (OkAstExprList (ast-expr-cons parsed-head parsed-tail))]
+            [(ErrAstExprList message) (ErrAstExprList message)])]
+        [(OkAstNoExpr) (parse-ast-call-arg-list dispatch (sp-node-get tail))]
+        [(ErrAstMaybeExpr message) (ErrAstExprList message)])]
+    [_ (ErrAstExprList "parse: malformed call argument list")]))
+
 (define (parse-ast-binary
   [dispatch : SymI64Env]
   [op : AstBinOp]
@@ -3808,7 +3854,7 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr dispatch head)
     [(OkAstExpr parsed-head)
-      (match (parse-ast-expr-list dispatch rest)
+      (match (parse-ast-call-arg-list dispatch rest)
         [(OkAstExprList parsed-args)
           (OkAstExpr (ast-expr-call parsed-head parsed-args))]
         [(ErrAstExprList message) (ErrAstExpr message)])]

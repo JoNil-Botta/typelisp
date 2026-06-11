@@ -2437,6 +2437,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-clone-roots-expr ctx env decls able roots inner))]
+    [(AstExprBracketClause items)
+      (lower-clone-roots-expr-list ctx env decls able roots items)]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -2952,6 +2954,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
+    [(AstExprBracketClause items)
+      (lower-reach-expr-list all-functions names state items)]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -25174,6 +25178,38 @@
   (expr-if lhs rhs (expr-bool false)))
 (define (main) : i64 (if (and2 true true) 1 0))")
 
+(define (compiler-lower-macro-expr-clause-source) : String
+  "(defmacro (pick [arm : ExprClause]) : i64
+  `(if ,(expr-clause-first arm) ,(expr-clause-second arm) 0))
+(define (main) : i64 (pick [true 7]))")
+
+(define (compiler-lower-macro-expr-clause-variadic-source) : String
+  "(defmacro (pick-first [arms : ExprClause ...]) : i64
+  (if (expr-clause-list-empty? arms)
+    (expr-int 0)
+    `(if ,(expr-clause-first (expr-clause-list-head arms))
+       ,(expr-clause-second (expr-clause-list-head arms))
+       (pick-first ,@(expr-clause-list->expr-list (expr-clause-list-tail arms))))))
+(define (main) : i64 (pick-first [false 1] [true 9] [true 3]))")
+
+(define (compiler-lower-macro-expr-clause-to-expr-error-source) : String
+  "(defmacro (id [x : Expr]) : i64 x)
+(define (main) : i64 (id [true 1]))")
+
+(define (compiler-lower-macro-expr-to-clause-error-source) : String
+  "(defmacro (need [arm : ExprClause]) : i64
+  (expr-clause-second arm))
+(define (main) : i64 (need 1))")
+
+(define (compiler-lower-macro-expr-clause-shape-error-source) : String
+  "(defmacro (need [arm : ExprClause]) : i64
+  (expr-clause-second arm))
+(define (main) : i64 (need [true 1 2]))")
+
+(define (compiler-lower-bracket-ordinary-call-error-source) : String
+  "(define (take [x : i64]) : i64 x)
+(define (main) : i64 (take [true 1]))")
+
 (define (compiler-lower-macro-arity-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
@@ -31941,12 +31977,39 @@
       (if (compiler-lower-ok? (compiler-lower-macro-expand-source))
         unit
         (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-macro-expr-clause-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok?
+        (compiler-lower-macro-expr-clause-variadic-source))
+        unit
+        (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-macro-hygiene-definition-source))
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?
         (compiler-lower-macro-arity-source)
         "macro call has too few arguments")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-macro-expr-clause-to-expr-error-source)
+        "typecheck: macro operand type mismatch: expected Expr, got bracket clause")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-macro-expr-to-clause-error-source)
+        "typecheck: ExprClause macro operand expects bracket syntax")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-macro-expr-clause-shape-error-source)
+        "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-bracket-ordinary-call-error-source)
+        "typecheck: bracket clause is only valid as an ExprClause macro operand")
         unit
         (set! ok false))
       (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))

@@ -462,7 +462,9 @@
     [(CtfeUnit) "unit"]
     [(CtfeType ty) (string-append "type_" (spec-type-key ty))]
     [(CtfeExpr _ _) "Expr"]
-    [(CtfeExprList _) "expr-list"]))
+    [(CtfeExprList _) "expr-list"]
+    [(CtfeExprClause _) "expr-clause"]
+    [(CtfeExprClauseList _) "expr-clause-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
@@ -4080,7 +4082,10 @@
     [(CtfeUnit) (ctfe-type-eq ty (AstTyUnit))]
     [(CtfeType _) false]
     [(CtfeExpr _ _) (ctfe-type-eq ty (AstTyExpr))]
-    [(CtfeExprList _) (ctfe-type-eq ty (AstTyExprList))]))
+    [(CtfeExprList _) (ctfe-type-eq ty (AstTyExprList))]
+    [(CtfeExprClause _) (ctfe-type-eq ty (AstTyVar (intern "ExprClause")))]
+    [(CtfeExprClauseList _)
+      (ctfe-type-eq ty (AstTyVar (intern "ExprClauseList")))]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
@@ -4091,7 +4096,9 @@
     [(CtfeUnit) "unit"]
     [(CtfeType _) "type"]
     [(CtfeExpr _ _) "Expr"]
-    [(CtfeExprList _) "expr-list"]))
+    [(CtfeExprList _) "expr-list"]
+    [(CtfeExprClause _) "ExprClause"]
+    [(CtfeExprClauseList _) "ExprClauseList"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -4353,7 +4360,17 @@
       (ErrSpecSubExpr
         (spec-diagnostic-at-expr
           origin
-          "cannot substitute compile-time ExprList value into runtime expression"))]))
+          "cannot substitute compile-time ExprList value into runtime expression"))]
+    [(CtfeExprClause _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time ExprClause value into runtime expression"))]
+    [(CtfeExprClauseList _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time ExprClauseList value into runtime expression"))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)
@@ -5257,6 +5274,11 @@
           [(OkSpecExpr rewritten state2)
             (OkSpecExpr (ast-expr-unquote-splicing rewritten) state2)]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprBracketClause items)
+      (match (spec-rewrite-expr-list items templates state)
+        [(OkSpecExprList rewritten state2)
+          (OkSpecExpr (ast-expr-bracket-clause rewritten) state2)]
+        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprBorrow _ _ _) (OkSpecExpr (ast-node-push expr) state)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
@@ -5781,6 +5803,11 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBracketClause items)
+      (match (spec-substitute-values-expr-list items subs)
+        [(OkSpecSubExprList rewritten)
+          (OkSpecSubExpr (ast-expr-bracket-clause rewritten))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprBorrow _ _ _) (OkSpecSubExpr (ast-node-push expr))]))
 
 (define (spec-substitute-values-expr-list
@@ -6399,6 +6426,11 @@
           [(OkSpecSubExpr rewritten)
             (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprBracketClause items)
+      (match (spec-substitute-types-expr-list items subs)
+        [(OkSpecSubExprList rewritten)
+          (OkSpecSubExpr (ast-expr-bracket-clause rewritten))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprBorrow _ _ _) (OkSpecSubExpr (ast-node-push expr))]))
 
 (define (spec-substitute-types-expr-list

@@ -293,6 +293,10 @@
   (AstExprQuasiquote i64)
   (AstExprUnquote i64)
   (AstExprUnquoteSplicing i64)
+  ;; Macro-only call operand syntax: `[expr expr]` bracket clauses are parsed
+  ;; only inside call argument lists. Ordinary typechecking rejects this node;
+  ;; macro binding consumes it for `ExprClause` operands.
+  (AstExprBracketClause AstExprList)
   ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
@@ -850,6 +854,14 @@
   (AstExprNil)
   (AstExprCons i64 (Box AstExprList)))
 
+(defstruct AstExprClause
+  (first i64)
+  (second i64))
+
+(defenum AstExprClauseList
+  (AstExprClauseNil)
+  (AstExprClauseCons AstExprClause (Box AstExprClauseList)))
+
 (defenum AstMaybeModuleName
   (AstNoModuleName)
   (AstSomeModuleName String))
@@ -1105,6 +1117,12 @@
 (define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
   (AstExprCons head (box rest)))
 
+(define (ast-expr-clause [first : i64] [second : i64]) : AstExprClause
+  (AstExprClause first second))
+
+(define (ast-expr-clause-cons [head : AstExprClause] [rest : AstExprClauseList]) : AstExprClauseList
+  (AstExprClauseCons head (box rest)))
+
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
   (ast-node-push (AstExprSpanned inner span)))
 
@@ -1116,6 +1134,9 @@
 
 (define (ast-expr-call [callee : i64] [args : AstExprList]) : i64
   (ast-node-push (AstExprCall callee args)))
+
+(define (ast-expr-bracket-clause [items : AstExprList]) : i64
+  (ast-node-push (AstExprBracketClause items)))
 
 (define (ast-expr-if [cond : i64] [then-expr : i64] [else-expr : i64]) : i64
   (ast-node-push (AstExprIf cond then-expr else-expr)))
@@ -1570,6 +1591,7 @@
     [(AstExprQuasiquote _) 45]
     [(AstExprUnquote _) 46]
     [(AstExprUnquoteSplicing _) 47]
+    [(AstExprBracketClause _) 63]
     [(AstExprStringData _) 49]
     [(AstExprStringFromBytes _ _) 50]
     [(AstExprArrayData _) 51]

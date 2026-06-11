@@ -1082,6 +1082,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
+    [(AstExprBracketClause items) (tltest-reach-mark-expr-list items names)]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

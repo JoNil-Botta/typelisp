@@ -981,6 +981,8 @@ contains|typelisp test: test executable exited with exit status:
 contains|test: failed to write assembly artifact
 end
 
+decision|selfhost/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
+
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:

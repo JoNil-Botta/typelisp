@@ -91,6 +91,14 @@
     AstDeclModuleList
     SymI64Env))
 
+(defenum CompilerLoadProgramCacheLookup
+  (CompilerLoadProgramCacheMiss)
+  (CompilerLoadProgramCacheHit AstProgram))
+
+(defenum CompilerLoadProgramCacheSlot
+  (CompilerLoadProgramCacheEmpty)
+  (CompilerLoadProgramCacheFull String AstProgram))
+
 (define compiler-load-session-ast-floor : i64
   0)
 
@@ -102,6 +110,129 @@
 
 (define compiler-load-session-cache-enabled : bool
   false)
+
+(define compiler-load-program-cache-capacity : i64
+  256)
+
+(define compiler-load-program-cache : (Array CompilerLoadProgramCacheSlot)
+  (make-array CompilerLoadProgramCacheSlot 256))
+
+(define compiler-load-program-cache-ready : bool
+  false)
+
+(define compiler-load-program-cache-hit-count : i64
+  0)
+
+(define compiler-load-program-cache-miss-count : i64
+  0)
+
+(define compiler-load-program-cache-store-count : i64
+  0)
+
+(define (compiler-load-program-cache-fill! [index : i64]) : unit
+  (if (>= index compiler-load-program-cache-capacity)
+    unit
+    (begin
+      (array-set!
+        compiler-load-program-cache
+        index
+        (CompilerLoadProgramCacheEmpty))
+      (compiler-load-program-cache-fill! (+ index 1)))))
+
+(define (compiler-load-program-cache-stats-reset!) : unit
+  (begin
+    (set! compiler-load-program-cache-hit-count 0)
+    (set! compiler-load-program-cache-miss-count 0)
+    (set! compiler-load-program-cache-store-count 0)))
+
+(define (compiler-load-program-cache-clear!) : unit
+  (begin
+    (compiler-load-program-cache-fill! 0)
+    (set! compiler-load-program-cache-ready true)
+    (compiler-load-program-cache-stats-reset!)))
+
+(define (compiler-load-program-cache-ensure!) : unit
+  (if compiler-load-program-cache-ready
+    unit
+    (compiler-load-program-cache-clear!)))
+
+(define (compiler-load-program-cache-note-hit!) : unit
+  (set!
+    compiler-load-program-cache-hit-count
+    (+ compiler-load-program-cache-hit-count 1)))
+
+(define (compiler-load-program-cache-note-miss!) : unit
+  (set!
+    compiler-load-program-cache-miss-count
+    (+ compiler-load-program-cache-miss-count 1)))
+
+(define (compiler-load-program-cache-note-store!) : unit
+  (set!
+    compiler-load-program-cache-store-count
+    (+ compiler-load-program-cache-store-count 1)))
+
+(define (compiler-load-program-cache-lookup-from [key : String] [index : i64]) : CompilerLoadProgramCacheLookup
+  (if (>= index compiler-load-program-cache-capacity)
+    (CompilerLoadProgramCacheMiss)
+    (match (array-ref compiler-load-program-cache index)
+      [(CompilerLoadProgramCacheEmpty) (CompilerLoadProgramCacheMiss)]
+      [(CompilerLoadProgramCacheFull slot-key program)
+        (if (string-eq slot-key key)
+          (CompilerLoadProgramCacheHit program)
+          (compiler-load-program-cache-lookup-from key (+ index 1)))])))
+
+(define (compiler-load-program-cache-lookup [key : String]) : CompilerLoadProgramCacheLookup
+  (begin
+    (compiler-load-program-cache-ensure!)
+    (compiler-load-program-cache-lookup-from key 0)))
+
+(define (compiler-load-program-cache-store-at
+  [key : String]
+  [program : AstProgram]
+  [index : i64]) : bool
+  (if (>= index compiler-load-program-cache-capacity)
+    false
+    (match (array-ref compiler-load-program-cache index)
+      [(CompilerLoadProgramCacheEmpty)
+        (begin
+          (array-set!
+            compiler-load-program-cache
+            index
+            (CompilerLoadProgramCacheFull key program))
+          (compiler-load-program-cache-note-store!)
+          true)]
+      [(CompilerLoadProgramCacheFull slot-key _)
+        (if (string-eq slot-key key)
+          (begin
+            (array-set!
+              compiler-load-program-cache
+              index
+              (CompilerLoadProgramCacheFull key program))
+            (compiler-load-program-cache-note-store!)
+            true)
+          (compiler-load-program-cache-store-at key program (+ index 1)))])))
+
+(define (compiler-load-program-cache-store
+  [key : String]
+  [program : AstProgram]) : bool
+  (begin
+    (compiler-load-program-cache-ensure!)
+    (compiler-load-program-cache-store-at key program 0)))
+
+(define (compiler-load-program-cache-can-store-at [key : String] [index : i64]) : bool
+  (if (>= index compiler-load-program-cache-capacity)
+    false
+    (match (array-ref compiler-load-program-cache index)
+      [(CompilerLoadProgramCacheEmpty) true]
+      [(CompilerLoadProgramCacheFull slot-key _)
+        (if (string-eq slot-key key)
+          true
+          (compiler-load-program-cache-can-store-at key (+ index 1)))])))
+
+(define (compiler-load-program-cache-can-store [key : String]) : bool
+  (begin
+    (compiler-load-program-cache-ensure!)
+    (compiler-load-program-cache-can-store-at key 0)))
 
 (define (compiler-load-session-note-persistent!) : unit
   (begin
@@ -119,6 +250,15 @@
   (begin
     (set! compiler-load-session-cache-enabled true)
     (intern-persistent-storage-enable!)))
+
+(define (compiler-load-session-cache-disable-for-test!) : unit
+  (begin
+    (set! compiler-load-session-cache-enabled false)
+    (set! compiler-load-session-ast-floor 0)
+    (set! compiler-load-session-ty-floor 0)
+    (set! compiler-load-session-intern-floor 0)
+    (compiler-load-program-cache-clear!)
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-enabled?) : bool
   compiler-load-session-cache-enabled)
@@ -176,6 +316,22 @@
       kind
       "|roots:"
       (compiler-load-roots-cache-key effective-roots)
+      "|cfg:"
+      (compiler-load-cfg-cache-key cfgs))))
+
+(define (compiler-load-program-cache-key
+  [kind : String]
+  [path : String]
+  [cfgs : SymI64Env]) : String
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (str-cat
+      "program|"
+      kind
+      ":"
+      (int->string (string-length normalized))
+      ":"
+      normalized
       "|cfg:"
       (compiler-load-cfg-cache-key cfgs))))
 
@@ -268,6 +424,52 @@
         (if (= (string-length root) 0)
           roots
           (string-vec-push roots root))])))
+
+(define (compiler-load-cache-root-prefix [root : String]) : String
+  (compiler-load-join-root-path (compiler-load-normalize-path root) ""))
+
+(define (compiler-load-cache-path-under-root?
+  [normalized-path : String]
+  [root : String]) : bool
+  (if (= (string-length root) 0)
+    false
+    (compiler-load-string-prefix-at?
+      normalized-path
+      (compiler-load-cache-root-prefix root)
+      0)))
+
+(define (compiler-load-path-under-roots-from?
+  [normalized-path : String]
+  [roots : StringVec]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    false
+    (if (compiler-load-cache-path-under-root?
+      normalized-path
+      (string-vec-get roots index ""))
+      true
+      (compiler-load-path-under-roots-from?
+        normalized-path
+        roots
+        (+ index 1)
+        count))))
+
+(define (compiler-load-session-file-cacheable?
+  [path : String]
+  [stdlib-roots : StringVec]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (if (compiler-load-stdlib-import? normalized)
+      true
+      (let
+        [effective-roots : StringVec
+          (compiler-load-roots-with-env stdlib-roots)]
+        (compiler-load-path-under-roots-from?
+          normalized
+          effective-roots
+          0
+          (string-vec-len effective-roots))))))
 
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
@@ -1289,6 +1491,105 @@
     [source : String (read-file path)]
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
+(define (compiler-load-cache-program-result
+  [key : String]
+  [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
+  (match result
+    [(OkAstProgramDiagnostic program)
+      (begin
+        (if (compiler-load-program-cache-store key program)
+          (compiler-load-session-note-persistent!)
+          unit)
+        (OkAstProgramDiagnostic program))]
+    [(ErrAstProgramDiagnostic diag) (ErrAstProgramDiagnostic diag)]))
+
+(define (compiler-load-parse-file-diagnostic-cache-miss
+  [key : String]
+  [path : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (if (compiler-load-program-cache-can-store key)
+    (let
+      [prev-arena : i64 (arena-current)]
+      [loaded : ResultAstProgramDiagnostic
+        (begin
+          (unsafe
+            (arena-set! node-pool-base-arena))
+          (let
+            [persistent-key : String (string-copy-borrowed (& key))]
+            [parsed : ResultAstProgramDiagnostic
+              (compiler-load-parse-file-diagnostic-escaping path cfgs)]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              (compiler-load-cache-program-result persistent-key parsed))))]
+      loaded)
+    (compiler-load-parse-file-diagnostic-escaping path cfgs)))
+
+(define (compiler-load-parse-file-diagnostic-session
+  [path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (if (and
+    (compiler-load-session-cache-enabled?)
+    (compiler-load-session-file-cacheable? path stdlib-roots))
+    (let
+      [key : String (compiler-load-program-cache-key "file" path cfgs)]
+      (match (compiler-load-program-cache-lookup key)
+        [(CompilerLoadProgramCacheHit program)
+          (begin
+            (compiler-load-program-cache-note-hit!)
+            (OkAstProgramDiagnostic program))]
+        [(CompilerLoadProgramCacheMiss)
+          (begin
+            (compiler-load-program-cache-note-miss!)
+            (compiler-load-parse-file-diagnostic-cache-miss key path cfgs))]))
+    (compiler-load-parse-file-diagnostic-escaping path cfgs)))
+
+(define (compiler-load-parse-embedded-source-diagnostic-cache-miss
+  [key : String]
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (if (compiler-load-program-cache-can-store key)
+    (let
+      [prev-arena : i64 (arena-current)]
+      [loaded : ResultAstProgramDiagnostic
+        (begin
+          (unsafe
+            (arena-set! node-pool-base-arena))
+          (let
+            [persistent-key : String (string-copy-borrowed (& key))]
+            [parsed : ResultAstProgramDiagnostic
+              (compiler-load-parse-source-diagnostic-escaping path source cfgs)]
+            (begin
+              (unsafe
+                (arena-set! prev-arena))
+              (compiler-load-cache-program-result persistent-key parsed))))]
+      loaded)
+    (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+
+(define (compiler-load-parse-embedded-source-diagnostic-session
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (if (compiler-load-session-cache-enabled?)
+    (let
+      [key : String (compiler-load-program-cache-key "embedded" path cfgs)]
+      (match (compiler-load-program-cache-lookup key)
+        [(CompilerLoadProgramCacheHit program)
+          (begin
+            (compiler-load-program-cache-note-hit!)
+            (OkAstProgramDiagnostic program))]
+        [(CompilerLoadProgramCacheMiss)
+          (begin
+            (compiler-load-program-cache-note-miss!)
+            (compiler-load-parse-embedded-source-diagnostic-cache-miss
+              key
+              path
+              source
+              cfgs))]))
+    (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]
   [source : String]
@@ -1394,13 +1695,32 @@
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
+    path
+    seen
+    stdlib-roots
+    expected-module
+    import-root
+    cfgs
+    true))
+
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : SymI64Env]
+  [cache-current : bool]) : ResultCompilerLoadWithPaths
   (let
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym-i64-contains seen path-key))
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
       (if (file-exists? path)
-        (match (compiler-load-parse-file-diagnostic-escaping path cfgs)
+        (match (if cache-current
+          (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
+          (compiler-load-parse-file-diagnostic-escaping path cfgs))
           [(OkAstProgramDiagnostic program)
             (compiler-load-bind-path-dedup
               (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -1416,10 +1736,12 @@
           [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
         (match (compiler-load-embedded-stdlib-source-for-path path)
           [(CompilerEmbeddedStdlibSomeSource source)
-            (match (compiler-load-parse-source-diagnostic-escaping
-              path
-              source
-              cfgs)
+            (match (if cache-current
+              (compiler-load-parse-embedded-source-diagnostic-session
+                path
+                source
+                cfgs)
+              (compiler-load-parse-source-diagnostic-escaping path source cfgs))
               [(OkAstProgramDiagnostic program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -1438,6 +1760,20 @@
               (compiler-diagnostic-at-start
                 path
                 (string-append "compiler-load: cannot read import " path)))])))))
+
+(define (compiler-load-entry-file-with-paths-and-roots-cfg
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    (compiler-load-dirname path)
+    cfgs
+    false))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))
@@ -2268,7 +2604,7 @@
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (file-exists? path)
-    (match (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)
+    (match (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
       [(OkAstProgramDiagnostic program)
         (compiler-load-package-program-with-paths-and-roots-expect
           path
@@ -2282,7 +2618,10 @@
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
     (match (compiler-load-embedded-stdlib-source-for-path path)
       [(CompilerEmbeddedStdlibSomeSource source)
-        (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
+        (match (compiler-load-parse-embedded-source-diagnostic-session
+          path
+          source
+          cfgs)
           [(OkAstProgramDiagnostic program)
             (compiler-load-package-program-with-paths-and-roots-expect
               path
@@ -2736,6 +3075,110 @@
   (match (try-mkdir-if-missing (& path))
     [(OkIoUnit) true]
     [(ErrIoUnit _) false]))
+
+(define (compiler-load-session-cache-common-dep-ok?) : bool
+  (let
+    [root : String "target/cl_cache_common_root"]
+    [dep-suffix : String "cache_dep.tl"]
+    [dep-file : String (compiler-load-join-root-path root dep-suffix)]
+    [roots : StringVec (string-vec-push (string-vec-new) root)]
+    (begin
+      (compiler-load-test-mkdir root)
+      (write-file dep-file "(module cache.dep)
+(define dep-value : i64 1)")
+      (write-file
+        "target/cl_cache_entry_a.tl"
+        "(module cache.entry.a)
+(import \"stdlib/cache_dep.tl\" module cache.dep as dep)
+(define entry-a : i64 1)")
+      (write-file
+        "target/cl_cache_entry_b.tl"
+        "(module cache.entry.b)
+(import \"stdlib/cache_dep.tl\" module cache.dep as dep)
+(define entry-b : i64 2)")
+      (compiler-load-session-cache-enable!)
+      (compiler-load-program-cache-clear!)
+      (let
+        [ok : bool false]
+        (begin
+          (if (match (compiler-load-file-with-paths-and-roots
+            "target/cl_cache_entry_a.tl"
+            (sym-i64-empty)
+            roots)
+            [(OkCompilerLoadWithPaths _ _ _ _) true]
+            [(ErrCompilerLoadWithPaths _) false])
+            (begin
+              (compiler-load-session-reset-pools!)
+              (compiler-load-session-reset-interns!)
+              (match (compiler-load-file-with-paths-and-roots
+                "target/cl_cache_entry_b.tl"
+                (sym-i64-empty)
+                roots)
+                [(OkCompilerLoadWithPaths _ _ _ _)
+                  (begin
+                    (set!
+                      ok
+                      (and
+                        (> compiler-load-program-cache-hit-count 0)
+                        (>= compiler-load-program-cache-store-count 1))))]
+                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+            (set! ok false))
+          (compiler-load-session-cache-disable-for-test!)
+          ok)))))
+
+(define (compiler-load-session-cache-root-isolation-ok?) : bool
+  (let
+    [root-a : String "target/cl_cache_root_a"]
+    [root-b : String "target/cl_cache_root_b"]
+    [dep-suffix : String "cache_root_dep.tl"]
+    [root-a-file : String (compiler-load-join-root-path root-a dep-suffix)]
+    [root-b-file : String (compiler-load-join-root-path root-b dep-suffix)]
+    [roots-a : StringVec (string-vec-push (string-vec-new) root-a)]
+    [roots-b : StringVec (string-vec-push (string-vec-new) root-b)]
+    (begin
+      (compiler-load-test-mkdir root-a)
+      (compiler-load-test-mkdir root-b)
+      (write-file
+        root-a-file
+        "(module cache.root.a)
+(define root-value : i64 1)")
+      (write-file
+        root-b-file
+        "(module cache.root.b)
+(define root-value : i64 2)")
+      (write-file
+        "target/cl_cache_root_entry_a.tl"
+        "(module cache.root.entry.a)
+(import \"stdlib/cache_root_dep.tl\" module cache.root.a as dep)
+(define entry-a : i64 1)")
+      (write-file
+        "target/cl_cache_root_entry_b.tl"
+        "(module cache.root.entry.b)
+(import \"stdlib/cache_root_dep.tl\" module cache.root.b as dep)
+(define entry-b : i64 2)")
+      (compiler-load-session-cache-enable!)
+      (compiler-load-program-cache-clear!)
+      (let
+        [ok : bool false]
+        (begin
+          (if (match (compiler-load-file-with-paths-and-roots
+            "target/cl_cache_root_entry_a.tl"
+            (sym-i64-empty)
+            roots-a)
+            [(OkCompilerLoadWithPaths _ _ _ _) true]
+            [(ErrCompilerLoadWithPaths _) false])
+            (begin
+              (compiler-load-session-reset-pools!)
+              (compiler-load-session-reset-interns!)
+              (match (compiler-load-file-with-paths-and-roots
+                "target/cl_cache_root_entry_b.tl"
+                (sym-i64-empty)
+                roots-b)
+                [(OkCompilerLoadWithPaths _ _ _ _) (set! ok true)]
+                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+            (set! ok false))
+          (compiler-load-session-cache-disable-for-test!)
+          ok)))))
 
 (define (compiler-load-dotted-source-root-ok?) : bool
   (begin
@@ -4800,6 +5243,18 @@
       (return
         (begin
           (panic "compiler-load: cfg import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-session-cache-common-dep-ok?)
+      (return
+        (begin
+          (panic "compiler-load: session cache common dep smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-session-cache-root-isolation-ok?)
+      (return
+        (begin
+          (panic "compiler-load: session cache root isolation smoke mismatch")
           0)))
     (unless
       (compiler-load-file-import-dedup-cycle-ok?)

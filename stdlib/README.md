@@ -196,9 +196,9 @@ names so runtime-plan additions must be assigned an owner first.
 - **Stdlib TypeLisp migration target:** compatibility runtime helpers whose
   preferred long-term owner is TypeLisp stdlib code or a narrower stdlib FFI
   boundary: `tl_substring`, `tl_string_concat`, `tl_string_concat3`,
-  `tl_string_concat4`, `tl_string_concat5`, `tl_string_eq`,
-  `tl_string_to_int`, `tl_int_to_string`, `tl_hash_string`. String migrations
-  are tracked by #2036/#2037. Bounds/division/shift/general/OOM abort handlers,
+  `tl_string_concat4`, `tl_string_concat5`, `tl_int_to_string`. String equality,
+  string parsing, and string hashing are implemented by TypeLisp stdlib code in
+  `string.tl` and `hash.tl`. Bounds/division/shift/general/OOM abort handlers,
   file/IO/process/fs helpers, primary env implementations, random seed,
   profile time, and CPU feature helpers have moved to TypeLisp
   stdlib/runtime-prelude exports or direct platform bindings; only the env

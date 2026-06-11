@@ -588,10 +588,15 @@ check_u64_float_cast_asm() {
 check_stdlib_string_helpers_asm() {
     _asm=$1
     _label="$2 assembly"
-    assert_contains "$_asm" "call tl_string_eq" "$_label"
+    assert_not_contains "$_asm" ".globl tl_string_eq" "$_label"
+    assert_not_contains "$_asm" "call tl_string_eq" "$_label"
+    assert_not_contains "$_asm" ".extern tl_string_eq" "$_label"
     assert_not_contains "$_asm" ".globl tl_string_to_int" "$_label"
     assert_not_contains "$_asm" "call tl_string_to_int" "$_label"
     assert_not_contains "$_asm" ".extern tl_string_to_int" "$_label"
+    assert_not_contains "$_asm" ".globl tl_hash_string" "$_label"
+    assert_not_contains "$_asm" "call tl_hash_string" "$_label"
+    assert_not_contains "$_asm" ".extern tl_hash_string" "$_label"
     assert_not_contains "$_asm" ".globl tl_int_to_string" "$_label"
     assert_not_contains "$_asm" "call tl_int_to_string" "$_label"
     assert_not_contains "$_asm" ".extern tl_int_to_string" "$_label"
@@ -684,12 +689,6 @@ run_linux_backend_fixtures() {
         "tl_substring:" \
         ".globl tl_string_concat" \
         "tl_string_concat:" \
-        ".globl tl_string_eq" \
-        "tl_string_eq:" \
-        ".L_tl_string_eq_word_loop:" \
-        "shrq \$3, %r8" \
-        "cmpq (%rdx), %rax" \
-        ".L_tl_string_eq_tail_1:" \
         "rep movsb" \
         "tl_current_arena:" \
         ".L_tl_alloc_new_arena:" \
@@ -710,6 +709,14 @@ run_linux_backend_fixtures() {
         ".extern tl_substring" \
         ".extern tl_string_concat" \
         ".extern tl_string_eq" \
+        ".globl tl_string_eq" \
+        "tl_string_eq:" \
+        ".globl tl_string_to_int" \
+        "tl_string_to_int:" \
+        ".globl tl_hash_string" \
+        "tl_hash_string:" \
+        ".extern tl_string_to_int" \
+        ".extern tl_hash_string" \
         "tl_print_err:" \
         "tl_print_string:" \
         ".L_tl_arg_count:" \
@@ -941,14 +948,6 @@ run_windows_backend_fixtures() {
         "tl_substring:" \
         ".globl tl_string_concat" \
         "tl_string_concat:" \
-        ".globl tl_string_eq" \
-        "tl_string_eq:" \
-        ".L_tl_string_eq_word_loop:" \
-        "shrq \$3, %r10" \
-        "cmpq (%r8), %rax" \
-        ".L_tl_string_eq_tail_1:" \
-        ".globl tl_string_to_int" \
-        "tl_string_to_int:" \
         ".globl tl_int_to_string" \
         "tl_int_to_string:" \
         ".L_tl_argc:" \
@@ -961,7 +960,6 @@ run_windows_backend_fixtures() {
         "call VirtualAlloc" \
         "movq %rcx, %rbx" \
         "movq %r12, %rcx" \
-        "movq %rcx, %r10" \
         "rep movsb"
     do
         assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
@@ -982,6 +980,13 @@ run_windows_backend_fixtures() {
         ".extern tl_string_concat" \
         ".extern tl_string_eq" \
         ".extern tl_string_to_int" \
+        ".globl tl_string_eq" \
+        "tl_string_eq:" \
+        ".globl tl_string_to_int" \
+        "tl_string_to_int:" \
+        ".globl tl_hash_string" \
+        "tl_hash_string:" \
+        ".extern tl_hash_string" \
         ".extern tl_int_to_string" \
         "tl_print_err:" \
         "tl_print_string:" \

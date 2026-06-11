@@ -19,6 +19,8 @@
     [a : String "a"]
     [ab : String "ab"]
     [abc : String "abc"]
+    [abcd : String "abcd"]
+    [abcdefgh : String "abcdefgh"]
     [ba : String "ba"]
     [a-newline-b : String "a\nb"]
     (begin
@@ -38,6 +40,8 @@
       (assert-i64-eq (hash-test-string a) 98 "hash one byte")
       (assert-i64-eq (hash-test-string ab) 12937 "hash two bytes")
       (assert-i64-eq (hash-test-string abc) 1694847 "hash three bytes")
+      (assert-i64-eq (hash-test-string abcd) 222025058 "hash four bytes")
+      (assert-i64-eq (hash-test-string abcdefgh) 1379066653 "hash eight bytes")
       (assert-i64-eq (hash-test-string ba) 13067 "hash order-sensitive string")
       (assert-i64-eq
         (hash-test-string a-newline-b)

@@ -70,11 +70,15 @@ contains|_tl_find_answer:
 contains|_tl_read_small:
 contains|_tl_maybe_score:
 contains|_tl_result_score:
-contains|tl_string_eq:
-contains|call tl_string_eq
+not-contains|tl_string_eq:
+not-contains|call tl_string_eq
 contains|string_append_borrowed
 not-contains|tl_string_concat:
 not-contains|call tl_string_concat
+not-contains|tl_string_to_int:
+not-contains|call tl_string_to_int
+not-contains|tl_hash_string:
+not-contains|call tl_hash_string
 contains|call tl_alloc
 end
 

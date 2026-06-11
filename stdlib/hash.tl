@@ -84,6 +84,20 @@
     [i : i64 0]
     [hash : i64 0]
     (begin
+      (while (>= (- n i) 4)
+        (let
+          [h1 : i64 (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
+          [h2 : i64 (+ (+ (* h1 131) (cast (string-ref key (+ i 1)) : i64)) 1)]
+          [h3 : i64 (+ (+ (* h2 131) (cast (string-ref key (+ i 2)) : i64)) 1)]
+          [h4 : i64 (+ (+ (* h3 131) (cast (string-ref key (+ i 3)) : i64)) 1)]
+          [reduced : i64 (+ (bit-and h4 0x7fffffff) (shr h4 31))]
+          (begin
+            (set!
+              hash
+              (if (>= reduced 0x7fffffff)
+                (- reduced 0x7fffffff)
+                reduced))
+            (set! i (+ i 4)))))
       (while (< i n)
         (let
           [next : i64 (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]

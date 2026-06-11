@@ -6580,26 +6580,14 @@
     [(LowerStringFields field-state field-ptr field-len)
       (match (lower-string-fields field-state lit-value)
         [(LowerStringFields done-state lit-ptr lit-len)
-          (match (lower-state-alloc-var done-state)
-            [(LowerAlloc eq-alloc eq-var)
-              (OkLowerExpr
-                (LowerExpr
-                  (lower-state-emit
-                    eq-alloc
-                    (IrInstrCall
-                      eq-var
-                      "tl_string_eq"
-                      (compiler-ir-call-args-from-list
-                        (compiler-ir-value-cons
-                          field-ptr
-                          (compiler-ir-value-cons
-                            field-len
-                            (compiler-ir-value-cons
-                              lit-ptr
-                              (compiler-ir-value-cons lit-len IrValueNil)))))
-                      (AstTyBool)))
-                  (IrValueVar eq-var)
-                  (AstTyBool)))])])]))
+          (OkLowerExpr
+            (lower-inline-string-eq-fields
+              done-state
+              field-ptr
+              field-len
+              lit-ptr
+              lit-len
+              (AstTyBool)))])]))
 
 (define (lower-literal-payload-eq
   [ctx : TcContext]
@@ -14582,32 +14570,6 @@
         result-ty
         origin)]))
 
-(define (lower-one-string-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [arg : AstExpr]
-  [runtime-name : String]
-  [result-ty : AstType]
-  [message : String]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env arg)
-    [(OkLowerExpr lowered)
-      (match lowered
-        [(LowerExpr arg-state arg-value arg-ty)
-          (if (lower-string-handle-type? ctx arg-ty)
-            (match (lower-string-fields arg-state arg-value)
-              [(LowerStringFields fields-state ptr len)
-                (lower-runtime-call-values
-                  fields-state
-                  runtime-name
-                  (compiler-ir-value-cons
-                    ptr
-                    (compiler-ir-value-cons len IrValueNil))
-                  result-ty)])
-            (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
-    [(ErrLowerExpr message) (ErrLowerExpr message)]))
-
 (define (lower-one-string-object-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -14630,52 +14592,457 @@
             (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
-(define (lower-two-string-runtime-call
-  [ctx : TcContext]
+(define (lower-inline-string-eq-finish
   [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [left : AstExpr]
-  [right : AstExpr]
-  [runtime-name : String]
-  [result-ty : AstType]
-  [message : String]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env left)
-    [(OkLowerExpr lowered-left)
-      (match lowered-left
-        [(LowerExpr left-state left-value left-ty)
-          (if (lower-string-handle-type? ctx left-ty)
-            (match (lower-expr ctx left-state env type-env right)
-              [(OkLowerExpr lowered-right)
-                (match lowered-right
-                  [(LowerExpr right-state right-value right-ty)
-                    (if (lower-string-handle-type? ctx right-ty)
-                      (match (lower-string-fields right-state left-value)
-                        [(LowerStringFields left-fields-state left-ptr left-len)
-                          (match (lower-string-fields
-                            left-fields-state
-                            right-value)
-                            [(LowerStringFields
-                                done-fields-state
-                                right-ptr
-                                right-len)
-                              (lower-runtime-call-values
-                                done-fields-state
-                                runtime-name
-                                (compiler-ir-value-cons
-                                  left-ptr
-                                  (compiler-ir-value-cons
-                                    left-len
-                                    (compiler-ir-value-cons
-                                      right-ptr
-                                      (compiler-ir-value-cons
-                                        right-len
-                                        IrValueNil))))
-                                result-ty)])])
-                      (ErrLowerExpr (lower-diagnostic-at-expr right message)))])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])
-            (ErrLowerExpr (lower-diagnostic-at-expr left message)))])]
-    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+  [true-label : String]
+  [false-label : String]
+  [done-label : String]
+  [result-var : i64]
+  [result-ty : AstType]) : LowerExpr
+  (let
+    [false-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit
+          (lower-state-emit
+            state
+            (IrInstrMov result-var (IrValueBool true) (AstTyBool)))
+          (IrInstrJump done-label))
+        false-label)]
+    [done-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit false-start (IrInstrJump done-label))
+        done-label)]
+    (LowerExpr done-start (IrValueVar result-var) result-ty)))
+
+(define (lower-inline-string-eq-body
+  [state : LowerState]
+  [header-label : String]
+  [true-label : String]
+  [false-label : String]
+  [done-label : String]
+  [result-var : i64]
+  [index-var : i64]
+  [left-ptr : CompilerIrValue]
+  [right-ptr : CompilerIrValue]
+  [result-ty : AstType]) : LowerExpr
+  (match (lower-emit-gep state left-ptr (IrValueVar index-var) (AstTyU8))
+    [(LowerExpr left-gep-state left-addr _)
+      (match (lower-emit-load left-gep-state left-addr (AstTyU8))
+        [(LowerExpr left-load-state left-byte _)
+          (match (lower-emit-gep
+            left-load-state
+            right-ptr
+            (IrValueVar index-var)
+            (AstTyU8))
+            [(LowerExpr right-gep-state right-addr _)
+              (match (lower-emit-load right-gep-state right-addr (AstTyU8))
+                [(LowerExpr right-load-state right-byte _)
+                  (match (lower-emit-cast
+                    right-load-state
+                    left-byte
+                    (AstTyU8)
+                    (AstTyI64))
+                    [(LowerExpr left-cast-state left-i64 _)
+                      (match (lower-emit-cast
+                        left-cast-state
+                        right-byte
+                        (AstTyU8)
+                        (AstTyI64))
+                        [(LowerExpr right-cast-state right-i64 _)
+                          (match (lower-emit-binop
+                            right-cast-state
+                            IrBinEq
+                            left-i64
+                            right-i64
+                            (AstTyBool))
+                            [(LowerExpr byte-eq-state byte-eq _)
+                              (match (lower-emit-binop
+                                byte-eq-state
+                                IrBinAdd
+                                (IrValueVar index-var)
+                                (IrValueI64 1)
+                                (AstTyI64))
+                                [(LowerExpr inc-state next-index _)
+                                  (lower-inline-string-eq-finish
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        (lower-state-emit
+                                          inc-state
+                                          (IrInstrMov
+                                            index-var
+                                            next-index
+                                            (AstTyI64)))
+                                        (IrInstrBranch
+                                          byte-eq
+                                          header-label
+                                          false-label))
+                                      true-label)
+                                    true-label
+                                    false-label
+                                    done-label
+                                    result-var
+                                    result-ty)])])])])])])])]))
+
+(define (lower-inline-string-eq-fields
+  [state : LowerState]
+  [left-ptr : CompilerIrValue]
+  [left-len : CompilerIrValue]
+  [right-ptr : CompilerIrValue]
+  [right-len : CompilerIrValue]
+  [result-ty : AstType]) : LowerExpr
+  (match (lower-state-fresh-label state "string_eq_header")
+    [(LowerLabel header-label-state header-label)
+      (match (lower-state-fresh-label header-label-state "string_eq_body")
+        [(LowerLabel body-label-state body-label)
+          (match (lower-state-fresh-label body-label-state "string_eq_true")
+            [(LowerLabel true-label-state true-label)
+              (match (lower-state-fresh-label
+                true-label-state
+                "string_eq_false")
+                [(LowerLabel false-label-state false-label)
+                  (match (lower-state-fresh-label
+                    false-label-state
+                    "string_eq_done")
+                    [(LowerLabel done-label-state done-label)
+                      (match (lower-state-alloc-var done-label-state)
+                        [(LowerAlloc result-alloc result-var)
+                          (match (lower-state-alloc-var result-alloc)
+                            [(LowerAlloc index-alloc index-var)
+                              (match (lower-emit-binop
+                                (lower-state-emit
+                                  (lower-state-emit
+                                    index-alloc
+                                    (IrInstrMov
+                                      result-var
+                                      (IrValueBool false)
+                                      (AstTyBool)))
+                                  (IrInstrMov
+                                    index-var
+                                    (IrValueI64 0)
+                                    (AstTyI64)))
+                                IrBinEq
+                                left-len
+                                right-len
+                                (AstTyBool))
+                                [(LowerExpr len-state len-ok _)
+                                  (let
+                                    [header-start : LowerState
+                                      (lower-state-finish-block
+                                        (lower-state-emit
+                                          len-state
+                                          (IrInstrBranch
+                                            len-ok
+                                            header-label
+                                            false-label))
+                                        header-label)]
+                                    (match (lower-emit-binop
+                                      header-start
+                                      IrBinLt
+                                      (IrValueVar index-var)
+                                      left-len
+                                      (AstTyBool))
+                                      [(LowerExpr cond-state cond-value _)
+                                        (lower-inline-string-eq-body
+                                          (lower-state-finish-block
+                                            (lower-state-emit
+                                              cond-state
+                                              (IrInstrBranch
+                                                cond-value
+                                                body-label
+                                                true-label))
+                                            body-label)
+                                          header-label
+                                          true-label
+                                          false-label
+                                          done-label
+                                          result-var
+                                          index-var
+                                          left-ptr
+                                          right-ptr
+                                          result-ty)]))])])])])])])])]))
+
+(define (lower-inline-string-to-int-negate
+  [state : LowerState]
+  [negate-label : String]
+  [done-label : String]
+  [value-var : i64]
+  [negative-var : i64]
+  [result-ty : AstType]) : LowerExpr
+  (let
+    [negate-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit
+          state
+          (IrInstrBranch (IrValueVar negative-var) negate-label done-label))
+        negate-label)]
+    (match (lower-emit-binop
+      negate-start
+      IrBinSub
+      (IrValueI64 0)
+      (IrValueVar value-var)
+      (AstTyI64))
+      [(LowerExpr neg-state neg-value _)
+        (let
+          [done-start : LowerState
+            (lower-state-finish-block
+              (lower-state-emit
+                (lower-state-emit
+                  neg-state
+                  (IrInstrMov value-var neg-value (AstTyI64)))
+                (IrInstrJump done-label))
+              done-label)]
+          (LowerExpr done-start (IrValueVar value-var) result-ty))])))
+
+(define (lower-inline-string-to-int-body
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [header-label : String]
+  [apply-label : String]
+  [negate-label : String]
+  [done-label : String]
+  [value-var : i64]
+  [index-var : i64]
+  [negative-var : i64]
+  [result-ty : AstType]) : LowerExpr
+  (match (lower-emit-gep state ptr (IrValueVar index-var) (AstTyU8))
+    [(LowerExpr byte-gep-state byte-addr _)
+      (match (lower-emit-load byte-gep-state byte-addr (AstTyU8))
+        [(LowerExpr byte-load-state byte-value _)
+          (match (lower-emit-cast
+            byte-load-state
+            byte-value
+            (AstTyU8)
+            (AstTyI64))
+            [(LowerExpr byte-cast-state byte-i64 _)
+              (match (lower-emit-binop
+                byte-cast-state
+                IrBinSub
+                byte-i64
+                (IrValueI64 48)
+                (AstTyI64))
+                [(LowerExpr digit-state digit _)
+                  (match (lower-emit-binop
+                    digit-state
+                    IrBinMul
+                    (IrValueVar value-var)
+                    (IrValueI64 10)
+                    (AstTyI64))
+                    [(LowerExpr scaled-state scaled _)
+                      (match (lower-emit-binop
+                        scaled-state
+                        IrBinAdd
+                        scaled
+                        digit
+                        (AstTyI64))
+                        [(LowerExpr next-state next-value _)
+                          (match (lower-emit-binop
+                            next-state
+                            IrBinAdd
+                            (IrValueVar index-var)
+                            (IrValueI64 1)
+                            (AstTyI64))
+                            [(LowerExpr inc-state next-index _)
+                              (lower-inline-string-to-int-negate
+                                (lower-state-finish-block
+                                  (lower-state-emit
+                                    (lower-state-emit
+                                      (lower-state-emit
+                                        inc-state
+                                        (IrInstrMov
+                                          value-var
+                                          next-value
+                                          (AstTyI64)))
+                                      (IrInstrMov
+                                        index-var
+                                        next-index
+                                        (AstTyI64)))
+                                    (IrInstrJump header-label))
+                                  apply-label)
+                                negate-label
+                                done-label
+                                value-var
+                                negative-var
+                                result-ty)])])])])])])]))
+
+(define (lower-inline-string-to-int-loop
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [len : CompilerIrValue]
+  [body-label : String]
+  [apply-label : String]
+  [header-label : String]
+  [negate-label : String]
+  [done-label : String]
+  [value-var : i64]
+  [index-var : i64]
+  [negative-var : i64]
+  [result-ty : AstType]) : LowerExpr
+  (match (lower-emit-binop state IrBinLt (IrValueVar index-var) len (AstTyBool))
+    [(LowerExpr cond-state cond-value _)
+      (lower-inline-string-to-int-body
+        (lower-state-finish-block
+          (lower-state-emit
+            cond-state
+            (IrInstrBranch cond-value body-label apply-label))
+          body-label)
+        ptr
+        header-label
+        apply-label
+        negate-label
+        done-label
+        value-var
+        index-var
+        negative-var
+        result-ty)]))
+
+(define (lower-inline-string-to-int-sign
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [len : CompilerIrValue]
+  [minus-label : String]
+  [header-label : String]
+  [body-label : String]
+  [apply-label : String]
+  [negate-label : String]
+  [done-label : String]
+  [value-var : i64]
+  [index-var : i64]
+  [negative-var : i64]
+  [result-ty : AstType]) : LowerExpr
+  (match (lower-emit-gep state ptr (IrValueI64 0) (AstTyU8))
+    [(LowerExpr first-gep-state first-addr _)
+      (match (lower-emit-load first-gep-state first-addr (AstTyU8))
+        [(LowerExpr first-load-state first-byte _)
+          (match (lower-emit-cast
+            first-load-state
+            first-byte
+            (AstTyU8)
+            (AstTyI64))
+            [(LowerExpr first-cast-state first-i64 _)
+              (match (lower-emit-binop
+                first-cast-state
+                IrBinEq
+                first-i64
+                (IrValueI64 45)
+                (AstTyBool))
+                [(LowerExpr minus-test-state minus? _)
+                  (let
+                    [minus-start : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          minus-test-state
+                          (IrInstrBranch minus? minus-label header-label))
+                        minus-label)]
+                    [header-start : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            (lower-state-emit
+                              minus-start
+                              (IrInstrMov
+                                negative-var
+                                (IrValueBool true)
+                                (AstTyBool)))
+                            (IrInstrMov index-var (IrValueI64 1) (AstTyI64)))
+                          (IrInstrJump header-label))
+                        header-label)]
+                    (lower-inline-string-to-int-loop
+                      header-start
+                      ptr
+                      len
+                      body-label
+                      apply-label
+                      header-label
+                      negate-label
+                      done-label
+                      value-var
+                      index-var
+                      negative-var
+                      result-ty))])])])]))
+
+(define (lower-inline-string-to-int-fields
+  [state : LowerState]
+  [ptr : CompilerIrValue]
+  [len : CompilerIrValue]
+  [result-ty : AstType]) : LowerExpr
+  (match (lower-state-fresh-label state "string_to_int_sign")
+    [(LowerLabel sign-label-state sign-label)
+      (match (lower-state-fresh-label sign-label-state "string_to_int_minus")
+        [(LowerLabel minus-label-state minus-label)
+          (match (lower-state-fresh-label
+            minus-label-state
+            "string_to_int_header")
+            [(LowerLabel header-label-state header-label)
+              (match (lower-state-fresh-label
+                header-label-state
+                "string_to_int_body")
+                [(LowerLabel body-label-state body-label)
+                  (match (lower-state-fresh-label
+                    body-label-state
+                    "string_to_int_apply_sign")
+                    [(LowerLabel apply-label-state apply-label)
+                      (match (lower-state-fresh-label
+                        apply-label-state
+                        "string_to_int_negate")
+                        [(LowerLabel negate-label-state negate-label)
+                          (match (lower-state-fresh-label
+                            negate-label-state
+                            "string_to_int_done")
+                            [(LowerLabel done-label-state done-label)
+                              (match (lower-state-alloc-var done-label-state)
+                                [(LowerAlloc value-alloc value-var)
+                                  (match (lower-state-alloc-var value-alloc)
+                                    [(LowerAlloc index-alloc index-var)
+                                      (match (lower-state-alloc-var index-alloc)
+                                        [(LowerAlloc
+                                            negative-alloc
+                                            negative-var)
+                                          (match (lower-emit-binop
+                                            (lower-state-emit
+                                              (lower-state-emit
+                                                (lower-state-emit
+                                                  negative-alloc
+                                                  (IrInstrMov
+                                                    value-var
+                                                    (IrValueI64 0)
+                                                    (AstTyI64)))
+                                                (IrInstrMov
+                                                  index-var
+                                                  (IrValueI64 0)
+                                                  (AstTyI64)))
+                                              (IrInstrMov
+                                                negative-var
+                                                (IrValueBool false)
+                                                (AstTyBool)))
+                                            IrBinGt
+                                            len
+                                            (IrValueI64 0)
+                                            (AstTyBool))
+                                            [(LowerExpr
+                                                nonempty-state
+                                                nonempty
+                                                _)
+                                              (lower-inline-string-to-int-sign
+                                                (lower-state-finish-block
+                                                  (lower-state-emit
+                                                    nonempty-state
+                                                    (IrInstrBranch
+                                                      nonempty
+                                                      sign-label
+                                                      done-label))
+                                                  sign-label)
+                                                ptr
+                                                len
+                                                minus-label
+                                                header-label
+                                                body-label
+                                                apply-label
+                                                negate-label
+                                                done-label
+                                                value-var
+                                                index-var
+                                                negative-var
+                                                result-ty)])])])])])])])])])])]))
 
 (define (lower-string-to-int-call
   [ctx : TcContext]
@@ -14692,15 +15059,24 @@
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              "tl_string_to_int"
-              result-ty
-              "lower: string->int requires String")]
+            (match (lower-expr ctx state env type-env arg)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr arg-state arg-value arg-ty)
+                    (if (lower-string-handle-type? ctx arg-ty)
+                      (match (lower-string-fields arg-state arg-value)
+                        [(LowerStringFields fields-state ptr len)
+                          (OkLowerExpr
+                            (lower-inline-string-to-int-fields
+                              fields-state
+                              ptr
+                              len
+                              result-ty))])
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          arg
+                          "lower: string->int requires String")))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]
           [_
             (lower-direct-call
               ctx
@@ -14816,19 +15192,14 @@
                                             done-fields-state
                                             right-ptr
                                             right-len)
-                                          (lower-runtime-call-values
-                                            done-fields-state
-                                            "tl_string_eq"
-                                            (compiler-ir-value-cons
+                                          (OkLowerExpr
+                                            (lower-inline-string-eq-fields
+                                              done-fields-state
                                               left-ptr
-                                              (compiler-ir-value-cons
-                                                left-len
-                                                (compiler-ir-value-cons
-                                                  right-ptr
-                                                  (compiler-ir-value-cons
-                                                    right-len
-                                                    IrValueNil))))
-                                            result-ty)])])])]
+                                              left-len
+                                              right-ptr
+                                              right-len
+                                              result-ty))])])])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)])]
                 [_
@@ -23966,135 +24337,6 @@
 (define (lower-global-init-function? [logical-name : String]) : bool
   (lower-logical-name-has-prefix? logical-name "__global_init_"))
 
-(define (lower-stdlib-hash-string-param? [ctx : TcContext] [ty : AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
-        [(AstTyStr) true]
-        [_ false])]
-    [_ false]))
-
-(define (lower-stdlib-hash-string-signature?
-  [ctx : TcContext]
-  [logical-name : String]
-  [params : AstParamList]
-  [ret-ty : AstType]) : bool
-  (and
-    (lower-logical-name-has-suffix? logical-name "stdlib/hash.tl::hash-string")
-    (tc-type-eq ret-ty (AstTyI64))
-    (match params
-      [(AstParamCons param rest)
-        (let
-          [rest : AstParamList (box-get rest)]
-          (match rest
-            [(AstParamNil)
-              (match param
-                [(AstParam _ ty _) (lower-stdlib-hash-string-param? ctx ty)])]
-            [_ false]))]
-      [_ false])))
-
-(define (lower-runtime-return-function
-  [ctx : TcContext]
-  [logical-name : String]
-  [params : AstParamList]
-  [ret-ty : AstType]
-  [call-state : LowerState]
-  [value : CompilerIrValue]) : ResultLowerFunction
-  (let
-    [return-state : LowerState
-      (lower-state-emit call-state (IrInstrReturn (IrSomeValue value)))]
-    (OkLowerFunction
-      (compiler-ir-function-cons
-        (IrFunction
-          logical-name
-          (lower-param-list ctx params 0)
-          ret-ty
-          (lower-state-next-var return-state)
-          (lower-state-build-function-blocks return-state))
-        (lower-state-functions return-state))
-      (lower-state-spans return-state))))
-
-(define (lower-stdlib-hash-string-function
-  [ctx : TcContext]
-  [logical-name : String]
-  [params : AstParamList]
-  [ret-ty : AstType]
-  [state : LowerState]) : ResultLowerFunction
-  (match (lower-string-fields state (IrValueVar 0))
-    [(LowerStringFields fields-state ptr len)
-      (match (lower-runtime-call-values
-        fields-state
-        "tl_hash_string"
-        (compiler-ir-value-cons ptr (compiler-ir-value-cons len IrValueNil))
-        ret-ty)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr call-state value _)
-              (lower-runtime-return-function
-                ctx
-                logical-name
-                params
-                ret-ty
-                call-state
-                value)])]
-        [(ErrLowerExpr message) (ErrLowerFunction message)])]))
-
-(define (lower-stdlib-string-eq-borrowed-signature?
-  [ctx : TcContext]
-  [logical-name : String]
-  [params : AstParamList]
-  [ret-ty : AstType]) : bool
-  (and
-    (lower-logical-name-has-suffix?
-      logical-name
-      "stdlib/string.tl::string-eq-borrowed")
-    (tc-type-eq ret-ty (AstTyBool))
-    (match params
-      [(AstParamCons (AstParam _ left-ty _) left-rest)
-        (match (box-get left-rest)
-          [(AstParamCons (AstParam _ right-ty _) right-rest)
-            (match (box-get right-rest)
-              [(AstParamNil)
-                (and
-                  (lower-stdlib-hash-string-param? ctx left-ty)
-                  (lower-stdlib-hash-string-param? ctx right-ty))]
-              [_ false])]
-          [_ false])]
-      [_ false])))
-
-(define (lower-stdlib-string-eq-borrowed-function
-  [ctx : TcContext]
-  [logical-name : String]
-  [params : AstParamList]
-  [ret-ty : AstType]
-  [state : LowerState]) : ResultLowerFunction
-  (match (lower-string-fields state (IrValueVar 0))
-    [(LowerStringFields left-state left-ptr left-len)
-      (match (lower-string-fields left-state (IrValueVar 1))
-        [(LowerStringFields done-state right-ptr right-len)
-          (match (lower-runtime-call-values
-            done-state
-            "tl_string_eq"
-            (compiler-ir-value-cons
-              left-ptr
-              (compiler-ir-value-cons
-                left-len
-                (compiler-ir-value-cons
-                  right-ptr
-                  (compiler-ir-value-cons right-len IrValueNil))))
-            ret-ty)
-            [(OkLowerExpr lowered)
-              (match lowered
-                [(LowerExpr call-state value _)
-                  (lower-runtime-return-function
-                    ctx
-                    logical-name
-                    params
-                    ret-ty
-                    call-state
-                    value)])]
-            [(ErrLowerExpr message) (ErrLowerFunction message)])])]))
-
 (define (lower-function
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -24150,41 +24392,23 @@
           type-cache
           mode)]
       (if (lower-supported-function-return-type? ctx ret-ty)
-        (if (lower-stdlib-hash-string-signature? ctx logical-name params ret-ty)
-          (lower-stdlib-hash-string-function
-            ctx
-            logical-name
-            params
-            ret-ty
-            state)
-          (if (lower-stdlib-string-eq-borrowed-signature?
-            ctx
-            logical-name
-            params
-            ret-ty)
-            (lower-stdlib-string-eq-borrowed-function
-              ctx
-              logical-name
-              params
-              ret-ty
-              state)
-            (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
-              [(OkLowerState final-state)
-                (OkLowerFunction
-                  (compiler-ir-function-cons
-                    (IrFunction
-                      logical-name
-                      (if (>= sret-var 0)
-                        (lower-param-list-append-sret
-                          (lower-param-list ctx params 0)
-                          sret-var)
-                        (lower-param-list ctx params 0))
-                      ret-ty
-                      (lower-state-next-var final-state)
-                      (lower-state-build-function-blocks final-state))
-                    (lower-state-functions final-state))
-                  (lower-state-spans final-state))]
-              [(ErrLowerState message) (ErrLowerFunction message)])))
+        (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
+          [(OkLowerState final-state)
+            (OkLowerFunction
+              (compiler-ir-function-cons
+                (IrFunction
+                  logical-name
+                  (if (>= sret-var 0)
+                    (lower-param-list-append-sret
+                      (lower-param-list ctx params 0)
+                      sret-var)
+                    (lower-param-list ctx params 0))
+                  ret-ty
+                  (lower-state-next-var final-state)
+                  (lower-state-build-function-blocks final-state))
+                (lower-state-functions final-state))
+              (lower-state-spans final-state))]
+          [(ErrLowerState message) (ErrLowerFunction message)])
         (ErrLowerFunction
           (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 
@@ -30631,8 +30855,10 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "tl_string_eq") 1)
-            (= (lower-test-functions-call-count functions "string-eq") 0))])]
+            (= (lower-test-functions-call-count functions "tl_string_eq") 0)
+            (= (lower-test-functions-call-count functions "string-eq") 0)
+            (> (lower-test-function-branch-count functions "classify") 2)
+            (> (lower-test-function-load-count functions "classify") 2))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-enum-match-shape-ok?) : bool
@@ -31034,10 +31260,10 @@
                       functions
                       name
                       "tl_hash_string")
-                    1)
+                    0)
                     unit
                     (set! ok false))
-                  (if (= (lower-test-function-bounds-count functions name) 0)
+                  (if (> (lower-test-function-bounds-count functions name) 0)
                     unit
                     (set! ok false))
                   (if (=

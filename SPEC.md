@@ -3944,10 +3944,8 @@ arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
 | `tl_arena_destroy` | Release an independent arena chain |
 | `tl_region_mark` | Return the current allocator region mark, or `0` before allocation |
 | `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
-| `tl_string_eq` | String comparison |
 | `tl_string_concat` | String concatenation |
 | `tl_substring` | String slicing |
-| `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
 | `tl_oob_abort` | Bounds-check trap |
 | `tl_div_abort` | Integer division/remainder trap |

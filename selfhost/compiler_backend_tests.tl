@@ -748,19 +748,28 @@
       (let
         [ok : bool true]
         (begin
+          (if (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm "    call tl_string_eq\n")
+            (set! ok false)
+            unit)
+          (if (compiler-backend-string-contains? asm ".extern tl_string_eq\n")
+            (set! ok false)
+            unit)
           (if (compiler-backend-string-contains?
             asm
             ".globl tl_string_to_int\n")
-            unit
-            (set! ok false))
+            (set! ok false)
+            unit)
           (if (compiler-backend-string-contains? asm "tl_string_to_int:\n")
-            unit
-            (set! ok false))
+            (set! ok false)
+            unit)
           (if (compiler-backend-string-contains?
             asm
             "    call tl_string_to_int\n")
-            unit
-            (set! ok false))
+            (set! ok false)
+            unit)
           (if (compiler-backend-string-contains?
             asm
             ".extern tl_string_to_int\n")
@@ -818,9 +827,6 @@
             ".extern tl_print_string\n")
             (set! ok false)
             unit)
-          (if (compiler-backend-string-contains? asm "    cmpq %rdi, %rdx\n")
-            unit
-            (set! ok false))
           (if (compiler-backend-string-contains?
             asm
             (compiler-backend-todo-marker))
@@ -2392,8 +2398,8 @@
           (backend-and8
             (compiler-backend-string-contains? asm "tl_substring:\n")
             (compiler-backend-string-contains? asm "tl_string_concat:\n")
-            (compiler-backend-string-contains? asm "tl_string_eq:\n")
-            (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+            (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
+            (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
             (compiler-backend-string-contains? asm "tl_int_to_string:\n")
             (not
               (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
@@ -2413,10 +2419,7 @@
         [private-file-handles : bool
           (not
             (compiler-backend-string-contains? asm ".L_tl_file_handle_next:\n"))]
-        [driver-runtime : bool
-          (and
-            (compiler-backend-string-contains? asm "    cmpq %rcx, %r8\n")
-            (compiler-backend-windows-driver-runtime-ok?))]
+        [driver-runtime : bool (compiler-backend-windows-driver-runtime-ok?)]
         [no-advapi-random : bool
           (not (compiler-backend-string-contains? asm "SystemFunction036"))]
         (backend-and8
@@ -3248,28 +3251,36 @@
 (define (compiler-backend-runtime-helper-inventory-stdlib-string-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
-    (backend-and8
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_substring")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_string_concat")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_string_concat3")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_string_concat4")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_string_concat5")
-      (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_string_eq")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_string_to_int")
-      (compiler-backend-runtime-helper-inventory-symbol-ok?
-        plan
-        "tl_int_to_string"))
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_hash_string")))
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_substring")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_string_concat")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_string_concat3")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_string_concat4")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_string_concat5")
+    (compiler-backend-runtime-helper-inventory-symbol-ok?
+      plan
+      "tl_int_to_string")))
+
+(define (compiler-backend-runtime-helper-inventory-retired-string-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (backend-and4
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_string_eq")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_string_to_int")
+    (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
+      plan
+      "tl_hash_string")
+    true))
 
 (define (compiler-backend-runtime-helper-inventory-env-compat-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -3498,6 +3509,7 @@
       (and
         (compiler-backend-runtime-helper-inventory-retired-process-ok? plan)
         (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok? plan)
+        (compiler-backend-runtime-helper-inventory-retired-string-ok? plan)
         (compiler-backend-runtime-helper-inventory-negative-ok? plan)
         (compiler-backend-runtime-helper-owner-id-ok?)
         (compiler-backend-runtime-plan-id-lookup-only-ok?)))))

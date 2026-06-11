@@ -792,6 +792,8 @@ assert_status root-package-build-help "$status" 0
 assert_empty root-package-build-help "$WORKDIR/root-package-build-help.out"
 assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "Summary:"
 assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "typelisp build [--manifest-path <typelisp.pkg>]"
+assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "--locked"
+assert_contains root-package-build-help "$WORKDIR/root-package-build-help.err" "--update-lock"
 
 CHAIN_DIR="$WORKDIR/package-graph-chain"
 CHAIN_ROOT="$CHAIN_DIR/root"
@@ -1046,6 +1048,15 @@ if [ "$HOST_OS" = windows ]; then
 fi
 
 set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-missing.out" 2> "$WORKDIR/package-graph-github-lock-missing.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-missing "$status" 1
+assert_empty package-graph-github-lock-missing "$WORKDIR/package-graph-github-lock-missing.out"
+assert_contains package-graph-github-lock-missing "$WORKDIR/package-graph-github-lock-missing.err" 'build: --locked requires typelisp.lock entry for remote dependency `remote`'
+[ ! -f "$GITHUB_LOCK_ROOT/typelisp.lock" ] || fail "locked missing package build wrote typelisp.lock"
+
+set +e
 GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-first.out" 2> "$WORKDIR/package-graph-github-lock-first.err"
 status=$?
 set -e
@@ -1086,6 +1097,26 @@ assert_status package-graph-github-lock-replay-program "$status" 51
 assert_empty package-graph-github-lock-replay-program "$WORKDIR/package-graph-github-lock-replay-program.out"
 assert_empty package-graph-github-lock-replay-program "$WORKDIR/package-graph-github-lock-replay-program.err"
 
+cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/package-graph-github-lock-before-locked"
+GITHUB_LOCK_REMOTE_OFFLINE="$GITHUB_LOCK_REMOTE.offline"
+rm -rf "$GITHUB_LOCK_REMOTE_OFFLINE"
+mv "$GITHUB_LOCK_REMOTE" "$GITHUB_LOCK_REMOTE_OFFLINE"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-locked.out" 2> "$WORKDIR/package-graph-github-lock-locked.err"
+status=$?
+set -e
+mv "$GITHUB_LOCK_REMOTE_OFFLINE" "$GITHUB_LOCK_REMOTE"
+assert_status package-graph-github-lock-locked "$status" 0
+assert_empty package-graph-github-lock-locked "$WORKDIR/package-graph-github-lock-locked.err"
+cmp -s "$WORKDIR/package-graph-github-lock-before-locked" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "locked package build rewrote typelisp.lock"
+set +e
+"$GITHUB_LOCK_EXE" > "$WORKDIR/package-graph-github-lock-locked-program.out" 2> "$WORKDIR/package-graph-github-lock-locked-program.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-locked-program "$status" 51
+assert_empty package-graph-github-lock-locked-program "$WORKDIR/package-graph-github-lock-locked-program.out"
+assert_empty package-graph-github-lock-locked-program "$WORKDIR/package-graph-github-lock-locked-program.err"
+
 git -C "$GITHUB_LOCK_REMOTE" branch next "$GITHUB_LOCK_REV2"
 cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
 (package
@@ -1096,8 +1127,19 @@ cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
     (remote (github "l/b" (branch "next")))))
 EOF
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/package-graph-github-lock-before-stale"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-stale.out" 2> "$WORKDIR/package-graph-github-lock-stale.err"
+status=$?
+set -e
+assert_status package-graph-github-lock-stale "$status" 1
+assert_empty package-graph-github-lock-stale "$WORKDIR/package-graph-github-lock-stale.out"
+assert_contains package-graph-github-lock-stale "$WORKDIR/package-graph-github-lock-stale.err" 'build: package lock entry for remote dependency `remote` is stale'
+cmp -s "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "locked stale package build rewrote typelisp.lock"
+
+rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
 status=$?
 set -e
 assert_status package-graph-github-lock-update "$status" 0

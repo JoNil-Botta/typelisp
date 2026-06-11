@@ -286,10 +286,9 @@
       (compiler-builtin-id-any4?
         name-id
         compiler-builtin-id-tl-string-concat5
-        compiler-builtin-id-tl-string-eq
-        compiler-builtin-id-tl-string-to-int
-        compiler-builtin-id-tl-int-to-string)
-      (= name-id compiler-builtin-id-tl-hash-string))))
+        compiler-builtin-id-tl-int-to-string
+        -1
+        -1))))
 
 (define (compiler-builtin-backend-runtime-compatibility-alias-id?
   [name-id : i64]) : bool

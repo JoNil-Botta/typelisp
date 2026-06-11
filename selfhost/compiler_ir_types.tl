@@ -1230,12 +1230,7 @@
     [_ true]))
 
 (define (compiler-ir-runtime-memory-read? [name : String]) : bool
-  (or
-    (string-eq name "tl_string_eq")
-    (string-eq name "tl_string_to_int")
-    (string-eq name "tl_hash_string")
-    (string-eq name "tl_region_mark")
-    (string-eq name ".L_tl_stdin_eof")))
+  (or (string-eq name "tl_region_mark") (string-eq name ".L_tl_stdin_eof")))
 
 (define (compiler-ir-runtime-memory-write? [name : String]) : bool
   (or
@@ -2460,7 +2455,7 @@
       (IrInstrStore "global" (IrValueI64 3) (AstTyI64))
       IrEffectMemoryWrite)
     (compiler-ir-effect-is?
-      (IrInstrCall 9 "tl_string_eq" (IrCallArgsNil) (AstTyBool))
+      (IrInstrCall 9 "tl_region_mark" (IrCallArgsNil) (AstTyI64))
       IrEffectMemoryRead)
     (compiler-ir-effect-is?
       (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok")

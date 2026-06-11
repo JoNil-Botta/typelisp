@@ -13939,8 +13939,8 @@
         oob
         substring
         concat
-        provides-string-eq
-        provides-string-to-int
+        _
+        _
         provides-int-to-string
         provides-abort
         _
@@ -13987,12 +13987,8 @@
             false
             (and substring (compiler-builtin-backend-tl-substring-id? name-id))
             (and concat (compiler-builtin-backend-runtime-concat-id? name-id))
-            (and
-              provides-string-eq
-              (compiler-builtin-backend-tl-string-eq-id? name-id))
-            (and
-              provides-string-to-int
-              (compiler-builtin-backend-tl-string-to-int-id? name-id)))
+            false
+            false)
           (backend-or8
             (and
               provides-int-to-string
@@ -14019,9 +14015,7 @@
             (and
               (compiler-backend-runtime-tail-profile? provides-tail)
               (compiler-builtin-backend-runtime-profile-id? name-id))
-            (and
-              (compiler-backend-runtime-tail-hash-string? provides-tail)
-              (compiler-builtin-backend-tl-hash-string-id? name-id)))))]))
+            false)))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -14319,14 +14313,9 @@
       (and (not defines-substring) (or extern-substring calls-substring))]
     [needs-concat : bool
       (and (not defines-concat) (or extern-concat calls-concat))]
-    [needs-string-eq : bool
-      (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
-    [needs-string-to-int : bool
-      (and
-        (not defines-string-to-int)
-        (or extern-string-to-int calls-string-to-int))]
-    [needs-hash-string : bool
-      (and (not defines-hash-string) (or extern-hash-string calls-hash-string))]
+    [needs-string-eq : bool false]
+    [needs-string-to-int : bool false]
+    [needs-hash-string : bool false]
     [needs-int-to-string : bool
       (and
         (not defines-int-to-string)
@@ -14416,8 +14405,8 @@
         needs-oob
         needs-substring
         needs-concat
-        needs-string-eq
-        needs-string-to-int
+        false
+        false
         needs-int-to-string
         needs-abort
         needs-print-err
@@ -14445,7 +14434,7 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        (CompilerBackendRuntimeTailPlan needs-profile needs-hash-string)))))
+        (CompilerBackendRuntimeTailPlan needs-profile false)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (begin
@@ -15706,303 +15695,6 @@ tl_profile_alloc_reset_peak:
 (define (compiler-backend-runtime-windows-abort-functions) : String
   "")
 
-(define (compiler-backend-runtime-string-eq-functions) : String
-  "    .globl tl_string_eq
-tl_string_eq:
-    cmpq %rcx, %rsi
-    jne .L_tl_string_eq_false
-    cmpq %rdi, %rdx
-    je .L_tl_string_eq_true
-    movq %rsi, %r8
-    shrq $3, %r8
-    jz .L_tl_string_eq_tail
-.L_tl_string_eq_word_loop:
-    movq (%rdi), %rax
-    cmpq (%rdx), %rax
-    jne .L_tl_string_eq_false
-    addq $8, %rdi
-    addq $8, %rdx
-    decq %r8
-    jne .L_tl_string_eq_word_loop
-.L_tl_string_eq_tail:
-    andq $7, %rsi
-    jz .L_tl_string_eq_true
-    cmpq $4, %rsi
-    jb .L_tl_string_eq_tail_2
-    movl (%rdi), %eax
-    cmpl (%rdx), %eax
-    jne .L_tl_string_eq_false
-    addq $4, %rdi
-    addq $4, %rdx
-    subq $4, %rsi
-.L_tl_string_eq_tail_2:
-    cmpq $2, %rsi
-    jb .L_tl_string_eq_tail_1
-    movzwl (%rdi), %eax
-    movzwl (%rdx), %r8d
-    cmpw %r8w, %ax
-    jne .L_tl_string_eq_false
-    addq $2, %rdi
-    addq $2, %rdx
-    subq $2, %rsi
-.L_tl_string_eq_tail_1:
-    testq %rsi, %rsi
-    jz .L_tl_string_eq_true
-    movzbl (%rdi), %eax
-    movzbl (%rdx), %r8d
-    cmpb %r8b, %al
-    jne .L_tl_string_eq_false
-.L_tl_string_eq_true:
-    movq $1, %rax
-    ret
-.L_tl_string_eq_false:
-    xorq %rax, %rax
-    ret
-
-")
-
-(define (compiler-backend-runtime-hash-string-functions) : String
-  "    .globl tl_hash_string
-tl_hash_string:
-    movq %rdi, %r10
-    movq %rsi, %r11
-    xorq %rax, %rax
-    cmpq $4, %r11
-    jb .L_tl_hash_string_tail_check
-.L_tl_hash_string_loop4:
-    imulq $131, %rax, %rax
-    movzbq (%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    imulq $131, %rax, %rax
-    movzbq 1(%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    imulq $131, %rax, %rax
-    movzbq 2(%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    imulq $131, %rax, %rax
-    movzbq 3(%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    movq %rax, %r8
-    andq $2147483647, %rax
-    shrq $31, %r8
-    addq %r8, %rax
-    cmpq $2147483647, %rax
-    jl .L_tl_hash_string_keep4
-    subq $2147483647, %rax
-.L_tl_hash_string_keep4:
-    addq $4, %r10
-    subq $4, %r11
-    cmpq $4, %r11
-    jae .L_tl_hash_string_loop4
-.L_tl_hash_string_tail_check:
-    testq %r11, %r11
-    jz .L_tl_hash_string_done
-.L_tl_hash_string_loop:
-    imulq $131, %rax, %rax
-    movzbq (%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    movq %rax, %r8
-    andq $2147483647, %rax
-    sarq $31, %r8
-    addq %r8, %rax
-    cmpq $2147483647, %rax
-    jl .L_tl_hash_string_keep
-    subq $2147483647, %rax
-.L_tl_hash_string_keep:
-    incq %r10
-    decq %r11
-    jne .L_tl_hash_string_loop
-.L_tl_hash_string_done:
-    ret
-
-")
-
-(define (compiler-backend-runtime-string-to-int-functions) : String
-  "    .globl tl_string_to_int
-tl_string_to_int:
-    xorq %rax, %rax
-    xorq %r8, %r8
-    testq %rsi, %rsi
-    jz .L_tl_string_to_int_done
-    movzbl (%rdi), %ecx
-    cmpb $45, %cl
-    jne .L_tl_string_to_int_loop
-    movq $1, %r8
-    incq %rdi
-    decq %rsi
-.L_tl_string_to_int_loop:
-    testq %rsi, %rsi
-    jz .L_tl_string_to_int_apply_sign
-    imulq $10, %rax, %rax
-    movzbl (%rdi), %ecx
-    subq $48, %rcx
-    addq %rcx, %rax
-    incq %rdi
-    decq %rsi
-    jmp .L_tl_string_to_int_loop
-.L_tl_string_to_int_apply_sign:
-    testq %r8, %r8
-    jz .L_tl_string_to_int_done
-    negq %rax
-.L_tl_string_to_int_done:
-    ret
-
-")
-
-(define (compiler-backend-runtime-windows-string-eq-functions) : String
-  "    .globl tl_string_eq
-tl_string_eq:
-    cmpq %r9, %rdx
-    jne .L_tl_string_eq_false
-    cmpq %rcx, %r8
-    je .L_tl_string_eq_true
-    movq %rdx, %r10
-    shrq $3, %r10
-    jz .L_tl_string_eq_tail
-.L_tl_string_eq_word_loop:
-    movq (%rcx), %rax
-    cmpq (%r8), %rax
-    jne .L_tl_string_eq_false
-    addq $8, %rcx
-    addq $8, %r8
-    decq %r10
-    jne .L_tl_string_eq_word_loop
-.L_tl_string_eq_tail:
-    andq $7, %rdx
-    jz .L_tl_string_eq_true
-    cmpq $4, %rdx
-    jb .L_tl_string_eq_tail_2
-    movl (%rcx), %eax
-    cmpl (%r8), %eax
-    jne .L_tl_string_eq_false
-    addq $4, %rcx
-    addq $4, %r8
-    subq $4, %rdx
-.L_tl_string_eq_tail_2:
-    cmpq $2, %rdx
-    jb .L_tl_string_eq_tail_1
-    movzwl (%rcx), %eax
-    movzwl (%r8), %r10d
-    cmpw %r10w, %ax
-    jne .L_tl_string_eq_false
-    addq $2, %rcx
-    addq $2, %r8
-    subq $2, %rdx
-.L_tl_string_eq_tail_1:
-    testq %rdx, %rdx
-    jz .L_tl_string_eq_true
-    movzbl (%rcx), %eax
-    movzbl (%r8), %r10d
-    cmpb %r10b, %al
-    jne .L_tl_string_eq_false
-.L_tl_string_eq_true:
-    movq $1, %rax
-    ret
-.L_tl_string_eq_false:
-    xorq %rax, %rax
-    ret
-
-")
-
-(define (compiler-backend-runtime-windows-hash-string-functions) : String
-  "    .globl tl_hash_string
-tl_hash_string:
-    movq %rcx, %r10
-    movq %rdx, %r11
-    xorq %rax, %rax
-    cmpq $4, %r11
-    jb .L_tl_hash_string_tail_check
-.L_tl_hash_string_loop4:
-    imulq $131, %rax, %rax
-    movzbq (%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    imulq $131, %rax, %rax
-    movzbq 1(%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    imulq $131, %rax, %rax
-    movzbq 2(%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    imulq $131, %rax, %rax
-    movzbq 3(%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    movq %rax, %r8
-    andq $2147483647, %rax
-    shrq $31, %r8
-    addq %r8, %rax
-    cmpq $2147483647, %rax
-    jl .L_tl_hash_string_keep4
-    subq $2147483647, %rax
-.L_tl_hash_string_keep4:
-    addq $4, %r10
-    subq $4, %r11
-    cmpq $4, %r11
-    jae .L_tl_hash_string_loop4
-.L_tl_hash_string_tail_check:
-    testq %r11, %r11
-    jz .L_tl_hash_string_done
-.L_tl_hash_string_loop:
-    imulq $131, %rax, %rax
-    movzbq (%r10), %r8
-    addq %r8, %rax
-    incq %rax
-    movq %rax, %r8
-    andq $2147483647, %rax
-    sarq $31, %r8
-    addq %r8, %rax
-    cmpq $2147483647, %rax
-    jl .L_tl_hash_string_keep
-    subq $2147483647, %rax
-.L_tl_hash_string_keep:
-    incq %r10
-    decq %r11
-    jne .L_tl_hash_string_loop
-.L_tl_hash_string_done:
-    ret
-
-")
-
-(define (compiler-backend-runtime-windows-string-to-int-functions) : String
-  "    .globl tl_string_to_int
-tl_string_to_int:
-    movq %rcx, %r10
-    xorq %rax, %rax
-    xorq %r8, %r8
-    testq %rdx, %rdx
-    jz .L_tl_string_to_int_done
-    movzbl (%r10), %ecx
-    cmpb $45, %cl
-    jne .L_tl_string_to_int_loop
-    movq $1, %r8
-    incq %r10
-    decq %rdx
-.L_tl_string_to_int_loop:
-    testq %rdx, %rdx
-    jz .L_tl_string_to_int_apply_sign
-    imulq $10, %rax, %rax
-    movzbl (%r10), %ecx
-    subq $48, %rcx
-    addq %rcx, %rax
-    incq %r10
-    decq %rdx
-    jmp .L_tl_string_to_int_loop
-.L_tl_string_to_int_apply_sign:
-    testq %r8, %r8
-    jz .L_tl_string_to_int_done
-    negq %rax
-.L_tl_string_to_int_done:
-    ret
-
-")
-
 (define (compiler-backend-runtime-int-to-string-functions) : String
   "    .globl tl_int_to_string
 tl_int_to_string:
@@ -16586,8 +16278,8 @@ tl_memcpy:
         oob
         substring
         concat
-        string-eq
-        string-to-int
+        _
+        _
         int-to-string
         abort
         _
@@ -16618,8 +16310,6 @@ tl_memcpy:
         tail-plan)
       (let
         [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
-        [hash-string : bool
-          (compiler-backend-runtime-tail-hash-string? tail-plan)]
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
@@ -16653,24 +16343,6 @@ tl_memcpy:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-concat-functions)
               (compiler-backend-runtime-concat-functions))
-            "")]
-        [string-eq-asm : String
-          (if string-eq
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-string-eq-functions)
-              (compiler-backend-runtime-string-eq-functions))
-            "")]
-        [hash-string-asm : String
-          (if hash-string
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-hash-string-functions)
-              (compiler-backend-runtime-hash-string-functions))
-            "")]
-        [string-to-int-asm : String
-          (if string-to-int
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-string-to-int-functions)
-              (compiler-backend-runtime-string-to-int-functions))
             "")]
         [int-to-string-asm : String
           (if int-to-string
@@ -16720,15 +16392,8 @@ tl_memcpy:
                   div-abort-asm))))]
         [runtime-string-asm : String
           (string-append
-            (backend-cat5
-              shift-abort-asm
-              substring-asm
-              concat-asm
-              string-eq-asm
-              hash-string-asm)
-            (string-append
-              string-to-int-asm
-              (string-append int-to-string-asm abort-asm)))]
+            (backend-cat5 shift-abort-asm substring-asm concat-asm "" "")
+            (string-append int-to-string-asm abort-asm))]
         [env-var-exists-asm : String
           (if env-var-exists
             (if (compiler-backend-target-windows? target)
@@ -18226,16 +17891,12 @@ tl_memcpy:
   (compiler-backend-string-cons
     "tl_alloc"
     (compiler-backend-string-cons
-      "tl_string_eq"
+      "tl_region_mark"
       (compiler-backend-string-cons
-        "tl_hash_string"
+        "tl_region_reset"
         (compiler-backend-string-cons
-          "tl_region_mark"
-          (compiler-backend-string-cons
-            "tl_region_reset"
-            (compiler-backend-string-cons
-              "tl_div_abort"
-              (compiler-backend-string-cons "tl_shift_abort" BackendStringNil))))))))
+          "tl_div_abort"
+          (compiler-backend-string-cons "tl_shift_abort" BackendStringNil))))))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
@@ -18810,12 +18471,8 @@ tl_memcpy:
       (compiler-ir-extern-cons
         (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
-          (compiler-ir-extern-cons
-            (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
-            (compiler-ir-extern-cons
-              (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
-              IrExternNil)))))))
+          (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
+          IrExternNil)))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -18870,16 +18527,12 @@ tl_memcpy:
   "(extern (tl_alloc [arg0 : i64]) : i64)
 (extern (tl_substring [arg0 : i64] [arg1 : i64] [arg2 : i64]) : i64)
 (extern (tl_string_concat [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64]) : i64)
-(extern (tl_string_eq [arg0 : String] [arg1 : String]) : bool)
-(extern (tl_string_to_int [arg0 : String]) : i64)
 (extern (tl_int_to_string [arg0 : i64]) : String)
 (define (main) : i64
   (begin
     (tl_alloc 8)
     (tl_substring 0 0 0)
     (tl_string_concat 0 0 0 0)
-    (tl_string_eq \"\" \"\")
-    (tl_string_to_int \"1\")
     (tl_int_to_string 1)
     42))")
 
@@ -18951,10 +18604,11 @@ tl_memcpy:
             (not (compiler-backend-string-contains? asm "getrandom:\n"))
             (not (compiler-backend-string-contains? asm "getcwd:\n"))))
         (backend-and8
-          (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
-          (compiler-backend-string-contains? asm "tl_string_eq:\n")
-          (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
-          (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+          (not (compiler-backend-string-contains? asm ".globl tl_string_eq\n"))
+          (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
+          (not
+            (compiler-backend-string-contains? asm ".globl tl_string_to_int\n"))
+          (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
           (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
           (compiler-backend-string-contains? asm "tl_int_to_string:\n")
           (not (compiler-backend-string-contains? asm "tl_process_output:\n"))
@@ -19044,8 +18698,8 @@ tl_memcpy:
           (compiler-backend-string-contains? asm ".extern tl_write_file\n")
           (compiler-backend-string-contains? asm ".extern tl_file_exists\n")
           (compiler-backend-string-contains? asm ".extern tl_print_err\n")
-          (compiler-backend-string-contains? asm "tl_string_eq:\n")
-          (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
+          (compiler-backend-string-contains? asm ".extern tl_string_eq\n")
+          (compiler-backend-string-contains? asm ".extern tl_string_to_int\n"))
         (compiler-backend-string-contains? asm "tl_int_to_string:\n")
         (compiler-backend-string-contains?
           asm
@@ -19057,6 +18711,8 @@ tl_memcpy:
           (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n")))
         (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
         (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
+        (not (compiler-backend-string-contains? asm "tl_string_eq:\n"))
+        (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
         (not (compiler-backend-string-contains? asm "    call _open\n"))
         (not (compiler-backend-string-contains? asm "syscall\n")))]
     [(ErrCompilerBackend _) false]))

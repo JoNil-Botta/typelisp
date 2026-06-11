@@ -318,11 +318,25 @@
                       (compiler-typecheck-reference-return-container-tests-ok?)
                       (compiler-typecheck-reference-dyn-array-tests-ok?))))))))))))
 
+(define (compiler-typecheck-macro-alias-cache-collision-ok?) : bool
+  (begin
+    (macro-alias-cache-reset!)
+    (macro-alias-cache-ensure!)
+    (macro-alias-cache-put! 1 262144 11)
+    (macro-alias-cache-put! 2 0 22)
+    (and
+      (= (macro-alias-cache-get 1 262144) 11)
+      (= (macro-alias-cache-get 2 0) 22))))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
-    (if (compiler-typecheck-reference-escape-tests-ok?)
-      42
+    (if (and
+      (compiler-typecheck-reference-escape-tests-ok?)
+      (compiler-typecheck-macro-alias-cache-collision-ok?))
+      (begin
+        (macro-alias-cache-reset!)
+        42)
       (begin
         (panic "typecheck: reference escape tests failed")
         0))))

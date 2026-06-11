@@ -19377,14 +19377,18 @@
 ;; declarations, which macro expansion, comptime generation, and
 ;; specialization never insert or reorder mid-compile. Memoize per
 ;; generation (same idiom as the marker name-id memos), open-addressed and
-;; keyed by the two intern ids. Key slots store key+1 so the zeroed table is
-;; empty; values store the resolved target's intern id, or -1 for "no alias
-;; import" (return the qualifier unchanged). Inserts stop at half load --
-;; only memoization, never correctness, degrades.
+;; keyed by the two intern ids. Module key slots store module-id+1 so the zeroed
+;; table is empty; qualifier slots store qualifier-id+1, and values store the
+;; resolved target's intern id, or -1 for "no alias import" (return the
+;; qualifier unchanged). Inserts stop at half load -- only memoization, never
+;; correctness, degrades.
 (define macro-alias-cache-capacity : i64
   4096)
 
-(define macro-alias-cache-keys : (Array i64)
+(define macro-alias-cache-module-keys : (Array i64)
+  (make-array i64 4096))
+
+(define macro-alias-cache-qualifier-keys : (Array i64)
   (make-array i64 4096))
 
 (define macro-alias-cache-values : (Array i64)
@@ -19417,19 +19421,23 @@
       (begin
         (while (< i macro-alias-cache-capacity)
           (begin
-            (array-set! macro-alias-cache-keys i 0)
+            (array-set! macro-alias-cache-module-keys i 0)
             (set! i (+ i 1))))
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (intern-generation))
         (set! macro-alias-cache-ready true)))))
 
-(define (macro-alias-cache-bucket [key : i64]) : i64
-  (bit-and (* key 2654435761) (- macro-alias-cache-capacity 1)))
+(define (macro-alias-cache-bucket [module-id : i64] [qualifier-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2654435761) qualifier-id)
+    (- macro-alias-cache-capacity 1)))
 
-;; Returns the cached value for `key`, or -2 when the key is absent.
-(define (macro-alias-cache-get [key : i64]) : i64
+;; Returns the cached value for `(module-id, qualifier-id)`, or -2 when absent.
+(define (macro-alias-cache-get [module-id : i64] [qualifier-id : i64]) : i64
   (let
-    [cursor : i64 (macro-alias-cache-bucket key)]
+    [cursor : i64 (macro-alias-cache-bucket module-id qualifier-id)]
+    [module-key : i64 (+ module-id 1)]
+    [qualifier-key : i64 (+ qualifier-id 1)]
     [steps : i64 0]
     [out : i64 -2]
     [done : bool false]
@@ -19438,10 +19446,14 @@
         false
         (< steps macro-alias-cache-capacity))
         (let
-          [slot : i64 (array-ref macro-alias-cache-keys cursor)]
+          [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
           (if (= slot 0)
             (set! done true)
-            (if (= slot (+ key 1))
+            (if (and
+              (= slot module-key)
+              (=
+                (array-ref macro-alias-cache-qualifier-keys cursor)
+                qualifier-key))
               (begin
                 (set! out (array-ref macro-alias-cache-values cursor))
                 (set! done true))
@@ -19452,11 +19464,16 @@
                 (set! steps (+ steps 1)))))))
       out)))
 
-(define (macro-alias-cache-put! [key : i64] [value : i64]) : unit
+(define (macro-alias-cache-put!
+  [module-id : i64]
+  [qualifier-id : i64]
+  [value : i64]) : unit
   (if (>= (* macro-alias-cache-count 2) macro-alias-cache-capacity)
     unit
     (let
-      [cursor : i64 (macro-alias-cache-bucket key)]
+      [cursor : i64 (macro-alias-cache-bucket module-id qualifier-id)]
+      [module-key : i64 (+ module-id 1)]
+      [qualifier-key : i64 (+ qualifier-id 1)]
       [steps : i64 0]
       [done : bool false]
       (begin
@@ -19464,14 +19481,22 @@
           false
           (< steps macro-alias-cache-capacity))
           (let
-            [slot : i64 (array-ref macro-alias-cache-keys cursor)]
+            [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
             (if (= slot 0)
               (begin
-                (array-set! macro-alias-cache-keys cursor (+ key 1))
+                (array-set! macro-alias-cache-module-keys cursor module-key)
+                (array-set!
+                  macro-alias-cache-qualifier-keys
+                  cursor
+                  qualifier-key)
                 (array-set! macro-alias-cache-values cursor value)
                 (set! macro-alias-cache-count (+ macro-alias-cache-count 1))
                 (set! done true))
-              (if (= slot (+ key 1))
+              (if (and
+                (= slot module-key)
+                (=
+                  (array-ref macro-alias-cache-qualifier-keys cursor)
+                  qualifier-key))
                 (set! done true)
                 (begin
                   (set!
@@ -19489,8 +19514,7 @@
     (let
       [current-module-id : i64 (intern current-module)]
       [qualifier-id : i64 (intern qualifier)]
-      [key : i64 (+ (* current-module-id 262144) qualifier-id)]
-      [cached : i64 (macro-alias-cache-get key)]
+      [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
       (if (= cached -2)
         (match (macro-import-alias-target-ids
           decls
@@ -19499,11 +19523,14 @@
           (intern ""))
           [(TcSomeString target)
             (begin
-              (macro-alias-cache-put! key (intern target))
+              (macro-alias-cache-put!
+                current-module-id
+                qualifier-id
+                (intern target))
               target)]
           [(TcNoString)
             (begin
-              (macro-alias-cache-put! key -1)
+              (macro-alias-cache-put! current-module-id qualifier-id -1)
               qualifier)])
         (if (< cached 0)
           qualifier

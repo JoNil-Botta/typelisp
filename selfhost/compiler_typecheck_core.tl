@@ -115,6 +115,10 @@
   (TcStringNil)
   (TcStringCons String (Box TcStringList)))
 
+(defenum ResultTcStringList
+  (OkTcStringList TcStringList)
+  (ErrTcStringList String))
+
 (defenum ResultTcLifetimeList
   (OkTcLifetimeList AstLifetimeList)
   (ErrTcLifetimeList String))
@@ -16306,7 +16310,1151 @@
           "typecheck: macro body produced type does not match declaration"))]
     [_ (ErrTcUnit "typecheck: macro body must return Expr")]))
 
+(define (tc-comptime-purity-chain-push [chain : TcStringList] [name : String]) : TcStringList
+  (TcStringCons name (box chain)))
+
+(define (tc-comptime-purity-chain-render [chain : TcStringList]) : String
+  (match chain
+    [(TcStringNil) ""]
+    [(TcStringCons head rest)
+      (let
+        [tail : String (tc-comptime-purity-chain-render (box-get rest))]
+        (if (string-eq tail "")
+          head
+          (str-cat tail " -> " head)))]))
+
+(define (tc-comptime-purity-chain-path [chain : TcStringList] [name : String]) : String
+  (let
+    [prefix : String (tc-comptime-purity-chain-render chain)]
+    (if (string-eq prefix "")
+      name
+      (str-cat prefix " -> " name))))
+
+(define (tc-comptime-purity-error
+  [expr : AstExpr]
+  [chain : TcStringList]
+  [name : String]
+  [reason : String]) : ResultTcUnit
+  (ErrTcUnit
+    (tc-locate-error-at-expr
+      expr
+      (str-cat
+        "typecheck: comptime purity rejects "
+        reason
+        (str-cat
+          "; reference path: "
+          (tc-comptime-purity-chain-path chain name))))))
+
+(define (tc-comptime-purity-banned-module? [module : String]) : bool
+  (core/cond
+    (string-eq module "io")
+    true
+    (string-eq module "stdlib.io")
+    true
+    (string-eq module "stdlib/io")
+    true
+    (string-eq module "fs")
+    true
+    (string-eq module "stdlib.fs")
+    true
+    (string-eq module "stdlib/fs")
+    true
+    (string-eq module "process")
+    true
+    (string-eq module "stdlib.process")
+    true
+    (string-eq module "stdlib/process")
+    true
+    (string-eq module "stdlib.process-runtime")
+    true
+    (string-eq module "stdlib/process_runtime")
+    true
+    (string-eq module "env")
+    true
+    (string-eq module "stdlib.env")
+    true
+    (string-eq module "stdlib/env")
+    true
+    false))
+
+(define (tc-comptime-purity-banned-qualified? [ctx : TcContext] [name : String]) : bool
+  (if (tc-name-qualified? name)
+    (let
+      [qualifier : String (tc-qualified-name-module name)]
+      [target : String (tc-qualified-access-target-module ctx qualifier)]
+      (or
+        (tc-comptime-purity-banned-module? qualifier)
+        (tc-comptime-purity-banned-module? target)))
+    false))
+
+(define (tc-comptime-purity-ctfe-builtin? [name : String]) : bool
+  (core/cond
+    (string-eq name "size-of")
+    true
+    (string-eq name "align-of")
+    true
+    (string-eq name "offset-of")
+    true
+    (ctfe-reflection-query-name? name)
+    true
+    (string-eq name "string-eq")
+    true
+    (string-eq name "string=?")
+    true
+    (string-eq name "string-append")
+    true
+    (string-eq name "string-concat")
+    true
+    (string-eq name "string-length")
+    true
+    (string-eq name "length")
+    true
+    (string-eq name "int->string")
+    true
+    (string-eq name "expr-bool")
+    true
+    (string-eq name "expr-int")
+    true
+    (string-eq name "expr-var")
+    true
+    (string-eq name "expr-splice")
+    true
+    (string-eq name "expr-if")
+    true
+    (ctfe-expr-inspector-name? name)
+    true
+    (ctfe-expr-list-inspector-name? name)
+    true
+    (ctfe-expr-clause-inspector-name? name)
+    true
+    (ctfe-expr-clause-list-inspector-name? name)
+    true
+    false))
+
+(define (tc-macro-param-list-add-bound-names
+  [params : AstMacroParamList]
+  [bound : TcStringList]) : TcStringList
+  (match params
+    [(AstMacroParamNil) bound]
+    [(AstMacroParamCons param rest)
+      (let
+        [rest : AstMacroParamList (box-get rest)]
+        (match param
+          [(AstMacroParam name _ _)
+            (tc-macro-param-list-add-bound-names
+              rest
+              (tc-string-list-add bound (intern-str name)))]))]))
+
+(define (tc-macro-param-bound-names [params : AstMacroParamList]) : TcStringList
+  (tc-macro-param-list-add-bound-names params TcStringNil))
+
+(define (tc-comptime-purity-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [expr : AstExpr]) : ResultTcUnit
+  (tc-comptime-purity-expr-mode ctx env bound chain seen false expr))
+
+(define (tc-comptime-purity-node-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [expr-id : i64]) : ResultTcUnit
+  (tc-comptime-purity-expr-mode
+    ctx
+    env
+    bound
+    chain
+    seen
+    template?
+    (ast-node-get expr-id)))
+
+(define (tc-comptime-purity-node2-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [left : i64]
+  [right : i64]) : ResultTcUnit
+  (match (tc-comptime-purity-node-mode ctx env bound chain seen template? left)
+    [(OkTcUnit)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? right)]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-comptime-purity-node3-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [first : i64]
+  [second : i64]
+  [third : i64]) : ResultTcUnit
+  (match (tc-comptime-purity-node-mode ctx env bound chain seen template? first)
+    [(OkTcUnit)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        second)
+        [(OkTcUnit)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            bound
+            chain
+            seen
+            template?
+            third)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-comptime-purity-template-bound
+  [template? : bool]
+  [bound : TcStringList]
+  [name : i64]) : TcStringList
+  (if template?
+    bound
+    (tc-string-list-add bound (intern-str name))))
+
+(define (tc-comptime-purity-reject-or-template-ok
+  [expr : AstExpr]
+  [chain : TcStringList]
+  [template? : bool]
+  [name : String]
+  [reason : String]) : ResultTcUnit
+  (if template?
+    OkTcUnit
+    (tc-comptime-purity-error expr chain name reason)))
+
+(define (tc-comptime-purity-reject-or-template-node
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [expr : AstExpr]
+  [name : String]
+  [reason : String]
+  [inner : i64]) : ResultTcUnit
+  (if template?
+    (tc-comptime-purity-node-mode ctx env bound chain seen true inner)
+    (tc-comptime-purity-error expr chain name reason)))
+
+(define (tc-comptime-purity-reject-or-template-node2
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [expr : AstExpr]
+  [name : String]
+  [reason : String]
+  [left : i64]
+  [right : i64]) : ResultTcUnit
+  (if template?
+    (tc-comptime-purity-node2-mode ctx env bound chain seen true left right)
+    (tc-comptime-purity-error expr chain name reason)))
+
+(define (tc-comptime-purity-expr-list-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [exprs : AstExprList]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons head rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match (tc-comptime-purity-node-mode
+          ctx
+          env
+          bound
+          chain
+          seen
+          template?
+          head)
+          [(OkTcUnit)
+            (tc-comptime-purity-expr-list-mode
+              ctx
+              env
+              bound
+              chain
+              seen
+              template?
+              rest)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]))
+
+(define (tc-comptime-purity-expr-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [exprs : AstExprList]) : ResultTcUnit
+  (tc-comptime-purity-expr-list-mode ctx env bound chain seen false exprs))
+
+(define (tc-comptime-purity-let-bindings-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [bindings : AstLetBindingList]) : ResultTcStringList
+  (match bindings
+    [(AstLetBindingNil) (OkTcStringList bound)]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ init-box)
+            (match (tc-comptime-purity-node-mode
+              ctx
+              env
+              bound
+              chain
+              seen
+              template?
+              init-box)
+              [(OkTcUnit)
+                (tc-comptime-purity-let-bindings-mode
+                  ctx
+                  env
+                  (tc-comptime-purity-template-bound template? bound name)
+                  chain
+                  seen
+                  template?
+                  rest)]
+              [(ErrTcUnit message) (ErrTcStringList message)])]))]))
+
+(define (tc-comptime-purity-resource-bindings-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [bindings : AstResourceBindingList]) : ResultTcStringList
+  (match bindings
+    [(AstResourceBindingNil) (OkTcStringList bound)]
+    [(AstResourceBindingCons binding rest)
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding name init-box cleanup-box)
+            (match (tc-comptime-purity-node2-mode
+              ctx
+              env
+              bound
+              chain
+              seen
+              template?
+              init-box
+              cleanup-box)
+              [(OkTcUnit)
+                (tc-comptime-purity-resource-bindings-mode
+                  ctx
+                  env
+                  (tc-comptime-purity-template-bound template? bound name)
+                  chain
+                  seen
+                  template?
+                  rest)]
+              [(ErrTcUnit message) (ErrTcStringList message)])]))]))
+
+(define (tc-comptime-purity-match-arms-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (match arms
+    [(AstMatchArmNil) OkTcUnit]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (match (tc-comptime-purity-node-mode
+              ctx
+              env
+              (if template?
+                bound
+                (tc-pattern-add-bound-names pattern bound))
+              chain
+              seen
+              template?
+              body-box)
+              [(OkTcUnit)
+                (tc-comptime-purity-match-arms-mode
+                  ctx
+                  env
+                  bound
+                  chain
+                  seen
+                  template?
+                  rest)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+
+(define (tc-comptime-purity-expr-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        inner-box)]
+    [(AstExprLiteral _) OkTcUnit]
+    [(AstExprVar name)
+      (if template?
+        OkTcUnit
+        (tc-comptime-purity-var ctx env bound chain seen expr name))]
+    [(AstExprBinary _ left right)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        left
+        right)]
+    [(AstExprUnary _ inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprCall func args)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        func)
+        [(OkTcUnit)
+          (tc-comptime-purity-expr-list-mode
+            ctx
+            env
+            bound
+            chain
+            seen
+            template?
+            args)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        cond
+        then-branch
+        else-branch)]
+    [(AstExprLet bindings body)
+      (match (tc-comptime-purity-let-bindings-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        bindings)
+        [(OkTcStringList body-bound)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            body-bound
+            chain
+            seen
+            template?
+            body)]
+        [(ErrTcStringList message) (ErrTcUnit message)])]
+    [(AstExprLambda params _ body)
+      (tc-comptime-purity-node-mode
+        ctx
+        env
+        (if template?
+          bound
+          (tc-param-list-add-bound-names params bound))
+        chain
+        seen
+        template?
+        body)]
+    [(AstExprTuple exprs)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        exprs)]
+    [(AstExprTupleRef tuple _)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? tuple)]
+    [(AstExprArray exprs)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        exprs)]
+    [(AstExprMakeArray _ len)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? len)]
+    [(AstExprArrayRef array index)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        array
+        index)]
+    [(AstExprArraySet array index value)
+      (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        array
+        index
+        value)]
+    [(AstExprArrayPush array value)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        array
+        value)]
+    [(AstExprStringRef str index)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        str
+        index)]
+    [(AstExprWhile cond body)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        cond
+        body)]
+    [(AstExprBegin exprs)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        exprs)]
+    [(AstExprUnsafe exprs)
+      (if template?
+        (tc-comptime-purity-expr-list-mode ctx env bound chain seen true exprs)
+        (tc-comptime-purity-error expr chain "unsafe" "unsafe block"))]
+    [(AstExprSet _ value)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? value)]
+    [(AstExprAnn inner _)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprCast inner _)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprBorrow _ _ place)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? place)]
+    [(AstExprMatch scrut arms)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        scrut)
+        [(OkTcUnit)
+          (tc-comptime-purity-match-arms-mode
+            ctx
+            env
+            bound
+            chain
+            seen
+            template?
+            arms)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprForeach index _ start end body)
+      (match (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        start
+        end)
+        [(OkTcUnit)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            (tc-comptime-purity-template-bound template? bound index)
+            chain
+            seen
+            template?
+            body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprSpmdReduce _ index _ start end init value)
+      (match (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        start
+        end
+        init)
+        [(OkTcUnit)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            (tc-comptime-purity-template-bound template? bound index)
+            chain
+            seen
+            template?
+            value)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprStructGet receiver _)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? receiver)]
+    [(AstExprStructSet receiver _ value)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        receiver
+        value)]
+    [(AstExprWithRegion _ body)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        body)]
+    [(AstExprWithEscape scratch body)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        scratch)
+        [(OkTcUnit)
+          (tc-comptime-purity-expr-list-mode
+            ctx
+            env
+            bound
+            chain
+            seen
+            template?
+            body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprWithResource bindings body)
+      (match (tc-comptime-purity-resource-bindings-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        bindings)
+        [(OkTcStringList body-bound)
+          (tc-comptime-purity-expr-list-mode
+            ctx
+            env
+            body-bound
+            chain
+            seen
+            template?
+            body)]
+        [(ErrTcStringList message) (ErrTcUnit message)])]
+    [(AstExprBox inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprBoxGet inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprTypeLiteral _) OkTcUnit]
+    [(AstExprInit _) OkTcUnit]
+    [(AstExprComptime inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprQuote _) OkTcUnit]
+    [(AstExprQuasiquote inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen true inner)]
+    [(AstExprUnquote inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen false inner)]
+    [(AstExprUnquoteSplicing inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen false inner)]
+    [(AstExprBracketClause items)
+      (tc-comptime-purity-expr-list-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        items)]
+    [(AstExprTry inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprReturn inner)
+      (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
+    [(AstExprPtrNull _)
+      (tc-comptime-purity-reject-or-template-ok
+        expr
+        chain
+        template?
+        "ptr-null"
+        "raw pointer operation")]
+    [(AstExprPtrNullCheck inner)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "ptr-null?"
+        "raw pointer operation"
+        inner)]
+    [(AstExprPtrAddrOf _)
+      (tc-comptime-purity-reject-or-template-ok
+        expr
+        chain
+        template?
+        "ptr-addr-of"
+        "raw pointer operation")]
+    [(AstExprPtrRead ptr)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "ptr-read"
+        "raw pointer operation"
+        ptr)]
+    [(AstExprPtrWrite ptr value)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "ptr-write!"
+        "raw pointer operation"
+        ptr
+        value)]
+    [(AstExprPtrOffset ptr offset)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "ptr-offset"
+        "raw pointer operation"
+        ptr
+        offset)]
+    [(AstExprPtrCast ptr _)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "ptr-cast"
+        "raw pointer operation"
+        ptr)]
+    [(AstExprPtrToInt ptr)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "ptr->int"
+        "raw pointer operation"
+        ptr)]
+    [(AstExprIntToPtr value _)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "int->ptr"
+        "raw pointer operation"
+        value)]
+    [(AstExprStringData str)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "string-data"
+        "unsafe FFI bridge"
+        str)]
+    [(AstExprStringFromBytes ptr len)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "string-from-bytes"
+        "unsafe FFI bridge"
+        ptr
+        len)]
+    [(AstExprArrayData array)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "array-data"
+        "unsafe FFI bridge"
+        array)]
+    [(AstExprProgramArgc)
+      (tc-comptime-purity-reject-or-template-ok
+        expr
+        chain
+        template?
+        "program-argc"
+        "runtime process state")]
+    [(AstExprProgramArgv)
+      (tc-comptime-purity-reject-or-template-ok
+        expr
+        chain
+        template?
+        "program-argv"
+        "runtime process state")]
+    [(AstExprProgramEnvp)
+      (tc-comptime-purity-reject-or-template-ok
+        expr
+        chain
+        template?
+        "program-envp"
+        "runtime process state")]
+    [(AstExprCpuIdEax leaf subleaf)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "cpuid"
+        "host CPU query"
+        leaf
+        subleaf)]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "cpuid"
+        "host CPU query"
+        leaf
+        subleaf)]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "cpuid"
+        "host CPU query"
+        leaf
+        subleaf)]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (tc-comptime-purity-reject-or-template-node2
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "cpuid"
+        "host CPU query"
+        leaf
+        subleaf)]
+    [(AstExprXgetbv index)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        expr
+        "xgetbv"
+        "host CPU query"
+        index)]
+    [(AstExprSyscall args)
+      (if template?
+        (tc-comptime-purity-expr-list-mode ctx env bound chain seen true args)
+        (tc-comptime-purity-error expr chain "syscall" "host syscall"))]))
+
+(define (tc-comptime-purity-var
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [expr : AstExpr]
+  [name-id : i64]) : ResultTcUnit
+  (let
+    [name : String (intern-str name-id)]
+    (core/cond
+      (tc-string-list-contains bound name)
+      OkTcUnit
+      (tc-comptime-purity-banned-qualified? ctx name)
+      (tc-comptime-purity-error
+        expr
+        chain
+        name
+        (str-cat "import from module " (tc-qualified-name-module name)))
+      (tc-comptime-purity-ctfe-builtin? name)
+      OkTcUnit
+      (match (tc-lookup-unsafe-id env name-id)
+        [(OkTcTypeUnsafe _ unsafe?)
+          (if unsafe?
+            (tc-comptime-purity-error
+              expr
+              chain
+              name
+              (str-cat "unsafe declaration " name))
+            (tc-comptime-purity-var-handle
+              ctx
+              env
+              bound
+              chain
+              seen
+              expr
+              name-id))]
+        [(ErrTcTypeUnsafe _)
+          (tc-comptime-purity-var-handle ctx env bound chain seen expr name-id)]))))
+
+(define (tc-comptime-purity-var-handle
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [expr : AstExpr]
+  [name-id : i64]) : ResultTcUnit
+  (match (compiler-symbols-lookup-value-id (tc-context-symbols ctx) name-id)
+    [(SomeI64 handle)
+      (let
+        [name : String (intern-str name-id)]
+        [kind : i64 (compiler-symbol-handle-kind handle)]
+        (core/cond
+          (= kind (compiler-symbol-kind-extern))
+          (tc-comptime-purity-error
+            expr
+            chain
+            name
+            (str-cat "extern reference " name))
+          (= kind (compiler-symbol-kind-defdispatch))
+          (tc-comptime-purity-error
+            expr
+            chain
+            name
+            (str-cat "runtime dispatch reference " name))
+          (or
+            (= kind (compiler-symbol-kind-value-define))
+            (= kind (compiler-symbol-kind-function-define)))
+          (tc-comptime-purity-handle-decl
+            ctx
+            env
+            bound
+            chain
+            seen
+            expr
+            name
+            handle)
+          OkTcUnit))]
+    [(NoneI64) OkTcUnit]))
+
+(define (tc-comptime-purity-handle-decl
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [expr : AstExpr]
+  [name : String]
+  [handle : i64]) : ResultTcUnit
+  (if (tc-string-list-contains seen name)
+    OkTcUnit
+    (let
+      [index : i64 (compiler-symbol-handle-index handle)]
+      [decls : (Array AstDecl)
+        (compiler-symbols-decls (tc-context-symbols ctx))]
+      (if (or (< index 0) (>= index (array-length decls)))
+        OkTcUnit
+        (tc-comptime-purity-decl
+          ctx
+          env
+          (tc-comptime-purity-chain-push chain name)
+          (tc-string-list-add seen name)
+          (array-ref decls index))))))
+
+(define (tc-comptime-purity-decl
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [decl : AstDecl]) : ResultTcUnit
+  (match decl
+    [(AstDeclDef _ _ expr-box)
+      (let
+        [expr : AstExpr (ast-node-get expr-box)]
+        (tc-comptime-purity-expr ctx env TcStringNil chain seen expr))]
+    [(AstDeclDefFn _ params _ body-box _)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tc-comptime-purity-expr
+          ctx
+          env
+          (tc-param-bound-names params)
+          chain
+          seen
+          body))]
+    [(AstDeclDefMacro _ _ _ _) OkTcUnit]
+    [(AstDeclExtern name _ _ _)
+      (tc-comptime-purity-error
+        (AstExprVar name)
+        chain
+        (intern-str name)
+        (str-cat "extern reference " (intern-str name)))]
+    [(AstDeclDefDispatch name _)
+      (tc-comptime-purity-error
+        (AstExprVar name)
+        chain
+        (intern-str name)
+        (str-cat "runtime dispatch reference " (intern-str name)))]
+    [(AstDeclUnsafe _)
+      (ErrTcUnit
+        (str-cat
+          "typecheck: comptime purity rejects unsafe declaration; reference path: "
+          (tc-comptime-purity-chain-render chain)))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (tc-comptime-purity-decl ctx env chain seen template))]
+    [_ OkTcUnit]))
+
+(define (tc-check-defmacro-purity
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [params : AstMacroParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-comptime-purity-expr
+    ctx
+    env
+    (tc-macro-param-bound-names params)
+    (tc-comptime-purity-chain-push TcStringNil (intern-str name))
+    (tc-string-list-add TcStringNil (intern-str name))
+    body))
+
+(define (tc-check-comptime-decl-purity
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [template : AstDecl]) : ResultTcUnit
+  (tc-comptime-purity-decl
+    ctx
+    env
+    (tc-comptime-purity-chain-push TcStringNil "comptime-decl")
+    TcStringNil
+    template))
+
 (define (tc-check-defmacro
+  [name : i64]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [params : AstMacroParamList]
@@ -16317,17 +17465,22 @@
       (tc-bind-macro-params ctx (tc-macro-helper-env top-env) params)]
     (match (tc-expr ctx macro-env body)
       [(OkTcType got)
-        (match (tc-expect
-          got
-          (AstTyExpr)
-          "typecheck: macro body must return Expr")
+        (match (tc-check-defmacro-purity ctx macro-env name params body)
           [(OkTcUnit)
-            (match (compiler-ctfe-eval
-              body
-              (tc-ctfe-env-extend-macro-params ctx (tc-ctfe-env ctx) params)
-              (ctfe-fuel-limit))
-              [(OkCtfe value _) (tc-check-defmacro-produced-type ctx ret value)]
-              [(ErrCtfe diag) (ErrTcUnit (compiler-diagnostic-message diag))])]
+            (match (tc-expect
+              got
+              (AstTyExpr)
+              "typecheck: macro body must return Expr")
+              [(OkTcUnit)
+                (match (compiler-ctfe-eval
+                  body
+                  (tc-ctfe-env-extend-macro-params ctx (tc-ctfe-env ctx) params)
+                  (ctfe-fuel-limit))
+                  [(OkCtfe value _)
+                    (tc-check-defmacro-produced-type ctx ret value)]
+                  [(ErrCtfe diag)
+                    (ErrTcUnit (compiler-diagnostic-message diag))])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
 
@@ -22555,10 +23708,10 @@
                   [(ErrTcUnit message) (ErrTcUnit message)])]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
-    [(AstDeclDefMacro _ params ret body-box)
+    [(AstDeclDefMacro name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
-        (tc-check-defmacro ctx top-env params ret body))]
+        (tc-check-defmacro name ctx top-env params ret body))]
     [(AstDeclExtern _ kind metadata ty)
       (tc-check-extern-decl ctx kind metadata ty)]
     [(AstDeclDefDispatch name variants)
@@ -22600,7 +23753,10 @@
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (tc-check-decl-with-global-env ctx top-env global-env template))]
+        (match (tc-check-comptime-decl-purity ctx top-env template)
+          [(OkTcUnit)
+            (tc-check-decl-with-global-env ctx top-env global-env template)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]

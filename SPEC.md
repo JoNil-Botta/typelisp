@@ -65,7 +65,10 @@ transitional surface:
   atomic arena supports concurrent allocation (#2591/#2593). Thread safety
   extends the section 1.1 no-UB contract through structural checker
   classification, not traits (#2590): a value may cross threads only when
-  owned by an arena whose lifetime spans both threads.
+  owned by an arena whose lifetime spans both threads. Sections 6.2 and 7.3
+  specify the v1 atomic arena runtime/source contract; until the runtime and
+  checker slices land, the raw `stdlib/thread.tl` caveat about unsynchronized
+  allocation remains implementation behavior.
 - **Tests.** Inline tests and doctests are typechecked on every build of the
   owning package and generate no code outside the test runner (#2587/#2594);
   the checked test surface is exactly the package's own sources.
@@ -3833,8 +3836,8 @@ stdlib code needs capabilities that are not expressible as ordinary FFI calls.
 environment, filesystem, and process helpers rather than backend runtime
 symbols. The backend-owned core runtime subset is limited to the allocator and
 arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
-`tl_arena_make`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, and
-`tl_arena_poison_enable`.
+`tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`,
+`tl_arena_destroy`, and `tl_arena_poison_enable`.
 
 | Symbol | Purpose |
 |--------|---------|
@@ -3842,6 +3845,7 @@ arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
 | `tl_arena_current` | Return the current arena header |
 | `tl_arena_set` | Install a current arena header |
 | `tl_arena_make` | Allocate an independent arena chain |
+| `tl_arena_make_atomic` | Allocate an independent atomic arena chain |
 | `tl_arena_destroy` | Release an independent arena chain |
 | `tl_region_mark` | Return the current allocator region mark, or `0` before allocation |
 | `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
@@ -3856,12 +3860,34 @@ arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
 
 Allocator/arena page acquisition and release are explicitly backend-owned core
 runtime (#2314): Linux emits `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`,
-`tl_arena_destroy`, and `tl_region_reset` (plus the current `tl_arena_make`
-fatal-exit syscall), while Windows emits kernel32 `VirtualAlloc`/`VirtualFree`
-for the corresponding page paths. `tl_region_mark`, `tl_arena_current`,
-`tl_arena_set`, and `tl_arena_poison_enable` only read or update backend runtime
-state. The string and trap symbols in the table are stdlib/runtime-prelude
-exports or migration targets, not backend-owned core helpers.
+`tl_arena_make_atomic`, `tl_arena_destroy`, and `tl_region_reset` (plus the
+current `tl_arena_make` fatal-exit syscall), while Windows emits kernel32
+`VirtualAlloc`/`VirtualFree` for the corresponding page paths. `tl_region_mark`,
+`tl_arena_current`, `tl_arena_set`, and `tl_arena_poison_enable` only read or
+update backend runtime state. The string and trap symbols in the table are
+stdlib/runtime-prelude exports or migration targets, not backend-owned core
+helpers.
+
+`tl_arena_make` creates an ordinary first-class arena whose bump cursor is
+single-threaded. `tl_arena_make_atomic` creates an arena handle with the same
+source-level handle ABI as ordinary arenas, but marks the arena header as an
+atomic owner so `tl_alloc` can use the concurrent allocation path when that
+arena is current. Neither helper installs the new arena; callers select an
+allocation target through `tl_arena_set` or the source wrappers described in
+section 7.3.
+
+For an atomic current arena, the allocation fast path reserves space from the
+current chunk with one atomic bump operation. If the reservation does not fit in
+the current chunk, chunk exhaustion is serialized: one thread links or acquires
+the next chunk, publishes it as the arena's current chunk, and contending
+threads retry against the published state. Ordinary arenas keep the existing
+non-atomic bump fast path. The retained-chunk/reset correctness fix in #2441 is
+a prerequisite for trusting the atomic slow path, because a reset must not make
+overflow chunks reusable while stale arena-owned values can still exist.
+
+Atomic allocation serializes allocation only. It does not make array writes,
+struct/enum mutation, raw pointer access, or user data protected from data races;
+those remain governed by the borrow, mutation, unsafe, and thread-safety rules.
 
 ### 6.3 Builtin operator aliases
 
@@ -4113,18 +4139,28 @@ verify these active-arena semantics.
 #### Lifetime owners and v1 outlives model
 
 The v1 checker treats a written lifetime name as the name of a visible owner,
-not as an independently quantified region. There are two owner classes:
+not as an independently quantified region. The specified owner classes are:
 
 - **Stack/frame owners:** function parameters and lexical bindings in the
   current frame. A reference type such as `(& x T)` names the stack slot or
   aggregate handle bound as `x`.
-- **Arena/region owners:** the implicit default program-lifetime arena and
+- **Lexical arena/region owners:** the implicit default program-lifetime arena and
   lexical `with-arena` binders. A scoped arena binder `phase` is named in
   `(& phase T)` reference types and in `(in phase T)` region-tagged handles.
   Untagged aggregate handles allocated outside any scoped arena are owned by
   the default program-lifetime arena; borrow inference uses the reserved
   lifetime name `program` for that storage, but there is no source binder to
   introduce.
+- **Ordinary first-class arena owners:** handles returned by `arena-make`
+  name single-thread allocation homes. They are not lexical binders and v1
+  source code cannot write a lifetime name for them directly. Safe code may use
+  them through `with-escape`, and through the planned `(in-arena ...)` form
+  (#2625), but concurrent allocation into one ordinary arena is not defined.
+- **Atomic first-class arena owners:** handles returned by the planned
+  `arena-make-atomic` wrapper over `tl_arena_make_atomic` name allocation homes
+  whose lifetime may span multiple threads. Multiple threads may make the same
+  atomic arena current and allocate into it concurrently, subject to the source
+  selection and lifetime rules below.
 
 The v1 outlives relation is lexical. The same owner outlives itself. An owner
 introduced by an outer parameter, `let` binding, or `with-arena` outlives
@@ -4139,6 +4175,13 @@ lifetime name. Its scratch arena is a first-class arena handle. The only
 supported escape from that scratch arena is the form's clone step: supported
 body results are cloned into the saved enclosing arena, the scratch arena is
 rewound, and the result leaves the form without the scratch region tag.
+
+Atomic arenas are shareable allocation owners, not synchronization primitives
+for the values allocated inside them. A value owned by an atomic arena may cross
+threads only when the atomic arena owner outlives both the sending and receiving
+threads and the structural send/share classifier accepts the value (#2590).
+The arena owner proves storage lifetime only; mutation, aliasing, raw pointer
+access, and interior synchronization remain separate obligations.
 
 #### Standard library and builtin allocation policy
 
@@ -4205,6 +4248,46 @@ enclosing active arena. This lowers to the same `arena-current` / `arena-set!` /
 used before. The form is intended for first-class scratch arenas; it is not a
 lexical lifetime binder, and lexical region cleanup remains the job of
 `with-arena`.
+
+#### Atomic arena allocation target
+
+The planned source wrapper for `tl_arena_make_atomic` is:
+
+```lisp test=ignore name=arena-make-atomic-specified reason="specified before runtime helper support"
+(import "stdlib/arena.tl")
+
+(define (main) : i64
+  (let
+    [shared : i64 (arena-make-atomic)]
+    shared))
+```
+
+`arena-make-atomic` returns a first-class arena handle and does not make that
+arena current. A thread allocates into an atomic arena by making it the active
+allocation target for a dynamic extent. The safe spelling is the planned
+`(in-arena arena-expr body ...)` form from #2625: it evaluates `arena-expr`,
+saves the calling thread's current arena, installs the target for `body`, then
+restores the saved arena without marking, rewinding, destroying, or cloning.
+With #2591, "current arena" is thread-local, so selecting an atomic arena in one
+thread does not change another thread's default arena. Before #2591 and
+`in-arena` land, threaded allocation through `arena-set!` remains unsafe because
+the implementation's current arena is still process-global.
+
+Values allocated while an atomic arena is current are owned by that atomic arena
+for thread-safety reasoning, even where the transitional lowerable type remains
+an ordinary aggregate handle. The checker must reject safe cross-thread transfer
+unless the atomic arena's lifetime spans every thread that can hold the value.
+The ordinary first-class arena returned by `arena-make` does not have this
+spanning-owner property and must not be used as a concurrent allocation target.
+
+Resetting or destroying an atomic arena while any worker can still allocate into
+it or hold a value owned by it is rejected by safe code. The v1 proof shape is
+"join all users before reset/destroy" unless a later checker slice provides an
+equivalent ownership proof. Until that proof is implemented, `arena-rewind` and
+`arena-destroy` on atomic arenas remain unsafe-only operations, matching the
+ordinary manual arena helpers. The runtime helpers have no permission to make
+use-after-reset deterministic for unsafe misuse; the no-UB guarantee is enforced
+by rejecting the safe program before lowering.
 
 #### Scoped non-memory resources - `with`
 
@@ -5074,3 +5157,5 @@ string        ::= \"...\"
 ### 0.1.0-dev
 
 - Initial specification covering the language as implemented.
+- Specified the v1 atomic arena runtime/source contract for concurrent
+  allocation and cross-thread arena ownership (#2641).

@@ -79,28 +79,21 @@
 (define (clean-vcs-metadata-path? [path : String]) : bool
   (or
     (string-eq path ".git")
-    (or
-      (clean-string-prefix? path ".git/")
-      (or
-        (clean-string-prefix? path ".git\\")
-        (or
-          (clean-string-contains? path "/.git/")
-          (or
-            (clean-string-contains? path "\\.git\\")
-            (or
-              (clean-string-suffix? path "/.git")
-              (clean-string-suffix? path "\\.git"))))))))
+    (clean-string-prefix? path ".git/")
+    (clean-string-prefix? path ".git\\")
+    (clean-string-contains? path "/.git/")
+    (clean-string-contains? path "\\.git\\")
+    (clean-string-suffix? path "/.git")
+    (clean-string-suffix? path "\\.git")))
 
 (define (clean-dangerous-path? [path : String]) : bool
   (or
     (= (string-length path) 0)
-    (or
-      (string-eq path ".")
-      (or
-        (string-eq path "..")
-        (or
-          (string-eq path "/")
-          (or (string-eq path "\\") (clean-vcs-metadata-path? path)))))))
+    (string-eq path ".")
+    (string-eq path "..")
+    (string-eq path "/")
+    (string-eq path "\\")
+    (clean-vcs-metadata-path? path)))
 
 (define (clean-file-exists? [path : String]) : bool
   (match (source-tool-try-file-exists? path)
@@ -165,7 +158,8 @@
 (define (clean-source-artifact-safe? [source : String] [path : String]) : bool
   (and
     (not (clean-dangerous-path? path))
-    (and (not (string-eq source path)) (not (clean-string-suffix? path ".tl")))))
+    (not (string-eq source path))
+    (not (clean-string-suffix? path ".tl"))))
 
 (define (clean-remove-source-artifact
   [source : String]
@@ -232,9 +226,8 @@
 (define (clean-package-name-safe? [name : String]) : bool
   (and
     (compiler-load-package-token-valid? name)
-    (and
-      (not (clean-string-contains? name "/"))
-      (not (clean-string-contains? name "\\")))))
+    (not (clean-string-contains? name "/"))
+    (not (clean-string-contains? name "\\"))))
 
 (define (clean-package-artifact-safe?
   [manifest-dir : String]

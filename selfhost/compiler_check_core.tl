@@ -305,23 +305,13 @@
                   [ctx : TcContext (TcContext program symbols registries "")]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
-                    (and
-                      (compiler-check-inline-layout-name-ok? ctx "AstExprList")
-                      (and
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstPatternList")
-                        (and
-                          (compiler-check-inline-layout-name-ok?
-                            ctx
-                            "AstDeclList")
-                          (and
-                            (compiler-check-inline-layout-name-ok?
-                              ctx
-                              "AstParamList")
-                            (compiler-check-inline-layout-name-ok?
-                              ctx
-                              "AstVariantDefList")))))))]
+                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
+                    (compiler-check-inline-layout-name-ok?
+                      ctx
+                      "AstVariantDefList")))]
               [(ErrCompilerRegistries _) false])]
           [(ErrCompilerSymbols _) false]))]
     [(ErrCompilerLoadWithPaths _) false]))

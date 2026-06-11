@@ -650,13 +650,10 @@
       (msvc-path-join (msvc-path-join sdk-root "Include") version)]
     (and
       (msvc-path-exists-owned? kernel32)
-      (and
-        (msvc-path-exists-owned? ucrt)
-        (and
-          (msvc-dir-exists-owned? (msvc-path-join include-root "shared"))
-          (and
-            (msvc-dir-exists-owned? (msvc-path-join include-root "um"))
-            (msvc-dir-exists-owned? (msvc-path-join include-root "ucrt"))))))))
+      (msvc-path-exists-owned? ucrt)
+      (msvc-dir-exists-owned? (msvc-path-join include-root "shared"))
+      (msvc-dir-exists-owned? (msvc-path-join include-root "um"))
+      (msvc-dir-exists-owned? (msvc-path-join include-root "ucrt")))))
 
 ;: Scan one Windows SDK root for the newest usable version.
 (define (msvc-sdk-scan-entries

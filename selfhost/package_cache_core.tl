@@ -160,9 +160,10 @@
 (define (package-cache-safe-code? [code : i64]) : bool
   (or
     (and (>= code 48) (<= code 57))
-    (or
-      (and (>= code 65) (<= code 90))
-      (or (and (>= code 97) (<= code 122)) (or (= code 45) (= code 95))))))
+    (and (>= code 65) (<= code 90))
+    (and (>= code 97) (<= code 122))
+    (= code 45)
+    (= code 95)))
 
 (define (package-cache-hex-digit [value : i64]) : String
   (core/cond
@@ -303,7 +304,7 @@
     [has-metadata : bool (package-cache-file-exists? metadata-path)]
     [has-marker : bool (package-cache-file-exists? marker-path)]
     (core/cond
-      (and (not has-entry) (and (not has-metadata) (not has-marker)))
+      (and (not has-entry) (not has-metadata) (not has-marker))
       (PackageCacheMiss entry-path)
       (not has-metadata)
       (PackageCachePartialOrCorrupt entry-path "missing metadata")
@@ -408,9 +409,8 @@
     [(OkPackageCacheRemoteSpec spec)
       (and
         (string-eq (struct-get spec url) expected-url)
-        (and
-          (package-cache-pin-kind-eq? (struct-get spec pin-kind) expected-kind)
-          (string-eq (struct-get spec pin-value) expected-pin)))]))
+        (package-cache-pin-kind-eq? (struct-get spec pin-kind) expected-kind)
+        (string-eq (struct-get spec pin-value) expected-pin))]))
 
 (define (package-cache-parse-rejects? [dep : String]) : bool
   (match (package-cache-parse-normalized-remote dep)
@@ -492,38 +492,27 @@
         "https://github.com/owner/repo.git"
         (PackageCachePinRev)
         "abc123")
-      (and
-        (package-cache-parse-ok?
-          "https://github.com/owner/repo.git#tag=v1.0.0"
-          "https://github.com/owner/repo.git"
-          (PackageCachePinTag)
-          "v1.0.0")
-        (and
-          (package-cache-parse-ok?
-            "https://github.com/owner/repo.git#branch=main"
-            "https://github.com/owner/repo.git"
-            (PackageCachePinBranch)
-            "main")
-          (and
-            (package-cache-parse-rejects? "https://github.com/owner/repo.git")
-            (and
-              (package-cache-parse-rejects?
-                "https://github.com/owner/repo.git#sha=abc123")
-              (and
-                (package-cache-key-ok? dep-a "abc123")
-                (and
-                  (package-cache-key-rejects?
-                    "https://github.com/owner/repo.git#tag=v1.0.0")
-                  (and
-                    (string-eq path-a path-a-again)
-                    (and
-                      (not (string-eq path-a path-b))
-                      (and
-                        (not (string-eq path-a path-c))
-                        (and
-                          (not
-                            (string-contains (& path-dot) (& parent-segment)))
-                          (string-eq stage-a stage-a-again))))))))))))))
+      (package-cache-parse-ok?
+        "https://github.com/owner/repo.git#tag=v1.0.0"
+        "https://github.com/owner/repo.git"
+        (PackageCachePinTag)
+        "v1.0.0")
+      (package-cache-parse-ok?
+        "https://github.com/owner/repo.git#branch=main"
+        "https://github.com/owner/repo.git"
+        (PackageCachePinBranch)
+        "main")
+      (package-cache-parse-rejects? "https://github.com/owner/repo.git")
+      (package-cache-parse-rejects?
+        "https://github.com/owner/repo.git#sha=abc123")
+      (package-cache-key-ok? dep-a "abc123")
+      (package-cache-key-rejects?
+        "https://github.com/owner/repo.git#tag=v1.0.0")
+      (string-eq path-a path-a-again)
+      (not (string-eq path-a path-b))
+      (not (string-eq path-a path-c))
+      (not (string-contains (& path-dot) (& parent-segment)))
+      (string-eq stage-a stage-a-again))))
 
 (define (package-cache-filesystem-self-test-ok?) : bool
   (let
@@ -575,21 +564,17 @@
         "write mismatch marker: ")
       (and
         (package-cache-state-miss? (package-cache-entry-state missing key))
-        (and
-          (package-cache-state-complete?
-            (package-cache-entry-state complete complete-key))
-          (and
-            (package-cache-entry-reusable?
-              (package-cache-entry-state complete complete-key))
-            (and
-              (package-cache-state-partial?
-                (package-cache-entry-state partial partial-key))
-              (and
-                (not
-                  (package-cache-entry-reusable?
-                    (package-cache-entry-state partial partial-key)))
-                (package-cache-state-partial?
-                  (package-cache-entry-state mismatch mismatch-key))))))))))
+        (package-cache-state-complete?
+          (package-cache-entry-state complete complete-key))
+        (package-cache-entry-reusable?
+          (package-cache-entry-state complete complete-key))
+        (package-cache-state-partial?
+          (package-cache-entry-state partial partial-key))
+        (not
+          (package-cache-entry-reusable?
+            (package-cache-entry-state partial partial-key)))
+        (package-cache-state-partial?
+          (package-cache-entry-state mismatch mismatch-key))))))
 
 (define (package-cache-self-test) : i64
   (if (and

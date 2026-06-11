@@ -315,7 +315,8 @@ Options:
   (core/cond
     (or
       (string-eq command "help")
-      (or (string-eq command "--help") (string-eq command "-h")))
+      (string-eq command "--help")
+      (string-eq command "-h"))
     (cli-print-help 0)
     (string-eq command "build")
     (if (cli-subcommand-help-request? count)

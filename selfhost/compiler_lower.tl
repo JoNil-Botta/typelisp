@@ -851,7 +851,8 @@
   [module : String]
   [source-name : String]) : bool
   (and
-    (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+    (string-eq decl-path entry-path)
+    (string-eq source-name "main")
     (or (string-eq module "") (string-eq module "main"))))
 
 (define (lower-decl-logical-name
@@ -884,7 +885,8 @@
         names
         (compiler-symbol-module-key module source-name))]
     (if (and
-      (and (string-eq module "main") (string-eq source-name "main"))
+      (string-eq module "main")
+      (string-eq source-name "main")
       (string-eq resolved key))
       "main"
       resolved)))
@@ -897,7 +899,8 @@
     [key : String (compiler-symbol-module-key module source-name)]
     [resolved : String (lower-name-cache-resolve names key)]
     (if (and
-      (and (string-eq module "main") (string-eq source-name "main"))
+      (string-eq module "main")
+      (string-eq source-name "main")
       (string-eq resolved key))
       "main"
       resolved)))
@@ -5182,9 +5185,8 @@
   ;; genuine memory aggregate keeps the pointer-return shape.
   (if (and
     (lower-mode-inline-aggregates? mode)
-    (and
-      (lower-type-inline-struct-or-enum? ctx ty)
-      (not (lower-type-register-resident? ctx ty))))
+    (lower-type-inline-struct-or-enum? ctx ty)
+    (not (lower-type-register-resident? ctx ty)))
     (match (lower-gep-byte state base offset)
       [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])
     (if (lower-type-register-group? ctx ty)
@@ -5280,11 +5282,10 @@
   [ty : AstType]) : bool
   (and
     (lower-mode-inline-aggregates? (lower-state-mode state))
-    (and
-      ;; #2386: a register-resident aggregate is returned/passed in a register,
-      ;; so it needs neither a heap escape-copy nor a caller-provided sret slot.
-      (lower-type-inline-struct-or-enum? ctx ty)
-      (not (lower-type-register-resident? ctx ty)))))
+    ;; #2386: a register-resident aggregate is returned/passed in a register,
+    ;; so it needs neither a heap escape-copy nor a caller-provided sret slot.
+    (lower-type-inline-struct-or-enum? ctx ty)
+    (not (lower-type-register-resident? ctx ty))))
 
 (define (lower-return-abi-value
   [ctx : TcContext]
@@ -7390,11 +7391,10 @@
           (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-function-define))
-          (or
-            (lower-extern-function-decl? ctx name)
-            (=
-              (compiler-symbol-handle-kind handle)
-              (compiler-symbol-kind-defdispatch))))]
+          (lower-extern-function-decl? ctx name)
+          (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defdispatch)))]
       [(NoneI64) false])))
 
 (define (lower-function-value-or-var
@@ -8285,9 +8285,8 @@
       [sret-needed : bool
         (and
           (lower-mode-inline-aggregates? mode)
-          (and
-            (lower-type-inline-struct-or-enum? ctx ret-ty)
-            (not (lower-type-register-resident? ctx ret-ty))))]
+          (lower-type-inline-struct-or-enum? ctx ret-ty)
+          (not (lower-type-register-resident? ctx ret-ty)))]
       [sret-var : i64
         (if sret-needed
           param-count
@@ -13181,7 +13180,7 @@
   [mode : CompilerLowerMode]
   [size : i64]) : bool
   (if (lower-mode-windows-c-abi? mode)
-    (or (= size 1) (or (= size 2) (or (= size 4) (= size 8))))
+    (or (= size 1) (= size 2) (= size 4) (= size 8))
     (and (> size 0) (<= size 8))))
 
 (define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
@@ -16061,16 +16060,14 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (and
       (= (lower-type-size ctx resolved) 8)
-      (and
-        (not (tc-type-eq resolved (AstTyF64)))
-        (and
-          ;; #1867/#2386: memory-resident inline aggregates are pointers to
-          ;; storage, but a one-word register-resident aggregate is the word
-          ;; itself, so fill8 can replicate it directly.
-          (or
-            (not (lower-type-inline-struct-or-enum? ctx resolved))
-            (lower-type-register-resident? ctx resolved))
-          (lower-init-default-share-safe? ctx resolved))))))
+      (not (tc-type-eq resolved (AstTyF64)))
+      ;; #1867/#2386: memory-resident inline aggregates are pointers to
+      ;; storage, but a one-word register-resident aggregate is the word
+      ;; itself, so fill8 can replicate it directly.
+      (or
+        (not (lower-type-inline-struct-or-enum? ctx resolved))
+        (lower-type-register-resident? ctx resolved))
+      (lower-init-default-share-safe? ctx resolved))))
 
 (define (lower-make-array-zero-fill-supported? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -16383,9 +16380,8 @@
   ;; element address.
   (if (and
     (lower-mode-inline-aggregates? (lower-state-mode addr-state))
-    (and
-      (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
-      (not (lower-type-register-resident? ctx elem-ir-ty))))
+    (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
+    (not (lower-type-register-resident? ctx elem-ir-ty)))
     (OkLowerExpr (LowerExpr addr-state elem-ptr elem-ir-ty))
     (if (lower-type-register-group? ctx elem-ir-ty)
       (match (lower-load-group-from-ptr addr-state elem-ptr elem-ir-ty)
@@ -16499,9 +16495,8 @@
   ;; of byte-copying from a pointer.
   (if (and
     (lower-mode-inline-aggregates? (lower-state-mode addr-state))
-    (and
-      (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
-      (not (lower-type-register-resident? ctx elem-ir-ty))))
+    (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
+    (not (lower-type-register-resident? ctx elem-ir-ty)))
     (lower-copy-bytes
       addr-state
       elem-ptr
@@ -18402,19 +18397,13 @@
         [value : AstExpr (ast-node-get value-box)]
         (or
           (lower-masked-vector-body-has-varying-if? mode env type-env index arr)
-          (or
-            (lower-masked-vector-body-has-varying-if?
-              mode
-              env
-              type-env
-              index
-              idx)
-            (lower-masked-vector-body-has-varying-if?
-              mode
-              env
-              type-env
-              index
-              value))))]
+          (lower-masked-vector-body-has-varying-if? mode env type-env index idx)
+          (lower-masked-vector-body-has-varying-if?
+            mode
+            env
+            type-env
+            index
+            value)))]
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-varying-if?
@@ -18652,9 +18641,8 @@
                       [lanes : i64 (lower-simd-lanes-for-elem mode lhs-elem)]
                       (if (and
                         (> lanes 0)
-                        (and
-                          (tc-type-eq lhs-elem rhs-elem)
-                          (tc-type-eq lhs-elem dst-elem)))
+                        (tc-type-eq lhs-elem rhs-elem)
+                        (tc-type-eq lhs-elem dst-elem))
                         (LowerSomeVectorMap
                           dst-var
                           lhs-var
@@ -22587,14 +22575,12 @@
   (match (ast-expr-unspan callee)
     [(AstExprVar name)
       (if (and
-        (and
-          (lower-tail-call-var-unshadowed? env name)
-          ;; #2357: only suppress TCO when THIS call actually involves inline
-          ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
-          ;; disabled tail-call optimization for every call (mode is always on),
-          ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-          (not
-            (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty)))
+        (lower-tail-call-var-unshadowed? env name)
+        ;; #2357: only suppress TCO when THIS call actually involves inline
+        ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
+        ;; disabled tail-call optimization for every call (mode is always on),
+        ;; losing TCO entirely (deep self-recursion, smoke shape failure).
+        (not (lower-tail-call-inline-aggregate-risk? ctx type-env args ret-ty))
         (lower-tail-call-direct-supported? ctx state env type-env name ret-ty))
         (match (lower-tail-call-args-for-target
           ctx
@@ -23226,18 +23212,17 @@
   [ret-ty : AstType]) : bool
   (and
     (lower-logical-name-has-suffix? logical-name "stdlib/hash.tl::hash-string")
-    (and
-      (tc-type-eq ret-ty (AstTyI64))
-      (match params
-        [(AstParamCons param rest)
-          (let
-            [rest : AstParamList (box-get rest)]
-            (match rest
-              [(AstParamNil)
-                (match param
-                  [(AstParam _ ty _) (lower-stdlib-hash-string-param? ctx ty)])]
-              [_ false]))]
-        [_ false]))))
+    (tc-type-eq ret-ty (AstTyI64))
+    (match params
+      [(AstParamCons param rest)
+        (let
+          [rest : AstParamList (box-get rest)]
+          (match rest
+            [(AstParamNil)
+              (match param
+                [(AstParam _ ty _) (lower-stdlib-hash-string-param? ctx ty)])]
+            [_ false]))]
+      [_ false])))
 
 (define (lower-runtime-return-function
   [ctx : TcContext]
@@ -23294,20 +23279,19 @@
     (lower-logical-name-has-suffix?
       logical-name
       "stdlib/string.tl::string-eq-borrowed")
-    (and
-      (tc-type-eq ret-ty (AstTyBool))
-      (match params
-        [(AstParamCons (AstParam _ left-ty _) left-rest)
-          (match (box-get left-rest)
-            [(AstParamCons (AstParam _ right-ty _) right-rest)
-              (match (box-get right-rest)
-                [(AstParamNil)
-                  (and
-                    (lower-stdlib-hash-string-param? ctx left-ty)
-                    (lower-stdlib-hash-string-param? ctx right-ty))]
-                [_ false])]
-            [_ false])]
-        [_ false]))))
+    (tc-type-eq ret-ty (AstTyBool))
+    (match params
+      [(AstParamCons (AstParam _ left-ty _) left-rest)
+        (match (box-get left-rest)
+          [(AstParamCons (AstParam _ right-ty _) right-rest)
+            (match (box-get right-rest)
+              [(AstParamNil)
+                (and
+                  (lower-stdlib-hash-string-param? ctx left-ty)
+                  (lower-stdlib-hash-string-param? ctx right-ty))]
+              [_ false])]
+          [_ false])]
+      [_ false])))
 
 (define (lower-stdlib-string-eq-borrowed-function
   [ctx : TcContext]
@@ -23366,11 +23350,9 @@
       [sret-needed : bool
         (and
           (lower-mode-inline-aggregates? mode)
-          (and
-            (not (lower-global-init-function? logical-name))
-            (and
-              (lower-type-inline-struct-or-enum? ctx ret-ty)
-              (not (lower-type-register-resident? ctx ret-ty)))))]
+          (not (lower-global-init-function? logical-name))
+          (lower-type-inline-struct-or-enum? ctx ret-ty)
+          (not (lower-type-register-resident? ctx ret-ty)))]
       [sret-var : i64
         (if sret-needed
           param-count
@@ -26115,21 +26097,19 @@
                 (lower-test-function-defined?
                   functions
                   "<source>::clone$NestedClone")
-                (and
+                (lower-test-function-defined?
+                  functions
+                  "<source>::clone$UsedClone")
+                (not
                   (lower-test-function-defined?
                     functions
+                    "<source>::clone$UnusedClone"))
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "<source>::clone$NestedClone"
                     "<source>::clone$UsedClone")
-                  (and
-                    (not
-                      (lower-test-function-defined?
-                        functions
-                        "<source>::clone$UnusedClone"))
-                    (=
-                      (lower-test-function-call-count
-                        functions
-                        "<source>::clone$NestedClone"
-                        "<source>::clone$UsedClone")
-                      1))))])]
+                  1))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -26311,17 +26291,13 @@
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
-    (and
-      (compiler-lower-inline-enum-shape-ok?)
-      (and
-        (compiler-lower-inline-boxed-recursive-shape-ok?)
-        (and
-          (compiler-lower-inline-aggregate-copy-shape-ok?)
-          (and
-            (compiler-lower-inline-hot-loop-struct-shape-ok?)
-            (compiler-lower-inline-error-ok?
-              (compiler-lower-inline-recursive-error-source)
-              "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))))
+    (compiler-lower-inline-enum-shape-ok?)
+    (compiler-lower-inline-boxed-recursive-shape-ok?)
+    (compiler-lower-inline-aggregate-copy-shape-ok?)
+    (compiler-lower-inline-hot-loop-struct-shape-ok?)
+    (compiler-lower-inline-error-ok?
+      (compiler-lower-inline-recursive-error-source)
+      "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (:generated point-family Point \"i64-i64\")
@@ -26586,9 +26562,8 @@
     [(OkCompilerLower _ spans)
       (and
         (= (compiler-source-spans-count spans) 2)
-        (and
-          (compiler-lower-span-start-line-ok? spans "inc" 3)
-          (compiler-lower-span-start-line-ok? spans "main" 5)))]
+        (compiler-lower-span-start-line-ok? spans "inc" 3)
+        (compiler-lower-span-start-line-ok? spans "main" 5))]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool
@@ -28973,14 +28948,13 @@
             [(IrProgram _ functions _)
               (and
                 (lower-test-function-defined? functions "lib.tl::after")
-                (and
-                  (lower-test-function-defined? functions "main")
-                  (=
-                    (lower-test-function-direct-call-count
-                      functions
-                      "main"
-                      "lib.tl::after")
-                    1)))])]
+                (lower-test-function-defined? functions "main")
+                (=
+                  (lower-test-function-direct-call-count
+                    functions
+                    "main"
+                    "lib.tl::after")
+                  1))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -29006,17 +28980,13 @@
             [(IrProgram globals functions _)
               (and
                 (lower-test-global-list-has-name? globals "lib.tl::answer")
-                (and
-                  (>
-                    (lower-test-functions-direct-call-count
-                      functions
-                      "lib.tl::inc")
-                    0)
-                  (and
-                    (>
-                      (lower-test-function-binop-count functions "lib.tl::inc")
-                      0)
-                    (>= (lower-test-function-binop-count functions "main") 0))))])]
+                (>
+                  (lower-test-functions-direct-call-count
+                    functions
+                    "lib.tl::inc")
+                  0)
+                (> (lower-test-function-binop-count functions "lib.tl::inc") 0)
+                (>= (lower-test-function-binop-count functions "main") 0))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -29046,14 +29016,13 @@
                 (lower-test-function-defined?
                   functions
                   "stdlib/runtime.tl::runtime-helper")
-                (and
-                  (lower-test-function-defined? functions "main")
-                  (=
-                    (lower-test-function-call-count
-                      functions
-                      "main"
-                      "app/src/main.tl::app-helper")
-                    1)))])]
+                (lower-test-function-defined? functions "main")
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "app/src/main.tl::app-helper")
+                  1))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -29076,13 +29045,10 @@
         [(IrProgram globals functions _)
           (and
             (lower-test-global-list-has-name? globals "left/same")
-            (and
-              (lower-test-global-list-has-name? globals "right/same")
-              (and
-                (> (lower-test-functions-call-count functions "left/get") 0)
-                (and
-                  (> (lower-test-functions-call-count functions "right/get") 0)
-                  (> (lower-test-function-binop-count functions "main") 0)))))])]
+            (lower-test-global-list-has-name? globals "right/same")
+            (> (lower-test-functions-call-count functions "left/get") 0)
+            (> (lower-test-functions-call-count functions "right/get") 0)
+            (> (lower-test-function-binop-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-import-alias-source) : String
@@ -29276,14 +29242,10 @@
                 "main"
                 "float-pair-make")
               1)
-            (and
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "main"
-                  "float-pair-use")
-                1)
-              (= (lower-test-function-call-count functions "main" "tl_alloc") 1)))])]
+            (=
+              (lower-test-function-call-count functions "main" "float-pair-use")
+              1)
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-extern-link-inputs-ok?
@@ -29304,9 +29266,8 @@
                       [(AstExternLinkInputNil)
                         (and
                           (string-eq lib "ffi")
-                          (and
-                            (string-eq dir "native")
-                            (string-eq arg-value "-Wl,--as-needed")))]
+                          (string-eq dir "native")
+                          (string-eq arg-value "-Wl,--as-needed"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -29323,11 +29284,9 @@
                 IrExternNil)
               (and
                 (string-eq name "ffi-add")
-                (and
-                  (string-eq symbol "ffi_add")
-                  (and
-                    (ast-extern-abi-c? abi)
-                    (compiler-lower-extern-link-inputs-ok? link-inputs))))]
+                (string-eq symbol "ffi_add")
+                (ast-extern-abi-c? abi)
+                (compiler-lower-extern-link-inputs-ok? link-inputs))]
             [_ false])])]
     [(ErrCompilerLower _) false]))
 
@@ -29347,15 +29306,9 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "raw-fn") 0)
-            (and
-              (=
-                (lower-test-function-call-count functions "main" "direct-fn")
-                1)
-              (and
-                (= (lower-test-function-indirect-call-count functions "main") 0)
-                (=
-                  (lower-test-function-indirect-c-call-count functions "main")
-                  1))))])]
+            (= (lower-test-function-call-count functions "main" "direct-fn") 1)
+            (= (lower-test-function-indirect-call-count functions "main") 0)
+            (= (lower-test-function-indirect-c-call-count functions "main") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-global-source) : String
@@ -29603,17 +29556,12 @@
 (define (compiler-lower-tail-call-shape-ok?) : bool
   (and
     (compiler-lower-tail-simple-shape-ok?)
-    (and
-      (compiler-lower-tail-context-shape-ok?)
-      (and
-        (compiler-lower-tail-operand-shape-ok?)
-        (and
-          (compiler-lower-tail-direct-shape-ok?)
-          (and
-            (compiler-lower-tail-direct-stack-shape-ok?)
-            (and
-              (compiler-lower-tail-indirect-shape-ok?)
-              (compiler-lower-tail-cleanup-shape-ok?))))))))
+    (compiler-lower-tail-context-shape-ok?)
+    (compiler-lower-tail-operand-shape-ok?)
+    (compiler-lower-tail-direct-shape-ok?)
+    (compiler-lower-tail-direct-stack-shape-ok?)
+    (compiler-lower-tail-indirect-shape-ok?)
+    (compiler-lower-tail-cleanup-shape-ok?)))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
@@ -29828,11 +29776,9 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-function-phi-count functions "classify") 0)
-            (and
-              (> (lower-test-function-phi-count functions "flag-score") 0)
-              (and
-                (> (lower-test-function-phi-count functions "sign") 0)
-                (= (lower-test-function-phi-count functions "announce") 0))))])]
+            (> (lower-test-function-phi-count functions "flag-score") 0)
+            (> (lower-test-function-phi-count functions "sign") 0)
+            (= (lower-test-function-phi-count functions "announce") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-enum-match-shape-ok? [src : String]) : bool
@@ -29842,15 +29788,11 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-function-phi-count functions "score") 0)
-            (and
-              (> (lower-test-function-phi-count functions "zero-call") 0)
-              (and
-                (> (lower-test-function-phi-count functions "or-zero") 0)
-                (and
-                  (= (lower-test-function-phi-count functions "touch") 0)
-                  (and
-                    (> (lower-test-function-load-count functions "score") 1)
-                    (> (lower-test-function-load-count functions "or-zero") 1))))))])]
+            (> (lower-test-function-phi-count functions "zero-call") 0)
+            (> (lower-test-function-phi-count functions "or-zero") 0)
+            (= (lower-test-function-phi-count functions "touch") 0)
+            (> (lower-test-function-load-count functions "score") 1)
+            (> (lower-test-function-load-count functions "or-zero") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool
@@ -29871,11 +29813,9 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-function-phi-count functions "score") 0)
-            (and
-              (> (lower-test-function-call-count functions "score" "take") 0)
-              (and
-                (> (lower-test-function-gep-offset-count functions "score" 8) 0)
-                (> (lower-test-function-branch-count functions "slot-score") 0))))])]
+            (> (lower-test-function-call-count functions "score" "take") 0)
+            (> (lower-test-function-gep-offset-count functions "score" 8) 0)
+            (> (lower-test-function-branch-count functions "slot-score") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-result-try-shape-ok? [src : String]) : bool
@@ -29885,11 +29825,9 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-function-branch-count functions "sum") 1)
-            (and
-              (> (lower-test-function-return-count functions "sum") 2)
-              (and
-                (> (lower-test-function-return-count functions "chain") 1)
-                (> (lower-test-function-load-count functions "sum") 3))))])]
+            (> (lower-test-function-return-count functions "sum") 2)
+            (> (lower-test-function-return-count functions "chain") 1)
+            (> (lower-test-function-load-count functions "sum") 3))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
@@ -29927,11 +29865,9 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-functions-call-count functions "close-a") 3)
-            (and
-              (= (lower-test-functions-call-count functions "close-b") 2)
-              (and
-                (> (lower-test-function-return-count functions "main") 2)
-                (> (lower-test-function-branch-count functions "main") 2))))])]
+            (= (lower-test-functions-call-count functions "close-b") 2)
+            (> (lower-test-function-return-count functions "main") 2)
+            (> (lower-test-function-branch-count functions "main") 2))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-resource-with-nested-shape-ok?) : bool
@@ -29956,14 +29892,13 @@
                 "cleanup-file-handle"
                 "close-fd")
               1)
-            (and
-              (>
-                (lower-test-function-direct-call-count
-                  functions
-                  "main"
-                  "cleanup-file-handle")
-                1)
-              (> (lower-test-function-return-count functions "main") 1)))])]
+            (>
+              (lower-test-function-direct-call-count
+                functions
+                "main"
+                "cleanup-file-handle")
+              1)
+            (> (lower-test-function-return-count functions "main") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool
@@ -29978,25 +29913,23 @@
                 "cleanup-file-handle"
                 "close-fd")
               1)
-            (and
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "cleanup-buffered-file"
-                  "close-buffer")
-                1)
-              (and
-                (=
-                  (lower-test-function-direct-call-count
-                    functions
-                    "cleanup-buffered-file"
-                    "cleanup-file-handle")
-                  1)
-                (lower-test-function-call-before?
-                  functions
-                  "cleanup-buffered-file"
-                  "close-buffer"
-                  "cleanup-file-handle"))))])]
+            (=
+              (lower-test-function-call-count
+                functions
+                "cleanup-buffered-file"
+                "close-buffer")
+              1)
+            (=
+              (lower-test-function-direct-call-count
+                functions
+                "cleanup-buffered-file"
+                "cleanup-file-handle")
+              1)
+            (lower-test-function-call-before?
+              functions
+              "cleanup-buffered-file"
+              "close-buffer"
+              "cleanup-file-handle"))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
@@ -30017,11 +29950,9 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-function-load-count functions "array-bag-handle") 0)
-            (and
-              (> (lower-test-function-load-count functions "len") 0)
-              (and
-                (> (lower-test-function-bounds-count functions "get") 0)
-                (> (lower-test-function-bounds-count functions "put") 0))))])]
+            (> (lower-test-function-load-count functions "len") 0)
+            (> (lower-test-function-bounds-count functions "get") 0)
+            (> (lower-test-function-bounds-count functions "put") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
@@ -30060,11 +29991,9 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-functions-call-count functions "tl_alloc") 0)
-            (and
-              (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
-              (and
-                (> (lower-test-function-binop-count functions "grow") 0)
-                (> (lower-test-function-store-ptr-count functions "grow") 0))))])]
+            (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
+            (> (lower-test-function-binop-count functions "grow") 0)
+            (> (lower-test-function-store-ptr-count functions "grow") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
@@ -30074,14 +30003,10 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-functions-call-count functions "tl_alloc") 1)
-            (and
-              (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "main"
-                  "tl_array_zero")
-                1)))])]
+            (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_zero")
+              1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool
@@ -30093,9 +30018,8 @@
             (=
               (lower-test-function-call-count functions "main" "tl_array_fill8")
               1)
-            (and
-              (>= (lower-test-function-store-ptr-count functions "main") 2)
-              (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
+            (>= (lower-test-function-store-ptr-count functions "main") 2)
+            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
@@ -30224,15 +30148,10 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-functions-call-count functions "tl_print_str") 0)
-            (and
-              (=
-                (lower-test-functions-direct-call-count
-                  functions
-                  "print-string")
-                2)
-              (=
-                (lower-test-functions-direct-call-count functions "print-str")
-                1)))])]
+            (=
+              (lower-test-functions-direct-call-count functions "print-string")
+              2)
+            (= (lower-test-functions-direct-call-count functions "print-str") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -30371,9 +30290,8 @@
 (define (compiler-lower-reference-nominal-aggregate-ok?) : bool
   (and
     (compiler-lower-ok? (compiler-lower-reference-struct-result-source))
-    (and
-      (compiler-lower-ok? (compiler-lower-reference-struct-multi-result-source))
-      (compiler-lower-ok? (compiler-lower-reference-enum-result-source)))))
+    (compiler-lower-ok? (compiler-lower-reference-struct-multi-result-source))
+    (compiler-lower-ok? (compiler-lower-reference-enum-result-source))))
 
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
@@ -30382,21 +30300,11 @@
         [(IrProgram _ functions _)
           (and
             (> (lower-test-functions-call-count functions "string-length") 0)
-            (and
-              (> (lower-test-functions-call-count functions "string-append") 0)
-              (and
-                (> (lower-test-functions-call-count functions "string-ref") 0)
-                (and
-                  (> (lower-test-functions-call-count functions "char-at") 0)
-                  (and
-                    (=
-                      (lower-test-functions-call-count
-                        functions
-                        "tl_string_concat")
-                      0)
-                    (=
-                      (lower-test-functions-call-count functions "tl_oob_abort")
-                      0))))))])]
+            (> (lower-test-functions-call-count functions "string-append") 0)
+            (> (lower-test-functions-call-count functions "string-ref") 0)
+            (> (lower-test-functions-call-count functions "char-at") 0)
+            (= (lower-test-functions-call-count functions "tl_string_concat") 0)
+            (= (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-function-value-shape-ok?) : bool
@@ -30469,14 +30377,13 @@
             [lambda-name : String "__tl_lambda_get-fn_0"]
             (and
               (= (compiler-ir-function-list-count functions) 2)
-              (and
-                (=
-                  (lower-test-function-return-function-count
-                    functions
-                    "get-fn"
-                    lambda-name)
-                  1)
-                (> (lower-test-function-binop-count functions lambda-name) 0))))])]
+              (=
+                (lower-test-function-return-function-count
+                  functions
+                  "get-fn"
+                  lambda-name)
+                1)
+              (> (lower-test-function-binop-count functions lambda-name) 0)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-immediate-lambda-call-ok?) : bool
@@ -30488,25 +30395,18 @@
             [lambda-name : String "__tl_lambda_main_0"]
             (and
               (= (compiler-ir-function-list-count functions) 2)
-              (and
-                (=
-                  (lower-test-function-indirect-tail-call-count
-                    functions
-                    "main")
-                  1)
-                (and
-                  (=
-                    (lower-test-function-indirect-callee-function-count
-                      functions
-                      "main"
-                      lambda-name)
-                    1)
-                  (=
-                    (lower-test-function-call-count
-                      functions
-                      "main"
-                      lambda-name)
-                    0)))))])]
+              (=
+                (lower-test-function-indirect-tail-call-count functions "main")
+                1)
+              (=
+                (lower-test-function-indirect-callee-function-count
+                  functions
+                  "main"
+                  lambda-name)
+                1)
+              (=
+                (lower-test-function-call-count functions "main" lambda-name)
+                0)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-unit-lambda-call-ok?) : bool
@@ -30518,22 +30418,20 @@
             [lambda-name : String "__tl_lambda_main_0"]
             (and
               (= (compiler-ir-function-list-count functions) 2)
-              (and
-                (= (lower-test-function-indirect-unit-count functions "main") 1)
-                (=
-                  (lower-test-function-indirect-callee-function-count
-                    functions
-                    "main"
-                    lambda-name)
-                  1))))])]
+              (= (lower-test-function-indirect-unit-count functions "main") 1)
+              (=
+                (lower-test-function-indirect-callee-function-count
+                  functions
+                  "main"
+                  lambda-name)
+                1)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-noncapturing-lambda-tests-ok?) : bool
   (and
     (compiler-lower-noncapturing-lambda-value-ok?)
-    (and
-      (compiler-lower-immediate-lambda-call-ok?)
-      (compiler-lower-unit-lambda-call-ok?))))
+    (compiler-lower-immediate-lambda-call-ok?)
+    (compiler-lower-unit-lambda-call-ok?)))
 
 (define (compiler-lower-capturing-lambda-scalar-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-capturing-lambda-scalar-source))
@@ -30717,17 +30615,12 @@
 (define (compiler-lower-capturing-lambda-tests-ok?) : bool
   (and
     (compiler-lower-capturing-lambda-scalar-shape-ok?)
-    (and
-      (compiler-lower-capturing-lambda-function-value-shape-ok?)
-      (and
-        (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
-        (and
-          (compiler-lower-capturing-lambda-aggregate-shape-ok?)
-          (and
-            (compiler-lower-capturing-lambda-shadow-shape-ok?)
-            (and
-              (compiler-lower-capturing-lambda-reference-shape-ok?)
-              (compiler-lower-capturing-lambda-reference-immediate-shape-ok?))))))))
+    (compiler-lower-capturing-lambda-function-value-shape-ok?)
+    (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
+    (compiler-lower-capturing-lambda-aggregate-shape-ok?)
+    (compiler-lower-capturing-lambda-shadow-shape-ok?)
+    (compiler-lower-capturing-lambda-reference-shape-ok?)
+    (compiler-lower-capturing-lambda-reference-immediate-shape-ok?)))
 
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
@@ -31118,15 +31011,9 @@
             (>=
               (lower-test-functions-call-count functions "tl_arena_current")
               3)
-            (and
-              (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
-              (and
-                (>
-                  (lower-test-functions-call-count functions "tl_region_mark")
-                  0)
-                (>
-                  (lower-test-functions-call-count functions "tl_region_reset")
-                  0))))])]
+            (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
+            (> (lower-test-functions-call-count functions "tl_region_mark") 0)
+            (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-escape-array-shape-ok?) : bool
@@ -31137,9 +31024,8 @@
           (and
             (compiler-lower-with-escape-arena-shape-ok?
               (compiler-lower-with-escape-array-source))
-            (and
-              (> (lower-test-functions-call-count functions "tl_alloc") 1)
-              (> (lower-test-function-branch-count functions "main") 0)))])]
+            (> (lower-test-functions-call-count functions "tl_alloc") 1)
+            (> (lower-test-function-branch-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-escape-box-shape-ok?) : bool
@@ -31150,9 +31036,8 @@
           (and
             (compiler-lower-with-escape-arena-shape-ok?
               (compiler-lower-with-escape-box-source))
-            (and
-              (> (lower-test-functions-call-count functions "tl_alloc") 0)
-              (> (lower-test-functions-call-count functions "tl_substring") 0)))])]
+            (> (lower-test-functions-call-count functions "tl_alloc") 0)
+            (> (lower-test-functions-call-count functions "tl_substring") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
@@ -31168,18 +31053,16 @@
               (and
                 (compiler-lower-with-escape-arena-shape-ok?
                   (compiler-lower-with-escape-owning-source))
-                (and
-                  (=
-                    (lower-test-function-call-count
-                      functions
-                      "main"
-                      "<source>::clone$EscapeResult")
-                    1)
-                  (and
-                    (lower-test-function-defined?
-                      functions
-                      "<source>::clone$EscapeResult")
-                    (> (lower-test-functions-call-count functions "tl_alloc") 0))))])]
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "<source>::clone$EscapeResult")
+                  1)
+                (lower-test-function-defined?
+                  functions
+                  "<source>::clone$EscapeResult")
+                (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -31221,9 +31104,8 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (and
-              (> (lower-test-function-gep-offset-count functions "main" 4) 0)
-              (> (lower-test-function-gep-offset-count functions "main" 12) 0)))])]
+            (> (lower-test-function-gep-offset-count functions "main" 4) 0)
+            (> (lower-test-function-gep-offset-count functions "main" 12) 0))])]
     [(ErrCompilerLower _) false]))
 
 ;; `foreach` scalar lowering (#1012): a foreach `main` lowers to a loop, so its
@@ -31294,11 +31176,10 @@
               (lower-test-function-store-ptr-count functions "fill")]
             (and
               (= load-count 2)
-              (and
-                (= binop-count 1)
-                (and
-                  (= store-count 1)
-                  (and (= shape-count 4) (> tail-store-count 0))))))])]
+              (= binop-count 1)
+              (= store-count 1)
+              (= shape-count 4)
+              (> tail-store-count 0)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-avx2-foreach-map-shape-ok?) : bool
@@ -31307,20 +31188,18 @@
       (compiler-lower-avx2-foreach-map-source)
       (AstTyI64)
       4)
-    (and
-      (compiler-lower-avx2-foreach-map-source-shape-ok?
-        (compiler-lower-avx2-foreach-map-i32-source)
-        (AstTyI32)
-        8)
-      (and
-        (compiler-lower-avx2-foreach-map-source-shape-ok?
-          (compiler-lower-avx2-foreach-map-f64-source)
-          (AstTyF64)
-          4)
-        (compiler-lower-avx2-foreach-map-source-shape-ok?
-          (compiler-lower-avx2-foreach-map-f32-source)
-          (AstTyF32)
-          8)))))
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-i32-source)
+      (AstTyI32)
+      8)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-f64-source)
+      (AstTyF64)
+      4)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-f32-source)
+      (AstTyF32)
+      8)))
 
 (define (compiler-lower-and8
   [a : bool]
@@ -31331,7 +31210,7 @@
   [f : bool]
   [g : bool]
   [h : bool]) : bool
-  (and (and (and a b) (and c d)) (and (and e f) (and g h))))
+  (and a b c d e f g h))
 
 (define (compiler-lower-avx512-foreach-map-source-shape-ok?
   [src : String]
@@ -31379,20 +31258,18 @@
       (compiler-lower-avx2-foreach-map-source)
       (AstTyI64)
       8)
-    (and
-      (compiler-lower-avx512-foreach-map-source-shape-ok?
-        (compiler-lower-avx2-foreach-map-i32-source)
-        (AstTyI32)
-        16)
-      (and
-        (compiler-lower-avx512-foreach-map-source-shape-ok?
-          (compiler-lower-avx2-foreach-map-f64-source)
-          (AstTyF64)
-          8)
-        (compiler-lower-avx512-foreach-map-source-shape-ok?
-          (compiler-lower-avx2-foreach-map-f32-source)
-          (AstTyF32)
-          16)))))
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-i32-source)
+      (AstTyI32)
+      16)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-f64-source)
+      (AstTyF64)
+      8)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-f32-source)
+      (AstTyF32)
+      16)))
 
 (define (compiler-lower-avx512-masked-if-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -31477,9 +31354,8 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-vector-load-count functions "fill") 0)
-            (and
-              (= (lower-test-function-vector-binop-count functions "fill") 0)
-              (= (lower-test-function-vector-store-count functions "fill") 0)))])]
+            (= (lower-test-function-vector-binop-count functions "fill") 0)
+            (= (lower-test-function-vector-store-count functions "fill") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-foreach-tests-ok?) : bool
@@ -31498,13 +31374,10 @@
       (compiler-lower-avx2-foreach-map-shape-ok?)
       (compiler-lower-avx512-foreach-map-shape-ok?)
       (compiler-lower-scalar-foreach-stays-scalar-ok?))
-    (and
-      (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)
-      (and
-        (compiler-lower-avx512-masked-if-shape-ok?)
-        (and
-          (compiler-lower-avx512-masked-if-offset-shape-ok?)
-          (compiler-lower-avx2-masked-if-diagnostic-ok?))))))
+    (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)
+    (compiler-lower-avx512-masked-if-shape-ok?)
+    (compiler-lower-avx512-masked-if-offset-shape-ok?)
+    (compiler-lower-avx2-masked-if-diagnostic-ok?)))
 
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?
   [src : String]
@@ -31516,17 +31389,15 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-vector-load-count functions "f") 1)
-            (and
-              (= (lower-test-function-vector-reduce-count functions "f") 1)
-              (and
-                (=
-                  (lower-test-function-vector-shape-count
-                    functions
-                    "f"
-                    lanes
-                    elem-ty)
-                  2)
-                (> (lower-test-function-bounds-count functions "f") 0))))])]
+            (= (lower-test-function-vector-reduce-count functions "f") 1)
+            (=
+              (lower-test-function-vector-shape-count
+                functions
+                "f"
+                lanes
+                elem-ty)
+              2)
+            (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-avx2-spmd-reduce-stays-scalar-ok? [src : String]) : bool
@@ -31547,17 +31418,15 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-vector-load-count functions "f") 1)
-            (and
-              (= (lower-test-function-vector-reduce-count functions "f") 1)
-              (and
-                (=
-                  (lower-test-function-vector-shape-count
-                    functions
-                    "f"
-                    lanes
-                    elem-ty)
-                  2)
-                (> (lower-test-function-bounds-count functions "f") 0))))])]
+            (= (lower-test-function-vector-reduce-count functions "f") 1)
+            (=
+              (lower-test-function-vector-shape-count
+                functions
+                "f"
+                lanes
+                elem-ty)
+              2)
+            (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
@@ -31625,27 +31494,20 @@
   (and
     (compiler-lower-ok?
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
-    (and
-      (compiler-lower-ok?
-        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
-      (and
-        (compiler-lower-foreach-shape-ok?
-          "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
-        (and
-          (compiler-lower-ok?
-            "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
-          (and
-            (compiler-lower-ok?
-              "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
-            (and
-              (compiler-lower-ok?
-                "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
-              (and
-                (compiler-lower-ok?
-                  "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))")
-                (and
-                  (compiler-lower-avx2-spmd-reduce-tests-ok?)
-                  (compiler-lower-avx512-spmd-reduce-tests-ok?))))))))))
+    (compiler-lower-ok?
+      "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+    (compiler-lower-foreach-shape-ok?
+      "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
+    (compiler-lower-ok?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
+    (compiler-lower-ok?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
+    (compiler-lower-ok?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
+    (compiler-lower-ok?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))")
+    (compiler-lower-avx2-spmd-reduce-tests-ok?)
+    (compiler-lower-avx512-spmd-reduce-tests-ok?)))
 
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,
@@ -31655,37 +31517,30 @@
     (compiler-lower-comptime-fold-ok?
       "(define (main) : i64 (comptime (- 50 8)))"
       42)
-    (and
-      (compiler-lower-comptime-fold-ok?
-        "(define (main) : i64 (comptime (/ 84 2)))"
-        42)
-      (and
-        (compiler-lower-comptime-fold-ok?
-          "(define (main) : i64 (comptime (% 142 100)))"
-          42)
-        (and
-          (compiler-lower-comptime-fold-ok?
-            "(define (main) : i64 (comptime (bit-and 63 42)))"
-            42)
-          (and
-            (compiler-lower-comptime-fold-ok?
-              "(define (main) : i64 (comptime (bit-or 40 2)))"
-              42)
-            (and
-              (compiler-lower-comptime-fold-ok?
-                "(define (main) : i64 (comptime (bit-xor 63 21)))"
-                42)
-              (and
-                (compiler-lower-comptime-fold-ok?
-                  "(define (main) : i64 (comptime (shl 21 1)))"
-                  42)
-                (and
-                  (compiler-lower-comptime-fold-ok?
-                    "(define (main) : i64 (comptime (shr 84 1)))"
-                    42)
-                  (compiler-lower-comptime-fold-ok?
-                    "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
-                    42))))))))))
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (/ 84 2)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (% 142 100)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (bit-and 63 42)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (bit-or 40 2)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (bit-xor 63 21)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (shl 21 1)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (shr 84 1)))"
+      42)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
+      42)))
 
 ;; `size-of`/`align-of` comptime layout queries (#989 slice 1): a scalar type
 ;; folds to its byte size / alignment (equal for primitives) inside `(comptime ...)`.
@@ -31694,25 +31549,20 @@
     (compiler-lower-comptime-fold-ok?
       "(define (main) : i64 (comptime (size-of (type i64))))"
       8)
-    (and
-      (compiler-lower-comptime-fold-ok?
-        "(define (main) : i64 (comptime (align-of (type i64))))"
-        8)
-      (and
-        (compiler-lower-comptime-fold-ok?
-          "(define (main) : i64 (comptime (size-of (type i32))))"
-          4)
-        (and
-          (compiler-lower-comptime-fold-ok?
-            "(define (main) : i64 (comptime (size-of (type bool))))"
-            1)
-          (and
-            (compiler-lower-comptime-fold-ok?
-              "(define (main) : i64 (comptime (size-of (type char))))"
-              1)
-            (and
-              (compiler-lower-comptime-fold-ok?
-                "(defstruct Inner
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (align-of (type i64))))"
+      8)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (size-of (type i32))))"
+      4)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (size-of (type bool))))"
+      1)
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (size-of (type char))))"
+      1)
+    (compiler-lower-comptime-fold-ok?
+      "(defstruct Inner
   (:repr c)
   (x i32))
 (defstruct Outer
@@ -31725,10 +31575,10 @@
     (+ (align-of (type Outer))
       (+ (offset-of (type Outer) inner)
         (+ (offset-of (type Outer) tail) 6))))))"
-                42)
-              (compiler-lower-error-ok?
-                "(define (main) : i64 (size-of (type i64)))"
-                "typecheck: size-of is compile-time only; wrap it in (comptime ...)"))))))))
+      42)
+    (compiler-lower-error-ok?
+      "(define (main) : i64 (size-of (type i64)))"
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
 
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
@@ -31772,9 +31622,8 @@
 (define (compiler-lower-raw-pointer-ops-ok?) : bool
   (and
     (compiler-lower-raw-pointer-addr-of-shape-ok?)
-    (and
-      (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
-      (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source)))))
+    (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
+    (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source))))
 
 (define (compiler-lower-raw-pointer-addr-of-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-raw-pointer-ops-source))
@@ -31783,9 +31632,8 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (and
-              (= (lower-test-function-addr-of-count functions "main") 1)
-              (>= (lower-test-function-store-ptr-count functions "main") 2)))])]
+            (= (lower-test-function-addr-of-count functions "main") 1)
+            (>= (lower-test-function-store-ptr-count functions "main") 2))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
@@ -31795,11 +31643,9 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-functions-call-count functions "raw-make") 1)
-            (and
-              (= (lower-test-functions-call-count functions "raw-value") 1)
-              (and
-                (= (lower-test-function-store-ptr-count functions "main") 1)
-                (> (lower-test-function-u64-mov-count functions "main") 0))))])]
+            (= (lower-test-functions-call-count functions "raw-value") 1)
+            (= (lower-test-function-store-ptr-count functions "main") 1)
+            (> (lower-test-function-u64-mov-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool
@@ -32441,33 +32287,20 @@
                         [no-main-kept : AstDeclList (box-get no-main-kept-box)]
                         (and
                           (= (lower-test-decl-list-count kept) 4)
-                          (and
-                            (lower-test-decl-list-defines? kept "main")
-                            (and
-                              (lower-test-decl-list-defines? kept "helper")
-                              (and
-                                (lower-test-decl-list-defines?
-                                  kept
-                                  "callback-target")
-                                (and
-                                  (not
-                                    (lower-test-decl-list-defines? kept "dead"))
-                                  (=
-                                    (lower-test-decl-list-count no-main-kept)
-                                    2)))))))]))])])])))
+                          (lower-test-decl-list-defines? kept "main")
+                          (lower-test-decl-list-defines? kept "helper")
+                          (lower-test-decl-list-defines? kept "callback-target")
+                          (not (lower-test-decl-list-defines? kept "dead"))
+                          (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : AstDeclList]) : bool
   (and
     (= (lower-test-decl-list-count kept) 3)
-    (and
-      (lower-test-decl-list-defines? kept "main")
-      (and
-        (lower-test-decl-list-defines? kept "unsafe-helper")
-        (and
-          (lower-test-decl-list-defines? kept "unsafe-entry")
-          (and
-            (not (lower-test-decl-list-defines? kept "dead-helper"))
-            (not (lower-test-decl-list-defines? kept "dead-unsafe"))))))))
+    (lower-test-decl-list-defines? kept "main")
+    (lower-test-decl-list-defines? kept "unsafe-helper")
+    (lower-test-decl-list-defines? kept "unsafe-entry")
+    (not (lower-test-decl-list-defines? kept "dead-helper"))
+    (not (lower-test-decl-list-defines? kept "dead-unsafe"))))
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
   (match (parse-ast-source (compiler-lower-unsafe-ast-dce-source))
@@ -32522,17 +32355,12 @@
             (box LowerCleanupNil))))]
     (and
       (= (lower-name-env-count names) 2)
-      (and
-        (string-eq (lower-name-env-resolve names "source-b") "logical-b")
-        (and
-          (lower-string-set-contains? strings "helper-a")
-          (and
-            (lower-string-set-contains? strings "helper-b")
-            (and
-              (= (lower-capture-list-count captures) 2)
-              (and
-                (lower-capture-list-contains-name? captures "cap-b")
-                (= (lower-cleanup-list-count cleanups) 2)))))))))
+      (string-eq (lower-name-env-resolve names "source-b") "logical-b")
+      (lower-string-set-contains? strings "helper-a")
+      (lower-string-set-contains? strings "helper-b")
+      (= (lower-capture-list-count captures) 2)
+      (lower-capture-list-contains-name? captures "cap-b")
+      (= (lower-cleanup-list-count cleanups) 2))))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
@@ -32641,7 +32469,8 @@
 (define (compiler-lower-self-test) : i64
   (if (and
     (compiler-lower-front-half-tests-ok?)
-    (and (compiler-lower-middle-tests-ok?) (compiler-lower-back-half-tests-ok?)))
+    (compiler-lower-middle-tests-ok?)
+    (compiler-lower-back-half-tests-ok?))
     42
     (begin
       (panic "lower: smoke score mismatch")

@@ -1264,9 +1264,8 @@
     (io-file-table-init!)
     (and
       (> raw 0)
-      (and
-        (< raw io-file-handle-cap)
-        (= (io-file-i64-ref (io-file-states-ptr) raw) 1)))))
+      (< raw io-file-handle-cap)
+      (= (io-file-i64-ref (io-file-states-ptr) raw) 1))))
 
 ;: Return a stdlib file handle id or negative status for opening `path`.
 (define (file-open-status [path : String] [mode : i64]) : i64

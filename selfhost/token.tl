@@ -81,9 +81,9 @@
   [end-col : i64]) : bool
   (and
     (= (span-start-line span) start-line)
-    (and
-      (= (span-start-col span) start-col)
-      (and (= (span-end-line span) end-line) (= (span-end-col span) end-col)))))
+    (= (span-start-col span) start-col)
+    (= (span-end-line span) end-line)
+    (= (span-end-col span) end-col)))
 
 (define (source-error-message [err : SourceError]) : String
   (struct-get err message))

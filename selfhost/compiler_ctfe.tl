@@ -2247,25 +2247,16 @@
   (core/cond
     (or
       (string-eq name "type-kind")
-      (or
-        (string-eq name "type-key")
-        (or
-          (string-eq name "type-nominal-module")
-          (or
-            (string-eq name "type-nominal-name")
-            (or
-              (string-eq name "struct-field-count")
-              (or
-                (string-eq name "enum-variant-count")
-                (or
-                  (string-eq name "array-element-type")
-                  (or
-                    (string-eq name "array-length")
-                    (or
-                      (string-eq name "array-dynamic?")
-                      (or
-                        (string-eq name "function-param-count")
-                        (string-eq name "function-return-type")))))))))))
+      (string-eq name "type-key")
+      (string-eq name "type-nominal-module")
+      (string-eq name "type-nominal-name")
+      (string-eq name "struct-field-count")
+      (string-eq name "enum-variant-count")
+      (string-eq name "array-element-type")
+      (string-eq name "array-length")
+      (string-eq name "array-dynamic?")
+      (string-eq name "function-param-count")
+      (string-eq name "function-return-type"))
     (ctfe-eval-one-type-reflection name args expr env fuel)
     (or
       (string-eq name "struct-field-name")
@@ -2541,22 +2532,19 @@
 (define (ctfe-expr-inspector-name? [name : String]) : bool
   (or
     (string-eq name "expr-bool?")
-    (or
-      (string-eq name "expr-bool-value")
-      (or
-        (string-eq name "expr-if?")
-        (or
-          (string-eq name "expr-if-cond")
-          (or (string-eq name "expr-if-then") (string-eq name "expr-if-else")))))))
+    (string-eq name "expr-bool-value")
+    (string-eq name "expr-if?")
+    (string-eq name "expr-if-cond")
+    (string-eq name "expr-if-then")
+    (string-eq name "expr-if-else")))
 
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
   (or
     (string-eq name "expr-list-empty?")
-    (or
-      (string-eq name "expr-list-length")
-      (or
-        (string-eq name "expr-list-head")
-        (or (string-eq name "expr-list-tail") (string-eq name "expr-list-nth"))))))
+    (string-eq name "expr-list-length")
+    (string-eq name "expr-list-head")
+    (string-eq name "expr-list-tail")
+    (string-eq name "expr-list-nth")))
 
 (define (ctfe-eval-expr-list-nth-call
   [list-arg : AstExpr]
@@ -3927,7 +3915,8 @@
         [(AstParam b-name b-ty b-comptime)
           (and
             (= a-name b-name)
-            (and (ctfe-type-eq a-ty b-ty) (= a-comptime b-comptime)))])]))
+            (ctfe-type-eq a-ty b-ty)
+            (= a-comptime b-comptime))])]))
 
 (define (ctfe-param-list-eq [a : AstParamList] [b : AstParamList]) : bool
   (match a
@@ -4014,9 +4003,8 @@
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
                 (= a-name b-name)
-                (and
-                  (ctfe-maybe-type-eq a-ty b-ty)
-                  (ctfe-expr-eq a-value b-value))))]
+                (ctfe-maybe-type-eq a-ty b-ty)
+                (ctfe-expr-eq a-value b-value)))]
           [_ false]))]))
 
 (define (ctfe-let-binding-list-eq
@@ -4054,9 +4042,8 @@
               [b-cleanup : AstExpr (ast-node-get b-cleanup-box)]
               (and
                 (= a-name b-name)
-                (and
-                  (ctfe-expr-eq a-init b-init)
-                  (ctfe-expr-eq a-cleanup b-cleanup))))]
+                (ctfe-expr-eq a-init b-init)
+                (ctfe-expr-eq a-cleanup b-cleanup)))]
           [_ false]))]))
 
 (define (ctfe-resource-binding-list-eq
@@ -4156,7 +4143,8 @@
               [b-r : AstExpr (ast-node-get b-r-box)]
               (and
                 (ctfe-binop-eq a-op b-op)
-                (and (ctfe-expr-eq a-l b-l) (ctfe-expr-eq a-r b-r))))]
+                (ctfe-expr-eq a-l b-l)
+                (ctfe-expr-eq a-r b-r)))]
           [_ false]))]
     [(AstExprUnary a-op a-in-box)
       (let
@@ -4180,7 +4168,8 @@
               [b-e : AstExpr (ast-node-get b-e-box)]
               (and
                 (ctfe-expr-eq a-c b-c)
-                (and (ctfe-expr-eq a-t b-t) (ctfe-expr-eq a-e b-e))))]
+                (ctfe-expr-eq a-t b-t)
+                (ctfe-expr-eq a-e b-e)))]
           [_ false]))]
     [(AstExprLet a-bindings a-body-box)
       (let
@@ -4202,9 +4191,8 @@
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
                 (ctfe-param-list-eq a-params b-params)
-                (and
-                  (ctfe-maybe-type-eq a-ret b-ret)
-                  (ctfe-expr-eq a-body b-body))))]
+                (ctfe-maybe-type-eq a-ret b-ret)
+                (ctfe-expr-eq a-body b-body)))]
           [_ false]))]
     [(AstExprCall a-fun-box a-args)
       (let
@@ -4267,9 +4255,8 @@
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
                 (ctfe-expr-eq a-target b-target)
-                (and
-                  (ctfe-expr-eq a-index b-index)
-                  (ctfe-expr-eq a-value b-value))))]
+                (ctfe-expr-eq a-index b-index)
+                (ctfe-expr-eq a-value b-value)))]
           [_ false]))]
     [(AstExprArrayPush a-target-box a-value-box)
       (let
@@ -4352,9 +4339,8 @@
               [b-place : AstExpr (ast-node-get b-place-box)]
               (and
                 (= a-mut b-mut)
-                (and
-                  (ctfe-borrow-lifetime-eq a-life b-life)
-                  (ctfe-expr-eq a-place b-place))))]
+                (ctfe-borrow-lifetime-eq a-life b-life)
+                (ctfe-expr-eq a-place b-place)))]
           [_ false]))]
     [(AstExprMatch a-scrut-box a-arms)
       (let
@@ -4380,13 +4366,10 @@
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
                 (= a-name b-name)
-                (and
-                  (ctfe-type-eq a-ty b-ty)
-                  (and
-                    (ctfe-expr-eq a-start b-start)
-                    (and
-                      (ctfe-expr-eq a-end b-end)
-                      (ctfe-expr-eq a-body b-body))))))]
+                (ctfe-type-eq a-ty b-ty)
+                (ctfe-expr-eq a-start b-start)
+                (ctfe-expr-eq a-end b-end)
+                (ctfe-expr-eq a-body b-body)))]
           [_ false]))]
     [(AstExprSpmdReduce
         a-op
@@ -4417,17 +4400,12 @@
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
                 (ctfe-reduce-op-eq a-op b-op)
-                (and
-                  (= a-name b-name)
-                  (and
-                    (ctfe-type-eq a-ty b-ty)
-                    (and
-                      (ctfe-expr-eq a-start b-start)
-                      (and
-                        (ctfe-expr-eq a-end b-end)
-                        (and
-                          (ctfe-expr-eq a-init b-init)
-                          (ctfe-expr-eq a-value b-value))))))))]
+                (= a-name b-name)
+                (ctfe-type-eq a-ty b-ty)
+                (ctfe-expr-eq a-start b-start)
+                (ctfe-expr-eq a-end b-end)
+                (ctfe-expr-eq a-init b-init)
+                (ctfe-expr-eq a-value b-value)))]
           [_ false]))]
     [(AstExprStructGet a-inner-box a-field)
       (let
@@ -5618,15 +5596,11 @@
     [if3 : i64 (ctfe-expr-if true-lit var-x false-lit)]
     (and
       (ctfe-test-expr-eq if1 if2)
-      (and
-        (not (ctfe-test-expr-eq if1 if3))
-        (and
-          (ctfe-expr-if? if1)
-          (and
-            (ctfe-test-expr-eq (ctfe-expr-if-cond if1) var-x)
-            (and
-              (ctfe-test-expr-eq (ctfe-expr-if-then if1) true-lit)
-              (ctfe-test-expr-eq (ctfe-expr-if-else if1) false-lit))))))))
+      (not (ctfe-test-expr-eq if1 if3))
+      (ctfe-expr-if? if1)
+      (ctfe-test-expr-eq (ctfe-expr-if-cond if1) var-x)
+      (ctfe-test-expr-eq (ctfe-expr-if-then if1) true-lit)
+      (ctfe-test-expr-eq (ctfe-expr-if-else if1) false-lit))))
 
 (define (compiler-ctfe-expr-list-ok?) : bool
   (let
@@ -5637,19 +5611,12 @@
     [lst3 : AstExprList (ctfe-expr-list-singleton a)]
     (and
       (ctfe-expr-list-eq lst1 lst2)
-      (and
-        (not (ctfe-expr-list-eq lst1 lst3))
-        (and
-          (= (ctfe-expr-list-length lst1) 2)
-          (and
-            (not (ctfe-expr-list-empty? lst1))
-            (and
-              (ctfe-test-expr-eq (ctfe-expr-list-head lst1) a)
-              (and
-                (ctfe-test-expr-eq
-                  (ctfe-expr-list-head (ctfe-expr-list-tail lst1))
-                  b)
-                (ctfe-test-expr-eq (ctfe-expr-list-nth lst1 1) b)))))))))
+      (not (ctfe-expr-list-eq lst1 lst3))
+      (= (ctfe-expr-list-length lst1) 2)
+      (not (ctfe-expr-list-empty? lst1))
+      (ctfe-test-expr-eq (ctfe-expr-list-head lst1) a)
+      (ctfe-test-expr-eq (ctfe-expr-list-head (ctfe-expr-list-tail lst1)) b)
+      (ctfe-test-expr-eq (ctfe-expr-list-nth lst1 1) b))))
 
 (define (compiler-ctfe-expr-list-fold-sketch-ok?)
   :
@@ -5711,40 +5678,36 @@
     [bad-cond-expr : i64 (compiler-ctfe-call1 "expr-if-cond" true-expr)]
     (and
       (compiler-ctfe-eval-bool-ok? if-predicate (ctfe-env-empty) true)
-      (and
-        (compiler-ctfe-eval-bool-ok? bool-predicate (ctfe-env-empty) true)
-        (and
-          (compiler-ctfe-eval-bool-ok? bool-value (ctfe-env-empty) false)
-          (and
-            (match (compiler-ctfe-eval
-              (ast-node-get cond-expr)
-              (ctfe-env-empty)
-              (ctfe-fuel-limit))
-              [(OkCtfe value _)
-                (match value
-                  [(CtfeExpr node checked-ty)
-                    (and
-                      (ctfe-type-eq checked-ty (AstTyBool))
-                      (ctfe-test-expr-eq node true-lit))]
-                  [_ false])]
-              [(ErrCtfe _) false])
-            (and
-              (match (compiler-ctfe-eval
-                (ast-node-get then-expr)
-                (ctfe-env-empty)
-                (ctfe-fuel-limit))
-                [(OkCtfe value _)
-                  (match value
-                    [(CtfeExpr node checked-ty)
-                      (and
-                        (ctfe-type-eq checked-ty (AstTyBool))
-                        (ctfe-test-expr-eq node false-lit))]
-                    [_ false])]
-                [(ErrCtfe _) false])
-              (compiler-ctfe-eval-error-ok?
-                bad-cond-expr
-                (ctfe-env-empty)
-                "expr-if-cond expects if Expr"))))))))
+      (compiler-ctfe-eval-bool-ok? bool-predicate (ctfe-env-empty) true)
+      (compiler-ctfe-eval-bool-ok? bool-value (ctfe-env-empty) false)
+      (match (compiler-ctfe-eval
+        (ast-node-get cond-expr)
+        (ctfe-env-empty)
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyBool))
+                (ctfe-test-expr-eq node true-lit))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ast-node-get then-expr)
+        (ctfe-env-empty)
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyBool))
+                (ctfe-test-expr-eq node false-lit))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (compiler-ctfe-eval-error-ok?
+        bad-cond-expr
+        (ctfe-env-empty)
+        "expr-if-cond expects if Expr"))))
 
 (define (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) : bool
   (let
@@ -5809,28 +5772,24 @@
                 (ctfe-test-expr-eq node true-lit))]
             [_ false])]
         [(ErrCtfe _) false])
-      (and
-        (match (compiler-ctfe-eval (ast-node-get qq-if) env (ctfe-fuel-limit))
-          [(OkCtfe value _)
-            (match value
-              [(CtfeExpr node ty)
-                (and
-                  (ctfe-type-eq ty (AstTyBool))
-                  (ctfe-test-expr-eq
-                    node
-                    (ast-expr-if flag-var true-lit false-lit)))]
-              [_ false])]
-          [(ErrCtfe _) false])
-        (match (compiler-ctfe-eval
-          (ast-node-get qq-splice)
-          env
-          (ctfe-fuel-limit))
-          [(OkCtfe value _)
-            (match value
-              [(CtfeExpr node _)
-                (ctfe-test-expr-eq node (ast-node-push (AstExprBegin spliced)))]
-              [_ false])]
-          [(ErrCtfe _) false])))))
+      (match (compiler-ctfe-eval (ast-node-get qq-if) env (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node ty)
+              (and
+                (ctfe-type-eq ty (AstTyBool))
+                (ctfe-test-expr-eq
+                  node
+                  (ast-expr-if flag-var true-lit false-lit)))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval (ast-node-get qq-splice) env (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node _)
+              (ctfe-test-expr-eq node (ast-node-push (AstExprBegin spliced)))]
+            [_ false])]
+        [(ErrCtfe _) false]))))
 
 (define (compiler-ctfe-self-test) : i64
   (begin

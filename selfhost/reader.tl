@@ -151,7 +151,9 @@
 (define (read-prefix-tag? [t : i64]) : bool
   (or
     (= t (tag-quote))
-    (or (= t (tag-backtick)) (or (= t (tag-comma)) (= t (tag-comma-at))))))
+    (= t (tag-backtick))
+    (= t (tag-comma))
+    (= t (tag-comma-at))))
 
 (define (read-prefix-symbol [t : i64]) : String
   (core/cond
@@ -599,14 +601,12 @@
         [(SpSSym name prefix-span)
           (and
             (string-eq name "quasiquote")
-            (and
-              (span-eq? prefix-span 1 1 1 1)
-              (and
-                (span-eq? outer-span 1 1 1 2)
-                (match (box-get tail)
-                  [(SpSCons form _ _)
-                    (span-eq? (spanned-sexpr-span (box-get form)) 1 2 1 2)]
-                  [_ false]))))]
+            (span-eq? prefix-span 1 1 1 1)
+            (span-eq? outer-span 1 1 1 2)
+            (match (box-get tail)
+              [(SpSCons form _ _)
+                (span-eq? (spanned-sexpr-span (box-get form)) 1 2 1 2)]
+              [_ false]))]
         [_ false])]
     [_ false]))
 
@@ -646,10 +646,8 @@
                 0)
               (if (and
                 (reader-nested-list-spans-ok?)
-                (and
-                  (reader-spanned-error-ok?)
-                  (and
-                    (reader-prefix-quote-spans-ok?)
-                    (reader-bracket-list-boxed-ok?))))
+                (reader-spanned-error-ok?)
+                (reader-prefix-quote-spans-ok?)
+                (reader-bracket-list-boxed-ok?))
                 (reader-error-score)
                 0))))))))

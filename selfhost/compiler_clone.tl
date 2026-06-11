@@ -79,13 +79,10 @@
     [grown : CloneNameSet (clone-name-set-smoke-insert-count dupe 10)]
     (and
       (not (clone-name-set-contains? one "Beta"))
-      (and
-        (clone-name-set-contains? one "Alpha")
-        (and
-          (= (clone-name-set-len dupe) 1)
-          (and
-            (= (clone-name-set-len grown) 11)
-            (> (clone-name-set-capacity grown) seed-capacity)))))))
+      (clone-name-set-contains? one "Alpha")
+      (= (clone-name-set-len dupe) 1)
+      (= (clone-name-set-len grown) 11)
+      (> (clone-name-set-capacity grown) seed-capacity))))
 
 ;; A field type is clone-able given the current clone-able-name set: scalars,
 ;; String, tuples, fixed arrays, and dynamic arrays are clone-able recursively; a

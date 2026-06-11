@@ -2061,19 +2061,18 @@
                   (match cond
                     [(AstExprVar name) (string-eq (intern-str name) "cond")]
                     [_ false])
-                  (and
-                    (match then-expr
-                      [(AstExprMatch scrut-box arms)
-                        (let
-                          [scrut : AstExpr (ast-node-get scrut-box)]
-                          (and
-                            (match scrut
-                              [(AstExprVar name)
-                                (string-eq (intern-str name) "input")]
-                              [_ false])
-                            (compiler-ast-single-arm-box-ok? arms)))]
-                      [_ false])
-                    (compiler-ast-begin-expr? else-expr))))]
+                  (match then-expr
+                    [(AstExprMatch scrut-box arms)
+                      (let
+                        [scrut : AstExpr (ast-node-get scrut-box)]
+                        (and
+                          (match scrut
+                            [(AstExprVar name)
+                              (string-eq (intern-str name) "input")]
+                            [_ false])
+                          (compiler-ast-single-arm-box-ok? arms)))]
+                    [_ false])
+                  (compiler-ast-begin-expr? else-expr)))]
             [_ false])))]
     [_ false]))
 
@@ -2191,9 +2190,7 @@
         [grew : bool (> (ty-node-pool-capacity) capacity)]
         (begin
           (ty-node-pool-reset!)
-          (and
-            (not exhausted)
-            (and (= id capacity) (and (= len (+ capacity 1)) grew))))))))
+          (and (not exhausted) (= id capacity) (= len (+ capacity 1)) grew))))))
 
 (define (compiler-ast-type-dedup-smoke?) : bool
   (begin
@@ -2210,13 +2207,11 @@
       [ok : bool
         (and
           (= first-i64 second-i64)
-          (and
-            (= first-len 1)
-            (and
-              (= second-len 1)
-              (and
-                (= first-array second-array)
-                (and (= array-len 2) (= final-len 2))))))]
+          (= first-len 1)
+          (= second-len 1)
+          (= first-array second-array)
+          (= array-len 2)
+          (= final-len 2))]
       (begin
         (ty-node-pool-reset!)
         ok))))
@@ -2265,9 +2260,10 @@
       [(AstProgram _)
         (if (and
           nested-ty-ok?
-          (and
-            nested-expr-pattern-ok?
-            (and decl-program-ok? (and type-dedup-ok? pool-exhaustion-ok?))))
+          nested-expr-pattern-ok?
+          decl-program-ok?
+          type-dedup-ok?
+          pool-exhaustion-ok?)
           (+
             (ast-type-tag fn-ty)
             (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))

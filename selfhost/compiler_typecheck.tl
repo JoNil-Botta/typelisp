@@ -424,19 +424,16 @@
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
     (clone-name-set-smoke-ok?)
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-clone-function-source)
-          "typecheck: clone unsupported type (-> i64 i64)")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-clone-pointer-source)
-            "typecheck: clone unsupported type (MutPtr i64)")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-clone-ref-source)
-            "typecheck: clone unsupported type (& n i64)"))))))
+    (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-clone-function-source)
+      "typecheck: clone unsupported type (-> i64 i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-clone-pointer-source)
+      "typecheck: clone unsupported type (MutPtr i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-clone-ref-source)
+      "typecheck: clone unsupported type (& n i64)")))
 
 (define (compiler-typecheck-foreach-return-source) : String
   "(define (main [n : i64]) : i64
@@ -542,57 +539,47 @@
 (define (compiler-typecheck-foreach-control-flow-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-foreach-local-set-ok-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-foreach-if-local-set-source)
-        "typecheck: foreach calls with varying arguments are not supported")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-foreach-while-local-set-source)
-          "typecheck: foreach calls with varying arguments are not supported")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-foreach-match-local-set-source)
-          "typecheck: foreach calls with varying arguments are not supported")))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-if-local-set-source)
+      "typecheck: foreach calls with varying arguments are not supported")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-while-local-set-source)
+      "typecheck: foreach calls with varying arguments are not supported")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-match-local-set-source)
+      "typecheck: foreach calls with varying arguments are not supported")))
 
 (define (compiler-typecheck-foreach-spmd-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-if-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-foreach-varying-while-source)
-            "typecheck: foreach while condition must be uniform")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-foreach-varying-call-source)
-              "typecheck: foreach calls with varying arguments are not supported")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-foreach-outer-set-source)
-                "typecheck: foreach cannot set binding declared outside foreach")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-foreach-unsupported-lane-source)
-                  "typecheck: foreach varying array lane type is not supported: String")
-                (compiler-typecheck-foreach-control-flow-tests-ok?)))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-if-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-varying-while-source)
+      "typecheck: foreach while condition must be uniform")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-varying-call-source)
+      "typecheck: foreach calls with varying arguments are not supported")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-outer-set-source)
+      "typecheck: foreach cannot set binding declared outside foreach")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-unsupported-lane-source)
+      "typecheck: foreach varying array lane type is not supported: String")
+    (compiler-typecheck-foreach-control-flow-tests-ok?)))
 
 (define (compiler-typecheck-return-tests-ok?) : bool
   (and
     (compiler-typecheck-ok-score? (compiler-typecheck-return-source) 10)
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-return-mismatch-source)
-        "typecheck: return type mismatch")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-return-outside-source)
-          "typecheck: return requires enclosing function")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-foreach-return-source)
-          "typecheck: return inside foreach is not supported")))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-return-mismatch-source)
+      "typecheck: return type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-return-outside-source)
+      "typecheck: return requires enclosing function")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-return-source)
+      "typecheck: return inside foreach is not supported")))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
@@ -602,52 +589,34 @@
 (define (compiler-typecheck-aggregate-tests-ok?) : bool
   (and
     (compiler-typecheck-ok-score? (compiler-typecheck-aggregate-source) 20)
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-builtin-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-stdio-source))
-        (and
-          (compiler-typecheck-ok? (compiler-typecheck-env-source))
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-env-missing-import-source)
-              "typecheck: unbound name env-var-value")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-tuple-oob-source)
-                "typecheck: tuple index out of bounds")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-array-mismatch-source)
-                  "typecheck: array elements must have same type")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-string-index-source)
-                    "typecheck: string index must be integer")
-                  (and
-                    (compiler-typecheck-ok-score?
-                      (compiler-typecheck-string-shadow-source)
-                      30)
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-cast-bad-source)
-                        "typecheck: cast requires scalar numeric (integer/char/float) source and target")
-                      (and
-                        (compiler-typecheck-ok-score?
-                          (compiler-typecheck-char-range-source)
-                          20)
-                        (and
-                          (compiler-typecheck-ok?
-                            (compiler-typecheck-never-branch-source))
-                          (and
-                            (compiler-typecheck-error-ok?
-                              (compiler-typecheck-foreach-body-source)
-                              "typecheck: foreach body must be unit")
-                            (and
-                              (compiler-typecheck-error-ok?
-                                (compiler-typecheck-lambda-ret-source)
-                                "typecheck: lambda return type mismatch")
-                              (compiler-typecheck-return-tests-ok?))))))))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-builtin-source))
+    (compiler-typecheck-ok? (compiler-typecheck-stdio-source))
+    (compiler-typecheck-ok? (compiler-typecheck-env-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-env-missing-import-source)
+      "typecheck: unbound name env-var-value")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-tuple-oob-source)
+      "typecheck: tuple index out of bounds")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-array-mismatch-source)
+      "typecheck: array elements must have same type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-string-index-source)
+      "typecheck: string index must be integer")
+    (compiler-typecheck-ok-score? (compiler-typecheck-string-shadow-source) 30)
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-cast-bad-source)
+      "typecheck: cast requires scalar numeric (integer/char/float) source and target")
+    (compiler-typecheck-ok-score? (compiler-typecheck-char-range-source) 20)
+    (compiler-typecheck-ok? (compiler-typecheck-never-branch-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-body-source)
+      "typecheck: foreach body must be unit")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lambda-ret-source)
+      "typecheck: lambda return type mismatch")
+    (compiler-typecheck-return-tests-ok?)))
 
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))
@@ -732,7 +701,7 @@
               "bad-generated"
               "i64")
             "generated declaration: bad-generated from bad-family")]
-        (and message-ok (and path-ok (and line-ok (and col-ok notes-ok)))))]))
+        (and message-ok path-ok line-ok col-ok notes-ok))]))
 
 (define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
   (let
@@ -763,7 +732,7 @@
         (compiler-diagnostic-notes diag)
         "policy-key"
         "generated declaration: GeneratedStruct from policy-family")]
-    (and message-ok (and path-ok (and line-ok (and col-ok notes-ok))))))
+    (and message-ok path-ok line-ok col-ok notes-ok)))
 
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
@@ -1199,41 +1168,34 @@
                       [(OkTcReprCLayout outer)
                         (and
                           (= (tc-repr-c-layout-size packet) 24)
-                          (and
-                            (= (tc-repr-c-layout-align packet) 8)
-                            (and
-                              (=
-                                (tc-repr-c-layout-field-offset
-                                  (tc-repr-c-layout-fields packet)
-                                  "tag")
-                                0)
-                              (and
-                                (=
-                                  (tc-repr-c-layout-field-offset
-                                    (tc-repr-c-layout-fields packet)
-                                    "count")
-                                  8)
-                                (and
-                                  (=
-                                    (tc-repr-c-layout-field-offset
-                                      (tc-repr-c-layout-fields packet)
-                                      "flag")
-                                    16)
-                                  (and
-                                    (= (tc-repr-c-layout-size outer) 16)
-                                    (and
-                                      (= (tc-repr-c-layout-align outer) 4)
-                                      (and
-                                        (=
-                                          (tc-repr-c-layout-field-offset
-                                            (tc-repr-c-layout-fields outer)
-                                            "inner")
-                                          4)
-                                        (=
-                                          (tc-repr-c-layout-field-offset
-                                            (tc-repr-c-layout-fields outer)
-                                            "tail")
-                                          12)))))))))]
+                          (= (tc-repr-c-layout-align packet) 8)
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields packet)
+                              "tag")
+                            0)
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields packet)
+                              "count")
+                            8)
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields packet)
+                              "flag")
+                            16)
+                          (= (tc-repr-c-layout-size outer) 16)
+                          (= (tc-repr-c-layout-align outer) 4)
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields outer)
+                              "inner")
+                            4)
+                          (=
+                            (tc-repr-c-layout-field-offset
+                              (tc-repr-c-layout-fields outer)
+                              "tail")
+                            12))]
                       [(ErrTcReprCLayout _) false])]
                   [(ErrTcReprCLayout _) false]))]
             [(ErrCompilerRegistries _) false])]
@@ -1253,25 +1215,22 @@
                   [(OkTcReprCLayout layout)
                     (and
                       (= (tc-repr-c-layout-size layout) 16)
-                      (and
-                        (= (tc-repr-c-layout-align layout) 8)
-                        (and
-                          (=
-                            (tc-repr-c-layout-field-offset
-                              (tc-repr-c-layout-fields layout)
-                              "x")
-                            0)
-                          (and
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields layout)
-                                "y")
-                              4)
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields layout)
-                                "tag")
-                              8)))))]
+                      (= (tc-repr-c-layout-align layout) 8)
+                      (=
+                        (tc-repr-c-layout-field-offset
+                          (tc-repr-c-layout-fields layout)
+                          "x")
+                        0)
+                      (=
+                        (tc-repr-c-layout-field-offset
+                          (tc-repr-c-layout-fields layout)
+                          "y")
+                        4)
+                      (=
+                        (tc-repr-c-layout-field-offset
+                          (tc-repr-c-layout-fields layout)
+                          "tag")
+                        8))]
                   [(ErrTcReprCLayout _) false]))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
@@ -1296,19 +1255,12 @@
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-layout-source))
-    (and
-      (compiler-typecheck-repr-c-layout-ok?)
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-repr-c-f32-source))
-        (and
-          (compiler-typecheck-repr-c-f32-layout-ok?)
-          (and
-            (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-repr-c-default-nested-source))
-              (compiler-typecheck-ok?
-                (compiler-typecheck-repr-c-recursive-source)))))))))
+    (compiler-typecheck-repr-c-layout-ok?)
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-f32-source))
+    (compiler-typecheck-repr-c-f32-layout-ok?)
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-default-nested-source))
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-recursive-source))))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
   (match (parse-ast-source src)
@@ -1599,17 +1551,11 @@
     [src : String (compiler-typecheck-inline-boxed-ctfe-metadata-source)]
     (and
       (compiler-typecheck-inline-layout-ok? src "CtfeEnv")
-      (and
-        (compiler-typecheck-inline-layout-ok? src "CtfeLayoutInfoList")
-        (and
-          (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
-          (and
-            (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")
-            (and
-              (compiler-typecheck-inline-layout-ok? src "CtfeReflectFieldList")
-              (compiler-typecheck-inline-layout-ok?
-                src
-                "CtfeReflectVariantList"))))))))
+      (compiler-typecheck-inline-layout-ok? src "CtfeLayoutInfoList")
+      (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectFieldList")
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList"))))
 
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
@@ -1640,15 +1586,11 @@
     [src : String (compiler-typecheck-inline-boxed-ast-list-source)]
     (and
       (compiler-typecheck-inline-layout-ok? src "AstType")
-      (and
-        (compiler-typecheck-inline-layout-ok? src "AstTypeList")
-        (and
-          (compiler-typecheck-inline-layout-ok? src "AstPattern")
-          (and
-            (compiler-typecheck-inline-layout-ok? src "AstPatternList")
-            (and
-              (compiler-typecheck-inline-layout-ok? src "AstExpr")
-              (compiler-typecheck-inline-layout-ok? src "AstExprList"))))))))
+      (compiler-typecheck-inline-layout-ok? src "AstTypeList")
+      (compiler-typecheck-inline-layout-ok? src "AstPattern")
+      (compiler-typecheck-inline-layout-ok? src "AstPatternList")
+      (compiler-typecheck-inline-layout-ok? src "AstExpr")
+      (compiler-typecheck-inline-layout-ok? src "AstExprList"))))
 
 (define (compiler-typecheck-inline-boxed-formatter-source) : String
   "(defenum FormatToken
@@ -1678,9 +1620,8 @@
     [src : String (compiler-typecheck-inline-boxed-formatter-source)]
     (and
       (compiler-typecheck-inline-layout-ok? src "FormatCst")
-      (and
-        (compiler-typecheck-inline-layout-ok? src "FormatCstList")
-        (compiler-typecheck-inline-layout-ok? src "Doc")))))
+      (compiler-typecheck-inline-layout-ok? src "FormatCstList")
+      (compiler-typecheck-inline-layout-ok? src "Doc"))))
 
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
@@ -2145,32 +2086,24 @@
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
     (string-eq (tc-type-render (ast-ty-box (AstTyI64))) "(Box i64)")
-    (and
-      (tc-type-eq
-        (ast-ty-box (ast-ty-region "r" (AstTyI64)))
-        (ast-ty-box (AstTyI64)))
-      (and
-        (tc-type-contains-region
-          (ast-ty-box (ast-ty-region "r" (AstTyString)))
-          "r")
-        (tc-type-move-only? (ast-ty-box (AstTyI64)))))))
+    (tc-type-eq
+      (ast-ty-box (ast-ty-region "r" (AstTyI64)))
+      (ast-ty-box (AstTyI64)))
+    (tc-type-contains-region (ast-ty-box (ast-ty-region "r" (AstTyString))) "r")
+    (tc-type-move-only? (ast-ty-box (AstTyI64)))))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
   (and
     (compiler-typecheck-box-render-ok?)
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-box-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-box-direct-source))
-        (and
-          (compiler-typecheck-ok? (compiler-typecheck-box-region-source))
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-box-region-project-source)
-              "typecheck: region-tagged value cannot escape with-arena 'r'")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-box-get-non-box-source)
-              "typecheck: box-get requires Box type")))))))
+    (compiler-typecheck-ok? (compiler-typecheck-box-source))
+    (compiler-typecheck-ok? (compiler-typecheck-box-direct-source))
+    (compiler-typecheck-ok? (compiler-typecheck-box-region-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-box-region-project-source)
+      "typecheck: region-tagged value cannot escape with-arena 'r'")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-box-get-non-box-source)
+      "typecheck: box-get requires Box type")))
 
 (define (compiler-typecheck-init-source) : String
   "(defstruct Point (x i64) (flag bool))
@@ -2240,58 +2173,44 @@
 (define (compiler-typecheck-init-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-init-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-contextual-init-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-init-function-source)
-          "typecheck: init unsupported type (->  i64)")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-contextual-init-function-source)
-            "typecheck: init unsupported type (->  i64)")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-contextual-init-ambiguous-source)
-              "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-init-repr-c-source)
-                "typecheck: init supports only default-layout structs")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-init-reference-source)
-                  "typecheck: init unsupported type (& n i64)")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-init-cleanup-owning-source)
-                  "typecheck: init does not support cleanup-owning aggregate FileHandle")))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-contextual-init-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-init-function-source)
+      "typecheck: init unsupported type (->  i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-contextual-init-function-source)
+      "typecheck: init unsupported type (->  i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-contextual-init-ambiguous-source)
+      "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-init-repr-c-source)
+      "typecheck: init supports only default-layout structs")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-init-reference-source)
+      "typecheck: init unsupported type (& n i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-init-cleanup-owning-source)
+      "typecheck: init does not support cleanup-owning aggregate FileHandle")))
 
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-region-builtin-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-region-escape-source)
-        "typecheck: region-tagged value cannot escape with-arena 'r'")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-region-user-call-source)
-          "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-region-nested-escape-source)
-            "typecheck: region-tagged value cannot escape with-arena 'inner'")
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-region-outer-in-inner-source))
-            (and
-              (compiler-typecheck-ok? (compiler-typecheck-region-array-source))
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-region-struct-escape-source)
-                  "typecheck: region-tagged value cannot escape with-arena 'r'")
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-region-match-source))))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-region-escape-source)
+      "typecheck: region-tagged value cannot escape with-arena 'r'")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-region-user-call-source)
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-region-nested-escape-source)
+      "typecheck: region-tagged value cannot escape with-arena 'inner'")
+    (compiler-typecheck-ok? (compiler-typecheck-region-outer-in-inner-source))
+    (compiler-typecheck-ok? (compiler-typecheck-region-array-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-region-struct-escape-source)
+      "typecheck: region-tagged value cannot escape with-arena 'r'")
+    (compiler-typecheck-ok? (compiler-typecheck-region-match-source))))
 
 (define (compiler-typecheck-result-try-source) : String
   "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
@@ -2463,58 +2382,44 @@
 (define (compiler-typecheck-resource-with-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-resource-with-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-resource-with-nested-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-resource-with-shadow-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-resource-with-cleanup-mismatch-source)
-            "typecheck: with cleanup function type mismatch")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-resource-with-cleanup-return-source)
-              "typecheck: with cleanup function type mismatch")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-resource-with-cleanup-expression-source)
-                "typecheck: with cleanup must be a direct function name")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-resource-with-let-source)
-                  "typecheck: ordinary let cannot own cleanup-required resource; use with")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-resource-with-escape-source)
-                    "typecheck: cleanup-required resource would escape with scope")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-resource-with-tuple-store-source)
-                      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-resource-with-array-store-source)
-                        "typecheck: cannot store cleanup-required resource in ordinary aggregate")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-resource-with-struct-store-source)
-                          "typecheck: cannot store cleanup-required resource in ordinary aggregate")
-                        (and
-                          (compiler-typecheck-error-ok?
-                            (compiler-typecheck-resource-with-enum-store-source)
-                            "typecheck: cannot store cleanup-required resource in ordinary aggregate")
-                          (and
-                            (compiler-typecheck-error-ok?
-                              (compiler-typecheck-resource-with-lambda-capture-source)
-                              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
-                            (and
-                              (compiler-typecheck-error-ok?
-                                (compiler-typecheck-resource-with-transfer-source)
-                                "typecheck: cleanup-required resource already has a cleanup owner")
-                              (compiler-typecheck-error-ok?
-                                (compiler-typecheck-resource-with-assignment-source)
-                                "typecheck: cannot store cleanup-required resource in longer-lived binding"))))))))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-resource-with-nested-source))
+    (compiler-typecheck-ok? (compiler-typecheck-resource-with-shadow-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-cleanup-mismatch-source)
+      "typecheck: with cleanup function type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-cleanup-return-source)
+      "typecheck: with cleanup function type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-cleanup-expression-source)
+      "typecheck: with cleanup must be a direct function name")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-let-source)
+      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-escape-source)
+      "typecheck: cleanup-required resource would escape with scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-tuple-store-source)
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-array-store-source)
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-struct-store-source)
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-enum-store-source)
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-lambda-capture-source)
+      "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-transfer-source)
+      "typecheck: cleanup-required resource already has a cleanup owner")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-resource-with-assignment-source)
+      "typecheck: cannot store cleanup-required resource in longer-lived binding")))
 
 (define (compiler-typecheck-cleanup-struct-valid-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -2746,108 +2651,74 @@
 (define (compiler-typecheck-result-try-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-result-try-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-option-try-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-result-try-non-result-source)
-          "typecheck: try operand must be Result-like enum")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-result-try-non-result-return-source)
-            "typecheck: try requires enclosing Result-like function")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-result-try-incompatible-error-source)
-              "typecheck: try error type mismatch")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-option-try-carrier-mismatch-source)
-                "typecheck: try carrier mismatch")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-option-try-payloadless-some-source)
-                  "typecheck: try operand must be Result-like enum")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-option-try-payloaded-none-source)
-                    "typecheck: try operand must be Result-like enum")
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-result-try-panic-source)))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-option-try-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-result-try-non-result-source)
+      "typecheck: try operand must be Result-like enum")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-result-try-non-result-return-source)
+      "typecheck: try requires enclosing Result-like function")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-result-try-incompatible-error-source)
+      "typecheck: try error type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-option-try-carrier-mismatch-source)
+      "typecheck: try carrier mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-option-try-payloadless-some-source)
+      "typecheck: try operand must be Result-like enum")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-option-try-payloaded-none-source)
+      "typecheck: try operand must be Result-like enum")
+    (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source))))
 
 (define (compiler-typecheck-move-kind-copyable-tests-ok?) : bool
   (and
     (tc-type-copyable? (AstTyI64))
-    (and
-      (tc-type-copyable? (AstTyI32))
-      (and
-        (tc-type-copyable? (AstTyF64))
-        (and
-          (tc-type-copyable? (AstTyF32))
-          (and
-            (tc-type-copyable? (AstTyBool))
-            (and
-              (tc-type-copyable? (AstTyChar))
-              (and
-                (tc-type-copyable? (AstTyUnit))
-                (and
-                  (tc-type-copyable? (AstTyNever))
-                  (and
-                    (tc-type-copyable? (ast-ty-func AstTypeNil (AstTyI64)))
-                    (and
-                      (tc-type-copyable?
-                        (ast-ty-ptr (ast-ty-region "inner" (AstTyString))))
-                      (and
-                        (tc-type-copyable?
-                          (ast-ty-mut-ptr (ast-ty-dyn-array (AstTyI64))))
-                        (tc-type-copyable? (ast-ty-ref "r" (AstTyString)))))))))))))))
+    (tc-type-copyable? (AstTyI32))
+    (tc-type-copyable? (AstTyF64))
+    (tc-type-copyable? (AstTyF32))
+    (tc-type-copyable? (AstTyBool))
+    (tc-type-copyable? (AstTyChar))
+    (tc-type-copyable? (AstTyUnit))
+    (tc-type-copyable? (AstTyNever))
+    (tc-type-copyable? (ast-ty-func AstTypeNil (AstTyI64)))
+    (tc-type-copyable? (ast-ty-ptr (ast-ty-region "inner" (AstTyString))))
+    (tc-type-copyable? (ast-ty-mut-ptr (ast-ty-dyn-array (AstTyI64))))
+    (tc-type-copyable? (ast-ty-ref "r" (AstTyString)))))
 
 (define (compiler-typecheck-move-kind-move-only-tests-ok?) : bool
   (and
     (tc-type-move-only? (AstTyString))
-    (and
-      (tc-type-move-only? (ast-ty-dyn-array (AstTyI64)))
-      (and
-        (tc-type-move-only? (ast-ty-array (AstTyI64) 4))
-        (and
-          (tc-type-move-only?
-            (AstTyTuple
-              (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))))
-          (and
-            (tc-type-move-only? (AstTyStruct (intern "Box")))
-            (and
-              (tc-type-move-only? (ast-ty-box (AstTyI64)))
-              (and
-                (tc-type-move-only? (AstTyEnum (intern "ResultI64")))
-                (and
-                  (tc-type-move-only? (ast-ty-mut-ref "phase" (AstTyI64)))
-                  (tc-type-move-only?
-                    (AstTyTuple
-                      (ast-type-cons
-                        (AstTyStruct (intern "Box"))
-                        (ast-type-cons (ast-ty-dyn-array (AstTyI64)) AstTypeNil)))))))))))))
+    (tc-type-move-only? (ast-ty-dyn-array (AstTyI64)))
+    (tc-type-move-only? (ast-ty-array (AstTyI64) 4))
+    (tc-type-move-only?
+      (AstTyTuple
+        (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))))
+    (tc-type-move-only? (AstTyStruct (intern "Box")))
+    (tc-type-move-only? (ast-ty-box (AstTyI64)))
+    (tc-type-move-only? (AstTyEnum (intern "ResultI64")))
+    (tc-type-move-only? (ast-ty-mut-ref "phase" (AstTyI64)))
+    (tc-type-move-only?
+      (AstTyTuple
+        (ast-type-cons
+          (AstTyStruct (intern "Box"))
+          (ast-type-cons (ast-ty-dyn-array (AstTyI64)) AstTypeNil))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
     (tc-type-copyable? (ast-ty-region "r" (AstTyI64)))
-    (and
-      (tc-type-copyable? (ast-ty-region "r" (ast-ty-ref "inner" (AstTyString))))
-      (and
-        (tc-type-move-only? (ast-ty-region "r" (AstTyString)))
-        (and
-          (tc-type-move-only?
-            (ast-ty-region
-              "r"
-              (AstTyTuple (ast-type-cons (AstTyI64) AstTypeNil))))
-          (tc-type-move-only?
-            (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstTyI64)))))))))
+    (tc-type-copyable? (ast-ty-region "r" (ast-ty-ref "inner" (AstTyString))))
+    (tc-type-move-only? (ast-ty-region "r" (AstTyString)))
+    (tc-type-move-only?
+      (ast-ty-region "r" (AstTyTuple (ast-type-cons (AstTyI64) AstTypeNil))))
+    (tc-type-move-only? (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstTyI64))))))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
   (and
     (compiler-typecheck-move-kind-copyable-tests-ok?)
-    (and
-      (compiler-typecheck-move-kind-move-only-tests-ok?)
-      (compiler-typecheck-move-kind-region-tests-ok?))))
+    (compiler-typecheck-move-kind-move-only-tests-ok?)
+    (compiler-typecheck-move-kind-region-tests-ok?)))
 
 (define (compiler-typecheck-raw-pointer-source) : String
   "(extern (raw-sink [arg0 : (Ptr i64)]) : unit)
@@ -2858,17 +2729,14 @@
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
     (string-eq (tc-type-render (ast-ty-ptr (AstTyI64))) "(Ptr i64)")
-    (and
-      (string-eq
-        (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
-        "(MutPtr (Ptr u8))")
-      (and
-        (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-ptr (AstTyI64)))
-        (and
-          (not (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-mut-ptr (AstTyI64))))
-          (tc-type-eq
-            (ast-ty-ptr (ast-ty-region "r" (AstTyI64)))
-            (ast-ty-ptr (AstTyI64))))))))
+    (string-eq
+      (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
+      "(MutPtr (Ptr u8))")
+    (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-ptr (AstTyI64)))
+    (not (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-mut-ptr (AstTyI64))))
+    (tc-type-eq
+      (ast-ty-ptr (ast-ty-region "r" (AstTyI64)))
+      (ast-ty-ptr (AstTyI64)))))
 
 (define (compiler-typecheck-raw-pointer-ops-source) : String
   "(extern (raw-make) : (MutPtr i64))
@@ -2924,47 +2792,37 @@
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-cast-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-raw-pointer-safe-read-source)
-          "typecheck: ptr-read requires unsafe context")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-raw-pointer-safe-addr-of-source)
-            "typecheck: ptr-addr-of requires unsafe context")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
-              "typecheck: ptr-read requires unsafe context")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-raw-pointer-write-const-source)
-                "typecheck: ptr-write! requires a MutPtr pointer operand")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-raw-pointer-write-mismatch-source)
-                  "typecheck: ptr-write! value type mismatch")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-raw-pointer-offset-bad-source)
-                    "typecheck: ptr-offset requires an integer offset")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-raw-pointer-cast-bad-target-source)
-                      "typecheck: ptr-cast target must be a raw pointer type")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
-                        "typecheck: int->ptr requires an integer operand")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-raw-pointer-addr-of-global-source)
-                          "typecheck: ptr-addr-of requires a local or parameter name")
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-raw-pointer-addr-of-aggregate-source)
-                          "typecheck: ptr-addr-of supports local scalar cells only")))))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-cast-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-safe-read-source)
+      "typecheck: ptr-read requires unsafe context")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-safe-addr-of-source)
+      "typecheck: ptr-addr-of requires unsafe context")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
+      "typecheck: ptr-read requires unsafe context")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-write-const-source)
+      "typecheck: ptr-write! requires a MutPtr pointer operand")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-write-mismatch-source)
+      "typecheck: ptr-write! value type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-offset-bad-source)
+      "typecheck: ptr-offset requires an integer offset")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-cast-bad-target-source)
+      "typecheck: ptr-cast target must be a raw pointer type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
+      "typecheck: int->ptr requires an integer operand")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-addr-of-global-source)
+      "typecheck: ptr-addr-of requires a local or parameter name")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-addr-of-aggregate-source)
+      "typecheck: ptr-addr-of supports local scalar cells only")))
 
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and
@@ -3028,52 +2886,42 @@
 (define (compiler-typecheck-extern-head-varargs-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-head-fixed-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-extern-head-varargs-open-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-extern-head-varargs-typed-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
-            "typecheck: argument type mismatch")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-extern-head-varargs-tail-enum-source)
-            "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64"))))))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-head-varargs-open-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-head-varargs-typed-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-head-varargs-tail-enum-source)
+      "typecheck: extern ABI c does not support enum aggregate variadic argument type ResultI64")))
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-abi-source))
-    (and
-      (compiler-typecheck-extern-head-varargs-tests-ok?)
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-extern-abi-tuple-source)
-          "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-extern-abi-array-source)
-            "typecheck: extern ABI c does not support parameter type (Array i64 2)")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-extern-abi-f32-source)
-              "typecheck: extern ABI c does not support parameter type f32")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-extern-abi-enum-param-source)
-                "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-extern-abi-enum-return-source)
-                  "typecheck: extern ABI c does not support enum aggregate return type ResultI64")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-extern-abi-enum-args-param-source)
-                    "typecheck: extern ABI c does not support enum aggregate parameter type (RefOption n)")
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-extern-abi-enum-args-return-source)
-                    "typecheck: extern ABI c does not support enum aggregate return type (RefOption n)"))))))))))
+    (compiler-typecheck-extern-head-varargs-tests-ok?)
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-tuple-source)
+      "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-array-source)
+      "typecheck: extern ABI c does not support parameter type (Array i64 2)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-f32-source)
+      "typecheck: extern ABI c does not support parameter type f32")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-enum-param-source)
+      "typecheck: extern ABI c does not support enum aggregate parameter type ResultI64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-enum-return-source)
+      "typecheck: extern ABI c does not support enum aggregate return type ResultI64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-enum-args-param-source)
+      "typecheck: extern ABI c does not support enum aggregate parameter type (RefOption n)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-abi-enum-args-return-source)
+      "typecheck: extern ABI c does not support enum aggregate return type (RefOption n)")))
 
 (define (compiler-typecheck-reference-local-source) : String
   "(define (take [r : (& n i64)]) : unit unit)
@@ -3421,25 +3269,17 @@
 (define (compiler-typecheck-owner-model-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-owner-stack-local-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-owner-stack-local-escape-source)
-        "typecheck: reference value would escape lexical scope")
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-reference-return-param-ref-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-owner-default-arena-source))
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-owner-scoped-arena-source))
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-owner-scoped-arena-escape-source)
-                "typecheck: region-tagged value cannot escape with-arena 'phase'")
-              (compiler-typecheck-ok?
-                (compiler-typecheck-with-escape-string-source)))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-owner-stack-local-escape-source)
+      "typecheck: reference value would escape lexical scope")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-return-param-ref-source))
+    (compiler-typecheck-ok? (compiler-typecheck-owner-default-arena-source))
+    (compiler-typecheck-ok? (compiler-typecheck-owner-scoped-arena-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-owner-scoped-arena-escape-source)
+      "typecheck: region-tagged value cannot escape with-arena 'phase'")
+    (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))))
 
 (define (compiler-typecheck-reference-render-ok?) : bool
   (let
@@ -3489,29 +3329,19 @@
         "inner")]
     (and
       string-ref-render-ok
-      (and
-        str-ref-render-ok
-        (and
-          mut-ref-render-ok
-          (and
-            str-eq-ok
-            (and
-              str-distinct-ok
-              (and
-                nominal-lifetime-render-ok
-                (and
-                  nominal-lifetime-distinct-ok
-                  (and
-                    str-move-kind-ok
-                    (and
-                      str-ref-move-kind-ok
-                      (and
-                        region-erased-eq-ok
-                        (and
-                          region-distinct-ok
-                          (and
-                            mut-distinct-ok
-                            (and region-contains-ok inner-region-contains-ok)))))))))))))))
+      str-ref-render-ok
+      mut-ref-render-ok
+      str-eq-ok
+      str-distinct-ok
+      nominal-lifetime-render-ok
+      nominal-lifetime-distinct-ok
+      str-move-kind-ok
+      str-ref-move-kind-ok
+      region-erased-eq-ok
+      region-distinct-ok
+      mut-distinct-ok
+      region-contains-ok
+      inner-region-contains-ok)))
 
 (define (compiler-typecheck-reference-tests-ok?) : bool
   (let
@@ -3878,20 +3708,18 @@
   (and
     (compiler-typecheck-located-source-ok?
       (compiler-typecheck-located-fn-source))
-    (and
-      (compiler-typecheck-located-source-ok?
-        (compiler-typecheck-located-value-source))
-      (match (typecheck-compiler-source
-        (compiler-typecheck-call-arity-located-source))
-        [(ErrCompilerTypecheck diag)
-          (and
-            (string-eq
-              (compiler-diagnostic-message diag)
-              "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
-            (and
-              (= (compiler-diagnostic-line diag) 9)
-              (= (compiler-diagnostic-col diag) 7)))]
-        [(OkCompilerTypecheck _) false]))))
+    (compiler-typecheck-located-source-ok?
+      (compiler-typecheck-located-value-source))
+    (match (typecheck-compiler-source
+      (compiler-typecheck-call-arity-located-source))
+      [(ErrCompilerTypecheck diag)
+        (and
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
+          (= (compiler-diagnostic-line diag) 9)
+          (= (compiler-diagnostic-col diag) 7))]
+      [(OkCompilerTypecheck _) false])))
 
 ;; Statement and control-flow type rules (#1042): if/while conditions, the
 ;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
@@ -3934,34 +3762,24 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-if-cond-source)
       "typecheck: if condition must be bool")
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-stmt-while-cond-source)
-        "typecheck: while condition must be bool")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-stmt-while-body-source)
-          "typecheck: while body must be unit")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-stmt-set-mismatch-source)
-            "typecheck: assignment type mismatch")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-stmt-let-mismatch-source)
-              "typecheck: let binding type mismatch")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-stmt-ann-mismatch-source)
-                "typecheck: annotation type mismatch")
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-stmt-ok-while-source))
-                (and
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-stmt-ok-if-set-source))
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-stmt-ok-cast-ann-source)))))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-while-cond-source)
+      "typecheck: while condition must be bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-while-body-source)
+      "typecheck: while body must be unit")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-set-mismatch-source)
+      "typecheck: assignment type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-let-mismatch-source)
+      "typecheck: let binding type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-ann-mismatch-source)
+      "typecheck: annotation type mismatch")
+    (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-while-source))
+    (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-if-set-source))
+    (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-cast-ann-source))))
 
 ;; Operator and call type rules (#1042): equality/comparison/integer operato
 ;; operand matching and call arity, plus accepting arithmetic/comparison/call
@@ -4010,44 +3828,31 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-eq-mismatch-source)
       "typecheck: equality operands must match")
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-op-int-mismatch-source)
-        "typecheck: integer operator expects matching integer operands")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-op-cmp-mismatch-source)
-          "typecheck: comparison expects matching ordered scalar operands")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-op-arity-many-source)
-            "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-op-arity-few-source)
-              "typecheck: call arity mismatch: f expected 2 arguments, got 1 argument")
-            (and
-              (compiler-typecheck-ok? (compiler-typecheck-op-ok-arith-source))
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-op-ok-cmp-eq-source))
-                (and
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-op-ok-shift-count-source))
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-op-shift-count-bad-source)
-                      "typecheck: shift count must be integer")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-op-shift-left-bad-source)
-                        "typecheck: shift left operand must be integer")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-op-bitwise-mismatch-source)
-                          "typecheck: integer operator expects matching integer operands")
-                        (compiler-typecheck-ok?
-                          (compiler-typecheck-op-ok-call-source))))))))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-int-mismatch-source)
+      "typecheck: integer operator expects matching integer operands")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-cmp-mismatch-source)
+      "typecheck: comparison expects matching ordered scalar operands")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-arity-many-source)
+      "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-arity-few-source)
+      "typecheck: call arity mismatch: f expected 2 arguments, got 1 argument")
+    (compiler-typecheck-ok? (compiler-typecheck-op-ok-arith-source))
+    (compiler-typecheck-ok? (compiler-typecheck-op-ok-cmp-eq-source))
+    (compiler-typecheck-ok? (compiler-typecheck-op-ok-shift-count-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-shift-count-bad-source)
+      "typecheck: shift count must be integer")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-shift-left-bad-source)
+      "typecheck: shift left operand must be integer")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-bitwise-mismatch-source)
+      "typecheck: integer operator expects matching integer operands")
+    (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))
 
 ;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit
 ;; coverage for bool not/equality, cond condition typing, narrow intege
@@ -4876,28 +4681,22 @@
 (define (compiler-typecheck-argv-builtin-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-ok-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-argv-builtin-bad-index-source)
-        "typecheck: argument type mismatch")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-argv-builtin-bad-arg-arity-source)
-          "typecheck: call arity mismatch: arg expected 1 argument, got 2 arguments")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-argv-builtin-bad-count-arity-source)
-            "typecheck: call arity mismatch: arg-count expected 0 arguments, got 1 argument")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-argv-no-import-count-source)
-              "typecheck: unbound name arg-count")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-argv-no-import-arg-source)
-                "typecheck: unbound name arg")
-              (compiler-typecheck-ok?
-                (compiler-typecheck-argv-builtin-shadow-source)))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-argv-builtin-bad-index-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-argv-builtin-bad-arg-arity-source)
+      "typecheck: call arity mismatch: arg expected 1 argument, got 2 arguments")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-argv-builtin-bad-count-arity-source)
+      "typecheck: call arity mismatch: arg-count expected 0 arguments, got 1 argument")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-argv-no-import-count-source)
+      "typecheck: unbound name arg-count")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-argv-no-import-arg-source)
+      "typecheck: unbound name arg")
+    (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-shadow-source))))
 
 (define (compiler-typecheck-lambda-ok-typed-source) : String
   "(define (main) : i64 (let [f : (-> i64 i64) (lambda ([x : i64]) : i64 x)] (f 5)))")
@@ -4994,87 +4793,50 @@
 (define (compiler-typecheck-lambda-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-typed-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-nullary-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-lambda-ok-inferred-ret-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-lambda-bad-ret-source)
-            "typecheck: lambda return type mismatch")
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-lambda-capture-scalar-source))
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-lambda-capture-multi-source))
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-lambda-capture-string-source))
-                (and
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-lambda-capture-struct-source))
-                  (and
-                    (compiler-typecheck-ok?
-                      (compiler-typecheck-lambda-capture-dyn-array-source))
-                    (and
-                      (compiler-typecheck-ok?
-                        (compiler-typecheck-lambda-capture-enum-source))
-                      (and
-                        (compiler-typecheck-ok?
-                          (compiler-typecheck-lambda-capture-tuple-source))
-                        (and
-                          (compiler-typecheck-ok?
-                            (compiler-typecheck-lambda-capture-fixed-array-source))
-                          (and
-                            (compiler-typecheck-error-ok?
-                              (compiler-typecheck-lambda-captured-set-source)
-                              "typecheck: lambda cannot assign captured binding")
-                            (and
-                              (compiler-typecheck-error-ok?
-                                (compiler-typecheck-lambda-captured-set-with-escape-source)
-                                "typecheck: lambda cannot assign captured binding")
-                              (and
-                                (compiler-typecheck-ok?
-                                  (compiler-typecheck-lambda-param-set-source))
-                                (compiler-typecheck-ok?
-                                  (compiler-typecheck-lambda-aggregate-return-source))))))))))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-nullary-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-inferred-ret-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lambda-bad-ret-source)
+      "typecheck: lambda return type mismatch")
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-scalar-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-multi-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-string-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-struct-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-lambda-capture-dyn-array-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-enum-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-tuple-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-lambda-capture-fixed-array-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lambda-captured-set-source)
+      "typecheck: lambda cannot assign captured binding")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lambda-captured-set-with-escape-source)
+      "typecheck: lambda cannot assign captured binding")
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-param-set-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-aggregate-return-source))))
 
 (define (compiler-typecheck-cast-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? "(define (f [x : i32]) : i64 (cast x : i64))")
-    (and
-      (compiler-typecheck-ok? "(define (f [x : i64]) : u8 (cast x : u8))")
-      (and
-        (compiler-typecheck-ok? "(define (f [x : i64]) : char (cast x : char))")
-        (and
-          (compiler-typecheck-ok?
-            "(define (f [c : char]) : i64 (cast c : i64))")
-          (and
-            (compiler-typecheck-ok?
-              "(define (f [x : f64]) : i64 (cast x : i64))")
-            (and
-              (compiler-typecheck-ok?
-                "(define (f [x : i64]) : f64 (cast x : f64))")
-              (and
-                (compiler-typecheck-ok?
-                  "(define (f [x : f64]) : f32 (cast x : f32))")
-                (and
-                  (compiler-typecheck-ok?
-                    "(define (f [x : f32]) : f64 (cast x : f64))")
-                  (and
-                    (compiler-typecheck-ok?
-                      "(define (inc [x : i64]) : i64 (+ x 1))
+    (compiler-typecheck-ok? "(define (f [x : i64]) : u8 (cast x : u8))")
+    (compiler-typecheck-ok? "(define (f [x : i64]) : char (cast x : char))")
+    (compiler-typecheck-ok? "(define (f [c : char]) : i64 (cast c : i64))")
+    (compiler-typecheck-ok? "(define (f [x : f64]) : i64 (cast x : i64))")
+    (compiler-typecheck-ok? "(define (f [x : i64]) : f64 (cast x : f64))")
+    (compiler-typecheck-ok? "(define (f [x : f64]) : f32 (cast x : f32))")
+    (compiler-typecheck-ok? "(define (f [x : f32]) : f64 (cast x : f64))")
+    (compiler-typecheck-ok?
+      "(define (inc [x : i64]) : i64 (+ x 1))
 (define (f) : u64 (unsafe (cast inc : u64)))")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        "(define (inc [x : i64]) : i64 (+ x 1))
+    (compiler-typecheck-error-ok?
+      "(define (inc [x : i64]) : i64 (+ x 1))
 (define (f) : u64 (cast inc : u64))"
-                        "typecheck: function-to-integer cast requires unsafe context")
-                      (compiler-typecheck-error-ok?
-                        "(define (f [b : bool]) : i64 (cast b : i64))"
-                        "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))))))))))
+      "typecheck: function-to-integer cast requires unsafe context")
+    (compiler-typecheck-error-ok?
+      "(define (f [b : bool]) : i64 (cast b : i64))"
+      "typecheck: cast requires scalar numeric (integer/char/float) source and target")))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
@@ -5083,16 +4845,14 @@
   (and
     (compiler-typecheck-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
-    (and
-      (compiler-typecheck-ok?
-        "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
-      (and
-        (compiler-typecheck-error-ok?
-          "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
-          "typecheck: spmd-reduce all requires a bool type")
-        (compiler-typecheck-error-ok?
-          "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
-          "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
+    (compiler-typecheck-ok?
+      "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
+      "typecheck: spmd-reduce all requires a bool type")
+    (compiler-typecheck-error-ok?
+      "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
+      "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))
 
 ;; spmd-reduce purity rules (#1011, SPEC.md 5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
@@ -5103,21 +4863,18 @@
   (and
     (compiler-typecheck-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 1)))")
-    (and
-      (compiler-typecheck-error-ok?
-        "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")
-      (and
-        (compiler-typecheck-error-ok?
-          "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
-          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")
-        (and
-          (compiler-typecheck-error-ok?
-            "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
-            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")
-          (compiler-typecheck-error-ok?
-            "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md 5.15)"))))))
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
+      "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")
+    (compiler-typecheck-error-ok?
+      "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
+      "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
+      "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
+      "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md 5.15)")))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array
@@ -5204,60 +4961,46 @@
     (compiler-typecheck-ok?
       "(define (twice [comptime n : i64]) : i64 (* n 2))
 (define (main) : i64 (twice 21))")
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
-      (and
-        (compiler-typecheck-error-ok?
-          "(define (main) : i64 (begin (type i64) 0))"
-          "type value i64 is compile-time only")
-        (and
-          (compiler-typecheck-error-ok?
-            "(define (main) : type (type i64))"
-            (compiler-typecheck-unknown-type-policy-message "type"))
-          (and
-            (compiler-typecheck-error-ok?
-              "(define (f [value : type]) : i64 0)"
-              (compiler-typecheck-unknown-type-policy-message "type"))
-            (and
-              (compiler-typecheck-error-ok?
-                "(define value : type (type i64))"
-                (compiler-typecheck-unknown-type-policy-message "type"))
-              (and
-                (compiler-typecheck-error-ok?
-                  "(define (main) : i64 (begin (type Missing) 0))"
-                  (compiler-typecheck-unknown-type-policy-message "Missing"))
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-type-valued-comptime-scalar-arg-source)
-                  "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (begin (type i64) 0))"
+      "type value i64 is compile-time only")
+    (compiler-typecheck-error-ok?
+      "(define (main) : type (type i64))"
+      (compiler-typecheck-unknown-type-policy-message "type"))
+    (compiler-typecheck-error-ok?
+      "(define (f [value : type]) : i64 0)"
+      (compiler-typecheck-unknown-type-policy-message "type"))
+    (compiler-typecheck-error-ok?
+      "(define value : type (type i64))"
+      (compiler-typecheck-unknown-type-policy-message "type"))
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (begin (type Missing) 0))"
+      (compiler-typecheck-unknown-type-policy-message "Missing"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-type-valued-comptime-scalar-arg-source)
+      "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))
 
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? "(define (main) : i64 (comptime (+ 1 2)))")
-    (and
-      (compiler-typecheck-ok? "(define (main) : bool (comptime (< 1 2)))")
-      (and
-        (compiler-typecheck-ok?
-          "(define (main) : i64 (comptime (let [a : i64 1] (if (< a 2) a 0))))")
-        (and
-          (compiler-typecheck-ok?
-            "(define (main) : i64 (+ (comptime (* 6 7)) 0))")
-          (and
-            (compiler-typecheck-ok?
-              "(define (mk) : Expr (comptime (expr-if (expr-bool true) (expr-splice (expr-bool false)) (expr-bool true))))")
-            (and
-              (compiler-typecheck-ok?
-                "(define (mk) : bool (comptime (expr-if? (expr-if (expr-bool true) (expr-bool false) (expr-bool true)))))")
-              (and
-                (compiler-typecheck-error-ok?
-                  "(define (mk) : Expr (comptime (expr-if true (expr-bool true) (expr-bool false))))"
-                  "expr-if condition expects Expr")
-                (and
-                  (compiler-typecheck-error-ok?
-                    "(define (f [x : i64]) : i64 (comptime x))"
-                    "compile-time evaluation cannot reference runtime variable 'x'")
-                  (compiler-typecheck-error-ok?
-                    "(define (main) : i64 (comptime (< 1 2)))"
-                    "typecheck: return type mismatch"))))))))))
+    (compiler-typecheck-ok? "(define (main) : bool (comptime (< 1 2)))")
+    (compiler-typecheck-ok?
+      "(define (main) : i64 (comptime (let [a : i64 1] (if (< a 2) a 0))))")
+    (compiler-typecheck-ok? "(define (main) : i64 (+ (comptime (* 6 7)) 0))")
+    (compiler-typecheck-ok?
+      "(define (mk) : Expr (comptime (expr-if (expr-bool true) (expr-splice (expr-bool false)) (expr-bool true))))")
+    (compiler-typecheck-ok?
+      "(define (mk) : bool (comptime (expr-if? (expr-if (expr-bool true) (expr-bool false) (expr-bool true)))))")
+    (compiler-typecheck-error-ok?
+      "(define (mk) : Expr (comptime (expr-if true (expr-bool true) (expr-bool false))))"
+      "expr-if condition expects Expr")
+    (compiler-typecheck-error-ok?
+      "(define (f [x : i64]) : i64 (comptime x))"
+      "compile-time evaluation cannot reference runtime variable 'x'")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (comptime (< 1 2)))"
+      "typecheck: return type mismatch")))
 
 ;; IO-builtin signature rules (#1042): whole-file helpers and file-handle status
 ;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch
@@ -5509,15 +5252,13 @@
 (define (compiler-typecheck-ptr-null-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-ptr-null-ok-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-ptr-null-mut-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-ptr-null-bad-type-source)
-          "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-ptr-null-check-bad-source)
-          "typecheck: ptr-null? requires a raw pointer operand")))))
+    (compiler-typecheck-ok? (compiler-typecheck-ptr-null-mut-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-ptr-null-bad-type-source)
+      "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-ptr-null-check-bad-source)
+      "typecheck: ptr-null? requires a raw pointer operand")))
 
 ;; Unsafe blocks (#1053): parse + typecheck like `begin`; empty `(unsafe)`
 ;; rejects at parse.
@@ -5850,17 +5591,15 @@
 (define (compiler-typecheck-reflection-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-reflection-runtime-source)
-        "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-reflection-string-result-source)
-          "String value is compile-time only")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-reflection-kind-mismatch-source)
-          "struct-field-count requires struct type")))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-runtime-source)
+      "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-string-result-source)
+      "String value is compile-time only")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-kind-mismatch-source)
+      "struct-field-count requires struct type")))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
@@ -5892,24 +5631,22 @@
 (define (compiler-typecheck-quote-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-quote-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-quote-bad-unquote-source)
-        "typecheck: unquote expects Expr")
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-quote-bad-splice-source)
-        "typecheck: unquote-splicing expects ExprList"))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-quote-bad-unquote-source)
+      "typecheck: unquote expects Expr")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-quote-bad-splice-source)
+      "typecheck: unquote-splicing expects ExprList")))
 
 (define (compiler-typecheck-defmacro-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-defmacro-produced-mismatch-source)
-        "typecheck: macro body produced type does not match declaration")
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-defmacro-body-type-source)
-        "typecheck: macro body must return Expr"))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-produced-mismatch-source)
+      "typecheck: macro body produced type does not match declaration")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-body-type-source)
+      "typecheck: macro body must return Expr")))
 
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;; A macro call in an evaluated position is expanded before typechecking; the
@@ -6204,108 +5941,74 @@
 (define (compiler-typecheck-macro-ownership-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-own-when-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-macro-own-unless-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
-        (and
-          (compiler-typecheck-ok? (compiler-typecheck-macro-own-and-source))
-          (and
-            (compiler-typecheck-ok? (compiler-typecheck-macro-own-or-source))
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-macro-prelude-and-or-source))
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-macro-prelude-and-bad-source)
-                  "typecheck: macro operand type mismatch: expected bool, got i64")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-macro-prelude-or-bad-source)
-                    "typecheck: macro operand type mismatch: expected bool, got i64")
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-compat-guards-source)))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-unless-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-and-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-or-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-prelude-and-or-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-prelude-and-bad-source)
+      "typecheck: macro operand type mismatch: expected bool, got i64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-prelude-or-bad-source)
+      "typecheck: macro operand type mismatch: expected bool, got i64")
+    (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))
 
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-macro-private-source)
-        "typecheck: private macro hidden/private-and")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-missing-export-source)
-          "typecheck: missing macro export hidden/missing")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-macro-late-local-source)
-            "typecheck: local macro late is defined later")
-          (compiler-typecheck-ok?
-            (compiler-typecheck-macro-runtime-import-order-source)))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-private-source)
+      "typecheck: private macro hidden/private-and")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-missing-export-source)
+      "typecheck: missing macro export hidden/missing")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-late-local-source)
+      "typecheck: local macro late is defined later")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-runtime-import-order-source))))
 
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.
 (define (compiler-typecheck-macro-expand-tests-ok?) : bool
   (and
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-expand-arity-source)
-          "macro call has too few arguments")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-macro-expand-operand-source)
-            "typecheck: macro operand type mismatch: expected bool, got i64")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-macro-expand-variadic-operand-source)
-              "typecheck: macro operand type mismatch: expected bool, got i64")
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-macro-expr-wildcard-operand-source))
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-macro-expr-shadow-source))
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
-                    "typecheck: if branches must match")
-                  (and
-                    (compiler-typecheck-ok?
-                      (compiler-typecheck-macro-expr-list-nth-source))
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-macro-expand-depth-source)
-                      "macro expansion exceeded depth limit")))))))))
-    (and
-      (compiler-typecheck-macro-export-tests-ok?)
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-macro-hygiene-capture-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-macro-hygiene-definition-source))
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-macro-hygiene-imported-definition-source))
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-macro-dotted-import-default-alias-source))
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-macro-hygiene-imported-builtin-source))
-                (and
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-macro-hygiene-nested-source))
-                  (and
-                    (compiler-typecheck-ok?
-                      (compiler-typecheck-macro-hygiene-splice-source))
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-macro-hygiene-unsafe-global-source)
-                        "typecheck: danger requires unsafe context")
-                      (compiler-typecheck-macro-ownership-tests-ok?))))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expand-arity-source)
+      "macro call has too few arguments")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expand-operand-source)
+      "typecheck: macro operand type mismatch: expected bool, got i64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expand-variadic-operand-source)
+      "typecheck: macro operand type mismatch: expected bool, got i64")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-expr-wildcard-operand-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-expr-shadow-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
+      "typecheck: if branches must match")
+    (compiler-typecheck-ok? (compiler-typecheck-macro-expr-list-nth-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expand-depth-source)
+      "macro expansion exceeded depth limit")
+    (compiler-typecheck-macro-export-tests-ok?)
+    (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-capture-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-definition-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-imported-definition-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-dotted-import-default-alias-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-imported-builtin-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-splice-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-hygiene-unsafe-global-source)
+      "typecheck: danger requires unsafe context")
+    (compiler-typecheck-macro-ownership-tests-ok?)))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
@@ -7438,21 +7141,15 @@
       (not (tc-moved-contains? root-path-clear (tc-moved-path-key "shadowed")))]
     (and
       (= (tc-moved-len (tc-moved-empty)) 0)
-      (and
-        (= (tc-moved-len dupe) 1)
-        (and
-          (= (tc-moved-len two) 2)
-          (and
-            (>= (tc-moved-capacity two) 8)
-            (and
-              (not (tc-moved-contains? removed "alpha"))
-              (and
-                partial-keeps-sibling
-                (and
-                  partial-keeps-marker
-                  (and
-                    partial-clears-sibling
-                    (and partial-clears-marker root-path-clears)))))))))))
+      (= (tc-moved-len dupe) 1)
+      (= (tc-moved-len two) 2)
+      (>= (tc-moved-capacity two) 8)
+      (not (tc-moved-contains? removed "alpha"))
+      partial-keeps-sibling
+      partial-keeps-marker
+      partial-clears-sibling
+      partial-clears-marker
+      root-path-clears)))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
@@ -7843,39 +7540,30 @@
 (define (compiler-typecheck-defdispatch-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defdispatch-full-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-defdispatch-scalar-only-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-defdispatch-export-alias-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-defdispatch-no-scalar-source)
-            "typecheck: defdispatch requires exactly one scalar variant")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-defdispatch-duplicate-isa-source)
-              "typecheck: duplicate defdispatch ISA variant")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-defdispatch-unknown-source)
-                "typecheck: unknown defdispatch variant dot-avx2")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-defdispatch-non-function-source)
-                  "typecheck: defdispatch variant is not a function value")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-defdispatch-mismatch-source)
-                    "typecheck: defdispatch variant signatures must match")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-defdispatch-self-source)
-                      "typecheck: defdispatch cannot use itself as a variant")
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-defdispatch-dispatch-variant-source)
-                      "typecheck: defdispatch variant cannot be another dispatch")))))))))))
+    (compiler-typecheck-ok? (compiler-typecheck-defdispatch-scalar-only-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defdispatch-export-alias-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-no-scalar-source)
+      "typecheck: defdispatch requires exactly one scalar variant")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-duplicate-isa-source)
+      "typecheck: duplicate defdispatch ISA variant")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-unknown-source)
+      "typecheck: unknown defdispatch variant dot-avx2")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-non-function-source)
+      "typecheck: defdispatch variant is not a function value")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-mismatch-source)
+      "typecheck: defdispatch variant signatures must match")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-self-source)
+      "typecheck: defdispatch cannot use itself as a variant")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defdispatch-dispatch-variant-source)
+      "typecheck: defdispatch variant cannot be another dispatch")))
 
 ;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through
@@ -7924,56 +7612,43 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-dup-function-source)
       "symbols: duplicate value declaration foo")
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-define-function-collision-source)
-        "symbols: duplicate value declaration foo")
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-dup-struct-type-source)
-          "symbols: duplicate type declaration Point")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-dup-enum-type-source)
-            "symbols: duplicate type declaration E")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-dup-extern-source)
-              "symbols: duplicate value declaration f")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-variant-function-collision-source)
-                "symbols: duplicate value declaration Foo")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-variant-define-collision-source)
-                  "symbols: duplicate value declaration Foo")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-variant-extern-collision-source)
-                    "symbols: duplicate value declaration Foo")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-variant-struct-collision-source)
-                      "symbols: duplicate value declaration Foo")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-struct-function-collision-source)
-                        "symbols: duplicate value declaration Point")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-struct-define-collision-source)
-                          "symbols: duplicate value declaration Point")
-                        (and
-                          (compiler-typecheck-error-ok?
-                            (compiler-typecheck-struct-extern-collision-source)
-                            "symbols: duplicate value declaration Point")
-                          (and
-                            (compiler-typecheck-ok?
-                              (compiler-typecheck-builtin-shadow-source))
-                            (compiler-typecheck-error-ok?
-                              (compiler-typecheck-cross-module-mismatch-source)
-                              "typecheck: argument type mismatch")))))))))))))))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-define-function-collision-source)
+      "symbols: duplicate value declaration foo")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-dup-struct-type-source)
+      "symbols: duplicate type declaration Point")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-dup-enum-type-source)
+      "symbols: duplicate type declaration E")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-dup-extern-source)
+      "symbols: duplicate value declaration f")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-variant-function-collision-source)
+      "symbols: duplicate value declaration Foo")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-variant-define-collision-source)
+      "symbols: duplicate value declaration Foo")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-variant-extern-collision-source)
+      "symbols: duplicate value declaration Foo")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-variant-struct-collision-source)
+      "symbols: duplicate value declaration Foo")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-struct-function-collision-source)
+      "symbols: duplicate value declaration Point")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-struct-define-collision-source)
+      "symbols: duplicate value declaration Point")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-struct-extern-collision-source)
+      "symbols: duplicate value declaration Point")
+    (compiler-typecheck-ok? (compiler-typecheck-builtin-shadow-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-cross-module-mismatch-source)
+      "typecheck: argument type mismatch")))
 
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin
@@ -8203,50 +7878,37 @@
   (and
     (compiler-typecheck-ok?
       (compiler-typecheck-runtime-builtin-print-string-ok-source))
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-runtime-builtin-print-str-ok-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-runtime-builtin-print-error-ok-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-runtime-builtin-print-region-ok-source))
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-runtime-builtin-xgetbv-ok-source))
-            (and
-              (compiler-typecheck-ok?
-                (compiler-typecheck-runtime-builtin-shadow-source))
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-runtime-builtin-print-string-bad-source)
-                  "typecheck: argument type mismatch")
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-runtime-builtin-print-str-bad-source)
-                    "typecheck: argument type mismatch")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-runtime-builtin-print-error-bad-source)
-                      "typecheck: argument type mismatch")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
-                        "typecheck: xgetbv index must be integer")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-runtime-builtin-cpuid-bad-source)
-                          "typecheck: argument type mismatch")
-                        (and
-                          (compiler-typecheck-runtime-stdlib-no-import-tests-ok?)
-                          (and
-                            (compiler-typecheck-error-ok?
-                              (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
-                              "typecheck: string index must be integer")
-                            (compiler-typecheck-error-ok?
-                              (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
-                              "typecheck: string index must be integer")))))))))))))))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-runtime-builtin-print-str-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-runtime-builtin-print-error-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-runtime-builtin-print-region-ok-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-runtime-builtin-xgetbv-ok-source))
+    (compiler-typecheck-ok? (compiler-typecheck-runtime-builtin-shadow-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-print-string-bad-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-print-str-bad-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-print-error-bad-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
+      "typecheck: xgetbv index must be integer")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-cpuid-bad-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-runtime-stdlib-no-import-tests-ok?)
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
+      "typecheck: string index must be integer")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
+      "typecheck: string index must be integer")))
 
 (define (compiler-typecheck-panic-error-never-tests-ok?) : bool
   (let

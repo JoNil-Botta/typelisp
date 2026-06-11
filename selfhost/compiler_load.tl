@@ -1495,9 +1495,9 @@
   (core/cond
     (or
       (and (>= c #A') (<= c #Z'))
-      (or
-        (and (>= c #a') (<= c #z'))
-        (or (and (>= c #0') (<= c #9')) (= c #_'))))
+      (and (>= c #a') (<= c #z'))
+      (and (>= c #0') (<= c #9'))
+      (= c #_'))
     (substring text idx 1)
     (= c #-')
     "_"
@@ -1558,7 +1558,7 @@
       out)))
 
 (define (compiler-load-package-symbol-separator? [c : char]) : bool
-  (or (= c #/') (or (= c #\\') (or (= c #:') (= c #.')))))
+  (or (= c #/') (= c #\\') (= c #:') (= c #.')))
 
 (define (compiler-load-package-tl-extension-at? [name : String] [idx : i64]) : bool
   (let
@@ -1566,15 +1566,12 @@
     [after : i64 (+ idx 3)]
     (and
       (<= after n)
-      (and
-        (= (string-ref name idx) #.')
-        (and
-          (= (string-ref name (+ idx 1)) #t')
-          (and
-            (= (string-ref name (+ idx 2)) #l')
-            (or
-              (= after n)
-              (compiler-load-package-symbol-separator? (string-ref name after)))))))))
+      (= (string-ref name idx) #.')
+      (= (string-ref name (+ idx 1)) #t')
+      (= (string-ref name (+ idx 2)) #l')
+      (or
+        (= after n)
+        (compiler-load-package-symbol-separator? (string-ref name after))))))
 
 (define (compiler-load-package-user-symbol [name : String]) : String
   (if (string-eq name "main")
@@ -1615,7 +1612,8 @@
   [module : String]
   [source-name : String]) : bool
   (and
-    (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+    (string-eq decl-path entry-path)
+    (string-eq source-name "main")
     (or (string-eq module "") (string-eq module "main"))))
 
 (define (compiler-load-root-prefix [root : String]) : String
@@ -1673,9 +1671,8 @@
           [path-len : i64 (string-length path)]
           (if (and
             (compiler-load-stdlib-owner-root? root)
-            (and
-              (> prefix-len 0)
-              (compiler-load-string-prefix-at? path prefix 0)))
+            (> prefix-len 0)
+            (compiler-load-string-prefix-at? path prefix 0))
             (begin
               (set! found true)
               (set!
@@ -2433,19 +2430,13 @@
                                 (string-eq
                                   (intern-str imported-module)
                                   "restore.dep")
-                                (and
-                                  (string-eq
-                                    (intern-str imported-name)
-                                    "dep-value")
-                                  (and
-                                    (string-eq (intern-str restored-module) "")
-                                    (and
-                                      (string-eq alias-module "restore.dep")
-                                      (and
-                                        (string-eq alias-name "dep")
-                                        (string-eq
-                                          (intern-str main-name)
-                                          "main"))))))]
+                                (string-eq
+                                  (intern-str imported-name)
+                                  "dep-value")
+                                (string-eq (intern-str restored-module) "")
+                                (string-eq alias-module "restore.dep")
+                                (string-eq alias-name "dep")
+                                (string-eq (intern-str main-name) "main"))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -2507,29 +2498,18 @@
                                                   (string-eq
                                                     first
                                                     "smoke.entry")
-                                                  (and
-                                                    (string-eq
-                                                      second
-                                                      "smoke.dep")
-                                                    (and
-                                                      (string-eq
-                                                        third
-                                                        "smoke.dep")
-                                                      (and
-                                                        (string-eq
-                                                          fourth
-                                                          "smoke.dep")
-                                                        (and
-                                                          (string-eq
-                                                            fifth
-                                                            "smoke.entry")
-                                                          (and
-                                                            (string-eq
-                                                              sixth
-                                                              "smoke.entry")
-                                                            (string-eq
-                                                              seventh
-                                                              "smoke.entry")))))))]
+                                                  (string-eq second "smoke.dep")
+                                                  (string-eq third "smoke.dep")
+                                                  (string-eq fourth "smoke.dep")
+                                                  (string-eq
+                                                    fifth
+                                                    "smoke.entry")
+                                                  (string-eq
+                                                    sixth
+                                                    "smoke.entry")
+                                                  (string-eq
+                                                    seventh
+                                                    "smoke.entry"))]
                                               [_ false]))]
                                         [_ false]))]
                                   [_ false]))]
@@ -2557,9 +2537,8 @@
     [(OkCompilerLoadWithPaths decls _ modules seen)
       (and
         (= (compiler-load-decl-list-count decls) 2)
-        (and
-          (compiler-load-two-modules? modules "app.main")
-          (sym-i64-contains seen "app.main")))]
+        (compiler-load-two-modules? modules "app.main")
+        (sym-i64-contains seen "app.main"))]
     [(ErrCompilerLoadWithPaths _) false]))
 
 (define (compiler-load-expected-module-conflict-ok?) : bool
@@ -2651,11 +2630,9 @@
       [(OkCompilerLoadWithPaths decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 7)
-          (and
-            (compiler-load-entry-cycle-modules? modules)
-            (and
-              (sym-i64-contains seen "smoke.entry")
-              (sym-i64-contains seen "smoke.dep"))))]
+          (compiler-load-entry-cycle-modules? modules)
+          (sym-i64-contains seen "smoke.entry")
+          (sym-i64-contains seen "smoke.dep"))]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-import-module-restore-ok?) : bool
@@ -2691,21 +2668,18 @@
       [(OkCompilerLoadWithPaths decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (and
-            (match modules
-              [(AstDeclModuleCons first tail)
-                (let
-                  [tail : AstDeclModuleList (box-get tail)]
-                  (match tail
-                    [(AstDeclModuleCons second AstDeclModuleNil)
-                      (and
-                        (string-eq first "target/compiler_load_legacy_dep.tl")
-                        (string-eq
-                          second
-                          "target/compiler_load_legacy_entry.tl"))]
-                    [_ false]))]
-              [_ false])
-            (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
+          (match modules
+            [(AstDeclModuleCons first tail)
+              (let
+                [tail : AstDeclModuleList (box-get tail)]
+                (match tail
+                  [(AstDeclModuleCons second AstDeclModuleNil)
+                    (and
+                      (string-eq first "target/compiler_load_legacy_dep.tl")
+                      (string-eq second "target/compiler_load_legacy_entry.tl"))]
+                  [_ false]))]
+            [_ false])
+          (sym-i64-contains seen "target/compiler_load_legacy_dep.tl"))]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-import-alias-preserved-ok?) : bool
@@ -2745,19 +2719,18 @@
     (string-eq
       (compiler-load-dotted-module-path "stdlib.core_macros")
       "stdlib/core_macros.tl")
-    (and
-      (match (compiler-load-resolve-module-import-with-roots
-        "src/"
-        "app.lib"
-        (string-vec-new))
-        [(OkPkgResolve path) (string-eq path "src/app/lib.tl")]
-        [(ErrPkgResolve _) false])
-      (match (compiler-load-resolve-module-import-with-roots
-        "src/"
-        "stdlib.core_macros"
-        (string-vec-new))
-        [(OkPkgResolve path) (string-eq path "stdlib/core_macros.tl")]
-        [(ErrPkgResolve _) false]))))
+    (match (compiler-load-resolve-module-import-with-roots
+      "src/"
+      "app.lib"
+      (string-vec-new))
+      [(OkPkgResolve path) (string-eq path "src/app/lib.tl")]
+      [(ErrPkgResolve _) false])
+    (match (compiler-load-resolve-module-import-with-roots
+      "src/"
+      "stdlib.core_macros"
+      (string-vec-new))
+      [(OkPkgResolve path) (string-eq path "stdlib/core_macros.tl")]
+      [(ErrPkgResolve _) false])))
 
 (define (compiler-load-test-mkdir [path : String]) : bool
   (match (try-mkdir-if-missing (& path))
@@ -2788,9 +2761,8 @@
       [(OkCompilerLoadWithPaths _ _ _ seen)
         (and
           (sym-i64-contains seen "dotted.entry")
-          (and
-            (sym-i64-contains seen "nested.dep")
-            (sym-i64-contains seen "root_leaf")))]
+          (sym-i64-contains seen "nested.dep")
+          (sym-i64-contains seen "root_leaf"))]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-package-dotted-import-resolution-ok?) : bool
@@ -2806,26 +2778,24 @@
         deps)
         [(OkPkgResolve path) (string-eq path "proj/app/lib.tl")]
         [(ErrPkgResolve _) false])
-      (and
-        (match (compiler-load-resolve-package-import-spec
-          "proj/src/main.tl"
+      (match (compiler-load-resolve-package-import-spec
+        "proj/src/main.tl"
+        (AstImportModule)
+        "math.src.add"
+        (string-vec-new)
+        "proj"
+        deps)
+        [(OkPkgResolve path) (string-eq path "math/src/add.tl")]
+        [(ErrPkgResolve _) false])
+      (compiler-load-package-import-externs?
+        (AstImportModule)
+        "math.src.add"
+        deps)
+      (not
+        (compiler-load-package-import-externs?
           (AstImportModule)
-          "math.src.add"
-          (string-vec-new)
-          "proj"
-          deps)
-          [(OkPkgResolve path) (string-eq path "math/src/add.tl")]
-          [(ErrPkgResolve _) false])
-        (and
-          (compiler-load-package-import-externs?
-            (AstImportModule)
-            "math.src.add"
-            deps)
-          (not
-            (compiler-load-package-import-externs?
-              (AstImportModule)
-              "stdlib.core_macros"
-              deps)))))))
+          "stdlib.core_macros"
+          deps)))))
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
@@ -2855,11 +2825,10 @@
                   [(AstSomeGeneratedDeclMeta generator item arg-keys _)
                     (and
                       (string-eq generator "gen")
-                      (and
-                        (string-eq item "generated-fn")
-                        (match arg-keys
-                          [(AstExprNil) true]
-                          [_ false])))]
+                      (string-eq item "generated-fn")
+                      (match arg-keys
+                        [(AstExprNil) true]
+                        [_ false]))]
                   [_ false])
                 (match template
                   [(AstDeclExtern name _ _ _)
@@ -2899,13 +2868,10 @@
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 15)
-          (and
-            (sym-i64-contains seen "diamond.c")
-            (and
-              (sym-i64-contains seen "diamond.a")
-              (and
-                (sym-i64-contains seen "diamond.b")
-                (sym-i64-contains seen "diamond.entry")))))]
+          (sym-i64-contains seen "diamond.c")
+          (sym-i64-contains seen "diamond.a")
+          (sym-i64-contains seen "diamond.b")
+          (sym-i64-contains seen "diamond.entry"))]
       [(ErrCompilerLoadWithPaths _) false])))
 
 ;; Transitive import dedup (#1074 / #1041): entry imports A, A imports B, B
@@ -2936,13 +2902,10 @@
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 14)
-          (and
-            (sym-i64-contains seen "tr.c")
-            (and
-              (sym-i64-contains seen "tr.b")
-              (and
-                (sym-i64-contains seen "tr.a")
-                (sym-i64-contains seen "tr.entry")))))]
+          (sym-i64-contains seen "tr.c")
+          (sym-i64-contains seen "tr.b")
+          (sym-i64-contains seen "tr.a")
+          (sym-i64-contains seen "tr.entry"))]
       [(ErrCompilerLoadWithPaths _) false])))
 
 ;; An `(import ...)` of a path that does not resolve to a readable file reports
@@ -3280,9 +3243,10 @@
     [code : i64 (cast c : i64)]
     (or
       (and (>= code 48) (<= code 57))
-      (or
-        (and (>= code 65) (<= code 90))
-        (or (and (>= code 97) (<= code 122)) (or (= code 45) (= code 95)))))))
+      (and (>= code 65) (<= code 90))
+      (and (>= code 97) (<= code 122))
+      (= code 45)
+      (= code 95))))
 
 (define (compiler-load-package-token-valid? [value : String]) : bool
   (let
@@ -3319,9 +3283,7 @@
   (compiler-load-string-prefix-at? path "https://github.com/" 0))
 
 (define (compiler-load-github-pin-kind-valid? [kind : String]) : bool
-  (or
-    (string-eq kind "rev")
-    (or (string-eq kind "tag") (string-eq kind "branch"))))
+  (or (string-eq kind "rev") (string-eq kind "tag") (string-eq kind "branch")))
 
 (define (compiler-load-github-address-body [address : String]) : String
   (if (compiler-load-string-prefix-at? address "github.com/" 0)
@@ -3993,14 +3955,13 @@
     [(OkCompilerPkgManifest m)
       (and
         (string-eq (struct-get m name) "demo")
-        (and
-          (string-eq (struct-get m version) "0.1.0")
-          (match (struct-get m kind)
-            [(CompilerPkgKindBin)
-              (and
-                (string-eq (struct-get m entry) "src/main.tl")
-                (= (compiler-pkg-deps-count (struct-get m deps)) 2))]
-            [(CompilerPkgKindLib) false])))]
+        (string-eq (struct-get m version) "0.1.0")
+        (match (struct-get m kind)
+          [(CompilerPkgKindBin)
+            (and
+              (string-eq (struct-get m entry) "src/main.tl")
+              (= (compiler-pkg-deps-count (struct-get m deps)) 2))]
+          [(CompilerPkgKindLib) false]))]
     [(ErrCompilerPkgManifest _) false]))
 
 ;: Self-test: a manifest without a `dependencies` field parses with no deps.
@@ -4074,23 +4035,16 @@
         [deps : CompilerPkgDeps (struct-get m deps)]
         (and
           (= (compiler-pkg-deps-count deps) 3)
-          (and
-            (compiler-load-pkg-deps-three-alias-order?
-              deps
-              "math"
-              "util"
-              "core")
-            (and
-              (compiler-load-manifest-dep-path-is?
-                deps
-                "math"
-                "https://github.com/JoNil-Botta/math.git#rev=abc123")
-              (and
-                (compiler-load-manifest-dep-path-is?
-                  deps
-                  "util"
-                  "https://github.com/JoNil-Botta/util.repo.git#tag=v1.0.0")
-                (compiler-load-manifest-dep-path-is? deps "core" "../core"))))))]
+          (compiler-load-pkg-deps-three-alias-order? deps "math" "util" "core")
+          (compiler-load-manifest-dep-path-is?
+            deps
+            "math"
+            "https://github.com/JoNil-Botta/math.git#rev=abc123")
+          (compiler-load-manifest-dep-path-is?
+            deps
+            "util"
+            "https://github.com/JoNil-Botta/util.repo.git#tag=v1.0.0")
+          (compiler-load-manifest-dep-path-is? deps "core" "../core")))]
     [(ErrCompilerPkgManifest _) false]))
 
 ;: True when parsing `source` fails with exactly the `expected` diagnostic.
@@ -4117,13 +4071,10 @@
     [(ErrCompilerPkgManifestDiagnostic diag)
       (and
         (string-eq (compiler-diagnostic-path diag) path)
-        (and
-          (= (compiler-diagnostic-line diag) line)
-          (and
-            (= (compiler-diagnostic-col diag) col)
-            (and
-              (compiler-load-manifest-diagnostic-span-forward? diag)
-              (string-eq (compiler-diagnostic-message diag) expected)))))]
+        (= (compiler-diagnostic-line diag) line)
+        (= (compiler-diagnostic-col diag) col)
+        (compiler-load-manifest-diagnostic-span-forward? diag)
+        (string-eq (compiler-diagnostic-message diag) expected))]
     [(OkCompilerPkgManifestDiagnostic _) false]))
 
 (define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
@@ -4186,9 +4137,7 @@
           (compiler-load-manifest-test-path root "src/lib.tl")
           "(define lib-value : i64 42)")
         true)]
-    (and
-      ok-target
-      (and ok-root (and ok-src (and ok-manifest (and ok-main ok-lib)))))))
+    (and ok-target ok-root ok-src ok-manifest ok-main ok-lib)))
 
 (define (compiler-load-manifest-path-kind-entry-is?
   [path : String]
@@ -4298,26 +4247,24 @@
     [explicit-entry-path : String
       (compiler-load-manifest-test-path explicit-entry-root "typelisp.pkg")]
     (and
-      (and
-        (compiler-load-manifest-write-convention-fixture
-          root
-          "(package (name \"explicit\") (version \"1\") (kind staticlib))"
-          true
-          true)
-        (compiler-load-manifest-path-kind-entry-is?
-          manifest-path
-          (CompilerPkgKindLib)
-          "src/lib.tl"))
-      (and
-        (compiler-load-manifest-write-convention-fixture
-          explicit-entry-root
-          "(package (name \"explicit_entry\") (version \"1\") (entry \"custom.tl\"))"
-          false
-          true)
-        (compiler-load-manifest-path-kind-entry-is?
-          explicit-entry-path
-          (CompilerPkgKindBin)
-          "custom.tl")))))
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"explicit\") (version \"1\") (kind staticlib))"
+        true
+        true)
+      (compiler-load-manifest-path-kind-entry-is?
+        manifest-path
+        (CompilerPkgKindLib)
+        "src/lib.tl")
+      (compiler-load-manifest-write-convention-fixture
+        explicit-entry-root
+        "(package (name \"explicit_entry\") (version \"1\") (entry \"custom.tl\"))"
+        false
+        true)
+      (compiler-load-manifest-path-kind-entry-is?
+        explicit-entry-path
+        (CompilerPkgKindBin)
+        "custom.tl"))))
 
 (define (compiler-load-manifest-infer-package-entry-ok?) : bool
   (let
@@ -4341,111 +4288,86 @@
 (define (compiler-load-manifest-path-inference-ok?) : bool
   (and
     (compiler-load-manifest-infer-bin-only-ok?)
-    (and
-      (compiler-load-manifest-infer-lib-only-ok?)
-      (and
-        (compiler-load-manifest-infer-ambiguous-ok?)
-        (and
-          (compiler-load-manifest-infer-missing-ok?)
-          (and
-            (compiler-load-manifest-infer-explicit-ok?)
-            (compiler-load-manifest-infer-package-entry-ok?)))))))
+    (compiler-load-manifest-infer-lib-only-ok?)
+    (compiler-load-manifest-infer-ambiguous-ok?)
+    (compiler-load-manifest-infer-missing-ok?)
+    (compiler-load-manifest-infer-explicit-ok?)
+    (compiler-load-manifest-infer-package-entry-ok?)))
 
 (define (compiler-load-pkg-manifest-github-validation-ok?) : bool
   (and
     (compiler-load-manifest-rejects?
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\"))))"
       "manifest dependency `math` github source requires exactly one rev, tag, or branch pin")
-    (and
-      (compiler-load-manifest-rejects?
-        "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo/extra\" (rev \"abc\")))))"
-        "manifest dependency `math` github address must be `owner/repo` or `github.com/owner/repo`")
-      (and
-        (compiler-load-manifest-rejects?
-          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (sha \"abc\")))))"
-          "manifest dependency `math` github pin must be rev, tag, or branch")
-        (compiler-load-manifest-rejects?
-          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (rev \"\")))))"
-          "manifest dependency `math` github pin must not be empty")))))
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo/extra\" (rev \"abc\")))))"
+      "manifest dependency `math` github address must be `owner/repo` or `github.com/owner/repo`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (sha \"abc\")))))"
+      "manifest dependency `math` github pin must be rev, tag, or branch")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (rev \"\")))))"
+      "manifest dependency `math` github pin must not be empty")))
 
 (define (compiler-load-pkg-manifest-validation-ok?) : bool
   (and
     (compiler-load-manifest-rejects?
       "(package (name \"demo\") (name \"again\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
       "duplicate manifest field `name`")
-    (and
-      (compiler-load-manifest-rejects?
-        "(package (name \"\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
-        "manifest field `name` must not be empty")
-      (and
-        (compiler-load-manifest-rejects?
-          "(package (name \"bad.name\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
-          "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")
-        (and
-          (compiler-load-manifest-rejects?
-            "(package (name \"x\") (version \"\") (kind \"bin\") (entry \"e.tl\"))"
-            "manifest field `version` must not be empty")
-          (and
-            (compiler-load-manifest-rejects?
-              "(package (name \"x\") (version \"1\") (kind \"bad\") (entry \"e.tl\"))"
-              "manifest field `kind` must be `bin`, `staticlib`, or `lib`")
-            (and
-              (compiler-load-manifest-rejects?
-                "(package (name \"x\") (version \"1\") (kind \"bin\") (kind \"lib\") (entry \"e.tl\"))"
-                "duplicate manifest field `kind`")
-              (and
-                (compiler-load-manifest-rejects?
-                  "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"\"))"
-                  "manifest field `entry` must not be empty")
-                (and
-                  (compiler-load-manifest-rejects?
-                    "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"../main.tl\"))"
-                    "manifest field `entry` must be a normal relative path below the manifest directory")
-                  (and
-                    (compiler-load-manifest-rejects?
-                      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"a\")) (dependencies (util \"b\")))"
-                      "duplicate manifest field `dependencies`")
-                    (and
-                      (compiler-load-manifest-rejects?
-                        "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"a\") (math \"b\")))"
-                        "duplicate dependency alias `math`")
-                      (and
-                        (compiler-load-manifest-rejects?
-                          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (bad.alias \"a\")))"
-                          "dependency alias may only contain ASCII letters, digits, '-' and '_'")
-                        (compiler-load-manifest-rejects?
-                          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
-                          "manifest dependency `math` path must not be empty")))))))))))))
+    (compiler-load-manifest-rejects?
+      "(package (name \"\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
+      "manifest field `name` must not be empty")
+    (compiler-load-manifest-rejects?
+      "(package (name \"bad.name\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
+      "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"\") (kind \"bin\") (entry \"e.tl\"))"
+      "manifest field `version` must not be empty")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bad\") (entry \"e.tl\"))"
+      "manifest field `kind` must be `bin`, `staticlib`, or `lib`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (kind \"lib\") (entry \"e.tl\"))"
+      "duplicate manifest field `kind`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"\"))"
+      "manifest field `entry` must not be empty")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"../main.tl\"))"
+      "manifest field `entry` must be a normal relative path below the manifest directory")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"a\")) (dependencies (util \"b\")))"
+      "duplicate manifest field `dependencies`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"a\") (math \"b\")))"
+      "duplicate dependency alias `math`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (bad.alias \"a\")))"
+      "dependency alias may only contain ASCII letters, digits, '-' and '_'")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
+      "manifest dependency `math` path must not be empty")))
 
 ;: Aggregate manifest-parser self-test (#834).
 (define (compiler-load-pkg-manifest-ok?) : bool
   (and
     (compiler-load-manifest-valid-full-ok?)
-    (and
-      (compiler-load-manifest-valid-nodeps-ok?)
-      (and
-        (compiler-load-manifest-default-bin-ok?)
-        (and
-          (compiler-load-manifest-entry-override-ok?)
-          (and
-            (compiler-load-manifest-rejects?
-              "(package (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
-              "manifest missing required field `name`")
-            (and
-              (compiler-load-manifest-rejects?
-                "(package (name \"x\") (kind \"bin\") (entry \"e.tl\"))"
-                "manifest missing required field `version`")
-              (and
-                (compiler-load-manifest-rejects?
-                  "(module foo)"
-                  "expected `package` form, got `module`")
-                (and
-                  (compiler-load-pkg-manifest-validation-ok?)
-                  (and
-                    (compiler-load-manifest-github-deps-ok?)
-                    (and
-                      (compiler-load-pkg-manifest-github-validation-ok?)
-                      (compiler-load-pkg-manifest-diagnostic-ok?))))))))))))
+    (compiler-load-manifest-valid-nodeps-ok?)
+    (compiler-load-manifest-default-bin-ok?)
+    (compiler-load-manifest-entry-override-ok?)
+    (compiler-load-manifest-rejects?
+      "(package (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
+      "manifest missing required field `name`")
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (kind \"bin\") (entry \"e.tl\"))"
+      "manifest missing required field `version`")
+    (compiler-load-manifest-rejects?
+      "(module foo)"
+      "expected `package` form, got `module`")
+    (compiler-load-pkg-manifest-validation-ok?)
+    (compiler-load-manifest-github-deps-ok?)
+    (compiler-load-pkg-manifest-github-validation-ok?)
+    (compiler-load-pkg-manifest-diagnostic-ok?)))
 
 ;: --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
 ;: Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
@@ -4624,23 +4546,19 @@
 (define (compiler-load-pkg-resolve-ok?) : bool
   (and
     (compiler-load-pkg-resolves? "pkg:math/src/add.tl" "math/src/add.tl")
-    (and
-      (compiler-load-pkg-resolves? "pkg:util/lib.tl" "proj/vendor/util/lib.tl")
-      (and
-        (compiler-load-pkg-resolve-rejects?
-          "pkg:nope/x.tl"
-          "compiler-load: unknown package alias 'nope': pkg:nope/x.tl")
-        (and
-          (compiler-load-pkg-resolve-rejects?
-            "pkg:math"
-            "compiler-load: pkg import missing '/' after alias: pkg:math")
-          (and
-            (compiler-load-pkg-resolve-rejects?
-              "pkg:math/../../etc.tl"
-              "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl")
-            (compiler-load-pkg-resolve-rejects?
-              "pkg:remote/src/lib.tl"
-              "compiler-load: GitHub dependency 'remote' requires fetch support (#1157): pkg:remote/src/lib.tl")))))))
+    (compiler-load-pkg-resolves? "pkg:util/lib.tl" "proj/vendor/util/lib.tl")
+    (compiler-load-pkg-resolve-rejects?
+      "pkg:nope/x.tl"
+      "compiler-load: unknown package alias 'nope': pkg:nope/x.tl")
+    (compiler-load-pkg-resolve-rejects?
+      "pkg:math"
+      "compiler-load: pkg import missing '/' after alias: pkg:math")
+    (compiler-load-pkg-resolve-rejects?
+      "pkg:math/../../etc.tl"
+      "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl")
+    (compiler-load-pkg-resolve-rejects?
+      "pkg:remote/src/lib.tl"
+      "compiler-load: GitHub dependency 'remote' requires fetch support (#1157): pkg:remote/src/lib.tl")))
 
 ;: True when `parent-dir dir` yields exactly `expected`.
 (define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool
@@ -4659,11 +4577,9 @@
 (define (compiler-load-pkg-parent-dir-ok?) : bool
   (and
     (compiler-load-pkg-parent-dir-is? "a/b/" "a/")
-    (and
-      (compiler-load-pkg-parent-dir-is? "a/b/c/" "a/b/")
-      (and
-        (compiler-load-pkg-parent-dir-is? "a/" "")
-        (compiler-load-pkg-parent-dir-none? "")))))
+    (compiler-load-pkg-parent-dir-is? "a/b/c/" "a/b/")
+    (compiler-load-pkg-parent-dir-is? "a/" "")
+    (compiler-load-pkg-parent-dir-none? "")))
 
 (define (compiler-load-string-vec-roots-ok?) : bool
   (begin
@@ -4675,16 +4591,14 @@
           "target")]
       (and
         (= (string-vec-len roots) 2)
-        (and
-          (string-eq (string-vec-get roots 0 "") "target/cl_vec_missing_root")
-          (and
-            (string-eq (string-vec-get roots 1 "") "target")
-            (match (compiler-load-resolve-stdlib-root-raw
-              "cl_vec_root_payload.tl"
-              roots)
-              [(CompilerLoadSomePath path)
-                (string-eq path "target/cl_vec_root_payload.tl")]
-              [(CompilerLoadNoPath) false])))))))
+        (string-eq (string-vec-get roots 0 "") "target/cl_vec_missing_root")
+        (string-eq (string-vec-get roots 1 "") "target")
+        (match (compiler-load-resolve-stdlib-root-raw
+          "cl_vec_root_payload.tl"
+          roots)
+          [(CompilerLoadSomePath path)
+            (string-eq path "target/cl_vec_root_payload.tl")]
+          [(CompilerLoadNoPath) false])))))
 
 (define (compiler-load-boxed-pkg-dep-list-ok?) : bool
   (let
@@ -4698,9 +4612,8 @@
               (box CompilerPkgDepNil)))))]
     (and
       (= (compiler-pkg-deps-count deps) 2)
-      (and
-        (compiler-pkg-deps-alias-seen? deps "beta")
-        (compiler-load-manifest-dep-path-is? deps "beta" "dep-beta")))))
+      (compiler-pkg-deps-alias-seen? deps "beta")
+      (compiler-load-manifest-dep-path-is? deps "beta" "dep-beta"))))
 
 ;; relative-resolution variants (#1074): importer-relative join, parent-directory
 ;; (`..`) resolution end-to-end (join then normalize), and absolute-path
@@ -4713,21 +4626,19 @@
     (string-eq
       (compiler-load-join-import-path "src/app/main.tl" "util.tl")
       "src/app/util.tl")
-    (and
-      ;; parent-directory (`..`) resolution end-to-end (join then normalize)
-      (string-eq
-        (compiler-load-normalize-path
-          (compiler-load-join-import-path "src/app/main.tl" "../lib/helper.tl"))
-        "src/lib/helper.tl")
-      (and
-        ;; absolute Unix-rooted import is preserved as-is (importer dir ignored)
-        (string-eq
-          (compiler-load-join-import-path "src/app/main.tl" "/opt/dep.tl")
-          "/opt/dep.tl")
-        ;; absolute Windows-drive import is preserved as-is
-        (string-eq
-          (compiler-load-join-import-path "src/app/main.tl" "C:/dep.tl")
-          "C:/dep.tl")))))
+    ;; parent-directory (`..`) resolution end-to-end (join then normalize)
+    (string-eq
+      (compiler-load-normalize-path
+        (compiler-load-join-import-path "src/app/main.tl" "../lib/helper.tl"))
+      "src/lib/helper.tl")
+    ;; absolute Unix-rooted import is preserved as-is (importer dir ignored)
+    (string-eq
+      (compiler-load-join-import-path "src/app/main.tl" "/opt/dep.tl")
+      "/opt/dep.tl")
+    ;; absolute Windows-drive import is preserved as-is
+    (string-eq
+      (compiler-load-join-import-path "src/app/main.tl" "C:/dep.tl")
+      "C:/dep.tl")))
 
 (define (compiler-load-test-path-at [paths : AstDeclPathList] [index : i64]) : String
   (match paths
@@ -4809,13 +4720,11 @@
         "app/selfhost/compiler_driver_core.tl")]
     (and
       runtime-owned-ok
-      (and
-        helper-owned-ok
-        (and
-          entry-main-ok
-          (and
-            stdlib-normalized-ok
-            (and empty-root-owned-ok selfhost-root-owned-ok)))))))
+      helper-owned-ok
+      entry-main-ok
+      stdlib-normalized-ok
+      empty-root-owned-ok
+      selfhost-root-owned-ok)))
 
 (define (compiler-load-package-owner-extern-symbol-ok?) : bool
   (let

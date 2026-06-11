@@ -568,11 +568,9 @@
   [base-name : String]) : bool
   (and
     (= (intern-qualified-last-slash id) last-slash)
-    (and
-      (= (intern-qualified? id) qualified)
-      (and
-        (string-eq (intern-qualified-module id) module-name)
-        (string-eq (intern-qualified-base id) base-name)))))
+    (= (intern-qualified? id) qualified)
+    (string-eq (intern-qualified-module id) module-name)
+    (string-eq (intern-qualified-base id) base-name)))
 
 (define (intern-slice-tests-ok?) : bool
   (begin
@@ -586,16 +584,14 @@
       [ok : bool
         (and
           (= slice-alpha slice-alpha-again)
-          (and
-            (not (= slice-alpha slice-beta))
-            (and
-              (string-eq (intern-str slice-alpha) "alpha")
-              (intern-qualified-metadata-case-ok?
-                slice-qualified
-                true
-                3
-                "pkg"
-                "name"))))]
+          (not (= slice-alpha slice-beta))
+          (string-eq (intern-str slice-alpha) "alpha")
+          (intern-qualified-metadata-case-ok?
+            slice-qualified
+            true
+            3
+            "pkg"
+            "name"))]
       (begin
         (intern-reset!)
         ok))))
@@ -624,9 +620,8 @@
       [ok : bool
         (and
           (= id again)
-          (and
-            (string-eq (intern-str id) "persist/entry")
-            (intern-qualified-metadata-case-ok? id true 7 "persist" "entry")))]
+          (string-eq (intern-str id) "persist/entry")
+          (intern-qualified-metadata-case-ok? id true 7 "persist" "entry"))]
       (begin
         (intern-reset!)
         (intern-persistent-storage-disable!)

@@ -1342,19 +1342,14 @@
 (define (is-builtin-op [name : String]) : bool
   (or
     (string-eq name "+")
-    (or
-      (string-eq name "-")
-      (or
-        (string-eq name "*")
-        (or
-          (string-eq name "/")
-          (or
-            (string-eq name "=")
-            (or
-              (string-eq name "<")
-              (or
-                (string-eq name ">")
-                (or (string-eq name "<=") (string-eq name ">="))))))))))
+    (string-eq name "-")
+    (string-eq name "*")
+    (string-eq name "/")
+    (string-eq name "=")
+    (string-eq name "<")
+    (string-eq name ">")
+    (string-eq name "<=")
+    (string-eq name ">=")))
 
 ;; eval-builtin: apply a builtin binary operator to two already-evaluated
 ;; integer operands, dispatching on the operator text via `string-eq`. Arithmetic
@@ -1980,9 +1975,9 @@
 (define (eval-boxed-recursive-data-ok?) : bool
   (and
     (eval-boxed-env-lookup-ok?)
-    (and
-      (eval-boxed-fn-lookup-ok?)
-      (and (eval-boxed-closure-apply-ok?) (eval-boxed-pair-path-ok?)))))
+    (eval-boxed-fn-lookup-ok?)
+    (eval-boxed-closure-apply-ok?)
+    (eval-boxed-pair-path-ok?)))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with

@@ -95,7 +95,9 @@
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or
     (string-eq value "0")
-    (or (string-eq value "1") (or (string-eq value "2") (string-eq value "3")))))
+    (string-eq value "1")
+    (string-eq value "2")
+    (string-eq value "3")))
 
 (define (source-tool-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
@@ -138,9 +140,8 @@
 (define (source-tool-link-inputs-empty? [inputs : SourceToolLinkInputs]) : bool
   (and
     (= (process-args-count (source-tool-link-inputs-libs inputs)) 0)
-    (and
-      (= (process-args-count (source-tool-link-inputs-search-dirs inputs)) 0)
-      (= (process-args-count (source-tool-link-inputs-raw-args inputs)) 0))))
+    (= (process-args-count (source-tool-link-inputs-search-dirs inputs)) 0)
+    (= (process-args-count (source-tool-link-inputs-raw-args inputs)) 0)))
 
 (define (source-tool-linux-crt-entry?
   [target : CompilerBackendTarget]
@@ -279,13 +280,12 @@
     (source-tool-string-list-eq?
       (source-tool-link-inputs-libs left)
       (source-tool-link-inputs-libs right))
-    (and
-      (source-tool-string-list-eq?
-        (source-tool-link-inputs-search-dirs left)
-        (source-tool-link-inputs-search-dirs right))
-      (source-tool-string-list-eq?
-        (source-tool-link-inputs-raw-args left)
-        (source-tool-link-inputs-raw-args right)))))
+    (source-tool-string-list-eq?
+      (source-tool-link-inputs-search-dirs left)
+      (source-tool-link-inputs-search-dirs right))
+    (source-tool-string-list-eq?
+      (source-tool-link-inputs-raw-args left)
+      (source-tool-link-inputs-raw-args right))))
 
 (define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
   (let
@@ -647,13 +647,12 @@
   [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-elf-image-supported? image)
-    (and
-      (compiler-object-symbol-list-contains?
-        (struct-get image symbols)
-        "_start"
-        (ObjectSymbolExport)
-        (ObjectSymbolFunction))
-      (> (compiler-object-elf-section-raw-size image (ObjectSectionText)) 0))))
+    (compiler-object-symbol-list-contains?
+      (struct-get image symbols)
+      "_start"
+      (ObjectSymbolExport)
+      (ObjectSymbolFunction))
+    (> (compiler-object-elf-section-raw-size image (ObjectSectionText)) 0)))
 
 (define (source-tool-linux-direct-object-unavailable-message) : String
   "linux direct object unavailable: object image lacks encoded .text or _start")
@@ -734,13 +733,12 @@
   [image : CompilerObjectImage]) : bool
   (and
     (compiler-object-coff-image-supported? image)
-    (and
-      (compiler-object-symbol-list-contains?
-        (struct-get image symbols)
-        "_tl_start"
-        (ObjectSymbolExport)
-        (ObjectSymbolFunction))
-      (> (compiler-object-coff-section-raw-size image (ObjectSectionText)) 0))))
+    (compiler-object-symbol-list-contains?
+      (struct-get image symbols)
+      "_tl_start"
+      (ObjectSymbolExport)
+      (ObjectSymbolFunction))
+    (> (compiler-object-coff-section-raw-size image (ObjectSectionText)) 0)))
 
 (define (source-tool-windows-direct-object-unavailable-message) : String
   "windows direct object unavailable: object image lacks encoded .text or _tl_start")

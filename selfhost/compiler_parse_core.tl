@@ -5157,7 +5157,7 @@
           (let
             [c : char (string-ref name i)]
             (core/cond
-              (or (char-eq c #/') (or (char-eq c #\\') (char-eq c #:')))
+              (or (char-eq c #/') (char-eq c #\\') (char-eq c #:'))
               (set! ok false)
               (char-eq c #.')
               (if last-was-dot
@@ -5975,9 +5975,8 @@
                 [(AstDeclNil)
                   (and
                     (string-eq path "stdlib/io.tl")
-                    (and
-                      (string-eq module-name "std.io")
-                      (string-eq alias "io")))]
+                    (string-eq module-name "std.io")
+                    (string-eq alias "io"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6002,9 +6001,8 @@
                 [(AstDeclNil)
                   (and
                     (string-eq module-path "stdlib.core_macros")
-                    (and
-                      (string-eq module-name "stdlib.core_macros")
-                      (string-eq alias "core")))]
+                    (string-eq module-name "stdlib.core_macros")
+                    (string-eq alias "core"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6029,9 +6027,8 @@
                 [(AstDeclNil)
                   (and
                     (string-eq module-path "stdlib.core_macros")
-                    (and
-                      (string-eq module-name "stdlib.core_macros")
-                      (string-eq alias "core_macros")))]
+                    (string-eq module-name "stdlib.core_macros")
+                    (string-eq alias "core_macros"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6046,17 +6043,15 @@
     (compiler-parse-error-ok?
       "(import stdlib..core)"
       "parse: invalid dotted import module name")
-    (and
-      (compiler-parse-error-ok?
-        "(import stdlib/core)"
-        "parse: invalid dotted import module name")
-      (and
-        (compiler-parse-error-ok?
-          "(import pkg:math.core)"
-          "parse: invalid dotted import module name")
-        (compiler-parse-error-ok?
-          "(import stdlib.core_macros module stdlib.core_macros)"
-          "parse: malformed import")))))
+    (compiler-parse-error-ok?
+      "(import stdlib/core)"
+      "parse: invalid dotted import module name")
+    (compiler-parse-error-ok?
+      "(import pkg:math.core)"
+      "parse: invalid dotted import module name")
+    (compiler-parse-error-ok?
+      "(import stdlib.core_macros module stdlib.core_macros)"
+      "parse: malformed import")))
 
 (define (compiler-parse-include-str-ok?) : bool
   (match (parse-ast-source "(include-str payload \"data.txt\")")
@@ -6071,21 +6066,18 @@
     (compiler-parse-error-ok?
       "(include-str)"
       "parse: include-str expects name and string path")
-    (and
-      (compiler-parse-error-ok?
-        "(include-str \"name\" \"data.txt\")"
-        "parse: include-str name must be a symbol")
-      (and
-        (compiler-parse-error-ok?
-          "(include-str payload data.txt)"
-          "parse: include-str path must be a string")
-        (and
-          (compiler-parse-error-ok?
-            "(include-str payload \"data.txt\" extra)"
-            "parse: include-str expects exactly two operands")
-          (compiler-parse-error-ok?
-            "(include-str payload)"
-            "parse: include-str expects name and string path"))))))
+    (compiler-parse-error-ok?
+      "(include-str \"name\" \"data.txt\")"
+      "parse: include-str name must be a symbol")
+    (compiler-parse-error-ok?
+      "(include-str payload data.txt)"
+      "parse: include-str path must be a string")
+    (compiler-parse-error-ok?
+      "(include-str payload \"data.txt\" extra)"
+      "parse: include-str expects exactly two operands")
+    (compiler-parse-error-ok?
+      "(include-str payload)"
+      "parse: include-str expects name and string path")))
 
 (define (compiler-parse-export-items-shape-ok? [items : AstExportItemList]) : bool
   (match items
@@ -6123,21 +6115,12 @@
                                         [(AstExportItemNil)
                                           (and
                                             (string-eq value-name "make-point")
-                                            (and
-                                              (string-eq type-name "Point")
-                                              (and
-                                                (string-eq macro-name "and2")
-                                                (and
-                                                  (string-eq ctor-name "Point")
-                                                  (and
-                                                    (string-eq
-                                                      field-type
-                                                      "Point")
-                                                    (and
-                                                      (string-eq field-name "x")
-                                                      (string-eq
-                                                        variant-name
-                                                        "Some")))))))]
+                                            (string-eq type-name "Point")
+                                            (string-eq macro-name "and2")
+                                            (string-eq ctor-name "Point")
+                                            (string-eq field-type "Point")
+                                            (string-eq field-name "x")
+                                            (string-eq variant-name "Some"))]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]
@@ -6192,9 +6175,8 @@
                       [(AstDispatchVariantNil)
                         (and
                           (string-eq scalar-name "dot-scalar")
-                          (and
-                            (string-eq avx2-name "dot-avx2")
-                            (string-eq avx512-name "dot-avx512")))]
+                          (string-eq avx2-name "dot-avx2")
+                          (string-eq avx512-name "dot-avx512"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -6251,19 +6233,16 @@
 (define (compiler-parse-defdispatch-tests-ok?) : bool
   (and
     (compiler-parse-defdispatch-shape-ok?)
-    (and
-      (compiler-parse-defdispatch-scalar-only-ok?)
-      (and
-        (compiler-parse-error-ok?
-          "(defdispatch dot)"
-          "parse: defdispatch needs at least one variant")
-        (and
-          (compiler-parse-error-ok?
-            "(defdispatch dot (sse2 dot-sse2))"
-            "parse: unknown defdispatch ISA sse2")
-          (compiler-parse-error-ok?
-            "(defdispatch dot (scalar))"
-            "parse: malformed defdispatch variant"))))))
+    (compiler-parse-defdispatch-scalar-only-ok?)
+    (compiler-parse-error-ok?
+      "(defdispatch dot)"
+      "parse: defdispatch needs at least one variant")
+    (compiler-parse-error-ok?
+      "(defdispatch dot (sse2 dot-sse2))"
+      "parse: unknown defdispatch ISA sse2")
+    (compiler-parse-error-ok?
+      "(defdispatch dot (scalar))"
+      "parse: malformed defdispatch variant")))
 
 (define (ast-source-span-start-line [span : AstSourceSpan]) : i64
   (struct-get span start-line))
@@ -6317,14 +6296,12 @@
                                       (=
                                         (ast-source-span-start-line body-span)
                                         1)
-                                      (and
-                                        (=
-                                          (ast-source-span-start-line
-                                            right-span)
-                                          1)
-                                        (>
-                                          (ast-source-span-start-col right-span)
-                                          (ast-source-span-start-col body-span))))]
+                                      (=
+                                        (ast-source-span-start-line right-span)
+                                        1)
+                                      (>
+                                        (ast-source-span-start-col right-span)
+                                        (ast-source-span-start-col body-span)))]
                                   [_ false]))]
                             [_ false]))]
                       [_ false]))]
@@ -6636,9 +6613,8 @@
                       [(AstExternLinkInputNil)
                         (and
                           (string-eq lib "m")
-                          (and
-                            (string-eq dir "native/lib")
-                            (string-eq arg-value "-Wl,--as-needed")))]
+                          (string-eq dir "native/lib")
+                          (string-eq arg-value "-Wl,--as-needed"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -6657,34 +6633,31 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "local-call"))
-                    (and
-                      (string-eq
-                        (ast-extern-metadata-symbol metadata)
-                        "foreign_exact")
-                      (and
-                        (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
-                        (and
-                          (compiler-parse-extern-link-inputs-ok?
-                            (ast-extern-metadata-link-inputs metadata))
-                          (match ty
-                            [(AstTyFunc args ret)
-                              (match args
-                                [(AstTypeCons first tail)
-                                  (let
-                                    [first : AstType (ty-node-get first)]
-                                    [tail : AstTypeList (box-get tail)]
-                                    (and
-                                      (match first
-                                        [(AstTyI64) true]
-                                        [_ false])
-                                      (match tail
-                                        [(AstTypeNil)
-                                          (match (ty-node-get ret)
-                                            [(AstTyI64) true]
-                                            [_ false])]
-                                        [_ false])))]
-                                [_ false])]
-                            [_ false])))))]
+                    (string-eq
+                      (ast-extern-metadata-symbol metadata)
+                      "foreign_exact")
+                    (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
+                    (compiler-parse-extern-link-inputs-ok?
+                      (ast-extern-metadata-link-inputs metadata))
+                    (match ty
+                      [(AstTyFunc args ret)
+                        (match args
+                          [(AstTypeCons first tail)
+                            (let
+                              [first : AstType (ty-node-get first)]
+                              [tail : AstTypeList (box-get tail)]
+                              (and
+                                (match first
+                                  [(AstTyI64) true]
+                                  [_ false])
+                                (match tail
+                                  [(AstTypeNil)
+                                    (match (ty-node-get ret)
+                                      [(AstTyI64) true]
+                                      [_ false])]
+                                  [_ false])))]
+                          [_ false])]
+                      [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6702,69 +6675,61 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "snprintf"))
-                    (and
-                      (string-eq
-                        (ast-extern-metadata-symbol metadata)
-                        "snprintf")
-                      (and
-                        (match (ast-extern-metadata-abi metadata)
-                          [(AstExternAbiCVarargs fixed-count) (= fixed-count 3)]
-                          [_ false])
-                        (match ty
-                          [(AstTyFunc args ret)
-                            (match args
-                              [(AstTypeCons first rest0)
-                                (let
-                                  [first : AstType (ty-node-get first)]
-                                  [rest0 : AstTypeList (box-get rest0)]
-                                  (and
-                                    (compiler-parse-type-mut-ptr-u8? first)
-                                    (match rest0
-                                      [(AstTypeCons second rest1)
-                                        (let
-                                          [second : AstType
-                                            (ty-node-get second)]
-                                          [rest1 : AstTypeList (box-get rest1)]
-                                          (and
-                                            (match second
-                                              [(AstTyI64) true]
-                                              [_ false])
-                                            (match rest1
-                                              [(AstTypeCons third rest2)
-                                                (let
-                                                  [third : AstType
-                                                    (ty-node-get third)]
-                                                  [rest2 : AstTypeList
-                                                    (box-get rest2)]
-                                                  (and
-                                                    (compiler-parse-type-ptr-u8?
-                                                      third)
-                                                    (match rest2
-                                                      [(AstTypeCons
-                                                          fourth
-                                                          rest3)
-                                                        (let
-                                                          [fourth : AstType
-                                                            (ty-node-get fourth)]
-                                                          [rest3 : AstTypeList
-                                                            (box-get rest3)]
-                                                          (and
-                                                            (match fourth
-                                                              [(AstTyF64) true]
-                                                              [_ false])
-                                                            (match rest3
-                                                              [(AstTypeNil)
-                                                                (match (ty-node-get
-                                                                  ret)
-                                                                  [(AstTyI32)
-                                                                    true]
-                                                                  [_ false])]
-                                                              [_ false])))]
-                                                      [_ false])))]
-                                              [_ false])))]
-                                      [_ false])))]
-                              [_ false])]
-                          [_ false]))))]
+                    (string-eq (ast-extern-metadata-symbol metadata) "snprintf")
+                    (match (ast-extern-metadata-abi metadata)
+                      [(AstExternAbiCVarargs fixed-count) (= fixed-count 3)]
+                      [_ false])
+                    (match ty
+                      [(AstTyFunc args ret)
+                        (match args
+                          [(AstTypeCons first rest0)
+                            (let
+                              [first : AstType (ty-node-get first)]
+                              [rest0 : AstTypeList (box-get rest0)]
+                              (and
+                                (compiler-parse-type-mut-ptr-u8? first)
+                                (match rest0
+                                  [(AstTypeCons second rest1)
+                                    (let
+                                      [second : AstType (ty-node-get second)]
+                                      [rest1 : AstTypeList (box-get rest1)]
+                                      (and
+                                        (match second
+                                          [(AstTyI64) true]
+                                          [_ false])
+                                        (match rest1
+                                          [(AstTypeCons third rest2)
+                                            (let
+                                              [third : AstType
+                                                (ty-node-get third)]
+                                              [rest2 : AstTypeList
+                                                (box-get rest2)]
+                                              (and
+                                                (compiler-parse-type-ptr-u8?
+                                                  third)
+                                                (match rest2
+                                                  [(AstTypeCons fourth rest3)
+                                                    (let
+                                                      [fourth : AstType
+                                                        (ty-node-get fourth)]
+                                                      [rest3 : AstTypeList
+                                                        (box-get rest3)]
+                                                      (and
+                                                        (match fourth
+                                                          [(AstTyF64) true]
+                                                          [_ false])
+                                                        (match rest3
+                                                          [(AstTypeNil)
+                                                            (match (ty-node-get
+                                                              ret)
+                                                              [(AstTyI32) true]
+                                                              [_ false])]
+                                                          [_ false])))]
+                                                  [_ false])))]
+                                          [_ false])))]
+                                  [_ false])))]
+                          [_ false])]
+                      [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6774,53 +6739,51 @@
     [(AstDeclExtern name _ metadata ty)
       (and
         (= name (intern "snprintf"))
-        (and
-          (match (ast-extern-metadata-abi metadata)
-            [(AstExternAbiCVarargsTyped fixed-count tail-ty)
-              (and
-                (= fixed-count 3)
-                (match tail-ty
-                  [(AstTyF64) true]
-                  [_ false]))]
-            [_ false])
-          (match ty
-            [(AstTyFunc args ret)
-              (and
-                (= (compiler-parse-type-list-count args) 3)
-                (and
-                  (match (ty-node-get ret)
-                    [(AstTyI32) true]
-                    [_ false])
-                  (match args
-                    [(AstTypeCons first rest0)
-                      (let
-                        [first : AstType (ty-node-get first)]
-                        [rest0 : AstTypeList (box-get rest0)]
-                        (and
-                          (compiler-parse-type-mut-ptr-u8? first)
-                          (match rest0
-                            [(AstTypeCons second rest1)
-                              (let
-                                [second : AstType (ty-node-get second)]
-                                [rest1 : AstTypeList (box-get rest1)]
-                                (and
-                                  (match second
-                                    [(AstTyI64) true]
-                                    [_ false])
-                                  (match rest1
-                                    [(AstTypeCons third rest2)
-                                      (let
-                                        [third : AstType (ty-node-get third)]
-                                        [rest2 : AstTypeList (box-get rest2)]
-                                        (and
-                                          (compiler-parse-type-ptr-u8? third)
-                                          (match rest2
-                                            [(AstTypeNil) true]
-                                            [_ false])))]
-                                    [_ false])))]
-                            [_ false])))]
-                    [_ false])))]
-            [_ false])))]
+        (match (ast-extern-metadata-abi metadata)
+          [(AstExternAbiCVarargsTyped fixed-count tail-ty)
+            (and
+              (= fixed-count 3)
+              (match tail-ty
+                [(AstTyF64) true]
+                [_ false]))]
+          [_ false])
+        (match ty
+          [(AstTyFunc args ret)
+            (and
+              (= (compiler-parse-type-list-count args) 3)
+              (match (ty-node-get ret)
+                [(AstTyI32) true]
+                [_ false])
+              (match args
+                [(AstTypeCons first rest0)
+                  (let
+                    [first : AstType (ty-node-get first)]
+                    [rest0 : AstTypeList (box-get rest0)]
+                    (and
+                      (compiler-parse-type-mut-ptr-u8? first)
+                      (match rest0
+                        [(AstTypeCons second rest1)
+                          (let
+                            [second : AstType (ty-node-get second)]
+                            [rest1 : AstTypeList (box-get rest1)]
+                            (and
+                              (match second
+                                [(AstTyI64) true]
+                                [_ false])
+                              (match rest1
+                                [(AstTypeCons third rest2)
+                                  (let
+                                    [third : AstType (ty-node-get third)]
+                                    [rest2 : AstTypeList (box-get rest2)]
+                                    (and
+                                      (compiler-parse-type-ptr-u8? third)
+                                      (match rest2
+                                        [(AstTypeNil) true]
+                                        [_ false])))]
+                                [_ false])))]
+                        [_ false])))]
+                [_ false]))]
+          [_ false]))]
     [_ false]))
 
 (define (compiler-parse-extern-head-open-varargs-decl-ok? [decl : AstDecl]) : bool
@@ -6828,30 +6791,28 @@
     [(AstDeclExtern name _ metadata ty)
       (and
         (= name (intern "printf"))
-        (and
-          (match (ast-extern-metadata-abi metadata)
-            [(AstExternAbiCVarargsOpen fixed-count) (= fixed-count 1)]
-            [_ false])
-          (match ty
-            [(AstTyFunc args ret)
-              (and
-                (= (compiler-parse-type-list-count args) 1)
-                (and
-                  (match (ty-node-get ret)
-                    [(AstTyI32) true]
-                    [_ false])
-                  (match args
-                    [(AstTypeCons first rest)
-                      (let
-                        [first : AstType (ty-node-get first)]
-                        [rest : AstTypeList (box-get rest)]
-                        (and
-                          (compiler-parse-type-ptr-u8? first)
-                          (match rest
-                            [(AstTypeNil) true]
-                            [_ false])))]
-                    [_ false])))]
-            [_ false])))]
+        (match (ast-extern-metadata-abi metadata)
+          [(AstExternAbiCVarargsOpen fixed-count) (= fixed-count 1)]
+          [_ false])
+        (match ty
+          [(AstTyFunc args ret)
+            (and
+              (= (compiler-parse-type-list-count args) 1)
+              (match (ty-node-get ret)
+                [(AstTyI32) true]
+                [_ false])
+              (match args
+                [(AstTypeCons first rest)
+                  (let
+                    [first : AstType (ty-node-get first)]
+                    [rest : AstTypeList (box-get rest)]
+                    (and
+                      (compiler-parse-type-ptr-u8? first)
+                      (match rest
+                        [(AstTypeNil) true]
+                        [_ false])))]
+                [_ false]))]
+          [_ false]))]
     [_ false]))
 
 (define (compiler-parse-i64-type? [ty : AstType]) : bool
@@ -6885,16 +6846,14 @@
     [(AstDeclExtern name _ metadata ty)
       (and
         (= name (intern "local-add"))
-        (and
-          (string-eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
-          (match ty
-            [(AstTyFunc args ret)
-              (and
-                (= (compiler-parse-type-list-count args) 2)
-                (and
-                  (compiler-parse-i64-type? (ty-node-get ret))
-                  (compiler-parse-two-i64-types? args)))]
-            [_ false])))]
+        (string-eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
+        (match ty
+          [(AstTyFunc args ret)
+            (and
+              (= (compiler-parse-type-list-count args) 2)
+              (compiler-parse-i64-type? (ty-node-get ret))
+              (compiler-parse-two-i64-types? args))]
+          [_ false]))]
     [_ false]))
 
 (define (compiler-parse-extern-function-head-varargs-ok?) : bool
@@ -6917,11 +6876,9 @@
                             (and
                               (compiler-parse-extern-head-typed-varargs-decl-ok?
                                 first)
-                              (and
-                                (compiler-parse-extern-head-open-varargs-decl-ok?
-                                  second)
-                                (compiler-parse-extern-head-fixed-decl-ok?
-                                  third)))]
+                              (compiler-parse-extern-head-open-varargs-decl-ok?
+                                second)
+                              (compiler-parse-extern-head-fixed-decl-ok? third))]
                           [_ false]))]
                     [_ false]))]
               [_ false]))]
@@ -6941,15 +6898,13 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "_write"))
-                    (and
-                      (= (compiler-parse-param-list-count params) 3)
-                      (and
-                        (match ret
-                          [(AstTyI32) true]
-                          [_ false])
-                        (match export
-                          [(AstFnExport symbol) (= symbol (intern "_write"))]
-                          [_ false]))))]
+                    (= (compiler-parse-param-list-count params) 3)
+                    (match ret
+                      [(AstTyI32) true]
+                      [_ false])
+                    (match export
+                      [(AstFnExport symbol) (= symbol (intern "_write"))]
+                      [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7002,10 +6957,9 @@
 (define (compiler-parse-box-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : (Box i64) (box 7))")
-    (and
-      (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (box-get b))")
-      (compiler-parse-ok?
-        "(define (main) : i64 (with-arena r (let ([b : (in r (Box i64)) (box 7)]) (box-get b))))"))))
+    (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (box-get b))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (with-arena r (let ([b : (in r (Box i64)) (box 7)]) (box-get b))))")))
 
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& r String)] [view : (& r str)] [items : (&mut phase (Array i64))]) : unit unit)")
@@ -7331,11 +7285,10 @@
                         [func : AstExpr (ast-node-get func-box)]
                         (and
                           (compiler-parse-call-head-name? func name)
-                          (and
-                            (= (compiler-parse-call-arg-count args) want-args)
-                            (if check-guard-args
-                              (compiler-parse-guard-call-args-ok? args)
-                              true))))]
+                          (= (compiler-parse-call-arg-count args) want-args)
+                          (if check-guard-args
+                            (compiler-parse-guard-call-args-ok? args)
+                            true)))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
@@ -7364,47 +7317,37 @@
 (define (compiler-parse-and-or-macro-call-candidates-ok?) : bool
   (and
     (compiler-parse-call-body-ok? "(define (main) : bool (and))" "and" 0 false)
-    (and
-      (compiler-parse-call-body-ok?
-        "(define (main [x : bool]) : bool (and x))"
-        "and"
-        1
-        false)
-      (and
-        (compiler-parse-call-body-ok?
-          "(define (main [x : bool] [y : bool]) : bool (and x y))"
-          "and"
-          2
-          false)
-        (and
-          (compiler-parse-call-body-ok?
-            "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
-            "and"
-            3
-            false)
-          (and
-            (compiler-parse-call-body-ok?
-              "(define (main) : bool (or))"
-              "or"
-              0
-              false)
-            (and
-              (compiler-parse-call-body-ok?
-                "(define (main [x : bool]) : bool (or x))"
-                "or"
-                1
-                false)
-              (and
-                (compiler-parse-call-body-ok?
-                  "(define (main [x : bool] [y : bool]) : bool (or x y))"
-                  "or"
-                  2
-                  false)
-                (compiler-parse-call-body-ok?
-                  "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
-                  "or"
-                  3
-                  false)))))))))
+    (compiler-parse-call-body-ok?
+      "(define (main [x : bool]) : bool (and x))"
+      "and"
+      1
+      false)
+    (compiler-parse-call-body-ok?
+      "(define (main [x : bool] [y : bool]) : bool (and x y))"
+      "and"
+      2
+      false)
+    (compiler-parse-call-body-ok?
+      "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
+      "and"
+      3
+      false)
+    (compiler-parse-call-body-ok? "(define (main) : bool (or))" "or" 0 false)
+    (compiler-parse-call-body-ok?
+      "(define (main [x : bool]) : bool (or x))"
+      "or"
+      1
+      false)
+    (compiler-parse-call-body-ok?
+      "(define (main [x : bool] [y : bool]) : bool (or x y))"
+      "or"
+      2
+      false)
+    (compiler-parse-call-body-ok?
+      "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
+      "or"
+      3
+      false)))
 
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -7428,9 +7371,8 @@
     [(AstSomeGeneratedDeclMeta generator-name item-name arg-keys _)
       (and
         (string-eq generator-name want-generator)
-        (and
-          (string-eq item-name want-item)
-          (= (compiler-parse-expr-list-count arg-keys) want-arg-count)))]
+        (string-eq item-name want-item)
+        (= (compiler-parse-expr-list-count arg-keys) want-arg-count))]
     [_ false]))
 
 (define (compiler-parse-comptime-defstruct-ok? [decl : AstDecl]) : bool
@@ -7525,19 +7467,15 @@
                                   [(AstDeclNil)
                                     (and
                                       (= (ast-decl-list-count decls) 4)
-                                      (and
-                                        (= (ast-decl-list-tag-sum decls) 32)
-                                        (and
-                                          (compiler-parse-comptime-defstruct-ok?
-                                            first)
-                                          (and
-                                            (compiler-parse-comptime-defenum-ok?
-                                              second)
-                                            (and
-                                              (compiler-parse-comptime-define-value-ok?
-                                                third)
-                                              (compiler-parse-comptime-define-fn-ok?
-                                                fourth))))))]
+                                      (= (ast-decl-list-tag-sum decls) 32)
+                                      (compiler-parse-comptime-defstruct-ok?
+                                        first)
+                                      (compiler-parse-comptime-defenum-ok?
+                                        second)
+                                      (compiler-parse-comptime-define-value-ok?
+                                        third)
+                                      (compiler-parse-comptime-define-fn-ok?
+                                        fourth))]
                                   [_ false]))]
                             [_ false]))]
                       [_ false]))]
@@ -7614,13 +7552,9 @@
                             [(AstDeclNil)
                               (and
                                 (= (ast-decl-list-count decls) 3)
-                                (and
-                                  (compiler-parse-comptime-decls-struct-ok?
-                                    first)
-                                  (and
-                                    (compiler-parse-comptime-decls-enum-ok?
-                                      second)
-                                    (compiler-parse-comptime-decls-fn-ok? third))))]
+                                (compiler-parse-comptime-decls-struct-ok? first)
+                                (compiler-parse-comptime-decls-enum-ok? second)
+                                (compiler-parse-comptime-decls-fn-ok? third))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -7657,14 +7591,13 @@
                                     [(AstDeclExtern extern-name _ _ extern-ty)
                                       (and
                                         (= name (intern "danger"))
-                                        (and
-                                          (= extern-name (intern "raw-call"))
-                                          (match extern-ty
-                                            [(AstTyFunc _ ret)
-                                              (match (ty-node-get ret)
-                                                [(AstTyI64) true]
-                                                [_ false])]
-                                            [_ false])))]
+                                        (= extern-name (intern "raw-call"))
+                                        (match extern-ty
+                                          [(AstTyFunc _ ret)
+                                            (match (ty-node-get ret)
+                                              [(AstTyI64) true]
+                                              [_ false])]
+                                          [_ false]))]
                                     [_ false]))]
                               [_ false])]
                           [_ false])]
@@ -7750,20 +7683,15 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "Resource"))
-                    (and
-                      (match repr
-                        [(AstStructReprDefault) true]
-                        [_ false])
-                      (and
-                        (match cleanup
-                          [(AstStructCleanupFn cleanup-name)
-                            (= cleanup-name (intern "close-resource"))]
-                          [_ false])
-                        (and
-                          (= (compiler-parse-field-count fields) 3)
-                          (=
-                            (compiler-parse-field-cleanup-list-score fields)
-                            110)))))]
+                    (match repr
+                      [(AstStructReprDefault) true]
+                      [_ false])
+                    (match cleanup
+                      [(AstStructCleanupFn cleanup-name)
+                        (= cleanup-name (intern "close-resource"))]
+                      [_ false])
+                    (= (compiler-parse-field-count fields) 3)
+                    (= (compiler-parse-field-cleanup-list-score fields) 110))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7786,14 +7714,11 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "Resource"))
-                    (and
-                      (match cleanup
-                        [(AstEnumCleanupFn cleanup-name)
-                          (= cleanup-name (intern "close-resource"))]
-                        [_ false])
-                      (=
-                        (compiler-parse-variant-list-cleanup-score variants)
-                        110)))]
+                    (match cleanup
+                      [(AstEnumCleanupFn cleanup-name)
+                        (= cleanup-name (intern "close-resource"))]
+                      [_ false])
+                    (= (compiler-parse-variant-list-cleanup-score variants) 110))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7822,11 +7747,8 @@
                         (match repr
                           [(AstStructReprDefault) true]
                           [_ false])
-                        (and
-                          (ast-struct-cleanup? cleanup)
-                          (=
-                            (compiler-parse-field-cleanup-list-score fields)
-                            10)))]
+                        (ast-struct-cleanup? cleanup)
+                        (= (compiler-parse-field-cleanup-list-score fields) 10))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
@@ -7835,9 +7757,8 @@
 (define (compiler-parse-cleanup-metadata-ok?) : bool
   (and
     (compiler-parse-struct-cleanup-ok?)
-    (and
-      (compiler-parse-enum-cleanup-ok?)
-      (compiler-parse-comptime-struct-cleanup-ok?))))
+    (compiler-parse-enum-cleanup-ok?)
+    (compiler-parse-comptime-struct-cleanup-ok?)))
 
 (define (compiler-parse-repr-c-source) : String
   "(defstruct Stat
@@ -7858,9 +7779,8 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "Stat"))
-                    (and
-                      (ast-struct-repr-c? repr)
-                      (= (compiler-parse-field-count fields) 2)))]
+                    (ast-struct-repr-c? repr)
+                    (= (compiler-parse-field-count fields) 2))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7909,12 +7829,11 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "parser-basic"))
-                    (and
-                      (= (ast-source-span-start-line span) 1)
-                      (match (ast-expr-unspan body)
-                        [(AstExprBegin exprs)
-                          (= (compiler-parse-expr-list-count exprs) 2)]
-                        [_ false])))]
+                    (= (ast-source-span-start-line span) 1)
+                    (match (ast-expr-unspan body)
+                      [(AstExprBegin exprs)
+                        (= (compiler-parse-expr-list-count exprs) 2)]
+                      [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7960,26 +7879,20 @@
   (and
     (compiler-parse-comptime-decl-invalid-payload-ok?
       (compiler-parse-comptime-decl-bad-payload-source))
-    (and
-      (compiler-parse-comptime-decl-invalid-payload-ok?
-        "(comptime-decl (defmacro (m [x : bool]) : bool x))")
-      (and
-        (compiler-parse-comptime-decl-invalid-payload-ok?
-          "(comptime-decl (module nested))")
-        (and
-          (compiler-parse-comptime-decl-invalid-payload-ok?
-            "(comptime-decl (import \"x.tl\"))")
-          (and
-            (compiler-parse-comptime-decl-invalid-payload-ok?
-              "(comptime-decl (export (value x)))")
-            (and
-              (compiler-parse-comptime-decl-invalid-payload-ok?
-                "(comptime-decl (cfg feature (define x : i64 1)))")
-              (and
-                (compiler-parse-comptime-decl-invalid-payload-ok?
-                  "(comptime-decl (test t 1))")
-                (compiler-parse-comptime-decl-invalid-payload-ok?
-                  "(comptime-decl (comptime-decl (defstruct X (x i64))))")))))))))
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (defmacro (m [x : bool]) : bool x))")
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (module nested))")
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (import \"x.tl\"))")
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (export (value x)))")
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (cfg feature (define x : i64 1)))")
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (test t 1))")
+    (compiler-parse-comptime-decl-invalid-payload-ok?
+      "(comptime-decl (comptime-decl (defstruct X (x i64))))")))
 
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
@@ -8019,161 +7932,136 @@
     (compiler-parse-error-ok?
       "(defstruct Bad (:repr c) (:repr c) (x i64))"
       "parse: duplicate defstruct :repr metadata")
-    (and
-      (compiler-parse-error-ok?
-        "(defstruct Bad (:repr rust) (x i64))"
-        "parse: unknown struct repr rust")
-      (and
-        (compiler-parse-error-ok?
-          "(defstruct Bad (:repr packed) (x i64))"
-          "parse: packed repr is reserved")
-        (and
-          (compiler-parse-error-ok?
-            "(defstruct Bad (x i64) (:repr c))"
-            "parse: defstruct metadata must appear before fields")
-          (and
-            (compiler-parse-error-ok?
-              "(defstruct Bad (:layout c) (x i64))"
-              "parse: unknown defstruct metadata :layout")
-            (compiler-parse-error-ok?
-              "(defstruct Bad (:repr c))"
-              "parse: defstruct needs at least one field")))))))
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr rust) (x i64))"
+      "parse: unknown struct repr rust")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr packed) (x i64))"
+      "parse: packed repr is reserved")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64) (:repr c))"
+      "parse: defstruct metadata must appear before fields")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:layout c) (x i64))"
+      "parse: unknown defstruct metadata :layout")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c))"
+      "parse: defstruct needs at least one field")))
 
 (define (compiler-parse-cleanup-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       "(defstruct Bad (:cleanup close) (:cleanup close2) (x i64))"
       "parse: duplicate defstruct :cleanup metadata")
-    (and
-      (compiler-parse-error-ok?
-        "(defstruct Bad (x i64 (:cleanup close-x)))"
-        "parse: field cleanup metadata requires struct :cleanup metadata")
-      (and
-        (compiler-parse-error-ok?
-          "(defstruct Bad (:repr c) (:cleanup close) (x i64))"
-          "parse: defstruct cannot combine :repr c with :cleanup metadata")
-        (and
-          (compiler-parse-error-ok?
-            "(defstruct Bad (:cleanup close) (:repr c) (x i64))"
-            "parse: defstruct cannot combine :repr c with :cleanup metadata")
-          (and
-            (compiler-parse-error-ok?
-              "(defstruct Bad (:cleanup) (x i64))"
-              "parse: malformed defstruct :cleanup metadata")
-            (and
-              (compiler-parse-error-ok?
-                "(defstruct Bad (:cleanup close) (x i64 (:cleanup)))"
-                "parse: malformed field :cleanup metadata")
-              (and
-                (compiler-parse-error-ok?
-                  "(defstruct Bad (:cleanup close) (x i64 (:cleanup close-x) (:owned)))"
-                  "parse: duplicate field cleanup metadata")
-                (and
-                  (compiler-parse-error-ok?
-                    "(defenum Bad (:cleanup close) (:cleanup close2) (A))"
-                    "parse: duplicate defenum :cleanup metadata")
-                  (and
-                    (compiler-parse-error-ok?
-                      "(defenum Bad (:cleanup) (A))"
-                      "parse: malformed defenum :cleanup metadata")
-                    (and
-                      (compiler-parse-error-ok?
-                        "(defenum Bad (A) (:cleanup close))"
-                        "parse: defenum metadata must appear before variants")
-                      (compiler-parse-error-ok?
-                        "(defenum Bad (A i64 (:cleanup close)))"
-                        "parse: enum payload cleanup metadata requires enum :cleanup metadata"))))))))))))
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64 (:cleanup close-x)))"
+      "parse: field cleanup metadata requires struct :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:cleanup close) (x i64))"
+      "parse: defstruct cannot combine :repr c with :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close) (:repr c) (x i64))"
+      "parse: defstruct cannot combine :repr c with :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup) (x i64))"
+      "parse: malformed defstruct :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close) (x i64 (:cleanup)))"
+      "parse: malformed field :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close) (x i64 (:cleanup close-x) (:owned)))"
+      "parse: duplicate field cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:cleanup close) (:cleanup close2) (A))"
+      "parse: duplicate defenum :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:cleanup) (A))"
+      "parse: malformed defenum :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (A) (:cleanup close))"
+      "parse: defenum metadata must appear before variants")
+    (compiler-parse-error-ok?
+      "(defenum Bad (A i64 (:cleanup close)))"
+      "parse: enum payload cleanup metadata requires enum :cleanup metadata")))
 
 (define (compiler-parse-comptime-decl-error-tests-ok?) : bool
   (and
     (compiler-parse-comptime-decl-invalid-payloads-ok?)
-    (and
-      (compiler-parse-error-ok?
-        (compiler-parse-comptime-decl-expression-source)
-        "parse: comptime-decl is only valid as a top-level declaration")
-      (and
-        (compiler-parse-error-ok?
-          (compiler-parse-comptime-decl-extra-source)
-          "parse: comptime-decl expects one template or generated metadata plus one template")
-        (and
-          (compiler-parse-error-ok?
-            (compiler-parse-comptime-decl-bad-metadata-source)
-            "parse: comptime-decl metadata must be :generated")
-          (compiler-parse-error-ok?
-            (compiler-parse-comptime-decl-malformed-metadata-source)
-            "parse: :generated metadata expects generator name, item name, and argument key expressions"))))))
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decl-expression-source)
+      "parse: comptime-decl is only valid as a top-level declaration")
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decl-extra-source)
+      "parse: comptime-decl expects one template or generated metadata plus one template")
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decl-bad-metadata-source)
+      "parse: comptime-decl metadata must be :generated")
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decl-malformed-metadata-source)
+      "parse: :generated metadata expects generator name, item name, and argument key expressions")))
 
 (define (compiler-parse-comptime-decls-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-expression-source)
       "parse: comptime-decls is only valid as a top-level declaration")
-    (and
-      (compiler-parse-error-ok?
-        (compiler-parse-comptime-decls-empty-source)
-        "parse: comptime-decls expects generated metadata plus one or more templates")
-      (and
-        (compiler-parse-error-ok?
-          (compiler-parse-comptime-decls-bad-metadata-source)
-          "parse: comptime-decls metadata must be :generated")
-        (and
-          (compiler-parse-error-ok?
-            (compiler-parse-comptime-decls-malformed-metadata-source)
-            "parse: :generated metadata expects generator name and argument key expressions")
-          (compiler-parse-error-ok?
-            (compiler-parse-comptime-decls-bad-payload-source)
-            (parse-ast-comptime-decl-payload-message)))))))
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decls-empty-source)
+      "parse: comptime-decls expects generated metadata plus one or more templates")
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decls-bad-metadata-source)
+      "parse: comptime-decls metadata must be :generated")
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decls-malformed-metadata-source)
+      "parse: :generated metadata expects generator name and argument key expressions")
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decls-bad-payload-source)
+      (parse-ast-comptime-decl-payload-message))))
 
 (define (compiler-parse-unsafe-decl-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       "(unsafe)"
       "parse: unsafe declaration expects exactly one declaration")
-    (and
-      (compiler-parse-error-ok?
-        "(unsafe (define value : i64 1))"
-        "parse: unsafe declaration accepts only function define or extern")
-      (and
-        (compiler-parse-error-ok?
-          "(unsafe (defstruct Bad (x i64)))"
-          "parse: unsafe declaration accepts only function define or extern")
-        (compiler-parse-error-ok?
-          "(unsafe (extern (a) : i64) (extern (b) : i64))"
-          "parse: unsafe declaration expects exactly one declaration")))))
+    (compiler-parse-error-ok?
+      "(unsafe (define value : i64 1))"
+      "parse: unsafe declaration accepts only function define or extern")
+    (compiler-parse-error-ok?
+      "(unsafe (defstruct Bad (x i64)))"
+      "parse: unsafe declaration accepts only function define or extern")
+    (compiler-parse-error-ok?
+      "(unsafe (extern (a) : i64) (extern (b) : i64))"
+      "parse: unsafe declaration expects exactly one declaration")))
 
 (define (compiler-parse-export-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       (compiler-parse-empty-export-source)
       "parse: export needs at least one item")
-    (and
-      (compiler-parse-error-ok?
-        (compiler-parse-malformed-export-item-source)
-        "parse: malformed export item")
-      (compiler-parse-error-ok?
-        (compiler-parse-unknown-export-kind-source)
-        "parse: unknown export item kind"))))
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-export-item-source)
+      "parse: malformed export item")
+    (compiler-parse-error-ok?
+      (compiler-parse-unknown-export-kind-source)
+      "parse: unknown export item kind")))
 
 (define (compiler-parse-define-export-metadata-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       "(define (f) (:export-symbol \"\") : i64 0)"
       "parse: define :export-symbol must not be empty")
-    (and
-      (compiler-parse-error-ok?
-        "(define (f) (:export-symbol bad) : i64 0)"
-        "parse: malformed define :export-symbol metadata")
-      (and
-        (compiler-parse-error-ok?
-          "(define (f) (:export-symbol \"a\") (:export-symbol \"b\") : i64 0)"
-          "parse: duplicate define :export-symbol metadata")
-        (and
-          (compiler-parse-error-ok?
-            "(define (f) (:link-lib \"m\") : i64 0)"
-            "parse: unknown define metadata :link-lib")
-          (compiler-parse-error-ok?
-            "(define (f [comptime n : i64]) (:export-symbol \"f\") : i64 n)"
-            "parse: define :export-symbol cannot be used on functions with comptime parameters"))))))
+    (compiler-parse-error-ok?
+      "(define (f) (:export-symbol bad) : i64 0)"
+      "parse: malformed define :export-symbol metadata")
+    (compiler-parse-error-ok?
+      "(define (f) (:export-symbol \"a\") (:export-symbol \"b\") : i64 0)"
+      "parse: duplicate define :export-symbol metadata")
+    (compiler-parse-error-ok?
+      "(define (f) (:link-lib \"m\") : i64 0)"
+      "parse: unknown define metadata :link-lib")
+    (compiler-parse-error-ok?
+      "(define (f [comptime n : i64]) (:export-symbol \"f\") : i64 n)"
+      "parse: define :export-symbol cannot be used on functions with comptime parameters")))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
@@ -8187,63 +8075,54 @@
     (compiler-parse-error-ok?
       "(define (main) : i64 (let 1))"
       "parse: let requires at least one binding")
-    (and
-      (compiler-parse-error-ok?
-        "(define (main) : i64 (let [x : i64] x))"
-        "parse: malformed let binding")
-      (and
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (let [x : i64 1]))"
-          "parse: let missing body")
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (let [x : i64 1] x x))"
-          "parse: let expects exactly one body")))))
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let [x : i64] x))"
+      "parse: malformed let binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let [x : i64 1]))"
+      "parse: let missing body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let [x : i64 1] x x))"
+      "parse: let expects exactly one body")))
 
 (define (compiler-parse-abstraction-policy-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       (compiler-parse-defgeneric-policy-source)
       (compiler-parse-abstraction-policy-message))
-    (and
-      (compiler-parse-error-ok?
-        (compiler-parse-trait-policy-source)
-        (compiler-parse-abstraction-policy-message))
-      (compiler-parse-error-ok?
-        (compiler-parse-generic-type-policy-source)
-        (compiler-parse-generic-type-policy-message "Option")))))
+    (compiler-parse-error-ok?
+      (compiler-parse-trait-policy-source)
+      (compiler-parse-abstraction-policy-message))
+    (compiler-parse-error-ok?
+      (compiler-parse-generic-type-policy-source)
+      (compiler-parse-generic-type-policy-message "Option"))))
 
 (define (compiler-parse-raw-pointer-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       "(define (main [p : (Ptr)]) : unit unit)"
       "parse: Ptr expects exactly one type")
-    (and
-      (compiler-parse-error-ok?
-        "(define (main [p : (MutPtr i64 i64)]) : unit unit)"
-        "parse: MutPtr expects exactly one type")
-      (and
-        (compiler-parse-error-ok?
-          "(define (main [p : (Ptr (Array))]) : unit unit)"
-          "parse: malformed array type")
-        (and
-          (compiler-parse-error-ok?
-            "(define (main [p : (Ptr i64)]) : i64 (ptr-read))"
-            "parse: ptr-read expects exactly one expression")
-          (and
-            (compiler-parse-error-ok?
-              "(define (main [p : (MutPtr i64)]) : unit (ptr-write! p))"
-              "parse: ptr-write! expects exactly two expressions")
-            (and
-              (compiler-parse-error-ok?
-                "(define (main) : (MutPtr i64) (unsafe (ptr-addr-of)))"
-                "parse: ptr-addr-of expects exactly one local name")
-              (and
-                (compiler-parse-error-ok?
-                  "(define (main [x : i64]) : (MutPtr i64) (unsafe (ptr-addr-of (+ x 1))))"
-                  "parse: ptr-addr-of expects a local name")
-                (compiler-parse-error-ok?
-                  "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
-                  "parse: pointer cast expects (form expr : pointer-type)")))))))))
+    (compiler-parse-error-ok?
+      "(define (main [p : (MutPtr i64 i64)]) : unit unit)"
+      "parse: MutPtr expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main [p : (Ptr (Array))]) : unit unit)"
+      "parse: malformed array type")
+    (compiler-parse-error-ok?
+      "(define (main [p : (Ptr i64)]) : i64 (ptr-read))"
+      "parse: ptr-read expects exactly one expression")
+    (compiler-parse-error-ok?
+      "(define (main [p : (MutPtr i64)]) : unit (ptr-write! p))"
+      "parse: ptr-write! expects exactly two expressions")
+    (compiler-parse-error-ok?
+      "(define (main) : (MutPtr i64) (unsafe (ptr-addr-of)))"
+      "parse: ptr-addr-of expects exactly one local name")
+    (compiler-parse-error-ok?
+      "(define (main [x : i64]) : (MutPtr i64) (unsafe (ptr-addr-of (+ x 1))))"
+      "parse: ptr-addr-of expects a local name")
+    (compiler-parse-error-ok?
+      "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
+      "parse: pointer cast expects (form expr : pointer-type)")))
 
 (define (compiler-parse-box-error-tests-ok?) : bool
   (let
@@ -8378,41 +8257,33 @@
     (compiler-parse-error-ok?
       (compiler-parse-malformed-binary-source)
       "parse: malformed binary expression")
-    (and
-      (compiler-parse-error-ok?
-        (compiler-parse-malformed-if-source)
-        "parse: malformed if")
-      (and
-        (compiler-parse-error-ok?
-          (compiler-parse-malformed-while-source)
-          "parse: malformed while")
-        (and
-          (compiler-parse-error-ok?
-            (compiler-parse-malformed-set-source)
-            "parse: malformed set!")
-          (and
-            (compiler-parse-error-ok?
-              (compiler-parse-bracket-cond-source)
-              (parse-ast-cond-bracket-diagnostic))
-            (and
-              (compiler-parse-error-ok?
-                (compiler-parse-qualified-bracket-cond-source)
-                (parse-ast-cond-bracket-diagnostic))
-              (and
-                (compiler-parse-error-ok?
-                  (compiler-parse-with-region-empty-source)
-                  "parse: with-arena 'r' requires a non-empty body")
-                (and
-                  (compiler-parse-error-ok?
-                    (compiler-parse-region-type-bad-source)
-                    "parse: region name must be an identifier")
-                  (and
-                    (compiler-parse-error-ok?
-                      (compiler-parse-malformed-try-source)
-                      "parse: try expects exactly one expression")
-                    (compiler-parse-error-ok?
-                      (compiler-parse-malformed-return-source)
-                      "parse: return expects exactly one expression")))))))))))
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-if-source)
+      "parse: malformed if")
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-while-source)
+      "parse: malformed while")
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-set-source)
+      "parse: malformed set!")
+    (compiler-parse-error-ok?
+      (compiler-parse-bracket-cond-source)
+      (parse-ast-cond-bracket-diagnostic))
+    (compiler-parse-error-ok?
+      (compiler-parse-qualified-bracket-cond-source)
+      (parse-ast-cond-bracket-diagnostic))
+    (compiler-parse-error-ok?
+      (compiler-parse-with-region-empty-source)
+      "parse: with-arena 'r' requires a non-empty body")
+    (compiler-parse-error-ok?
+      (compiler-parse-region-type-bad-source)
+      "parse: region name must be an identifier")
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-try-source)
+      "parse: try expects exactly one expression")
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-return-source)
+      "parse: return expects exactly one expression")))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (core/cond
@@ -8494,85 +8365,58 @@
         "(cfg feature (define answer : i64 42))"
         (compiler-cfg-empty)
         0)
-      (and
-        (compiler-parse-cfg-decl-count-ok?
-          "(cfg feature (define answer : i64 42))"
-          feature-cfg
-          1)
-        (and
-          (compiler-parse-cfg-decl-count-ok?
-            "(cfg feature (define))"
-            (compiler-cfg-empty)
-            0)
-          (and
-            (compiler-parse-cfg-decl-count-ok?
-              "(cfg (all feature windows) (define answer : i64 42))"
-              windows-feature-cfg
-              1)
-            (and
-              (compiler-parse-cfg-decl-count-ok?
-                "(cfg (any missing feature) (define answer : i64 42))"
-                feature-cfg
-                1)
-              (and
-                (compiler-parse-cfg-decl-count-ok?
-                  "(cfg (not missing) (define answer : i64 42))"
-                  feature-cfg
-                  1)
-                (and
-                  (compiler-parse-cfg-decl-count-ok?
-                    "(define (main) : i64 (begin (cfg feature (if)) 42))"
-                    (compiler-cfg-empty)
-                    1)
-                  (and
-                    (compiler-parse-cfg-decl-count-ok?
-                      "(define (main) : i64 (cfg feature (if) 42))"
-                      (compiler-cfg-empty)
-                      1)
-                    (compiler-parse-cfg-error?
-                      "(define (main) : i64 (cfg feature (if) 42))"
-                      feature-cfg)))))))))))
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg feature (define answer : i64 42))"
+        feature-cfg
+        1)
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg feature (define))"
+        (compiler-cfg-empty)
+        0)
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg (all feature windows) (define answer : i64 42))"
+        windows-feature-cfg
+        1)
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg (any missing feature) (define answer : i64 42))"
+        feature-cfg
+        1)
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg (not missing) (define answer : i64 42))"
+        feature-cfg
+        1)
+      (compiler-parse-cfg-decl-count-ok?
+        "(define (main) : i64 (begin (cfg feature (if)) 42))"
+        (compiler-cfg-empty)
+        1)
+      (compiler-parse-cfg-decl-count-ok?
+        "(define (main) : i64 (cfg feature (if) 42))"
+        (compiler-cfg-empty)
+        1)
+      (compiler-parse-cfg-error?
+        "(define (main) : i64 (cfg feature (if) 42))"
+        feature-cfg))))
 
 (define (compiler-parse-declaration-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define answer : i64 42)")
-    (and
-      (compiler-parse-ok? "(define (add [a : i64] [b : i64]) : i64 (+ a b))")
-      (and
-        (compiler-parse-ok? "(extern (puts [arg0 : String]) : unit)")
-        (and
-          (compiler-parse-ok? "(defenum Maybe (Some i64) (None))")
-          (and
-            (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
-            (and
-              (compiler-parse-ok? "(import \"stdlib/io.tl\")")
-              (and
-                (compiler-parse-include-str-ok?)
-                (and
-                  (compiler-parse-include-str-errors-ok?)
-                  (and
-                    (compiler-parse-error-ok?
-                      "(define answer : i64)"
-                      "parse: malformed value definition")
-                    (and
-                      (compiler-parse-error-ok?
-                        "(define (main) : i64)"
-                        "parse: malformed function definition")
-                      (and
-                        (compiler-parse-error-ok?
-                          "(extern puts)"
-                          "parse: malformed extern")
-                        (and
-                          (compiler-parse-error-ok?
-                            "(defenum)"
-                            "parse: malformed defenum")
-                          (and
-                            (compiler-parse-error-ok?
-                              "(defstruct)"
-                              "parse: malformed defstruct")
-                            (compiler-parse-error-ok?
-                              "(import)"
-                              "parse: malformed import")))))))))))))))
+    (compiler-parse-ok? "(define (add [a : i64] [b : i64]) : i64 (+ a b))")
+    (compiler-parse-ok? "(extern (puts [arg0 : String]) : unit)")
+    (compiler-parse-ok? "(defenum Maybe (Some i64) (None))")
+    (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
+    (compiler-parse-ok? "(import \"stdlib/io.tl\")")
+    (compiler-parse-include-str-ok?)
+    (compiler-parse-include-str-errors-ok?)
+    (compiler-parse-error-ok?
+      "(define answer : i64)"
+      "parse: malformed value definition")
+    (compiler-parse-error-ok?
+      "(define (main) : i64)"
+      "parse: malformed function definition")
+    (compiler-parse-error-ok? "(extern puts)" "parse: malformed extern")
+    (compiler-parse-error-ok? "(defenum)" "parse: malformed defenum")
+    (compiler-parse-error-ok? "(defstruct)" "parse: malformed defstruct")
+    (compiler-parse-error-ok? "(import)" "parse: malformed import")))
 
 ;; enum/struct expression coverage (#1073): defenum empty rejection,
 ;; defstruct mixed field types, empty struct rejection, struct-get, and
@@ -8582,27 +8426,18 @@
     (compiler-parse-error-ok?
       "(defenum Empty)"
       "parse: defenum needs at least one variant")
-    (and
-      (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
-      (and
-        (compiler-parse-ok? "(defstruct Mixed (a i64) (b bool) (c f64))")
-        (and
-          (compiler-parse-error-ok?
-            "(defstruct Empty)"
-            "parse: defstruct needs at least one field")
-          (and
-            (compiler-parse-ok?
-              "(define (f [p : Point]) : i64 (struct-get p x))")
-            (and
-              (compiler-parse-ok? "(define (f) : Point (Point 1 2))")
-              (and
-                (compiler-parse-ok?
-                  "(defstruct RefBox (:lifetimes a) (value (& a i64)))")
-                (and
-                  (compiler-parse-ok?
-                    "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))")
-                  (compiler-parse-ok?
-                    "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))"))))))))))
+    (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
+    (compiler-parse-ok? "(defstruct Mixed (a i64) (b bool) (c f64))")
+    (compiler-parse-error-ok?
+      "(defstruct Empty)"
+      "parse: defstruct needs at least one field")
+    (compiler-parse-ok? "(define (f [p : Point]) : i64 (struct-get p x))")
+    (compiler-parse-ok? "(define (f) : Point (Point 1 2))")
+    (compiler-parse-ok? "(defstruct RefBox (:lifetimes a) (value (& a i64)))")
+    (compiler-parse-ok?
+      "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))")
+    (compiler-parse-ok?
+      "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))")))
 
 ;
 ;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and
@@ -8611,77 +8446,62 @@
 (define (compiler-parse-let-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (let [x 1] x))")
-    (and
-      (compiler-parse-ok?
-        "(define (main) : i64 (let [x : i64 1] [y : i64 2] (+ x y)))")
-      (and
-        (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x))")
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (let [] 0))"
-          "parse: malformed let binding")))))
+    (compiler-parse-ok?
+      "(define (main) : i64 (let [x : i64 1] [y : i64 2] (+ x y)))")
+    (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let [] 0))"
+      "parse: malformed let binding")))
 
 (define (compiler-parse-spmd-tests-ok?) : bool
   (and
     (compiler-parse-ok?
       "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
-    (and
-      (compiler-parse-ok?
-        "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
-      (and
-        ;; #1073: an empty range, a non-i64 index type, and expression
-        ;; start/end bounds all parse (range semantics are checked later).
-        (compiler-parse-ok?
-          "(define (main) : i64 (begin (foreach ([i : i64 5 5]) unit) 0))")
-        (and
-          (compiler-parse-ok?
-            "(define (main) : i64 (begin (foreach ([i : u32 0 3]) unit) 0))")
-          (and
-            (compiler-parse-ok?
-              "(define (main [n : i64]) : i64 (begin (foreach ([i : i64 (+ 0 1) (* n 2)]) unit) 0))")
-            (and
-              ;; #1073: an unknown reduce operator is rejected by the parser.
-              (compiler-parse-error-ok?
-                "(define (main [n : i64]) : i64 (spmd-reduce bogus ([i : i64 0 n]) 0 i))"
-                "parse: unsupported spmd-reduce operator `bogus`; expected one of sum, min, max, all, any")
-              (and
-                (compiler-parse-error-ok?
-                  "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
-                  "parse: expected ':' in foreach")
-                (and
-                  (compiler-parse-error-ok?
-                    "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
-                    "parse: malformed foreach binding")
-                  (and
-                    (compiler-parse-error-ok?
-                      "(define (main) : i64 (begin (foreach) 0))"
-                      "parse: malformed foreach")
-                    (compiler-parse-error-ok?
-                      "(define (main) : i64 (spmd-reduce sum))"
-                      "parse: malformed spmd-reduce")))))))))))
+    (compiler-parse-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+    ;; #1073: an empty range, a non-i64 index type, and expression
+    ;; start/end bounds all parse (range semantics are checked later).
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (foreach ([i : i64 5 5]) unit) 0))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (foreach ([i : u32 0 3]) unit) 0))")
+    (compiler-parse-ok?
+      "(define (main [n : i64]) : i64 (begin (foreach ([i : i64 (+ 0 1) (* n 2)]) unit) 0))")
+    ;; #1073: an unknown reduce operator is rejected by the parser.
+    (compiler-parse-error-ok?
+      "(define (main [n : i64]) : i64 (spmd-reduce bogus ([i : i64 0 n]) 0 i))"
+      "parse: unsupported spmd-reduce operator `bogus`; expected one of sum, min, max, all, any")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
+      "parse: expected ':' in foreach")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
+      "parse: malformed foreach binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach) 0))"
+      "parse: malformed foreach")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum))"
+      "parse: malformed spmd-reduce")))
 
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (match 1 [0 1] [_ 0]))")
-    (and
-      (compiler-parse-ok?
-        "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")
-      (and
-        (compiler-parse-ok?
-          "(defenum E (A i64) (B))
+    (compiler-parse-ok?
+      "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")
+    (compiler-parse-ok?
+      "(defenum E (A i64) (B))
 (define (main [e : E]) : i64 (match e [(A x) x] [(B) 0]))")
-        (and
-          (compiler-parse-ok? "(define (main) : i64 (match 5 [x x]))")
-          (and
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (match))"
-              "parse: malformed match")
-            (and
-              (compiler-parse-error-ok?
-                "(define (main) : i64 (match 1 [_]))"
-                "parse: malformed match arm")
-              (compiler-parse-error-ok?
-                "(define (main) : i64 (match 1 [() 0]))"
-                "parse: expected pattern"))))))))
+    (compiler-parse-ok? "(define (main) : i64 (match 5 [x x]))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match))"
+      "parse: malformed match")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [_]))"
+      "parse: malformed match arm")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [() 0]))"
+      "parse: expected pattern")))
 
 ;; pattern literals (#1073): string literal arms, nested string payload,
 ;; char literal in pattern, named char literal in value position.
@@ -8690,16 +8510,14 @@
     ;; string literal arms
     (compiler-parse-ok?
       "(define (f [s : String]) : i64 (match s [\"if\" 10] [\"let\" 20] [_ 0]))")
-    (and
-      ;; nested string payload
-      (compiler-parse-ok?
-        "(defenum Token (TIdent String))\n(define (f [t : Token]) : i64 (match t [(TIdent \"if\") 1] [_ 0]))")
-      (and
-        ;; char literal in pattern (named space + literal char)
-        (compiler-parse-ok?
-          "(define (f [c : char]) : i64 (match c [#\\space' 1] [#a' 2] [_ 0]))")
-        ;; named char literal in value position
-        (compiler-parse-ok? "(define (f) : char #\\newline')")))))
+    ;; nested string payload
+    (compiler-parse-ok?
+      "(defenum Token (TIdent String))\n(define (f [t : Token]) : i64 (match t [(TIdent \"if\") 1] [_ 0]))")
+    ;; char literal in pattern (named space + literal char)
+    (compiler-parse-ok?
+      "(define (f [c : char]) : i64 (match c [#\\space' 1] [#a' 2] [_ 0]))")
+    ;; named char literal in value position
+    (compiler-parse-ok? "(define (f) : char #\\newline')")))
 
 ;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
@@ -8710,35 +8528,28 @@
   (and
     (compiler-parse-ok?
       "(define (main [a : i64] [p : bool]) : i64 (begin (neg a) (bit-not a) (if (not p) 1 0)))")
-    (and
-      (compiler-parse-ok?
-        "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
-      (and
-        (compiler-parse-ok?
-          "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
-        (and
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (not))"
-            "parse: malformed unary expression")
-          (compiler-parse-error-ok?
-            "(define (main [a : i64]) : i64 (+ a))"
-            "parse: malformed binary expression"))))))
+    (compiler-parse-ok?
+      "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
+    (compiler-parse-ok?
+      "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (not))"
+      "parse: malformed unary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64]) : i64 (+ a))"
+      "parse: malformed binary expression")))
 
 (define (compiler-parse-type-literal-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
-    (and
-      (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
-      (and
-        (compiler-parse-ok?
-          "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
-        (and
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (type))"
-            "parse: type expects exactly one type")
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (type i64 bool))"
-            "parse: type expects exactly one type"))))))
+    (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+    (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (type))"
+      "parse: type expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (type i64 bool))"
+      "parse: type expects exactly one type")))
 
 ;; region parsing (#1073 / #1041): `(with-arena <ident> body+)` accepts (basic,
 ;; multi-expression body, nested region) and rejects missing binder,
@@ -8747,22 +8558,17 @@
 (define (compiler-parse-region-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (with-arena r 0))")
-    (and
-      (compiler-parse-ok? "(define (main) : i64 (with-arena r 1 2 0))")
-      (and
-        (compiler-parse-ok?
-          "(define (main) : i64 (with-arena r (with-arena s 0)))")
-        (and
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (with-arena))"
-            "parse: with-arena requires a region name before its body")
-          (and
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (with-arena 5 0))"
-              "parse: with-arena region name must be an identifier")
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (with-arena r))"
-              "parse: with-arena 'r' requires a non-empty body")))))))
+    (compiler-parse-ok? "(define (main) : i64 (with-arena r 1 2 0))")
+    (compiler-parse-ok? "(define (main) : i64 (with-arena r (with-arena s 0)))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-arena))"
+      "parse: with-arena requires a region name before its body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-arena 5 0))"
+      "parse: with-arena region name must be an identifier")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-arena r))"
+      "parse: with-arena 'r' requires a non-empty body")))
 
 (define (compiler-parse-with-escape-shape-ok?) : bool
   (match (parse-ast-source
@@ -8807,16 +8613,14 @@
 (define (compiler-parse-with-escape-tests-ok?) : bool
   (and
     (compiler-parse-with-escape-shape-ok?)
-    (and
-      (compiler-parse-ok?
-        "(define (main) : i64 (let ([scratch : i64 (arena-make)]) (with-escape scratch 1 2 3)))")
-      (and
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (with-escape))"
-          "parse: with-escape requires a scratch arena before its body")
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (with-escape (arena-make)))"
-          "parse: with-escape requires a non-empty body")))))
+    (compiler-parse-ok?
+      "(define (main) : i64 (let ([scratch : i64 (arena-make)]) (with-escape scratch 1 2 3)))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-escape))"
+      "parse: with-escape requires a scratch arena before its body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-escape (arena-make)))"
+      "parse: with-escape requires a non-empty body")))
 
 (define (compiler-parse-resource-with-source) : String
   "(define (main) : i64
@@ -8842,36 +8646,35 @@
                     [(AstExprWithResource bindings body-exprs)
                       (and
                         (= (compiler-parse-resource-binding-count bindings) 2)
-                        (and
-                          (= (compiler-parse-expr-list-count body-exprs) 2)
-                          (match body-exprs
-                            [(AstExprCons _ tail)
-                              (let
-                                [tail : AstExprList (box-get tail)]
-                                (match tail
-                                  [(AstExprCons nested done-box)
-                                    (let
-                                      [nested : AstExpr (ast-node-get nested)]
-                                      [done : AstExprList (box-get done-box)]
-                                      (match done
-                                        [(AstExprNil)
-                                          (match (ast-expr-unspan nested)
-                                            [(AstExprWithResource
-                                                nested-bindings
-                                                nested-body)
-                                              (and
-                                                (=
-                                                  (compiler-parse-resource-binding-count
-                                                    nested-bindings)
-                                                  1)
-                                                (=
-                                                  (compiler-parse-expr-list-count
-                                                    nested-body)
-                                                  1))]
-                                            [_ false])]
-                                        [_ false]))]
-                                  [_ false]))]
-                            [_ false])))]
+                        (= (compiler-parse-expr-list-count body-exprs) 2)
+                        (match body-exprs
+                          [(AstExprCons _ tail)
+                            (let
+                              [tail : AstExprList (box-get tail)]
+                              (match tail
+                                [(AstExprCons nested done-box)
+                                  (let
+                                    [nested : AstExpr (ast-node-get nested)]
+                                    [done : AstExprList (box-get done-box)]
+                                    (match done
+                                      [(AstExprNil)
+                                        (match (ast-expr-unspan nested)
+                                          [(AstExprWithResource
+                                              nested-bindings
+                                              nested-body)
+                                            (and
+                                              (=
+                                                (compiler-parse-resource-binding-count
+                                                  nested-bindings)
+                                                1)
+                                              (=
+                                                (compiler-parse-expr-list-count
+                                                  nested-body)
+                                                1))]
+                                          [_ false])]
+                                      [_ false]))]
+                                [_ false]))]
+                          [_ false]))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
@@ -8880,44 +8683,35 @@
 (define (compiler-parse-resource-with-tests-ok?) : bool
   (and
     (compiler-parse-resource-with-shape-ok?)
-    (and
-      (compiler-parse-ok?
-        "(define (main) : i64 (with ([h (open-handle) close-handle]) 42))")
-      (and
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (with))"
-          "parse: with requires a binding list before its body")
-        (and
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (with () 42))"
-            "parse: with requires a non-empty binding list")
-          (and
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (with ([1 (open) close]) 42))"
-              "parse: with binding name must be an identifier")
-            (and
-              (compiler-parse-error-ok?
-                "(define (main) : i64 (with ([h]) 42))"
-                "parse: with binding is missing initializer")
-              (and
-                (compiler-parse-error-ok?
-                  "(define (main) : i64 (with ([h (open)]) 42))"
-                  "parse: with binding is missing cleanup function")
-                (and
-                  (compiler-parse-error-ok?
-                    "(define (main) : i64 (with ([h (open) close extra]) 42))"
-                    "parse: with binding has too many fields")
-                  (and
-                    (compiler-parse-error-ok?
-                      "(define (main) : i64 (with ([h (open) close])))"
-                      "parse: with requires a non-empty body")
-                    (and
-                      (compiler-parse-error-ok?
-                        "(define (main) : i64 (with [h (open) close] 42))"
-                        "parse: malformed with binding list")
-                      (compiler-parse-error-ok?
-                        "(define (main) : i64 (with ((h (open) close)) 42))"
-                        "parse: with binding must use bracket syntax"))))))))))))
+    (compiler-parse-ok?
+      "(define (main) : i64 (with ([h (open-handle) close-handle]) 42))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with))"
+      "parse: with requires a binding list before its body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with () 42))"
+      "parse: with requires a non-empty binding list")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with ([1 (open) close]) 42))"
+      "parse: with binding name must be an identifier")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with ([h]) 42))"
+      "parse: with binding is missing initializer")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with ([h (open)]) 42))"
+      "parse: with binding is missing cleanup function")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with ([h (open) close extra]) 42))"
+      "parse: with binding has too many fields")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with ([h (open) close])))"
+      "parse: with requires a non-empty body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with [h (open) close] 42))"
+      "parse: malformed with binding list")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with ((h (open) close)) 42))"
+      "parse: with binding must use bracket syntax")))
 
 (define (compiler-parse-quote-syntax-shape-ok?) : bool
   (match (parse-ast-source
@@ -8963,13 +8757,11 @@
 (define (compiler-parse-quote-syntax-tests-ok?) : bool
   (and
     (compiler-parse-quote-syntax-shape-ok?)
-    (and
-      (compiler-parse-ok? "(define x : Expr '(+ 1 2))")
-      (and
-        (compiler-parse-ok? "(define x : Expr `(begin ,@xs))")
-        (compiler-parse-error-ok?
-          "(define x : Expr (quote))"
-          "parse: quote form expects exactly one expression")))))
+    (compiler-parse-ok? "(define x : Expr '(+ 1 2))")
+    (compiler-parse-ok? "(define x : Expr `(begin ,@xs))")
+    (compiler-parse-error-ok?
+      "(define x : Expr (quote))"
+      "parse: quote form expects exactly one expression")))
 
 ;; REPL-item parsing (#1072 / #1041): `parse-ast-repl-source` accepts a single
 ;; top-level declaration, a parenthesized expression, or a bare expression, and
@@ -9000,21 +8792,16 @@
   (and
     ;; declaration item
     (compiler-parse-repl-decl-ok? "(define x : i64 42)")
-    (and
-      ;; parenthesized expression item
-      (compiler-parse-repl-expr-ok? "(+ 1 2)")
-      (and
-        ;; bare expression item
-        (compiler-parse-repl-expr-ok? "42")
-        (and
-          ;; trailing tokens after a complete item are rejected
-          (compiler-parse-repl-error-ok?
-            "42 43"
-            "parse: trailing tokens after REPL input")
-          ;; a malformed expression item surfaces the expression diagnostic
-          (compiler-parse-repl-error-ok?
-            "(+ 1)"
-            "parse: malformed binary expression"))))))
+    ;; parenthesized expression item
+    (compiler-parse-repl-expr-ok? "(+ 1 2)")
+    ;; bare expression item
+    (compiler-parse-repl-expr-ok? "42")
+    ;; trailing tokens after a complete item are rejected
+    (compiler-parse-repl-error-ok?
+      "42 43"
+      "parse: trailing tokens after REPL input")
+    ;; a malformed expression item surfaces the expression diagnostic
+    (compiler-parse-repl-error-ok? "(+ 1)" "parse: malformed binary expression")))
 
 ;; comptime function-parameter parsing (#1072 / #1041): `[comptime n : i64]`
 ;; and the type-valued `[comptime T : type]` parse as top-level function
@@ -9037,12 +8824,11 @@
   (and
     (compiler-parse-first-fn-has-comptime-param?
       "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))")
-    (and
-      (compiler-parse-first-fn-has-comptime-param?
-        "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))")
-      (compiler-parse-error-ok?
-        "(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))"
-        "comptime parameters are only supported on top-level function definitions"))))
+    (compiler-parse-first-fn-has-comptime-param?
+      "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))"
+      "comptime parameters are only supported on top-level function definitions")))
 
 (define (compiler-parse-defmacro-shape-ok?) : bool
   (match (parse-ast-source
@@ -9080,87 +8866,62 @@
 (define (compiler-parse-defmacro-tests-ok?) : bool
   (and
     (compiler-parse-defmacro-shape-ok?)
-    (and
-      (compiler-parse-ok?
-        "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
-      (compiler-parse-error-ok?
-        "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
-        "parse: variadic macro operand must be final"))))
+    (compiler-parse-ok?
+      "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
+      "parse: variadic macro operand must be final")))
 
 (define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
   (and
     (= (compiler-parse-smoke-score program) 36)
-    (and
-      (compiler-parse-nested-expr-span-ok?)
-      (and
-        (compiler-parse-error-span-ok?)
-        (and
-          (compiler-parse-float-literal-ok?)
-          (and (compiler-parse-region-ok?) (compiler-parse-arena-ok?)))))))
+    (compiler-parse-nested-expr-span-ok?)
+    (compiler-parse-error-span-ok?)
+    (compiler-parse-float-literal-ok?)
+    (compiler-parse-region-ok?)
+    (compiler-parse-arena-ok?)))
 
 (define (compiler-parse-shape-tests-middle-ok?) : bool
   (and
     (compiler-parse-comptime-decl-ok?)
-    (and
-      (compiler-parse-comptime-decls-ok?)
-      (and
-        (compiler-parse-unsafe-decl-ok?)
-        (and
-          (compiler-parse-module-decl-ok?)
-          (and
-            (compiler-parse-import-metadata-ok?)
-            (and
-              (compiler-parse-dotted-import-metadata-ok?)
-              (and
-                (compiler-parse-export-decl-ok?)
-                (and
-                  (compiler-parse-defdispatch-tests-ok?)
-                  (and
-                    (compiler-parse-flat-let-call-body-ok?)
-                    (and
-                      (compiler-parse-inline-test-ok?)
-                      (compiler-parse-try-ok?))))))))))))
+    (compiler-parse-comptime-decls-ok?)
+    (compiler-parse-unsafe-decl-ok?)
+    (compiler-parse-module-decl-ok?)
+    (compiler-parse-import-metadata-ok?)
+    (compiler-parse-dotted-import-metadata-ok?)
+    (compiler-parse-export-decl-ok?)
+    (compiler-parse-defdispatch-tests-ok?)
+    (compiler-parse-flat-let-call-body-ok?)
+    (compiler-parse-inline-test-ok?)
+    (compiler-parse-try-ok?)))
 
 (define (compiler-parse-error-suite-front-ok?) : bool
   (and
     (compiler-parse-error-tests-ok?)
-    (and
-      (compiler-parse-declaration-tests-ok?)
-      (and
-        (compiler-parse-let-tests-ok?)
-        (and
-          (compiler-parse-spmd-tests-ok?)
-          (and
-            (compiler-parse-pattern-tests-ok?)
-            (compiler-parse-pattern-string-char-tests-ok?)))))))
+    (compiler-parse-declaration-tests-ok?)
+    (compiler-parse-let-tests-ok?)
+    (compiler-parse-spmd-tests-ok?)
+    (compiler-parse-pattern-tests-ok?)
+    (compiler-parse-pattern-string-char-tests-ok?)))
 
 (define (compiler-parse-error-suite-middle-ok?) : bool
   (and
     (compiler-parse-enum-struct-tests-ok?)
-    (and
-      (compiler-parse-operator-tests-ok?)
-      (and
-        (compiler-parse-type-literal-tests-ok?)
-        (and
-          (compiler-parse-region-tests-ok?)
-          (and
-            (compiler-parse-repl-tests-ok?)
-            (compiler-parse-comptime-param-tests-ok?)))))))
+    (compiler-parse-operator-tests-ok?)
+    (compiler-parse-type-literal-tests-ok?)
+    (compiler-parse-region-tests-ok?)
+    (compiler-parse-repl-tests-ok?)
+    (compiler-parse-comptime-param-tests-ok?)))
 
 (define (compiler-parse-error-suite-back-ok?) : bool
   (and
     (compiler-parse-defmacro-tests-ok?)
-    (and
-      (compiler-parse-resource-with-tests-ok?)
-      (and
-        (compiler-parse-with-escape-tests-ok?)
-        (and
-          (compiler-parse-quote-syntax-tests-ok?)
-          (and
-            (compiler-parse-export-error-tests-ok?)
-            (and
-              (compiler-parse-define-export-metadata-error-tests-ok?)
-              (compiler-parse-dotted-import-errors-ok?))))))))
+    (compiler-parse-resource-with-tests-ok?)
+    (compiler-parse-with-escape-tests-ok?)
+    (compiler-parse-quote-syntax-tests-ok?)
+    (compiler-parse-export-error-tests-ok?)
+    (compiler-parse-define-export-metadata-error-tests-ok?)
+    (compiler-parse-dotted-import-errors-ok?)))
 
 (define (compiler-parse-smoke-shapes [program : AstProgram]) : unit
   (begin
@@ -9241,108 +9002,59 @@
     [(OkAstProgram program)
       (if (and
         (= (compiler-parse-smoke-score program) 36)
-        (and
-          (compiler-parse-nested-expr-span-ok?)
-          (and
-            (compiler-parse-error-span-ok?)
-            (and
-              (compiler-parse-float-literal-ok?)
-              (and
-                (compiler-parse-region-ok?)
-                (and
-                  (compiler-parse-arena-ok?)
-                  (and
-                    (compiler-parse-comptime-decl-ok?)
-                    (and
-                      (compiler-parse-unsafe-decl-ok?)
-                      (and
-                        (compiler-parse-module-decl-ok?)
-                        (and
-                          (compiler-parse-import-metadata-ok?)
-                          (and
-                            (compiler-parse-dotted-import-metadata-ok?)
-                            (and
-                              (compiler-parse-export-decl-ok?)
-                              (and
-                                (compiler-parse-defdispatch-tests-ok?)
-                                (and
-                                  (compiler-parse-flat-let-call-body-ok?)
-                                  (and
-                                    (compiler-parse-inline-test-ok?)
-                                    (and
-                                      (compiler-parse-try-ok?)
-                                      (and
-                                        (and
-                                          (compiler-parse-return-ok?)
-                                          (and
-                                            (compiler-parse-guard-forms-ok?)
-                                            (and
-                                              (compiler-parse-flat-cond-call-ok?)
-                                              (compiler-parse-and-or-macro-call-candidates-ok?))))
-                                        (and
-                                          (compiler-parse-repr-c-ok?)
-                                          (and
-                                            (compiler-parse-cleanup-metadata-ok?)
-                                            (and
-                                              (compiler-parse-raw-pointer-ok?)
-                                              (and
-                                                (compiler-parse-extern-metadata-ok?)
-                                                (and
-                                                  (compiler-parse-extern-varargs-metadata-ok?)
-                                                  (and
-                                                    (compiler-parse-extern-function-head-varargs-ok?)
-                                                    (and
-                                                      (compiler-parse-raw-pointer-ops-ok?)
-                                                      (and
-                                                        (compiler-parse-init-ok?)
-                                                        (and
-                                                          (compiler-parse-contextual-init-ok?)
-                                                          (and
-                                                            (compiler-parse-init-call-name-ok?)
-                                                            (and
-                                                              (compiler-parse-box-ok?)
-                                                              (and
-                                                                (compiler-parse-reference-ok?)
-                                                                (and
-                                                                  (compiler-parse-borrow-ok?)
-                                                                  (and
-                                                                    (compiler-parse-resource-with-shape-ok?)
-                                                                    (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))))))))))
+        (compiler-parse-nested-expr-span-ok?)
+        (compiler-parse-error-span-ok?)
+        (compiler-parse-float-literal-ok?)
+        (compiler-parse-region-ok?)
+        (compiler-parse-arena-ok?)
+        (compiler-parse-comptime-decl-ok?)
+        (compiler-parse-unsafe-decl-ok?)
+        (compiler-parse-module-decl-ok?)
+        (compiler-parse-import-metadata-ok?)
+        (compiler-parse-dotted-import-metadata-ok?)
+        (compiler-parse-export-decl-ok?)
+        (compiler-parse-defdispatch-tests-ok?)
+        (compiler-parse-flat-let-call-body-ok?)
+        (compiler-parse-inline-test-ok?)
+        (compiler-parse-try-ok?)
+        (compiler-parse-return-ok?)
+        (compiler-parse-guard-forms-ok?)
+        (compiler-parse-flat-cond-call-ok?)
+        (compiler-parse-and-or-macro-call-candidates-ok?)
+        (compiler-parse-repr-c-ok?)
+        (compiler-parse-cleanup-metadata-ok?)
+        (compiler-parse-raw-pointer-ok?)
+        (compiler-parse-extern-metadata-ok?)
+        (compiler-parse-extern-varargs-metadata-ok?)
+        (compiler-parse-extern-function-head-varargs-ok?)
+        (compiler-parse-raw-pointer-ops-ok?)
+        (compiler-parse-init-ok?)
+        (compiler-parse-contextual-init-ok?)
+        (compiler-parse-init-call-name-ok?)
+        (compiler-parse-box-ok?)
+        (compiler-parse-reference-ok?)
+        (compiler-parse-borrow-ok?)
+        (compiler-parse-resource-with-shape-ok?)
+        (compiler-parse-quote-syntax-shape-ok?))
         (if (and
           (compiler-parse-error-tests-ok?)
-          (and
-            (compiler-parse-declaration-tests-ok?)
-            (and
-              (compiler-parse-let-tests-ok?)
-              (and
-                (compiler-parse-spmd-tests-ok?)
-                (and
-                  (compiler-parse-pattern-tests-ok?)
-                  (and
-                    (compiler-parse-pattern-string-char-tests-ok?)
-                    (and
-                      (compiler-parse-enum-struct-tests-ok?)
-                      (and
-                        (compiler-parse-operator-tests-ok?)
-                        (and
-                          (compiler-parse-type-literal-tests-ok?)
-                          (and
-                            (compiler-parse-region-tests-ok?)
-                            (and
-                              (compiler-parse-repl-tests-ok?)
-                              (and
-                                (compiler-parse-comptime-param-tests-ok?)
-                                (and
-                                  (compiler-parse-defmacro-tests-ok?)
-                                  (and
-                                    (compiler-parse-resource-with-tests-ok?)
-                                    (and
-                                      (compiler-parse-quote-syntax-tests-ok?)
-                                      (and
-                                        (compiler-parse-export-error-tests-ok?)
-                                        (and
-                                          (compiler-parse-dotted-import-errors-ok?)
-                                          (compiler-parse-cfg-tests-ok?))))))))))))))))))
+          (compiler-parse-declaration-tests-ok?)
+          (compiler-parse-let-tests-ok?)
+          (compiler-parse-spmd-tests-ok?)
+          (compiler-parse-pattern-tests-ok?)
+          (compiler-parse-pattern-string-char-tests-ok?)
+          (compiler-parse-enum-struct-tests-ok?)
+          (compiler-parse-operator-tests-ok?)
+          (compiler-parse-type-literal-tests-ok?)
+          (compiler-parse-region-tests-ok?)
+          (compiler-parse-repl-tests-ok?)
+          (compiler-parse-comptime-param-tests-ok?)
+          (compiler-parse-defmacro-tests-ok?)
+          (compiler-parse-resource-with-tests-ok?)
+          (compiler-parse-quote-syntax-tests-ok?)
+          (compiler-parse-export-error-tests-ok?)
+          (compiler-parse-dotted-import-errors-ok?)
+          (compiler-parse-cfg-tests-ok?))
           42
           (begin
             (panic "parse: error-path self-tests failed")

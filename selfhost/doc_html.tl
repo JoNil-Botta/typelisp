@@ -308,64 +308,53 @@
         page
         "<!doctype html>"
         "doc-html: doctype missing")
-      (and
-        (doc-html-require-contains
-          page
-          "<title>TypeLisp API: smoke&lt;&amp;&gt;.tl</title>"
-          "doc-html: title escaping missing")
-        (and
-          (doc-html-require-contains
-            page
-            "id=\"tl-smoke-60-38-62-46tl\""
-            "doc-html: module anchor missing")
-          (and
-            (doc-html-require-contains
-              page
-              "Module docs with `code`, [links], &lt;tag&gt;, &amp; amp.<br>"
-              "doc-html: module doc escaping missing")
-            (and
-              (doc-html-require-contains
-                page
-                "Quote docs say &quot;hello&quot;."
-                "doc-html: quote escaping missing")
-              (and
-                (doc-html-require-contains
-                  page
-                  "id=\"tl-answer\""
-                  "doc-html: item anchor missing")
-                (and
-                  (doc-html-require-contains
-                    page
-                    "<code class=\"language-typelisp\">(define answer : i64 42)</code>"
-                    "doc-html: signature code block missing")
-                  (and
-                    (doc-html-require-contains
-                      page
-                      "Global docs for answer mention &lt;answer&gt;, &amp; value, and &quot;quote&quot;."
-                      "doc-html: item doc escaping missing")
-                    (and
-                      (doc-html-require-contains
-                        page
-                        "href=\"#tl-add-one\""
-                        "doc-html: item nav link missing")
-                      (and
-                        (doc-html-require-contains
-                          graph
-                          "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">"
-                          "doc-html: module nav missing")
-                        (and
-                          (doc-html-require-contains
-                            graph
-                            "href=\"#tl-second-46tl\""
-                            "doc-html: second module nav link missing")
-                          (and
-                            (doc-html-require-contains
-                              graph
-                              "Second module docs."
-                              "doc-html: second module docs missing")
-                            (doc-html-require-contains
-                              graph
-                              "No documented declarations."
-                              "doc-html: empty item message missing")))))))))))))
+      (doc-html-require-contains
+        page
+        "<title>TypeLisp API: smoke&lt;&amp;&gt;.tl</title>"
+        "doc-html: title escaping missing")
+      (doc-html-require-contains
+        page
+        "id=\"tl-smoke-60-38-62-46tl\""
+        "doc-html: module anchor missing")
+      (doc-html-require-contains
+        page
+        "Module docs with `code`, [links], &lt;tag&gt;, &amp; amp.<br>"
+        "doc-html: module doc escaping missing")
+      (doc-html-require-contains
+        page
+        "Quote docs say &quot;hello&quot;."
+        "doc-html: quote escaping missing")
+      (doc-html-require-contains
+        page
+        "id=\"tl-answer\""
+        "doc-html: item anchor missing")
+      (doc-html-require-contains
+        page
+        "<code class=\"language-typelisp\">(define answer : i64 42)</code>"
+        "doc-html: signature code block missing")
+      (doc-html-require-contains
+        page
+        "Global docs for answer mention &lt;answer&gt;, &amp; value, and &quot;quote&quot;."
+        "doc-html: item doc escaping missing")
+      (doc-html-require-contains
+        page
+        "href=\"#tl-add-one\""
+        "doc-html: item nav link missing")
+      (doc-html-require-contains
+        graph
+        "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">"
+        "doc-html: module nav missing")
+      (doc-html-require-contains
+        graph
+        "href=\"#tl-second-46tl\""
+        "doc-html: second module nav link missing")
+      (doc-html-require-contains
+        graph
+        "Second module docs."
+        "doc-html: second module docs missing")
+      (doc-html-require-contains
+        graph
+        "No documented declarations."
+        "doc-html: empty item message missing"))
       42
       0)))

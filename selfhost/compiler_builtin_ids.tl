@@ -283,14 +283,13 @@
         compiler-builtin-id-tl-string-concat
         compiler-builtin-id-tl-string-concat3
         compiler-builtin-id-tl-string-concat4)
-      (or
-        (compiler-builtin-id-any4?
-          name-id
-          compiler-builtin-id-tl-string-concat5
-          compiler-builtin-id-tl-string-eq
-          compiler-builtin-id-tl-string-to-int
-          compiler-builtin-id-tl-int-to-string)
-        (= name-id compiler-builtin-id-tl-hash-string)))))
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-string-concat5
+        compiler-builtin-id-tl-string-eq
+        compiler-builtin-id-tl-string-to-int
+        compiler-builtin-id-tl-int-to-string)
+      (= name-id compiler-builtin-id-tl-hash-string))))
 
 (define (compiler-builtin-backend-runtime-compatibility-alias-id?
   [name-id : i64]) : bool
@@ -305,11 +304,9 @@
 (define (compiler-builtin-backend-runtime-helper-known-id? [name-id : i64]) : bool
   (or
     (compiler-builtin-backend-runtime-core-id? name-id)
-    (or
-      (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id)
-      (or
-        (compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id)
-        (compiler-builtin-backend-runtime-compatibility-alias-id? name-id)))))
+    (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id)
+    (compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id)
+    (compiler-builtin-backend-runtime-compatibility-alias-id? name-id)))
 
 (define (compiler-builtin-backend-runtime-concat-id? [name-id : i64]) : bool
   (begin

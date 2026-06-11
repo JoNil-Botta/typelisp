@@ -526,7 +526,8 @@
         [(AstParam b-name b-ty b-comptime)
           (and
             (= a-name b-name)
-            (and (ctfe-type-eq a-ty b-ty) (= a-comptime b-comptime)))])]))
+            (ctfe-type-eq a-ty b-ty)
+            (= a-comptime b-comptime))])]))
 
 (define (gen-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
   (match a
@@ -553,7 +554,8 @@
         [(AstMacroParam b-name b-ty b-variadic)
           (and
             (= a-name b-name)
-            (and (ctfe-type-eq a-ty b-ty) (= a-variadic b-variadic)))])]))
+            (ctfe-type-eq a-ty b-ty)
+            (= a-variadic b-variadic))])]))
 
 (define (gen-macro-param-list-eq?
   [a : AstMacroParamList]
@@ -597,9 +599,8 @@
         [(AstFieldDef b-name b-ty b-cleanup)
           (and
             (= a-name b-name)
-            (and
-              (ctfe-type-eq a-ty b-ty)
-              (gen-field-cleanup-eq? a-cleanup b-cleanup)))])]))
+            (ctfe-type-eq a-ty b-ty)
+            (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
   (match a
@@ -696,9 +697,8 @@
         [(AstVariantDef b-name b-payloads b-cleanups)
           (and
             (= a-name b-name)
-            (and
-              (ctfe-type-list-eq a-payloads b-payloads)
-              (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups)))])]))
+            (ctfe-type-list-eq a-payloads b-payloads)
+            (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
   (match a
@@ -740,9 +740,8 @@
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
                 (= a-name b-name)
-                (and
-                  (gen-maybe-type-eq? a-ty b-ty)
-                  (gen-expr-eq? a-value b-value))))]
+                (gen-maybe-type-eq? a-ty b-ty)
+                (gen-expr-eq? a-value b-value)))]
           [_ false]))]
     [(AstDeclDefFn a-name a-params a-ret a-body-box a-export)
       (let
@@ -753,44 +752,36 @@
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
                 (= a-name b-name)
-                (and
-                  (gen-param-list-eq? a-params b-params)
-                  (and
-                    (ctfe-type-eq a-ret b-ret)
-                    (and
-                      (gen-expr-eq? a-body b-body)
-                      (gen-fn-export-eq? a-export b-export))))))]
+                (gen-param-list-eq? a-params b-params)
+                (ctfe-type-eq a-ret b-ret)
+                (gen-expr-eq? a-body b-body)
+                (gen-fn-export-eq? a-export b-export)))]
           [_ false]))]
     [(AstDeclDefEnum a-name a-cleanup a-variants)
       (match b
         [(AstDeclDefEnum b-name b-cleanup b-variants)
           (and
             (= a-name b-name)
-            (and
-              (gen-enum-cleanup-eq? a-cleanup b-cleanup)
-              (gen-variant-list-eq? a-variants b-variants)))]
+            (gen-enum-cleanup-eq? a-cleanup b-cleanup)
+            (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
     [(AstDeclDefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
       (match b
         [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
           (and
             (= a-name b-name)
-            (and
-              (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
-              (and
-                (gen-enum-cleanup-eq? a-cleanup b-cleanup)
-                (gen-variant-list-eq? a-variants b-variants))))]
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (gen-enum-cleanup-eq? a-cleanup b-cleanup)
+            (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
     [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
       (match b
         [(AstDeclDefStruct b-name b-repr b-cleanup b-fields)
           (and
             (= a-name b-name)
-            (and
-              (gen-struct-repr-eq? a-repr b-repr)
-              (and
-                (gen-struct-cleanup-eq? a-cleanup b-cleanup)
-                (gen-field-list-eq? a-fields b-fields))))]
+            (gen-struct-repr-eq? a-repr b-repr)
+            (gen-struct-cleanup-eq? a-cleanup b-cleanup)
+            (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
     [(AstDeclDefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
       (match b
@@ -802,13 +793,10 @@
             b-fields)
           (and
             (= a-name b-name)
-            (and
-              (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
-              (and
-                (gen-struct-repr-eq? a-repr b-repr)
-                (and
-                  (gen-struct-cleanup-eq? a-cleanup b-cleanup)
-                  (gen-field-list-eq? a-fields b-fields)))))]
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (gen-struct-repr-eq? a-repr b-repr)
+            (gen-struct-cleanup-eq? a-cleanup b-cleanup)
+            (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
     [(AstDeclDefMacro a-name a-params a-ret a-body-box)
       (let
@@ -819,9 +807,9 @@
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
                 (= a-name b-name)
-                (and
-                  (gen-macro-param-list-eq? a-params b-params)
-                  (and (ctfe-type-eq a-ret b-ret) (gen-expr-eq? a-body b-body)))))]
+                (gen-macro-param-list-eq? a-params b-params)
+                (ctfe-type-eq a-ret b-ret)
+                (gen-expr-eq? a-body b-body)))]
           [_ false]))]
     [(AstDeclComptimeDecl _ a-inner-box)
       (let
@@ -1037,15 +1025,13 @@
         [(AstFieldDef name ty cleanup)
           (and
             (string-eq (intern-str name) "__hashmap_family_request")
-            (and
-              (ctfe-type-eq ty (AstTyI64))
-              (and
-                (match cleanup
-                  [(AstFieldNoCleanup) true]
-                  [_ false])
-                (match (box-get rest-box)
-                  [(AstFieldDefNil) true]
-                  [_ false]))))])]
+            (ctfe-type-eq ty (AstTyI64))
+            (match cleanup
+              [(AstFieldNoCleanup) true]
+              [_ false])
+            (match (box-get rest-box)
+              [(AstFieldDefNil) true]
+              [_ false]))])]
     [_ false]))
 
 (define (gen-hashmap-family-marker-name [decl : AstDecl]) : SpecMaybeString
@@ -6714,13 +6700,12 @@
       (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
       (string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
-      (and
-        (string-eq
-          (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
-          "mutptr_ptr_u8")
-        (ctfe-type-eq
-          (spec-substitute-type (ast-ty-mut-ptr (AstTyVar (intern "T"))) subs)
-          (ast-ty-mut-ptr (AstTyI64)))))))
+      (string-eq
+        (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
+        "mutptr_ptr_u8")
+      (ctfe-type-eq
+        (spec-substitute-type (ast-ty-mut-ptr (AstTyVar (intern "T"))) subs)
+        (ast-ty-mut-ptr (AstTyI64))))))
 
 ;: Deterministic specialized name + stable specialization key (#1043, mirrors
 ;: src/specialize.rs deterministic-names / stable-keys coverage). The mangling
@@ -6744,28 +6729,23 @@
       (string-eq
         (spec-specialized-name "alloc" vals-i64)
         "__tl_specialized_alloc_type_i64_none")
-      (and
+      (string-eq
+        (spec-specialized-name "alloc" vals-i64)
+        (spec-specialized-name "alloc" vals-i64))
+      (string-eq
+        (spec-specialization-key "alloc" vals-i64)
+        "alloc:type_i64_none")
+      (not
         (string-eq
           (spec-specialized-name "alloc" vals-i64)
-          (spec-specialized-name "alloc" vals-i64))
-        (and
-          (string-eq
-            (spec-specialization-key "alloc" vals-i64)
-            "alloc:type_i64_none")
-          (and
-            (not
-              (string-eq
-                (spec-specialized-name "alloc" vals-i64)
-                (spec-specialized-name "alloc" vals-bool)))
-            (and
-              (string-eq
-                (spec-specialized-name "pair" vals-multi)
-                "__tl_specialized_pair_type_i64_i64_5_none")
-              (and
-                (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
-                (string-eq
-                  (spec-specialized-name "name" vals-string)
-                  "__tl_specialized_name_string_3_97_32_98_none")))))))))
+          (spec-specialized-name "alloc" vals-bool)))
+      (string-eq
+        (spec-specialized-name "pair" vals-multi)
+        "__tl_specialized_pair_type_i64_i64_5_none")
+      (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
+      (string-eq
+        (spec-specialized-name "name" vals-string)
+        "__tl_specialized_name_string_3_97_32_98_none"))))
 
 ;: Count function declarations named `name` in `decls` (specialized decls are
 ;: emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
@@ -6874,31 +6854,25 @@
       (string-eq
         (spec-type-key (spec-substitute-type (AstTyVar (intern "T")) subs))
         "i64")
-      (and
-        (string-eq
-          (spec-type-key
-            (spec-substitute-type (ast-ty-ptr (AstTyVar (intern "T"))) subs))
-          "ptr_i64")
-        (and
-          (string-eq
-            (spec-type-key
-              (spec-substitute-type
-                (ast-ty-dyn-array (AstTyVar (intern "T")))
-                subs))
-            "dynarray_i64")
-          (and
-            (string-eq
-              (spec-type-key
-                (spec-substitute-type
-                  (ast-ty-func
-                    (ast-type-cons (AstTyVar (intern "T")) AstTypeNil)
-                    (AstTyVar (intern "T")))
-                  subs))
-              "fn_i64_nil_to_i64")
-            (string-eq
-              (spec-type-key
-                (spec-substitute-type (AstTyVar (intern "U")) subs))
-              "var_U")))))))
+      (string-eq
+        (spec-type-key
+          (spec-substitute-type (ast-ty-ptr (AstTyVar (intern "T"))) subs))
+        "ptr_i64")
+      (string-eq
+        (spec-type-key
+          (spec-substitute-type (ast-ty-dyn-array (AstTyVar (intern "T"))) subs))
+        "dynarray_i64")
+      (string-eq
+        (spec-type-key
+          (spec-substitute-type
+            (ast-ty-func
+              (ast-type-cons (AstTyVar (intern "T")) AstTypeNil)
+              (AstTyVar (intern "T")))
+            subs))
+        "fn_i64_nil_to_i64")
+      (string-eq
+        (spec-type-key (spec-substitute-type (AstTyVar (intern "U")) subs))
+        "var_U"))))
 
 ;: Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
 ;: substitution coverage): `spec-substitute-values-expr` replaces a variable
@@ -6919,39 +6893,38 @@
                 [_ false])]
             [_ false])]
         [(ErrSpecSubExpr _) false])
-      (and
-        ;; unmapped variable y -> unchanged
-        (match (spec-substitute-values-expr (AstExprVar (intern "y")) subs)
-          [(OkSpecSubExpr e)
-            (match (ast-node-get e)
-              [(AstExprVar name) (string-eq (intern-str name) "y")]
-              [_ false])]
-          [(ErrSpecSubExpr _) false])
-        ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
-        (match (spec-substitute-values-expr
-          (AstExprIf
-            (ast-node-push (AstExprVar (intern "x")))
-            (ast-node-push (AstExprLiteral (AstLitInt 1)))
-            (ast-node-push (AstExprVar (intern "y"))))
-          subs)
-          [(OkSpecSubExpr e)
-            (match (ast-node-get e)
-              [(AstExprIf cond-box _ else-branch-box)
-                (let
-                  [cond : AstExpr (ast-node-get cond-box)]
-                  [else-branch : AstExpr (ast-node-get else-branch-box)]
-                  (and
-                    (match cond
-                      [(AstExprLiteral lit)
-                        (match lit
-                          [(AstLitInt n) (= n 5)]
-                          [_ false])]
-                      [_ false])
-                    (match else-branch
-                      [(AstExprVar name) (string-eq (intern-str name) "y")]
-                      [_ false])))]
-              [_ false])]
-          [(ErrSpecSubExpr _) false])))))
+      ;; unmapped variable y -> unchanged
+      (match (spec-substitute-values-expr (AstExprVar (intern "y")) subs)
+        [(OkSpecSubExpr e)
+          (match (ast-node-get e)
+            [(AstExprVar name) (string-eq (intern-str name) "y")]
+            [_ false])]
+        [(ErrSpecSubExpr _) false])
+      ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
+      (match (spec-substitute-values-expr
+        (AstExprIf
+          (ast-node-push (AstExprVar (intern "x")))
+          (ast-node-push (AstExprLiteral (AstLitInt 1)))
+          (ast-node-push (AstExprVar (intern "y"))))
+        subs)
+        [(OkSpecSubExpr e)
+          (match (ast-node-get e)
+            [(AstExprIf cond-box _ else-branch-box)
+              (let
+                [cond : AstExpr (ast-node-get cond-box)]
+                [else-branch : AstExpr (ast-node-get else-branch-box)]
+                (and
+                  (match cond
+                    [(AstExprLiteral lit)
+                      (match lit
+                        [(AstLitInt n) (= n 5)]
+                        [_ false])]
+                    [_ false])
+                  (match else-branch
+                    [(AstExprVar name) (string-eq (intern-str name) "y")]
+                    [_ false])))]
+            [_ false])]
+        [(ErrSpecSubExpr _) false]))))
 
 (define (compiler-specialize-boxed-tails-ok?) : bool
   (let
@@ -6997,17 +6970,14 @@
           (match template
             [(SpecTemplate name _ _ _) (string-eq name "second")])]
         [(SpecNoTemplate) false])
-      (and
-        (match (spec-cache-lookup cache "two")
-          [(SpecSomeString name) (string-eq name "generated-two")]
-          [(SpecNoString) false])
-        (and
-          (string-eq (spec-values-key values) "i64_1_bool_1_none")
-          (and
-            (match (spec-value-subst-value value-subs "flag")
-              [(CtfeBool flag) flag]
-              [_ false])
-            (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstTyBool))))))))
+      (match (spec-cache-lookup cache "two")
+        [(SpecSomeString name) (string-eq name "generated-two")]
+        [(SpecNoString) false])
+      (string-eq (spec-values-key values) "i64_1_bool_1_none")
+      (match (spec-value-subst-value value-subs "flag")
+        [(CtfeBool flag) flag]
+        [_ false])
+      (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstTyBool)))))
 
 (define (compiler-specialize-reflection-string-param-source) : String
   "(defstruct Point (x i64))
@@ -7316,11 +7286,10 @@
                     "Result_Payload_Status")]
                 (and
                   (= option-count 1)
-                  (and
-                    (= option-helper-count 1)
-                    (and
-                      (= result-count 1)
-                      (and (= result-helper-count 1) (= nominal-result-count 1))))))])]
+                  (= option-helper-count 1)
+                  (= result-count 1)
+                  (= result-helper-count 1)
+                  (= nominal-result-count 1)))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
@@ -7347,9 +7316,7 @@
                     (compiler-specialize-decl-list-count-defs
                       decls
                       "bundle-score")]
-                  (and
-                    (= box-count 1)
-                    (and (= maybe-count 1) (= score-count 1))))])]
+                  (and (= box-count 1) (= maybe-count 1) (= score-count 1)))])]
           [(ErrSpecProgram _) false]))]
     [(ErrAstProgram _) false]))
 
@@ -7416,29 +7383,15 @@
     [i64-mut-entry-macro-needle : String "i64-i64-map-get-mut-entry"]
     (and
       (string-contains (& string-source) (& string-round-needle))
-      (and
-        (string-contains (& i64-source) (& i64-round-needle))
-        (and
-          (string-contains (& string-source) (& mask-needle))
-          (and
-            (string-contains (& i64-source) (& mask-needle))
-            (and
-              (not (string-contains (& string-source) (& modulo-needle)))
-              (and
-                (not (string-contains (& i64-source) (& modulo-needle)))
-                (and
-                  (string-contains
-                    (& string-source)
-                    (& string-mut-entry-needle))
-                  (and
-                    (string-contains
-                      (& string-source)
-                      (& string-mut-entry-macro-needle))
-                    (and
-                      (string-contains (& i64-source) (& i64-mut-entry-needle))
-                      (string-contains
-                        (& i64-source)
-                        (& i64-mut-entry-macro-needle)))))))))))))
+      (string-contains (& i64-source) (& i64-round-needle))
+      (string-contains (& string-source) (& mask-needle))
+      (string-contains (& i64-source) (& mask-needle))
+      (not (string-contains (& string-source) (& modulo-needle)))
+      (not (string-contains (& i64-source) (& modulo-needle)))
+      (string-contains (& string-source) (& string-mut-entry-needle))
+      (string-contains (& string-source) (& string-mut-entry-macro-needle))
+      (string-contains (& i64-source) (& i64-mut-entry-needle))
+      (string-contains (& i64-source) (& i64-mut-entry-macro-needle)))))
 
 (define (compiler-generated-hashmap-family-bundle-ok?) : bool
   (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))
@@ -7695,11 +7648,10 @@
                           [(AstSomeGeneratedDeclMeta generator item _ key)
                             (and
                               (string-eq generator "option-family")
-                              (and
-                                (string-eq item "Option_String")
-                                (string-eq
-                                  key
-                                  (compiler-generated-decl-expected-string-key))))]
+                              (string-eq item "Option_String")
+                              (string-eq
+                                key
+                                (compiler-generated-decl-expected-string-key)))]
                           [(AstNoGeneratedDeclMeta) false])
                         (match (box-get template-box)
                           [(AstDeclDefStruct name _ _ _)

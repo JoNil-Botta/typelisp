@@ -2038,9 +2038,8 @@
         [(CompilerRegSomeType right-ty)
           (and
             (compiler-reg-scalar-type? left-ty)
-            (and
-              (compiler-reg-scalar-type? right-ty)
-              (= (ast-type-tag left-ty) (ast-type-tag right-ty))))]
+            (compiler-reg-scalar-type? right-ty)
+            (= (ast-type-tag left-ty) (ast-type-tag right-ty)))]
         [(CompilerRegNoType) false])]
     [(CompilerRegNoType) false]))
 
@@ -2081,9 +2080,8 @@
   [other : i64]) : CompilerRegMaybeLocation
   (if (or
     (= var other)
-    (or
-      (not (compiler-reg-compatible-types? types var other))
-      (compiler-reg-vars-interfere? intervals var other)))
+    (not (compiler-reg-compatible-types? types var other))
+    (compiler-reg-vars-interfere? intervals var other))
     CompilerRegNoLocation
     (match (compiler-reg-assignment-lookup assignments other)
       [(CompilerRegSomeLocation location)
@@ -3435,26 +3433,24 @@
     [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
-        (and
-          (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 0)
-            "%r12")
-          (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 1)
-            "%r12")))]))
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 0)
+          "%r12")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%r12"))]))
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
     [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
-        (and
-          (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 0)
-            "%xmm2")
-          (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 1)
-            "%xmm2")))]))
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 0)
+          "%xmm2")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%xmm2"))]))
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
@@ -3464,59 +3460,49 @@
       ;; spill. %rbx joined the pool once its hard-scratch role moved to %r8.
       (and
         (= (compiler-reg-assignment-count assignments) 7)
-        (and
-          (= (compiler-reg-spill-count assignments) 2)
-          (and
-            (compiler-reg-location-register?
-              (compiler-reg-assignment-lookup assignments 3)
-              "%r15")
-            (and
-              (compiler-reg-location-register?
-                (compiler-reg-assignment-lookup assignments 4)
-                "%rbx")
-              (compiler-reg-location-spill-offset?
-                (compiler-reg-assignment-lookup assignments 6)
-                (compiler-reg-stack-slot-offset 6))))))]))
+        (= (compiler-reg-spill-count assignments) 2)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 3)
+          "%r15")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 4)
+          "%rbx")
+        (compiler-reg-location-spill-offset?
+          (compiler-reg-assignment-lookup assignments 6)
+          (compiler-reg-stack-slot-offset 6)))]))
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
     [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 5)
-        (and
-          (= (compiler-reg-spill-count assignments) 1)
-          (and
-            (compiler-reg-location-register?
-              (compiler-reg-assignment-lookup assignments 0)
-              "%xmm2")
-            (and
-              (compiler-reg-location-register?
-                (compiler-reg-assignment-lookup assignments 1)
-                "%xmm3")
-              (and
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup assignments 2)
-                  "%xmm4")
-                (and
-                  (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup assignments 3)
-                    "%xmm5")
-                  (compiler-reg-location-spill-offset?
-                    (compiler-reg-assignment-lookup assignments 4)
-                    (compiler-reg-stack-slot-offset 4))))))))]))
+        (= (compiler-reg-spill-count assignments) 1)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 0)
+          "%xmm2")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%xmm3")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%xmm4")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 3)
+          "%xmm5")
+        (compiler-reg-location-spill-offset?
+          (compiler-reg-assignment-lookup assignments 4)
+          (compiler-reg-stack-slot-offset 4)))]))
 
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
     [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
-        (and
-          (compiler-live-set-contains? ineligible 1)
-          (and
-            (compiler-reg-unassigned? assignments 0)
-            (compiler-reg-location-register?
-              (compiler-reg-assignment-lookup assignments 2)
-              "%r12"))))]))
+        (compiler-live-set-contains? ineligible 1)
+        (compiler-reg-unassigned? assignments 0)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%r12"))]))
 
 ;; Scalar plan (#perf): the same function, but an integer value live across a
 ;; call now keeps a callee-saved register home (the integer pool is call-safe),
@@ -3526,11 +3512,10 @@
     [(CompilerRegPlan assignments ineligible _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
-        (and
-          (compiler-reg-location-any-register?
-            (compiler-reg-assignment-lookup assignments 0))
-          (compiler-reg-location-any-register?
-            (compiler-reg-assignment-lookup assignments 2))))]))
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 0))
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 2)))]))
 
 ;; Scalar plan correctness: a FLOAT value live across a call must NOT be homed in
 ;; the caller-saved XMM pool, so it stays ineligible even on the scalar path.
@@ -3547,41 +3532,34 @@
     [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
-        (and
-          (compiler-live-set-contains? ineligible 1)
-          (and
-            (compiler-reg-unassigned? assignments 0)
-            (and
-              (compiler-reg-unassigned? assignments 1)
-              (compiler-reg-location-register?
-                (compiler-reg-assignment-lookup assignments 2)
-                "%xmm2")))))]))
+        (compiler-live-set-contains? ineligible 1)
+        (compiler-reg-unassigned? assignments 0)
+        (compiler-reg-unassigned? assignments 1)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%xmm2"))]))
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
     [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
-        (and
-          (compiler-live-set-contains? ineligible 1)
-          (and
-            (compiler-reg-unassigned? assignments 0)
-            (and
-              (compiler-reg-unassigned? assignments 1)
-              (compiler-reg-location-register?
-                (compiler-reg-assignment-lookup assignments 3)
-                "%r12")))))]))
+        (compiler-live-set-contains? ineligible 1)
+        (compiler-reg-unassigned? assignments 0)
+        (compiler-reg-unassigned? assignments 1)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 3)
+          "%r12"))]))
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
     [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
-        (and
-          (compiler-reg-unassigned? assignments 0)
-          (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 2)
-            "%xmm2")))]))
+        (compiler-reg-unassigned? assignments 0)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%xmm2"))]))
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
@@ -3590,23 +3568,17 @@
         [marked : bool
           (and
             (compiler-live-set-contains? ineligible 0)
-            (and
-              (compiler-live-set-contains? ineligible 2)
-              (and
-                (compiler-live-set-contains? ineligible 3)
-                (and
-                  (compiler-live-set-contains? ineligible 4)
-                  (compiler-live-set-contains? ineligible 6)))))]
+            (compiler-live-set-contains? ineligible 2)
+            (compiler-live-set-contains? ineligible 3)
+            (compiler-live-set-contains? ineligible 4)
+            (compiler-live-set-contains? ineligible 6))]
         [unassigned : bool
           (and
             (compiler-reg-unassigned? assignments 0)
-            (and
-              (compiler-reg-unassigned? assignments 2)
-              (and
-                (compiler-reg-unassigned? assignments 3)
-                (and
-                  (compiler-reg-unassigned? assignments 4)
-                  (compiler-reg-unassigned? assignments 6)))))]
+            (compiler-reg-unassigned? assignments 2)
+            (compiler-reg-unassigned? assignments 3)
+            (compiler-reg-unassigned? assignments 4)
+            (compiler-reg-unassigned? assignments 6))]
         [homes : bool
           (and
             (compiler-reg-location-register?
@@ -3615,7 +3587,7 @@
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 5)
               "%r12"))]
-        (and marked (and unassigned homes)))]))
+        (and marked unassigned homes))]))
 
 ;; Scalar plan (#perf): String/DynArray handles (vars 2/4) are register-eligible
 ;; 8-byte values; params (var 0) and address-taken values (var 3 via the AddrOf
@@ -3624,14 +3596,11 @@
   (match (compiler-reg-plan-function-scalar (compiler-reg-ineligible-function))
     [(CompilerRegPlan _ ineligible _ _)
       (and
-        (and
-          (compiler-live-set-contains? ineligible 0)
-          (and
-            (compiler-live-set-contains? ineligible 3)
-            (compiler-live-set-contains? ineligible 6)))
-        (and
-          (not (compiler-live-set-contains? ineligible 2))
-          (not (compiler-live-set-contains? ineligible 4))))]))
+        (compiler-live-set-contains? ineligible 0)
+        (compiler-live-set-contains? ineligible 3)
+        (compiler-live-set-contains? ineligible 6)
+        (not (compiler-live-set-contains? ineligible 2))
+        (not (compiler-live-set-contains? ineligible 4)))]))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -3652,10 +3621,9 @@
       (and
         (compiler-reg-location-any-register?
           (compiler-reg-assignment-lookup assignments 1))
-        (and
-          (compiler-reg-location-any-register?
-            (compiler-reg-assignment-lookup assignments 2))
-          (compiler-reg-different-location? assignments 1 2)))]))
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 2))
+        (compiler-reg-different-location? assignments 1 2))]))
 
 (define (compiler-reg-same-location?
   [assignments : CompilerRegAssignmentList]
@@ -3697,24 +3665,14 @@
                     [(CompilerRegPlan spill-assignments _ _ _)
                       (and
                         (compiler-reg-same-location? chain-assignments 0 1)
-                        (and
-                          (compiler-reg-same-location? chain-assignments 1 2)
-                          (and
-                            (compiler-reg-same-location? phi-assignments 0 1)
-                            (and
-                              (compiler-reg-different-location?
-                                loop-assignments
-                                1
-                                2)
-                              (and
-                                (compiler-reg-different-location?
-                                  blocked-assignments
-                                  0
-                                  1)
-                                (compiler-reg-same-location?
-                                  spill-assignments
-                                  4
-                                  5))))))])])])])]))
+                        (compiler-reg-same-location? chain-assignments 1 2)
+                        (compiler-reg-same-location? phi-assignments 0 1)
+                        (compiler-reg-different-location? loop-assignments 1 2)
+                        (compiler-reg-different-location?
+                          blocked-assignments
+                          0
+                          1)
+                        (compiler-reg-same-location? spill-assignments 4 5))])])])])]))
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
@@ -3727,29 +3685,26 @@
                 (compiler-reg-location-register?
                   (compiler-reg-assignment-lookup vector-assignments 0)
                   "%vec6")
-                (and
-                  (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup vector-assignments 1)
-                    "%vec7")
-                  (and
-                    (compiler-reg-location-register?
-                      (compiler-reg-assignment-lookup vector-assignments 2)
-                      "%vec7")
-                    (compiler-reg-location-register?
-                      (compiler-reg-assignment-lookup vector-assignments 3)
-                      "%vec6"))))]
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup vector-assignments 1)
+                  "%vec7")
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup vector-assignments 2)
+                  "%vec7")
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup vector-assignments 3)
+                  "%vec6"))]
             [mask-ok : bool
               (and
                 (compiler-reg-location-register?
                   (compiler-reg-assignment-lookup mask-assignments 0)
                   "%k1")
-                (and
-                  (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup mask-assignments 1)
-                    "%k2")
-                  (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup mask-assignments 3)
-                    "%k1")))]
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup mask-assignments 1)
+                  "%k2")
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup mask-assignments 3)
+                  "%k1"))]
             (and vector-ok mask-ok))])]))
 
 (define (compiler-reg-target-clobbers-ok?) : bool
@@ -3764,34 +3719,27 @@
       (compiler-reg-win64-callee-saved-integer-registers)]
     (and
       (compiler-reg-string-list-contains? sysv-callers "%rdi")
-      (and
-        (not (compiler-reg-string-list-contains? sysv-callees "%rdi"))
-        (and
-          (compiler-reg-string-list-contains? win-callees "%rdi")
-          (and
-            (not (compiler-reg-string-list-contains? win-callers "%rdi"))
-            (and
-              (not
-                (=
-                  (compiler-reg-string-list-count
-                    (compiler-reg-sysv-integer-registers))
-                  (compiler-reg-string-list-count win-callees)))
-              ;; The allocatable pool admits only callee-saved registers, so a
-              ;; value homed there survives an intervening call. It must never
-              ;; offer a caller-saved register such as %r8/%r9.
-              (and
-                (compiler-reg-string-list-contains?
-                  (compiler-reg-sysv-integer-registers)
-                  "%r12")
-                (and
-                  (not
-                    (compiler-reg-string-list-contains?
-                      (compiler-reg-sysv-integer-registers)
-                      "%r8"))
-                  (not
-                    (compiler-reg-string-list-contains?
-                      (compiler-reg-sysv-integer-registers)
-                      "%r9")))))))))))
+      (not (compiler-reg-string-list-contains? sysv-callees "%rdi"))
+      (compiler-reg-string-list-contains? win-callees "%rdi")
+      (not (compiler-reg-string-list-contains? win-callers "%rdi"))
+      (not
+        (=
+          (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers))
+          (compiler-reg-string-list-count win-callees)))
+      ;; The allocatable pool admits only callee-saved registers, so a
+      ;; value homed there survives an intervening call. It must never
+      ;; offer a caller-saved register such as %r8/%r9.
+      (compiler-reg-string-list-contains?
+        (compiler-reg-sysv-integer-registers)
+        "%r12")
+      (not
+        (compiler-reg-string-list-contains?
+          (compiler-reg-sysv-integer-registers)
+          "%r8"))
+      (not
+        (compiler-reg-string-list-contains?
+          (compiler-reg-sysv-integer-registers)
+          "%r9")))))
 
 (define (compiler-reg-xmm-clobbers-ok?) : bool
   (let
@@ -3807,15 +3755,11 @@
     [pool-ok : bool
       (and
         (compiler-reg-string-list-contains? pool "%xmm2")
-        (and
-          (compiler-reg-string-list-contains? pool "%xmm5")
-          (and
-            (not (compiler-reg-string-list-contains? pool "%xmm0"))
-            (and
-              (not (compiler-reg-string-list-contains? pool "%xmm1"))
-              (and
-                (not (compiler-reg-string-list-contains? pool "%xmm6"))
-                (not (compiler-reg-string-list-contains? pool "%xmm15")))))))]
+        (compiler-reg-string-list-contains? pool "%xmm5")
+        (not (compiler-reg-string-list-contains? pool "%xmm0"))
+        (not (compiler-reg-string-list-contains? pool "%xmm1"))
+        (not (compiler-reg-string-list-contains? pool "%xmm6"))
+        (not (compiler-reg-string-list-contains? pool "%xmm15")))]
     [sysv-ok : bool
       (and
         (compiler-reg-string-list-contains? sysv-callers "%xmm14")
@@ -3823,57 +3767,37 @@
     [win-ok : bool
       (and
         (compiler-reg-string-list-contains? win-callers "%xmm5")
-        (and
-          (not (compiler-reg-string-list-contains? win-callers "%xmm6"))
-          (compiler-reg-string-list-contains? win-callees "%xmm6")))]
+        (not (compiler-reg-string-list-contains? win-callers "%xmm6"))
+        (compiler-reg-string-list-contains? win-callees "%xmm6"))]
     [counts-ok : bool
       (and
         (= (compiler-reg-string-list-count sysv-callers) 16)
-        (and
-          (= (compiler-reg-string-list-count sysv-callees) 0)
-          (and
-            (= (compiler-reg-string-list-count win-callers) 6)
-            (= (compiler-reg-string-list-count win-callees) 10))))]
-    (and pool-ok (and sysv-ok (and win-ok counts-ok)))))
+        (= (compiler-reg-string-list-count sysv-callees) 0)
+        (= (compiler-reg-string-list-count win-callers) 6)
+        (= (compiler-reg-string-list-count win-callees) 10))]
+    (and pool-ok sysv-ok win-ok counts-ok)))
 
 (define (compiler-regalloc-self-test) : i64
   (if (and
     (compiler-reg-reuse-ok?)
-    (and
-      (compiler-reg-f64-reuse-ok?)
-      (and
-        (compiler-reg-overlap-spill-ok?)
-        (and
-          (compiler-reg-f64-overlap-spill-ok?)
-          (and
-            (compiler-reg-call-live-ok?)
-            (and
-              (compiler-reg-f64-call-live-ok?)
-              (and
-                (compiler-reg-call-arg-ok?)
-                (and
-                  (compiler-reg-f64-call-arg-ok?)
-                  (and
-                    (compiler-reg-ineligible-ok?)
-                    (and
-                      (compiler-reg-target-clobbers-ok?)
-                      (and
-                        (compiler-reg-xmm-clobbers-ok?)
-                        (and
-                          (compiler-reg-coalesce-ok?)
-                          (and
-                            (compiler-reg-vector-mask-homes-ok?)
-                            (and
-                              (compiler-reg-scalar-call-live-ok?)
-                              (and
-                                (compiler-reg-scalar-f64-call-live-ok?)
-                                (and
-                                  (compiler-reg-scalar-handle-eligible-ok?)
-                                  (and
-                                    (compiler-reg-scalar-function-intervals-ok?)
-                                    (and
-                                      (compiler-reg-scalar-interval-guardrail-ok?)
-                                      (compiler-reg-scalar-loop-backedge-ok?)))))))))))))))))))
+    (compiler-reg-f64-reuse-ok?)
+    (compiler-reg-overlap-spill-ok?)
+    (compiler-reg-f64-overlap-spill-ok?)
+    (compiler-reg-call-live-ok?)
+    (compiler-reg-f64-call-live-ok?)
+    (compiler-reg-call-arg-ok?)
+    (compiler-reg-f64-call-arg-ok?)
+    (compiler-reg-ineligible-ok?)
+    (compiler-reg-target-clobbers-ok?)
+    (compiler-reg-xmm-clobbers-ok?)
+    (compiler-reg-coalesce-ok?)
+    (compiler-reg-vector-mask-homes-ok?)
+    (compiler-reg-scalar-call-live-ok?)
+    (compiler-reg-scalar-f64-call-live-ok?)
+    (compiler-reg-scalar-handle-eligible-ok?)
+    (compiler-reg-scalar-function-intervals-ok?)
+    (compiler-reg-scalar-interval-guardrail-ok?)
+    (compiler-reg-scalar-loop-backedge-ok?))
     42
     (begin
       (panic "regalloc: smoke mismatch")

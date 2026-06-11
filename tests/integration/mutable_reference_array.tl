@@ -51,10 +51,9 @@
       (put-fixed (&mut fixed) 41)
       (if (and
         (= (array-length items) 2)
-        (and
-          (= (array-bag-handle-score) 42)
-          (and
-            (= (array-ref items 0) 40)
-            (and (= (array-ref items 1) 2) (= (array-ref fixed 1) 41)))))
+        (= (array-bag-handle-score) 42)
+        (= (array-ref items 0) 40)
+        (= (array-ref items 1) 2)
+        (= (array-ref fixed 1) 41))
         42
         1))))

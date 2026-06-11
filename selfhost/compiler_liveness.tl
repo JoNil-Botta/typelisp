@@ -1377,29 +1377,24 @@
           (compiler-live-set-eq?
             (compiler-live-block-uses block)
             (compiler-live-set1 2))
-          (and
-            (compiler-live-set-eq?
-              (compiler-live-block-defs block)
-              (compiler-live-set2 0 1))
-            (and
-              (compiler-live-set-eq?
-                (compiler-live-block-live-in block)
-                (compiler-live-set1 2))
-              (and
-                (compiler-live-set-eq?
-                  (compiler-live-block-live-out block)
-                  (compiler-live-set-empty))
-                (and
-                  (compiler-live-set-eq?
-                    (compiler-live-after liveness "entry" 0)
-                    (compiler-live-set2 0 2))
-                  (and
-                    (compiler-live-set-eq?
-                      (compiler-live-after liveness "entry" 1)
-                      (compiler-live-set1 1))
-                    (compiler-live-set-eq?
-                      (compiler-live-after liveness "entry" 2)
-                      (compiler-live-set-empty))))))))]
+          (compiler-live-set-eq?
+            (compiler-live-block-defs block)
+            (compiler-live-set2 0 1))
+          (compiler-live-set-eq?
+            (compiler-live-block-live-in block)
+            (compiler-live-set1 2))
+          (compiler-live-set-eq?
+            (compiler-live-block-live-out block)
+            (compiler-live-set-empty))
+          (compiler-live-set-eq?
+            (compiler-live-after liveness "entry" 0)
+            (compiler-live-set2 0 2))
+          (compiler-live-set-eq?
+            (compiler-live-after liveness "entry" 1)
+            (compiler-live-set1 1))
+          (compiler-live-set-eq?
+            (compiler-live-after liveness "entry" 2)
+            (compiler-live-set-empty)))]
       [(CompilerLiveNoBlock) false])))
 
 (define (compiler-live-branch-ok?) : bool
@@ -1415,17 +1410,15 @@
             (compiler-live-label-set-count
               (compiler-live-block-successor-labels block))
             2)
-          (and
-            (compiler-live-label-set-contains?
-              (compiler-live-block-successor-labels block)
-              "then")
-            (and
-              (compiler-live-label-set-contains?
-                (compiler-live-block-successor-labels block)
-                "else")
-              (compiler-live-set-eq?
-                (compiler-live-block-live-in block)
-                (compiler-live-set3 0 1 2)))))]
+          (compiler-live-label-set-contains?
+            (compiler-live-block-successor-labels block)
+            "then")
+          (compiler-live-label-set-contains?
+            (compiler-live-block-successor-labels block)
+            "else")
+          (compiler-live-set-eq?
+            (compiler-live-block-live-in block)
+            (compiler-live-set3 0 1 2)))]
       [(CompilerLiveNoBlock) false])))
 
 (define (compiler-live-phi-ok?) : bool
@@ -1440,40 +1433,34 @@
           (compiler-live-set-eq?
             (compiler-live-block-uses block)
             (compiler-live-set2 1 2))
-          (and
-            (compiler-live-set-eq?
-              (compiler-live-block-defs block)
-              (compiler-live-set1 3))
-            (and
-              (compiler-live-set-eq?
-                (compiler-live-block-live-in block)
-                (compiler-live-set2 1 2))
-              (and
-                (compiler-live-set-eq?
-                  (compiler-live-after liveness "join" 0)
-                  (compiler-live-set1 3))
-                (match (compiler-live-find-block
-                  (compiler-live-function-blocks liveness)
-                  "left")
-                  [(CompilerLiveSomeBlock left-block)
-                    (compiler-live-label-set-contains?
-                      (compiler-live-block-successor-labels left-block)
-                      "join")]
-                  [(CompilerLiveNoBlock) false])))))]
+          (compiler-live-set-eq?
+            (compiler-live-block-defs block)
+            (compiler-live-set1 3))
+          (compiler-live-set-eq?
+            (compiler-live-block-live-in block)
+            (compiler-live-set2 1 2))
+          (compiler-live-set-eq?
+            (compiler-live-after liveness "join" 0)
+            (compiler-live-set1 3))
+          (match (compiler-live-find-block
+            (compiler-live-function-blocks liveness)
+            "left")
+            [(CompilerLiveSomeBlock left-block)
+              (compiler-live-label-set-contains?
+                (compiler-live-block-successor-labels left-block)
+                "join")]
+            [(CompilerLiveNoBlock) false]))]
       [(CompilerLiveNoBlock) false])))
 
 (define (compiler-live-self-test) : i64
   (if (and
     (compiler-live-set-ops-ok?)
-    (and
-      (compiler-live-use-def-ok?)
-      (and
-        (compiler-live-memory-use-def-ok?)
-        (and
-          (compiler-live-vector-mask-use-def-ok?)
-          (and
-            (compiler-live-straight-ok?)
-            (and (compiler-live-branch-ok?) (compiler-live-phi-ok?)))))))
+    (compiler-live-use-def-ok?)
+    (compiler-live-memory-use-def-ok?)
+    (compiler-live-vector-mask-use-def-ok?)
+    (compiler-live-straight-ok?)
+    (compiler-live-branch-ok?)
+    (compiler-live-phi-ok?))
     42
     (begin
       (panic "liveness: smoke mismatch")

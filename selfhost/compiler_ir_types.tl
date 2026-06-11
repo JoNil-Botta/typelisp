@@ -1232,43 +1232,31 @@
 (define (compiler-ir-runtime-memory-read? [name : String]) : bool
   (or
     (string-eq name "tl_string_eq")
-    (or
-      (string-eq name "tl_string_to_int")
-      (or
-        (string-eq name "tl_hash_string")
-        (or
-          (string-eq name "tl_region_mark")
-          (string-eq name ".L_tl_stdin_eof"))))))
+    (string-eq name "tl_string_to_int")
+    (string-eq name "tl_hash_string")
+    (string-eq name "tl_region_mark")
+    (string-eq name ".L_tl_stdin_eof")))
 
 (define (compiler-ir-runtime-memory-write? [name : String]) : bool
   (or
     (string-eq name "tl_alloc")
-    (or
-      (string-eq name "tl_int_to_string")
-      (or
-        (string-eq name "tl_substring")
-        (or
-          (string-eq name "tl_string_concat")
-          (or
-            (string-eq name "tl_string_concat3")
-            (or
-              (string-eq name "tl_string_concat4")
-              (or
-                (string-eq name "tl_string_concat5")
-                (or
-                  (string-eq name "tl_region_reset")
-                  (or
-                    (string-eq name "tl_array_fill8")
-                    (or
-                      (string-eq name "tl_array_zero")
-                      (string-eq name ".L_tl_flush_stdout"))))))))))))
+    (string-eq name "tl_int_to_string")
+    (string-eq name "tl_substring")
+    (string-eq name "tl_string_concat")
+    (string-eq name "tl_string_concat3")
+    (string-eq name "tl_string_concat4")
+    (string-eq name "tl_string_concat5")
+    (string-eq name "tl_region_reset")
+    (string-eq name "tl_array_fill8")
+    (string-eq name "tl_array_zero")
+    (string-eq name ".L_tl_flush_stdout")))
 
 (define (compiler-ir-runtime-control-flow? [name : String]) : bool
   (or
     (string-eq name ".L_tl_abort")
-    (or
-      (string-eq name "tl_oob_abort")
-      (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort")))))
+    (string-eq name "tl_oob_abort")
+    (string-eq name "tl_div_abort")
+    (string-eq name "tl_shift_abort")))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
   (core/cond
@@ -2439,260 +2427,173 @@
     (compiler-ir-effect-is?
       (IrInstrMov 0 (IrValueI64 1) (AstTyI64))
       IrEffectPure)
-    (and
-      (compiler-ir-effect-is? (IrInstrAddrOf 1 0) IrEffectPure)
-      (and
-        (compiler-ir-effect-is?
-          (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyI64))
-          IrEffectPure)
-        (and
-          (compiler-ir-effect-is?
-            (IrInstrCast 3 (IrValueVar 2) (AstTyI64) (AstTyI32))
-            IrEffectPure)
-          (and
-            (compiler-ir-effect-is?
-              (IrInstrBinOp
-                4
-                (IrBinAdd)
-                (IrValueVar 2)
-                (IrValueI64 1)
-                (AstTyI64))
-              IrEffectPure)
-            (and
-              (compiler-ir-effect-is?
-                (IrInstrUnOp 5 (IrUnNeg) (IrValueVar 4) (AstTyI64))
-                IrEffectPure)
-              (and
-                (compiler-ir-effect-is?
-                  (IrInstrPhi
-                    6
-                    (compiler-ir-phi-input-cons
-                      (IrValueI64 1)
-                      "entry"
-                      (IrPhiInputNil))
-                    (AstTyI64))
-                  IrEffectPure)
-                (and
-                  (compiler-ir-effect-is?
-                    (IrInstrLoad 7 (IrValueVar 1) (AstTyI64))
-                    IrEffectMemoryRead)
-                  (and
-                    (compiler-ir-effect-is?
-                      (IrInstrAlloc 8 (AstTyI64))
-                      IrEffectMemoryWrite)
-                    (and
-                      (compiler-ir-effect-is?
-                        (IrInstrStorePtr
-                          (IrValueVar 1)
-                          (IrValueI64 2)
-                          (AstTyI64))
-                        IrEffectMemoryWrite)
-                      (and
-                        (compiler-ir-effect-is?
-                          (IrInstrCopyBytes (IrValueVar 1) (IrValueVar 2) 16)
-                          IrEffectMemoryWrite)
-                        (and
-                          (compiler-ir-effect-is?
-                            (IrInstrStore "global" (IrValueI64 3) (AstTyI64))
-                            IrEffectMemoryWrite)
-                          (and
-                            (compiler-ir-effect-is?
-                              (IrInstrCall
-                                9
-                                "tl_string_eq"
-                                (IrCallArgsNil)
-                                (AstTyBool))
-                              IrEffectMemoryRead)
-                            (and
-                              (compiler-ir-effect-is?
-                                (IrInstrBoundsCheck
-                                  (IrValueVar 0)
-                                  (IrValueVar 1)
-                                  "bounds_ok")
-                                IrEffectControlFlow)
-                              (and
-                                (compiler-ir-effect-is?
-                                  (IrInstrTailCall
-                                    "fact_loop"
-                                    (IrCallArgsTwo
-                                      (IrValueVar 3)
-                                      (IrValueI64 1))
-                                    (AstTyI64))
-                                  IrEffectControlFlow)
-                                (and
-                                  (compiler-ir-effect-is?
-                                    (IrInstrJump "done")
-                                    IrEffectControlFlow)
-                                  (and
-                                    (compiler-ir-effect-is?
-                                      (IrInstrBranch
-                                        (IrValueBool true)
-                                        "then"
-                                        "else")
-                                      IrEffectControlFlow)
-                                    (compiler-ir-effect-is?
-                                      (IrInstrReturn
-                                        (IrSomeValue (IrValueI64 0)))
-                                      IrEffectControlFlow)))))))))))))))))))
+    (compiler-ir-effect-is? (IrInstrAddrOf 1 0) IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrCast 3 (IrValueVar 2) (AstTyI64) (AstTyI32))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 2) (IrValueI64 1) (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrUnOp 5 (IrUnNeg) (IrValueVar 4) (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrPhi
+        6
+        (compiler-ir-phi-input-cons (IrValueI64 1) "entry" (IrPhiInputNil))
+        (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrLoad 7 (IrValueVar 1) (AstTyI64))
+      IrEffectMemoryRead)
+    (compiler-ir-effect-is? (IrInstrAlloc 8 (AstTyI64)) IrEffectMemoryWrite)
+    (compiler-ir-effect-is?
+      (IrInstrStorePtr (IrValueVar 1) (IrValueI64 2) (AstTyI64))
+      IrEffectMemoryWrite)
+    (compiler-ir-effect-is?
+      (IrInstrCopyBytes (IrValueVar 1) (IrValueVar 2) 16)
+      IrEffectMemoryWrite)
+    (compiler-ir-effect-is?
+      (IrInstrStore "global" (IrValueI64 3) (AstTyI64))
+      IrEffectMemoryWrite)
+    (compiler-ir-effect-is?
+      (IrInstrCall 9 "tl_string_eq" (IrCallArgsNil) (AstTyBool))
+      IrEffectMemoryRead)
+    (compiler-ir-effect-is?
+      (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok")
+      IrEffectControlFlow)
+    (compiler-ir-effect-is?
+      (IrInstrTailCall
+        "fact_loop"
+        (IrCallArgsTwo (IrValueVar 3) (IrValueI64 1))
+        (AstTyI64))
+      IrEffectControlFlow)
+    (compiler-ir-effect-is? (IrInstrJump "done") IrEffectControlFlow)
+    (compiler-ir-effect-is?
+      (IrInstrBranch (IrValueBool true) "then" "else")
+      IrEffectControlFlow)
+    (compiler-ir-effect-is?
+      (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+      IrEffectControlFlow)))
 
 (define (compiler-ir-vector-mask-effects-ok?) : bool
   (and
     (compiler-ir-effect-is? (IrInstrLaneId 20 4 (AstTyI64)) IrEffectPure)
-    (and
-      (compiler-ir-effect-is?
-        (IrInstrSplat 21 (IrValueVar 0) 4 (AstTyI64))
-        IrEffectPure)
-      (and
-        (compiler-ir-effect-is?
-          (IrInstrVectorBinOp
-            22
-            (IrBinAdd)
-            (IrValueVar 20)
-            (IrValueVar 21)
-            4
-            (AstTyI64))
-          IrEffectPure)
-        (and
-          (compiler-ir-effect-is?
-            (IrInstrVectorReduce
-              23
-              (IrVectorReduceSum)
-              (IrValueVar 22)
-              4
-              (AstTyI64))
-            IrEffectPure)
-          (and
-            (compiler-ir-effect-is?
-              (IrInstrVectorCompare
-                24
-                (IrBinLt)
-                (IrValueVar 20)
-                (IrValueVar 21)
-                4
-                (AstTyI64))
-              IrEffectPure)
-            (and
-              (compiler-ir-effect-is?
-                (IrInstrMaskBinOp
-                  25
-                  (IrMaskAnd)
-                  (IrValueVar 24)
-                  (IrValueVar 24)
-                  4)
-                IrEffectPure)
-              (and
-                (compiler-ir-effect-is?
-                  (IrInstrMaskNot 26 (IrValueVar 25) 4)
-                  IrEffectPure)
-                (and
-                  (compiler-ir-effect-is?
-                    (IrInstrMaskReduce 27 (IrMaskReduceAny) (IrValueVar 26) 4)
-                    IrEffectPure)
-                  (and
-                    (compiler-ir-effect-is?
-                      (IrInstrSelect
-                        28
-                        (IrValueVar 24)
-                        (IrValueVar 20)
-                        (IrValueVar 21)
-                        4
-                        (AstTyI64))
-                      IrEffectPure)
-                    (and
-                      (compiler-ir-effect-is?
-                        (IrInstrTailMask 29 (IrValueVar 0) (IrValueVar 1) 4)
-                        IrEffectPure)
-                      (and
-                        (compiler-ir-effect-is?
-                          (IrInstrVectorLoad
-                            30
-                            (IrValueVar 2)
-                            (IrValueVar 0)
-                            4
-                            (AstTyI64))
-                          IrEffectMemoryRead)
-                        (and
-                          (compiler-ir-effect-is?
-                            (IrInstrPredicatedLoad
-                              31
-                              (IrValueVar 2)
-                              (IrValueVar 0)
-                              (IrValueVar 29)
-                              4
-                              (AstTyI64))
-                            IrEffectMemoryRead)
-                          (and
-                            (compiler-ir-effect-is?
-                              (IrInstrVectorStore
-                                (IrValueVar 2)
-                                (IrValueVar 0)
-                                (IrValueVar 22)
-                                4
-                                (AstTyI64))
-                              IrEffectMemoryWrite)
-                            (compiler-ir-effect-is?
-                              (IrInstrPredicatedStore
-                                (IrValueVar 2)
-                                (IrValueVar 0)
-                                (IrValueVar 22)
-                                (IrValueVar 29)
-                                4
-                                (AstTyI64))
-                              IrEffectMemoryWrite)))))))))))))))
+    (compiler-ir-effect-is?
+      (IrInstrSplat 21 (IrValueVar 0) 4 (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrVectorBinOp
+        22
+        (IrBinAdd)
+        (IrValueVar 20)
+        (IrValueVar 21)
+        4
+        (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrVectorReduce 23 (IrVectorReduceSum) (IrValueVar 22) 4 (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrVectorCompare
+        24
+        (IrBinLt)
+        (IrValueVar 20)
+        (IrValueVar 21)
+        4
+        (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrMaskBinOp 25 (IrMaskAnd) (IrValueVar 24) (IrValueVar 24) 4)
+      IrEffectPure)
+    (compiler-ir-effect-is? (IrInstrMaskNot 26 (IrValueVar 25) 4) IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrMaskReduce 27 (IrMaskReduceAny) (IrValueVar 26) 4)
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrSelect
+        28
+        (IrValueVar 24)
+        (IrValueVar 20)
+        (IrValueVar 21)
+        4
+        (AstTyI64))
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrTailMask 29 (IrValueVar 0) (IrValueVar 1) 4)
+      IrEffectPure)
+    (compiler-ir-effect-is?
+      (IrInstrVectorLoad 30 (IrValueVar 2) (IrValueVar 0) 4 (AstTyI64))
+      IrEffectMemoryRead)
+    (compiler-ir-effect-is?
+      (IrInstrPredicatedLoad
+        31
+        (IrValueVar 2)
+        (IrValueVar 0)
+        (IrValueVar 29)
+        4
+        (AstTyI64))
+      IrEffectMemoryRead)
+    (compiler-ir-effect-is?
+      (IrInstrVectorStore
+        (IrValueVar 2)
+        (IrValueVar 0)
+        (IrValueVar 22)
+        4
+        (AstTyI64))
+      IrEffectMemoryWrite)
+    (compiler-ir-effect-is?
+      (IrInstrPredicatedStore
+        (IrValueVar 2)
+        (IrValueVar 0)
+        (IrValueVar 22)
+        (IrValueVar 29)
+        4
+        (AstTyI64))
+      IrEffectMemoryWrite)))
 
 (define (compiler-ir-runtime-effects-ok?) : bool
   (and
     (compiler-ir-effect-eq?
       (compiler-ir-direct-call-effect "tl_region_mark")
       IrEffectMemoryRead)
-    (and
-      (compiler-ir-effect-eq?
-        (compiler-ir-direct-call-effect ".L_tl_stdin_eof")
-        IrEffectMemoryRead)
-      (and
-        (compiler-ir-effect-eq?
-          (compiler-ir-direct-call-effect "tl_alloc")
-          IrEffectMemoryWrite)
-        (and
-          (compiler-ir-effect-eq?
-            (compiler-ir-direct-call-effect ".L_tl_flush_stdout")
-            IrEffectMemoryWrite)
-          (and
-            (compiler-ir-effect-eq?
-              (compiler-ir-direct-call-effect ".L_tl_abort")
-              IrEffectControlFlow)
-            (and
-              (compiler-ir-effect-eq?
-                (compiler-ir-direct-call-effect "tl_shift_abort")
-                IrEffectControlFlow)
-              (and
-                (compiler-ir-effect-eq?
-                  (compiler-ir-direct-call-effect ".L_tl_arg_count")
-                  IrEffectUnknown)
-                (compiler-ir-effect-eq?
-                  (compiler-ir-direct-call-effect "user_or_extern_call")
-                  IrEffectUnknown)))))))))
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect ".L_tl_stdin_eof")
+      IrEffectMemoryRead)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect "tl_alloc")
+      IrEffectMemoryWrite)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect ".L_tl_flush_stdout")
+      IrEffectMemoryWrite)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect ".L_tl_abort")
+      IrEffectControlFlow)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect "tl_shift_abort")
+      IrEffectControlFlow)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect ".L_tl_arg_count")
+      IrEffectUnknown)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect "user_or_extern_call")
+      IrEffectUnknown)))
 
 (define (compiler-ir-effect-predicates-ok?) : bool
   (and
     (not (compiler-ir-effect-has-side-effect? IrEffectPure))
-    (and
-      (not (compiler-ir-effect-has-side-effect? IrEffectMemoryRead))
-      (and
-        (compiler-ir-effect-has-side-effect? IrEffectMemoryWrite)
-        (and
-          (compiler-ir-effect-has-side-effect? IrEffectControlFlow)
-          (and
-            (compiler-ir-effect-has-side-effect? IrEffectUnknown)
-            (and
-              (not (compiler-ir-effect-invalidates-cse? IrEffectPure))
-              (and
-                (compiler-ir-effect-invalidates-cse? IrEffectMemoryRead)
-                (and
-                  (compiler-ir-effect-invalidates-cse? IrEffectMemoryWrite)
-                  (and
-                    (compiler-ir-effect-invalidates-cse? IrEffectControlFlow)
-                    (compiler-ir-effect-invalidates-cse? IrEffectUnknown)))))))))))
+    (not (compiler-ir-effect-has-side-effect? IrEffectMemoryRead))
+    (compiler-ir-effect-has-side-effect? IrEffectMemoryWrite)
+    (compiler-ir-effect-has-side-effect? IrEffectControlFlow)
+    (compiler-ir-effect-has-side-effect? IrEffectUnknown)
+    (not (compiler-ir-effect-invalidates-cse? IrEffectPure))
+    (compiler-ir-effect-invalidates-cse? IrEffectMemoryRead)
+    (compiler-ir-effect-invalidates-cse? IrEffectMemoryWrite)
+    (compiler-ir-effect-invalidates-cse? IrEffectControlFlow)
+    (compiler-ir-effect-invalidates-cse? IrEffectUnknown)))
 
 (define (compiler-ir-display-type-names-ok?) : bool
   (and
@@ -2702,17 +2603,12 @@
 (define (compiler-ir-display-op-names-ok?) : bool
   (and
     (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceSum) "sum")
-    (and
-      (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMin) "min")
-      (and
-        (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMax) "max")
-        (and
-          (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAll) "all")
-          (and
-            (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAny) "any")
-            (and
-              (string-eq (compiler-ir-mask-binop-name IrMaskAnd) "mask_and")
-              (string-eq (compiler-ir-mask-binop-name IrMaskOr) "mask_or"))))))))
+    (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMin) "min")
+    (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMax) "max")
+    (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAll) "all")
+    (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAny) "any")
+    (string-eq (compiler-ir-mask-binop-name IrMaskAnd) "mask_and")
+    (string-eq (compiler-ir-mask-binop-name IrMaskOr) "mask_or")))
 
 (define (compiler-ir-display-instrs-ok?) : bool
   (let
@@ -2844,23 +2740,22 @@
       (string-eq
         (compiler-ir-instr-describe instr)
         "  %9 = tail_mask %1, %2 : 8")
-      (and
-        (compiler-ir-effect-is? instr IrEffectPure)
-        (match instr
-          [(IrInstrTailMask dst index len lanes)
-            (and
-              (= dst 9)
-              (and
-                (compiler-ir-value-var-eq? index 1)
-                (and (compiler-ir-value-var-eq? len 2) (= lanes 8))))]
-          [_ false])))))
+      (compiler-ir-effect-is? instr IrEffectPure)
+      (match instr
+        [(IrInstrTailMask dst index len lanes)
+          (and
+            (= dst 9)
+            (compiler-ir-value-var-eq? index 1)
+            (compiler-ir-value-var-eq? len 2)
+            (= lanes 8))]
+        [_ false]))))
 
 (define (compiler-ir-display-self-test-ok?) : bool
   (and
     (compiler-ir-display-type-names-ok?)
-    (and
-      (compiler-ir-display-op-names-ok?)
-      (and (compiler-ir-display-instrs-ok?) (compiler-ir-display-tail-mask-ok?)))))
+    (compiler-ir-display-op-names-ok?)
+    (compiler-ir-display-instrs-ok?)
+    (compiler-ir-display-tail-mask-ok?)))
 
 (define (compiler-ir-tail-call-render-ok?) : bool
   (string-eq
@@ -2888,14 +2783,13 @@
         span2)]
     (and
       (= (compiler-source-spans-entry-list-count entries) 2)
-      (and
-        (= (compiler-source-spans-count spans) 2)
-        (match (compiler-source-spans-entry-list-lookup entries "second")
-          [(CompilerSomeSourceSpan found)
-            (and
-              (= (struct-get found start-line) 4)
-              (= (struct-get found end-col) 8))]
-          [(CompilerNoSourceSpan) false])))))
+      (= (compiler-source-spans-count spans) 2)
+      (match (compiler-source-spans-entry-list-lookup entries "second")
+        [(CompilerSomeSourceSpan found)
+          (and
+            (= (struct-get found start-line) 4)
+            (= (struct-get found end-col) 8))]
+        [(CompilerNoSourceSpan) false]))))
 
 (define (compiler-ir-instr-list-first-mov-dst?
   [instrs : CompilerIrInstrList]
@@ -2935,21 +2829,15 @@
       (compiler-ir-block-list-compact block-list)]
     (and
       (= (compiler-ir-instr-seq-count seq) 3)
-      (and
-        (and
-          (not (compiler-ir-instr-seq-empty? seq))
-          (match (compiler-ir-instr-seq-ref seq 2)
-            [(IrInstrReturn _) true]
-            [_ false]))
-        (and
-          (= (compiler-ir-instr-list-count roundtrip) 3)
-          (and
-            (= (compiler-ir-block-list-instruction-count block-list) 3)
-            (and
-              (= (compiler-ir-block-list-count compact-blocks) 1)
-              (and
-                (compiler-ir-block-list-first-label? compact-blocks "entry")
-                (compiler-ir-instr-list-first-mov-dst? roundtrip 1)))))))))
+      (not (compiler-ir-instr-seq-empty? seq))
+      (match (compiler-ir-instr-seq-ref seq 2)
+        [(IrInstrReturn _) true]
+        [_ false])
+      (= (compiler-ir-instr-list-count roundtrip) 3)
+      (= (compiler-ir-block-list-instruction-count block-list) 3)
+      (= (compiler-ir-block-list-count compact-blocks) 1)
+      (compiler-ir-block-list-first-label? compact-blocks "entry")
+      (compiler-ir-instr-list-first-mov-dst? roundtrip 1))))
 
 (define (compiler-ir-effect-self-test) : i64
   (begin

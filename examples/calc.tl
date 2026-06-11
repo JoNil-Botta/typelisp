@@ -72,7 +72,7 @@
 
 ;; `c` is ASCII whitespace: space, tab, or newline.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
+  (or (= c #\space') (= c #\tab') (= c #\newline')))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 (define (digit-value [c : char]) : i64

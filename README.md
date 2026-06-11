@@ -408,9 +408,11 @@ Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and
 attached `;:` item docs, writes each example to a deterministic temporary
 source file, type-checks it, and removes the temporary directory before exiting.
-The self-hosted Markdown generator can render one source file through
-`typelisp doc input.tl -o output.md`; import-graph traversal is separate
-follow-up work.
+Multiple explicit doctest inputs and package doctests keep per-file reporting.
+The self-hosted Markdown generator renders `typelisp doc input.tl -o output.md`
+from the entry file plus its reachable import graph, with deterministic module
+sections and navigation. Package docs use `typelisp doc -o output.md
+--manifest-path typelisp.pkg`.
 
 ```lisp
 ;# ```typelisp

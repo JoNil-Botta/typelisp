@@ -65,10 +65,11 @@ transitional surface:
   atomic arena supports concurrent allocation (#2591/#2593). Thread safety
   extends the section 1.1 no-UB contract through structural checker
   classification, not traits (#2590): a value may cross threads only when
-  owned by an arena whose lifetime spans both threads. Sections 6.2 and 7.3
-  specify the v1 atomic arena runtime/source contract; until the runtime and
-  checker slices land, the raw `stdlib/thread.tl` caveat about unsynchronized
-  allocation remains implementation behavior.
+  owned by an arena whose lifetime spans both threads. Section 6.5 specifies
+  the structural transfer/share model, while sections 6.2 and 7.3 specify the
+  v1 atomic arena runtime/source contract; until the runtime and checker slices
+  land, the raw `stdlib/thread.tl` caveat about unsynchronized allocation
+  remains implementation behavior.
 - **Tests.** Inline tests and doctests are typechecked on every build of the
   owning package and generate no code outside the test runner (#2587/#2594);
   the checked test surface is exactly the package's own sources.
@@ -106,6 +107,7 @@ table.
 | Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are implemented (#1033/#1034/#1035); non-lexical lifetimes remain deferred (#810). |
 | Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker is implemented (#806). Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
+| Task-thread data-race freedom | Static reject | Safe task-threading APIs reject captured, sent, returned, or shared values whose arena owner does not prove storage lifetime across the participating threads, or whose structural transfer/share classification does not prove race-free access. See section 6.5 and #2590/#2592. |
 | Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value aggregate states are rejected. See sections 3.5, 4.6, and 5.13. |
 | Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
 | Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code. Runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17; reflection surface owner is #970. |
@@ -2896,6 +2898,10 @@ before compiler implementation; until those implementations land, the current
 checker still rejects varying control-flow conditions inside `foreach` and
 rejects `(program-index)`/`(program-count)`.
 
+SPMD is data parallelism inside one task. It does not create independently
+scheduled OS threads, does not transfer ownership between thread-local arenas,
+and is separate from the safe task-threading APIs specified in section 6.5.
+
 Initial syntax:
 
 ```lisp test=ignore name=spmd-foreach-map reason="illustrative function; integration tests cover executable foreach programs"
@@ -4038,6 +4044,188 @@ streaming writes/flush are implemented for the stdlib API and selfhost backend,
 with Windows returning structured `IoUnsupported` results until native handle
 support lands.
 
+### 6.5 Task threading and structural thread safety (v1 design)
+
+This section specifies the safe task-threading model for the future stdlib
+surface tracked by #2592. The current `stdlib/thread.tl` remains a raw substrate:
+`thread-spawn` takes a `(-> i64 i64)` entry and one `i64` context, `thread-join`
+returns an `i64`, and callers that smuggle addresses through those integers are
+responsible for their own synchronization in unsafe code. The safe surface is
+closure-based and checker-visible; it does not add `Send`/`Sync` traits or any
+source-level trait system.
+
+The core rule is structural: a value may cross a task-thread boundary only when
+its type shape is accepted by the transfer/share classifier and every reachable
+owned allocation is owned by an arena whose lifetime spans all participating
+threads. Arena lifetime only proves that storage remains live. It does not
+prove mutation race freedom, uniqueness, initialization, pointer provenance, or
+foreign ABI invariants.
+
+Task threading is distinct from SPMD `foreach` (section 5.15). `foreach` is a
+single-task data-parallel lowering whose race freedom is checked by the SPMD
+uniform/varying and reduction rules. The APIs below create independently
+scheduled tasks/threads with their own default arenas and with explicit
+ownership crossing points.
+
+#### Arena-owner crossing rules
+
+The structural classifier consults both the source type and the owner of every
+reachable heap allocation:
+
+| Owner class | Safe cross-thread role |
+|-------------|------------------------|
+| Static data and program-lifetime owner | May be transferred or shared when the type classifier accepts the value. This includes read-only string literal storage and values explicitly allocated in a program-lifetime allocation home. |
+| Per-thread default arena | Does not cross thread boundaries. A worker may freely use values allocated in its own default arena, but it may not return, send, or share those values with another thread unless an accepted API first clones or moves them into a spanning owner. |
+| Lexical `with-arena` scoped region | Does not cross task-thread boundaries in v1. Its reset is tied to the creating lexical scope, and the existing region checker only proves same-thread escape safety. A later scoped-task API may add a join-before-reset proof, but ordinary safe spawn/channel/mutex APIs reject scoped-region values. |
+| Ordinary first-class arena from `arena-make` | Does not by itself prove cross-thread lifetime or concurrent allocation safety. Safe code may use it for single-thread scratch workflows such as `with-escape`, but it is not a spanning owner for task-thread transfer/share. |
+| Atomic first-class arena from `arena-make-atomic` | May be a spanning owner when the arena handle outlives every thread that can hold its values. Multiple threads may allocate into it through the section 7.3 allocation-target rules. Reset or destroy still requires a proof that all users have joined or otherwise released the values. |
+| Raw pointers, raw integer addresses, and foreign handles | Do not establish ownership or lifetime. Safe code does not become transferable/shareable by carrying an address in `i64`, `Ptr`, `MutPtr`, or an opaque host handle. Crossing those values is allowed only by an explicitly unsafe API or by a safe wrapper with its own synchronization contract. |
+
+The current process-lifetime implementation detail of the allocator is not a
+permission to transfer thread-default allocations. The v1 source model is the
+post-#2591 model: every thread has its own default arena, and only program/static
+or atomic spanning owners are accepted for general cross-thread aggregate
+storage.
+
+#### Structural transferability
+
+Transferability is one-way ownership movement from one thread to another. After
+a safe send, spawn capture, or return transfer, the source thread may not use the
+moved value except through the ordinary post-move rules. Copyable scalar values
+may be copied instead of moved.
+
+A value is transferable when all of the following hold:
+
+- Its source type is structurally transferable.
+- Every reachable owned allocation has a spanning owner from the table above.
+- The operation can prove exclusive ownership of mutable reachable storage, or
+  the reachable storage is immutable.
+- No reachable value is a guard, reference, raw-pointer ownership claim, or
+  other non-transferable synchronization token.
+
+The baseline structural rules are:
+
+- `unit`, `bool`, numeric scalars, `char`, and function symbols with no captured
+  state are transferable by copy.
+- Tuples, fixed arrays, structs, and enum values are transferable when every
+  field, element, or payload is transferable and any reachable allocation owner
+  spans the participating threads.
+- `String` is transferable when its bytes are static/program-owned or owned by a
+  spanning atomic arena. It is immutable, so the transfer does not create a
+  mutation race.
+- Dynamic arrays and `(Box T)` values are transferable only by exclusive move,
+  only when their element/referent type is transferable, and only when their
+  backing storage owner spans the participating threads.
+- Closure values are transferable only when their environment record and every
+  captured value are transferable. Captured references, scoped-region handles,
+  ordinary-arena values, raw-pointer-derived ownership claims, mutable aliases,
+  and guard values are rejected with targeted diagnostics.
+- Raw pointers, mutable raw pointers, integer addresses, and foreign handles are
+  not transferable in safe code unless a specific safe wrapper gives them a
+  synchronization and lifetime contract.
+
+#### Structural shareability
+
+Shareability permits more than one thread to hold access to the same value at
+the same time. A value is shareable only when all reachable storage has a
+spanning owner and the source type exposes no unsynchronized safe mutation path,
+or when all mutation is mediated by an accepted synchronization primitive.
+
+Immutable data in a spanning owner is shareable: examples include copyable
+scalars, immutable strings, and aggregates that recursively contain only
+shareable immutable fields. Mutable data is not made shareable by living in an
+atomic arena. Atomic arena allocation protects allocator metadata only; it does
+not protect array elements, struct fields, enum payloads, raw pointer targets, or
+foreign resources from data races.
+
+Ordinary `(& r T)` and `(&mut r T)` reference values do not cross threads in v1,
+even when their referent is program-owned. The current lifetime syntax has no
+way to quantify a reference over a worker's dynamic lifetime, and mutable
+references require single-thread exclusive access. Cross-thread read sharing is
+expressed by copying or moving an owned immutable handle, not by sending a
+borrowed reference. Cross-thread mutation is expressed through mutex guards,
+channels, explicit safe atomics, or unsafe code.
+
+#### Safe spawn and typed join
+
+The accepted safe spawn shape is closure based:
+
+- `thread/spawn` accepts a closure whose captured environment is structurally
+  transferable. The closure itself is moved into the worker. The checker rejects
+  captured stack references, borrowed `str` views, `(& r T)` / `(&mut r T)`
+  values, scoped-region values, ordinary first-class arena values, raw
+  pointer-derived ownership claims, mutable aliases that are still live in the
+  parent, and lock/channel guard values.
+- A worker starts with its own per-thread default arena. It may allocate
+  temporary data there, but aggregate results that leave the worker through join
+  must already live in a spanning owner or be explicitly cloned/moved into one
+  by an accepted API.
+- `thread/join` consumes the thread handle, waits for completion, and returns a
+  result typed by the closure return type. Double join and use-after-join are
+  ordinary use-after-move errors.
+- Joining a worker is also the proof that the worker no longer allocates into,
+  mutates through, or holds values from any atomic arena whose lifetime depended
+  on that worker. Resetting or destroying such an arena before all users have
+  joined remains unsafe or rejected.
+
+Typed join does not launder ownership. Returning a `String`, dynamic array,
+`Box`, tuple, struct, or enum from a worker is accepted only when the returned
+value's reachable storage is already in a spanning owner or when the join API
+performs an explicit, specified clone/move into a caller-selected spanning owner.
+Returning a value allocated in the worker's default arena is rejected.
+
+#### Mutexes and guards
+
+The safe mutex surface protects shared mutable state through a lexical guard.
+Exact type names are owned by #2592, but the required source contract is:
+
+- A mutex shared across threads must itself be owned by a spanning owner.
+- Locking a mutex yields a guard tied to both the mutex and the lexical cleanup
+  scope, normally through `(with ([g (mutex/lock m) mutex/unlock]) ...)`.
+- The guard grants the only safe mutable access path to the protected value for
+  the guard scope. Ordinary mutable-reference exclusivity rules apply while the
+  guard is live.
+- Guard values are move-only and non-transferable. They cannot be returned,
+  stored in longer-lived aggregates, captured by spawned closures, sent through
+  channels, or held past the cleanup scope.
+- Unlocking releases the guard's exclusive access. It does not change the arena
+  owner of the protected value and does not make non-spanning data transferable.
+
+#### Channels
+
+Channels transfer ownership between threads. The channel object and any queued
+storage used by the channel must be owned by a spanning owner or by runtime
+state whose safe wrapper proves lifetime and synchronization.
+
+`channel/send` consumes its message. The sender may not use the moved value after
+a successful send, and a buffered channel owns queued messages until a receiver
+takes them. `channel/recv` produces an owned value for the receiving thread. A
+message type is accepted only when it is structurally transferable and its
+reachable storage either already has a spanning owner or is cloned/moved into
+the channel's spanning storage by a specified API. Sending references, guard
+values, raw-pointer ownership claims, scoped-region values, or ordinary
+thread-default aggregate values is rejected.
+
+Closing, cancellation, and blocking policy are stdlib API details, but they must
+preserve the same ownership rule: no safe channel operation may create two
+unsynchronized mutable owners for the same reachable storage or let a message
+outlive its arena owner.
+
+#### Atomics
+
+Safe atomic operations exist only where the language or stdlib explicitly
+accepts an atomic type/helper with a specified width, alignment, ownership, and
+memory-ordering contract. Until such helpers are specified, raw CPU atomics,
+volatile-looking raw pointer operations, and FFI atomic intrinsics remain
+unsafe-only escape hatches.
+
+The minimal v1 policy is conservative: safe atomics are synchronization
+operations for the specific atomic location they operate on, not a blanket
+permission to share surrounding non-atomic data. Atomic allocation in an atomic
+arena is allocator synchronization only. Programs that need shared mutable
+ordinary data must use mutex guards, channel ownership transfer, an accepted
+atomic helper for that exact field, or `(unsafe ...)`.
+
 ---
 
 ## 7. Memory model
@@ -4192,9 +4380,9 @@ rewound, and the result leaves the form without the scratch region tag.
 Atomic arenas are shareable allocation owners, not synchronization primitives
 for the values allocated inside them. A value owned by an atomic arena may cross
 threads only when the atomic arena owner outlives both the sending and receiving
-threads and the structural send/share classifier accepts the value (#2590).
-The arena owner proves storage lifetime only; mutation, aliasing, raw pointer
-access, and interior synchronization remain separate obligations.
+threads and the structural transfer/share classifier in section 6.5 accepts the
+value. The arena owner proves storage lifetime only; mutation, aliasing, raw
+pointer access, and interior synchronization remain separate obligations.
 
 #### Standard library and builtin allocation policy
 
@@ -4289,9 +4477,10 @@ the implementation's current arena is still process-global.
 Values allocated while an atomic arena is current are owned by that atomic arena
 for thread-safety reasoning, even where the transitional lowerable type remains
 an ordinary aggregate handle. The checker must reject safe cross-thread transfer
-unless the atomic arena's lifetime spans every thread that can hold the value.
-The ordinary first-class arena returned by `arena-make` does not have this
-spanning-owner property and must not be used as a concurrent allocation target.
+unless the atomic arena's lifetime spans every thread that can hold the value
+and the section 6.5 structural classifier accepts the type shape. The ordinary
+first-class arena returned by `arena-make` does not have this spanning-owner
+property and must not be used as a concurrent allocation target.
 
 Resetting or destroying an atomic arena while any worker can still allocate into
 it or hold a value owned by it is rejected by safe code. The v1 proof shape is

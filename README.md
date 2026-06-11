@@ -75,7 +75,7 @@ of imitating transitional patterns still present in the tree:
   for concurrent allocation (#2591, #2593). Thread safety follows the Rust
   model via structural checker classification — no traits (#2590): values
   cross threads only when owned by an arena whose lifetime spans both; safe
-  spawn/join/mutex/channels build on that (#2592).
+  spawn/join/mutex/channels build on the SPEC.md section 6.5 model (#2592).
 - **Testing**: inline `(test ...)` items and doctests are typechecked on
   every build of the owning package and never generate code outside the test
   runner (#2587, #2594); stdlib adopts inline tests (#2586). The typechecked

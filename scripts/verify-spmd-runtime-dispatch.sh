@@ -12,6 +12,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -112,7 +114,7 @@ if [ "$HOST_OS" = linux ]; then
         sed 's/^/  /' "$RUN_ERR" >&2
         exit 1
     fi
-    if ! ld "$OBJ" -o "$BIN" -static \
+    if ! ld "$OBJ" -o "$BIN" -static -e "$(linux_entry_symbol_for_asm "$ASM")" \
         >> "$RUN_OUT" 2>> "$RUN_ERR"; then
         echo "spmd-runtime-dispatch: link failed" >&2
         sed 's/^/  /' "$RUN_ERR" >&2

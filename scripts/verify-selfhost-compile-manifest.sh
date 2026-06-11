@@ -494,7 +494,7 @@ main_label_count() {
 }
 
 stage1_entry_label_count() {
-    awk 'BEGIN { count = 0 } /^_start:$/ { count += 1 } END { print count }' "$asm_path"
+    awk 'BEGIN { count = 0 } /^_tl_start:$/ { count += 1 } END { print count }' "$asm_path"
 }
 
 ensure_compiled() {
@@ -520,7 +520,7 @@ ensure_compiled() {
         exactly-one)
             if [ "$main_count" -eq 0 ] && [ "$EXPECTATION_MODE" = stage1 ]; then
                 if [ "$stage1_entry_count" -ne 1 ]; then
-                    fail "$case_id expected exactly one stage1 _start: entry fallback, found $stage1_entry_count"
+                    fail "$case_id expected exactly one stage1 _tl_start: entry fallback, found $stage1_entry_count"
                 fi
             elif [ "$main_count" -ne 1 ]; then
                 fail "$case_id expected exactly one main: label, found $main_count"
@@ -529,7 +529,7 @@ ensure_compiled() {
         present)
             if [ "$main_count" -eq 0 ] && [ "$EXPECTATION_MODE" = stage1 ]; then
                 if [ "$stage1_entry_count" -lt 1 ]; then
-                    fail "$case_id expected a main: label or stage1 _start: entry fallback"
+                    fail "$case_id expected a main: label or stage1 _tl_start: entry fallback"
                 fi
             elif [ "$main_count" -lt 1 ]; then
                 fail "$case_id expected a main: label"

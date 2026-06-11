@@ -32,6 +32,8 @@ NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-1073741824}
 TYPELISP_WINDOWS_LINK_POSIX=
 TYPELISP_WINDOWS_CLANG_POSIX=
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 NL_HOST_OS=linux
 NL_BOOTSTRAP_TARGET=linux-x86_64
 NL_OBJ_EXT=o
@@ -284,6 +286,7 @@ assemble_and_link() {
         # shims (write/read/open/getenv/...), so the compiler links static with
         # no `-lc` and no dynamic loader -- the produced binary depends on no
         # shared library. See compiler-backend-runtime-linux-libc-shim-functions.
-        ld -static "$obj" -o "$bin"
+        _entry=$(linux_entry_symbol_for_asm "$asm")
+        ld -static -e "$_entry" "$obj" -o "$bin"
     fi
 }

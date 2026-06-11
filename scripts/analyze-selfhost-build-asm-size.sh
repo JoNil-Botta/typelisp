@@ -190,7 +190,7 @@ function module_name(raw, value, split_at) {
         }
         return "generated/type-lisp"
     }
-    if (raw == "main" || raw == "_start" || raw ~ /^tl_/) {
+    if (raw == "main" || raw == "_start" || raw == "_tl_start" || raw ~ /^tl_/) {
         return "runtime/entry"
     }
     return "runtime/other"

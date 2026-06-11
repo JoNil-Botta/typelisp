@@ -16812,9 +16812,9 @@ tl_memcpy:
     [(BackendTargetLinux) 0]
     [(BackendTargetWindows) 32]))
 
-;; Program entry section and global symbol. Linux normally links the bare
-;; `_start`; CRT entry mode links `main` through the C runtime. Windows links
-;; `main` through the CRT. (The Windows entry body is #647.)
+;; Program entry section and global symbol. Freestanding Linux links the
+;; backend-owned `_tl_start`; CRT entry mode links `main` through the C runtime.
+;; Windows links `main` through the CRT. (The Windows entry body is #647.)
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
   (match target
     [(BackendTargetLinux) true]
@@ -16829,7 +16829,7 @@ tl_memcpy:
       [(BackendTargetLinux)
         (if crt-entry
           ".text\n.globl main\n"
-          ".text\n.globl _start\n")]
+          ".text\n.globl _tl_start\n")]
       [(BackendTargetWindows) ".text\n.globl main\n"])
     ".text\n"))
 
@@ -16873,7 +16873,7 @@ tl_memcpy:
   [global-inits : String]) : String
   (if (or capture-argv capture-env)
     (string-append
-      "_start:
+      "_tl_start:
     movq (%rsp), %rax
 "
       (string-append
@@ -16895,7 +16895,7 @@ tl_memcpy:
             "")
           (string-append global-inits (compiler-backend-entry-call-main)))))
     (string-append
-      "_start:\n"
+      "_tl_start:\n"
       (string-append global-inits (compiler-backend-entry-call-main)))))
 
 (define (compiler-backend-entry-for-target-with-crt
@@ -18267,7 +18267,7 @@ tl_memcpy:
           parts
           (compiler-backend-object-symbol-export-section
             parts
-            "_start"
+            "_tl_start"
             (ObjectSectionText)
             (ObjectSymbolFunction)))]
       [(BackendTargetWindows) parts])

@@ -13,6 +13,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-verify.sh
@@ -261,7 +263,7 @@ stage1_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
         return 1
     fi
-    if ! ld "$obj" -o "$bin" -static \
+    if ! ld "$obj" -o "$bin" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[no-rust-stage0] stage1 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true

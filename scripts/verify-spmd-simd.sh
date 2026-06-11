@@ -30,6 +30,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -134,7 +136,7 @@ run_spmd_mode() {
             mode_code=1
             return
         fi
-        if ! ld "$_obj" -o "$_bin" -static \
+        if ! ld "$_obj" -o "$_bin" -static -e "$(linux_entry_symbol_for_asm "$_asm")" \
             >> "$mode_out" 2>> "$mode_err"; then
             mode_code=1
             return

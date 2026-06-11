@@ -5075,7 +5075,7 @@ declarations.
 - Return value: `%rax` (integer), `%xmm0` (float).
 - Callers reserve 32 bytes of shadow space before each call.
 - The CRT owns process startup; Windows output emits `main` and no Linux
-  `_start` wrapper.
+  `_tl_start` wrapper.
 
 ### 11.3 Data layout
 

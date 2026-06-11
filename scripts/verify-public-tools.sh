@@ -12,6 +12,7 @@ cd "$ROOT"
 # retry only a segfault-class exit (132/134/139), since public-tool cases may
 # legitimately exit non-zero (so retry-on-any-non-zero would be wrong here).
 . "$ROOT/scripts/lib-retry.sh"
+. "$ROOT/scripts/lib-linux-entry.sh"
 # Default 6 (not 3): this gate runs many CLI invocations, so the #1204 Windows
 # segfault can exhaust 3 attempts on one of them (observed on PR #1249:
 # inline-test-fail crashed 134/134/segfault); more headroom keeps the
@@ -241,7 +242,7 @@ build_linux_cli_tool() {
     assert_success
     assert_stdout_empty
     assert_stderr_empty
-    run_cmd "$_case-link" ld "$_obj" -o "$_output" -static
+    run_cmd "$_case-link" ld "$_obj" -o "$_output" -static -e "$(linux_entry_symbol_for_asm "$_asm")"
     assert_success
     assert_stdout_empty
     assert_stderr_empty

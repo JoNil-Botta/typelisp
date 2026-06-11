@@ -649,13 +649,13 @@
     (compiler-object-elf-image-supported? image)
     (compiler-object-symbol-list-contains?
       (struct-get image symbols)
-      "_start"
+      "_tl_start"
       (ObjectSymbolExport)
       (ObjectSymbolFunction))
     (> (compiler-object-elf-section-raw-size image (ObjectSectionText)) 0)))
 
 (define (source-tool-linux-direct-object-unavailable-message) : String
-  "linux direct object unavailable: object image lacks encoded .text or _start")
+  "linux direct object unavailable: object image lacks encoded .text or _tl_start")
 
 (define (source-tool-render-linkable-linux-elf-object
   [image : CompilerObjectImage]) : ResultSourceToolString
@@ -993,10 +993,14 @@
       (process-args-cons
         "-static"
         (process-args-cons
-          obj-path
+          "-e"
           (process-args-cons
-            "-o"
-            (process-args-cons bin-path (process-args-empty))))))
+            "_tl_start"
+            (process-args-cons
+              obj-path
+              (process-args-cons
+                "-o"
+                (process-args-cons bin-path (process-args-empty))))))))
     (process-command
       (source-tool-env-command-or-default
         "TYPELISP_LINUX_CC"

@@ -7,9 +7,9 @@
 ;; emits the operator instruction.
 ;;
 ;; #156 productizes that instruction sequence into a COMPLETE runnable `.s`:
-;; `emit-program` wraps `emit-expr`'s body in the same `main` + `_start` skeleton
+;; `emit-program` wraps `emit-expr`'s body in the same `main` + `_tl_start` skeleton
 ;; the legacy backend emitted. The body leaves the computed value in %rax, `main`
-;; returns it, and `_start` exits with that value - so the printed `.s`, when
+;; returns it, and `_tl_start` exits with that value - so the printed `.s`, when
 ;; assembled (`as`) + linked (`ld`) + run, EXITS 7 for `(+ 1 (* 2 3))`.
 (import "../stdlib/io.tl")
 

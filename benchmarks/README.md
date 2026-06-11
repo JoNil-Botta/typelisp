@@ -71,19 +71,8 @@ timing, size, and ratio work:
 bash scripts/bench.sh --correctness
 ```
 
-For a quick local sanity check, `--smoke` builds and runs a single small
-benchmark (`arith_loop` by default; override with `BENCH_FILTER`) and asserts
-the TypeLisp and C binaries agree on observable output, also skipping all
-timing:
-
-```sh
-bash scripts/bench.sh --smoke
-```
-
-The `.github/workflows/bench-smoke.yml` workflow still runs the single-benchmark
-smoke on Linux, manually (`workflow_dispatch`) or nightly (#1099). The required
-CI gate is `scripts/ci-verify.sh` running `scripts/bench.sh --correctness`
-(#2439).
+The required CI gate is `scripts/ci-verify.sh` running
+`scripts/bench.sh --correctness` (#2439).
 
 Requirements:
 

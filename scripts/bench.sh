@@ -29,18 +29,11 @@ RUNS=${BENCH_RUNS:-5}
 CLANG_OPT=${BENCH_CLANG_OPT:--O2}
 FILTER=${BENCH_FILTER:-}
 
-# `--smoke` (#1099): build + run ONE benchmark and assert TypeLisp and C agree
-# on observable output, then stop -- no timing runs. This is a fast correctness
-# smoke for CI (a few seconds), NOT a performance gate. Defaults to the small
-# `arith_loop` benchmark when no BENCH_FILTER is set.
-#
 # `--correctness` (#2439): build + run EVERY comparison benchmark and assert
 # TypeLisp and C agree on observable output, with no timing, size, or ratio work.
-SMOKE=0
 CORRECTNESS=0
 for _arg in "$@"; do
     case "$_arg" in
-        --smoke) SMOKE=1 ;;
         --correctness) CORRECTNESS=1 ;;
         *)
             echo "unknown benchmark harness argument: $_arg" >&2
@@ -48,13 +41,6 @@ for _arg in "$@"; do
             ;;
     esac
 done
-if [ "$SMOKE" = 1 ] && [ "$CORRECTNESS" = 1 ]; then
-    echo "--smoke and --correctness are mutually exclusive" >&2
-    exit 2
-fi
-if [ "$SMOKE" = 1 ] && [ -z "$FILTER" ]; then
-    FILTER=arith_loop
-fi
 
 HOST_OS=linux
 EXE=
@@ -174,9 +160,6 @@ ratio() { awk "BEGIN { if ($2 == 0) { print \"n/a\" } else { printf \"%.2fx\", $
 
 found=0
 MODE=timing
-if [ "$SMOKE" = 1 ]; then
-    MODE=smoke
-fi
 if [ "$CORRECTNESS" = 1 ]; then
     MODE=correctness
 fi
@@ -209,7 +192,7 @@ for bench_tl in benchmarks/*/bench.tl; do
     tl_asm="$WORKDIR/$name.tl.s"
     c_bin="$WORKDIR/$name.c$EXE"
 
-    if [ "$SMOKE" = 1 ] || [ "$CORRECTNESS" = 1 ]; then
+    if [ "$CORRECTNESS" = 1 ]; then
         # Timing-free modes only build runnable artifacts and compare outputs.
         run_build "$WORKDIR/$name.tlbuild" "$COMPILER" build "$bench_tl" -o "$tl_bin" $TARGET_ARGS
         run_build "$WORKDIR/$name.cbuild" clang $CLANG_OPT "$baseline_c" -o "$c_bin"
@@ -228,13 +211,6 @@ for bench_tl in benchmarks/*/bench.tl; do
     if [ "$tl_code" != "$c_code" ]; then
         echo "FAIL: $name observable output differs (typelisp exit $tl_code, C exit $c_code)" >&2
         exit 1
-    fi
-
-    # Smoke mode: the build + correctness gate above is the whole check. Report
-    # and stop before any timing so CI stays fast and timing-noise-free.
-    if [ "$SMOKE" = 1 ]; then
-        printf 'smoke OK: %s -- typelisp and C agree on exit %s (build+run only, no timing)\n' "$name" "$tl_code"
-        break
     fi
 
     if [ "$CORRECTNESS" = 1 ]; then

@@ -7,8 +7,7 @@ name: Heavy instruction counts
 on:
   workflow_dispatch:
   schedule:
-    # Nightly, after the lighter benchmark smoke. Scheduled runs only fire on
-    # the default branch.
+    # Nightly. Scheduled runs only fire on the default branch.
     - cron: '30 6 * * *'
 
 permissions:

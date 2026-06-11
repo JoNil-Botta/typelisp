@@ -793,6 +793,22 @@
           (tc-generated-decl-diag meta (tc-decl-diag template message)))]
       [_ (tc-diag-at-start message)])))
 
+(define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
+  (if (tc-located-error? message)
+    message
+    (match expr
+      [(AstExprSpanned _ span) (tc-located-error span message)]
+      [_ message])))
+
+(define (tc-expect-at-expr
+  [expr : AstExpr]
+  [actual : AstType]
+  [expected : AstType]
+  [message : String]) : ResultTcUnit
+  (if (tc-type-compatible? expected actual)
+    OkTcUnit
+    (ErrTcUnit (tc-locate-error-at-expr expr message))))
+
 (define (tc-empty-env) : TcTypeEnv
   TcTypeNil)
 
@@ -839,8 +855,40 @@
 (define (tc-unsafe-decl-marker-name [name : String]) : String
   (string-append " __tl_unsafe_decl:" name))
 
-(define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
+;; --- marker name-id memos -----------------------------------------------------
+;; The Superluminal stage2 self-compile profile shows ~25% of CPU re-interning
+;; marker names: every env walk re-hashes constant names like
+;; "__tl_default_boundary" per node, and every unsafe-binding query allocates
+;; " __tl_unsafe_decl:<name>" and re-interns it. These memos are gated on
+;; (intern-generation) like the tc-agg caches. Each id is still interned lazily
+;; at its FIRST use per generation, so intern insertion order -- and therefore
+;; every assigned id and the emitted assembly -- exactly matches the uncached
+;; code.
+;; Capacities track (intern-capacity); ids at or above it fall back to the
+;; uncached path. Generation slots store (intern-generation)+1 so the
+;; zero-initialized arrays are invalid for every generation.
+(define tc-unsafe-decl-marker-id-cache : (Array i64)
+  (make-array i64 262144))
+
+(define tc-unsafe-decl-marker-id-cache-gens : (Array i64)
+  (make-array i64 262144))
+
+(define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
   (tc-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
+
+(define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
+  (if (>= name-id 262144)
+    (tc-unsafe-decl-marker-id-uncached name-id)
+    (let
+      [gen : i64 (+ (intern-generation) 1)]
+      (if (= (array-ref tc-unsafe-decl-marker-id-cache-gens name-id) gen)
+        (array-ref tc-unsafe-decl-marker-id-cache name-id)
+        (let
+          [id : i64 (tc-unsafe-decl-marker-id-uncached name-id)]
+          (begin
+            (array-set! tc-unsafe-decl-marker-id-cache name-id id)
+            (array-set! tc-unsafe-decl-marker-id-cache-gens name-id gen)
+            id))))))
 
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind-unsafe-id env (tc-name-id name) ty))
@@ -934,7 +982,7 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind name-id _ rest)
-      (if (= name-id (tc-name-id (tc-default-boundary-name)))
+      (if (= name-id (tc-default-boundary-id))
         0
         (+ 1 (tc-env-default-shadow-count (box-get rest))))]
     [(TcTypeCache _ _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
@@ -943,7 +991,7 @@
   (match env
     [(TcTypeNil) shadows]
     [(TcTypeBind name-id _ rest)
-      (if (= name-id (tc-name-id (tc-default-boundary-name)))
+      (if (= name-id (tc-default-boundary-id))
         shadows
         (tc-env-default-shadow-fill
           (box-get rest)
@@ -1094,17 +1142,101 @@
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
 
+;; Generation-checked id memo for one constant marker name; see the marker
+;; name-id memo comment above tc-unsafe-decl-marker-id.
+(define tc-default-boundary-id-cache : i64
+  -1)
+
+(define tc-default-boundary-id-cache-generation : i64
+  -1)
+
+(define (tc-default-boundary-id) : i64
+  (if (= tc-default-boundary-id-cache-generation (intern-generation))
+    tc-default-boundary-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-default-boundary-name))]
+      (begin
+        (set! tc-default-boundary-id-cache id)
+        (set! tc-default-boundary-id-cache-generation (intern-generation))
+        id))))
+
 (define (tc-region-marker-name) : String
   "__tl_active_region")
+
+(define tc-region-marker-id-cache : i64
+  -1)
+
+(define tc-region-marker-id-cache-generation : i64
+  -1)
+
+(define (tc-region-marker-id) : i64
+  (if (= tc-region-marker-id-cache-generation (intern-generation))
+    tc-region-marker-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-region-marker-name))]
+      (begin
+        (set! tc-region-marker-id-cache id)
+        (set! tc-region-marker-id-cache-generation (intern-generation))
+        id))))
 
 (define (tc-cleanup-owner-marker-name) : String
   " __tl_cleanup_owner")
 
+(define tc-cleanup-owner-marker-id-cache : i64
+  -1)
+
+(define tc-cleanup-owner-marker-id-cache-generation : i64
+  -1)
+
+(define (tc-cleanup-owner-marker-id) : i64
+  (if (= tc-cleanup-owner-marker-id-cache-generation (intern-generation))
+    tc-cleanup-owner-marker-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-cleanup-owner-marker-name))]
+      (begin
+        (set! tc-cleanup-owner-marker-id-cache id)
+        (set! tc-cleanup-owner-marker-id-cache-generation (intern-generation))
+        id))))
+
 (define (tc-return-type-name) : String
   "__tl_return_type")
 
+(define tc-return-type-id-cache : i64
+  -1)
+
+(define tc-return-type-id-cache-generation : i64
+  -1)
+
+(define (tc-return-type-id) : i64
+  (if (= tc-return-type-id-cache-generation (intern-generation))
+    tc-return-type-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-return-type-name))]
+      (begin
+        (set! tc-return-type-id-cache id)
+        (set! tc-return-type-id-cache-generation (intern-generation))
+        id))))
+
 (define (tc-hygiene-global-boundary-name) : String
   "__tl_hygiene_global_boundary")
+
+(define tc-hygiene-global-boundary-id-cache : i64
+  -1)
+
+(define tc-hygiene-global-boundary-id-cache-generation : i64
+  -1)
+
+(define (tc-hygiene-global-boundary-id) : i64
+  (if (= tc-hygiene-global-boundary-id-cache-generation (intern-generation))
+    tc-hygiene-global-boundary-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-hygiene-global-boundary-name))]
+      (begin
+        (set! tc-hygiene-global-boundary-id-cache id)
+        (set!
+          tc-hygiene-global-boundary-id-cache-generation
+          (intern-generation))
+        id))))
 
 (define (tc-hygiene-template-prefix) : String
   "__tl_macro_template$")
@@ -1248,6 +1380,22 @@
 (define (tc-unsafe-marker-name) : String
   " __tl_unsafe_context")
 
+(define tc-unsafe-marker-id-cache : i64
+  -1)
+
+(define tc-unsafe-marker-id-cache-generation : i64
+  -1)
+
+(define (tc-unsafe-marker-id) : i64
+  (if (= tc-unsafe-marker-id-cache-generation (intern-generation))
+    tc-unsafe-marker-id-cache
+    (let
+      [id : i64 (tc-name-id (tc-unsafe-marker-name))]
+      (begin
+        (set! tc-unsafe-marker-id-cache id)
+        (set! tc-unsafe-marker-id-cache-generation (intern-generation))
+        id))))
+
 (define (tc-enter-unsafe [env : TcTypeEnv]) : TcTypeEnv
   (tc-bind env (tc-unsafe-marker-name) (AstTyUnit)))
 
@@ -1256,7 +1404,7 @@
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key _ rest)
-      (if (= key (tc-name-id (tc-unsafe-marker-name)))
+      (if (= key (tc-unsafe-marker-id))
         true
         (tc-in-unsafe-scan? (box-get rest)))]))
 
@@ -1275,7 +1423,7 @@
     [(TcTypeCache _ _ _ _ _)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
     [(TcTypeBind key ty rest)
-      (if (= key (tc-name-id (tc-return-type-name)))
+      (if (= key (tc-return-type-id))
         (OkTcType ty)
         (tc-current-return-type-scan (box-get rest)))]))
 
@@ -1557,7 +1705,7 @@
     [(TcTypeCache _ _ _ _ rest)
       (tc-lookup-hygiene-global-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
-      (if (= key (tc-name-id (tc-hygiene-global-boundary-name)))
+      (if (= key (tc-hygiene-global-boundary-id))
         (tc-lookup-id (box-get rest) name-id)
         (tc-lookup-hygiene-global-scan root (box-get rest) name-id))]))
 
@@ -1650,7 +1798,7 @@
     [(TcTypeCache _ _ _ _ rest)
       (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
-      (if (= key (tc-name-id (tc-hygiene-global-boundary-name)))
+      (if (= key (tc-hygiene-global-boundary-id))
         (tc-binding-unsafe-id? (box-get rest) name-id)
         (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id))]))
 
@@ -1665,7 +1813,7 @@
     [(TcTypeNil) (TcNoString)]
     [(TcTypeCache _ _ _ _ _) (TcNoString)]
     [(TcTypeBind key ty rest)
-      (if (= key (tc-name-id (tc-region-marker-name)))
+      (if (= key (tc-region-marker-id))
         (match ty
           [(AstTyVar region) (TcSomeString (intern-str region))]
           [_ (tc-active-region-scan (box-get rest))])
@@ -1699,14 +1847,14 @@
   [key : i64]
   [ty : AstType]
   [name : String]) : bool
-  (if (= key (tc-name-id (tc-cleanup-owner-marker-name)))
+  (if (= key (tc-cleanup-owner-marker-id))
     (match ty
       [(AstTyVar owner) (string-eq (intern-str owner) name)]
       [_ false])
     false))
 
 (define (tc-cleanup-owner-marker-entry? [key : i64] [ty : AstType]) : bool
-  (if (= key (tc-name-id (tc-cleanup-owner-marker-name)))
+  (if (= key (tc-cleanup-owner-marker-id))
     (match ty
       [(AstTyVar _) true]
       [_ false])
@@ -1741,7 +1889,7 @@
       (let
         [owners : TcStringList
           (tc-active-cleanup-owners-scan root (box-get rest))]
-        (if (= key (tc-name-id (tc-cleanup-owner-marker-name)))
+        (if (= key (tc-cleanup-owner-marker-id))
           (match ty
             [(AstTyVar owner)
               (let
@@ -1911,7 +2059,7 @@
   [lifetime : String]) : bool
   (if (= key (tc-name-id lifetime))
     true
-    (if (= key (tc-name-id (tc-region-marker-name)))
+    (if (= key (tc-region-marker-id))
       (match ty
         [(AstTyVar region) (string-eq (intern-str region) lifetime)]
         [_ false])
@@ -2509,7 +2657,7 @@
       [(TcTypeNil) false]
       [(TcTypeCache _ _ _ _ _) false]
       [(TcTypeBind key ty rest)
-        (if (= key (tc-name-id (tc-region-marker-name)))
+        (if (= key (tc-region-marker-id))
           (match ty
             [(AstTyVar region)
               (if (string-eq (intern-str region) value-region)
@@ -4332,7 +4480,7 @@
     [(TcTypeCache _ _ _ _ rest)
       (tc-ptr-addr-of-local-lookup (box-get rest) name)]
     [(TcTypeBind key ty rest)
-      (if (= key (tc-name-id (tc-hygiene-global-boundary-name)))
+      (if (= key (tc-hygiene-global-boundary-id))
         (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")
         (if (= key (tc-name-id name))
           (OkTcType ty)
@@ -6166,7 +6314,7 @@
     [(TcTypeBind key _ rest)
       (if (= key (tc-name-id name))
         false
-        (if (= key (tc-name-id (tc-default-boundary-name)))
+        (if (= key (tc-default-boundary-id))
           true
           (tc-default-builtin-unshadowed-scan? (box-get rest) name)))]))
 
@@ -6619,7 +6767,8 @@
                         rest-params
                         lifetimes
                         next-subst)]
-                    [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)])]
+                    [(ErrTcLifetimeSubst message)
+                      (ErrTcLifetimeSubst (tc-locate-error-at-expr arg message))])]
                 [(ErrTcType message) (ErrTcLifetimeSubst message)]))]
           [(AstTypeNil) (ErrTcLifetimeSubst "typecheck: arity mismatch")]))]))
 
@@ -6912,7 +7061,8 @@
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr-with-expected-or-actual ctx env arg want)
                 [(OkTcType got)
-                  (match (tc-expect
+                  (match (tc-expect-at-expr
+                    arg
                     got
                     want
                     "typecheck: argument type mismatch")
@@ -6996,7 +7146,8 @@
               [rest-params : AstTypeList (box-get rest-params)]
               (match (tc-expr-with-expected-or-actual ctx env arg want)
                 [(OkTcType got)
-                  (match (tc-expect
+                  (match (tc-expect-at-expr
+                    arg
                     got
                     want
                     "typecheck: argument type mismatch")
@@ -7123,7 +7274,7 @@
     [(OkTcType arg-ty)
       (if (tc-string-handle-type? arg-ty)
         OkTcUnit
-        (ErrTcUnit message))]
+        (ErrTcUnit (tc-locate-error-at-expr arg message)))]
     [(ErrTcType message) (ErrTcUnit message)]))
 
 (define (tc-check-exact-arg
@@ -7133,7 +7284,7 @@
   [want : AstType]
   [message : String]) : ResultTcUnit
   (match (tc-expr ctx env arg)
-    [(OkTcType arg-ty) (tc-expect arg-ty want message)]
+    [(OkTcType arg-ty) (tc-expect-at-expr arg arg-ty want message)]
     [(ErrTcType message) (ErrTcUnit message)]))
 
 (define (tc-one-string-handle-builtin-call
@@ -7715,9 +7866,9 @@
     [(TcTypeCache _ _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (or
-        (= key (tc-name-id (tc-region-marker-name)))
+        (= key (tc-region-marker-id))
         (or
-          (= key (tc-name-id (tc-default-boundary-name)))
+          (= key (tc-default-boundary-id))
           (tc-cleanup-owner-marker-entry? key ty)))
         (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
         (if (and
@@ -10573,9 +10724,9 @@
         [name : String (intern-str key)]
         (core/cond
           (or
-            (= key (tc-name-id (tc-region-marker-name)))
+            (= key (tc-region-marker-id))
             (or
-              (= key (tc-name-id (tc-default-boundary-name)))
+              (= key (tc-default-boundary-id))
               (tc-cleanup-owner-marker-entry? key ty)))
           (tc-check-lambda-region-captures-scan-root
             root
@@ -16268,9 +16419,9 @@
         [name : String (intern-str key)]
         (core/cond
           (or
-            (= key (tc-name-id (tc-region-marker-name)))
+            (= key (tc-region-marker-id))
             (or
-              (= key (tc-name-id (tc-default-boundary-name)))
+              (= key (tc-default-boundary-id))
               (tc-cleanup-owner-marker-entry? key ty)))
           (tc-move-check-lambda-owner-captures-scan
             ctx
@@ -19260,10 +19411,16 @@
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr call-expr (macro-private-message name)))]
         [(NoneI64)
-          (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr
-              call-expr
-              (macro-missing-export-message name)))])]))
+          (match (compiler-symbols-lookup-value-in-module-id
+            (tc-context-symbols ctx)
+            (intern target-module)
+            (intern base))
+            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
+            [(NoneI64)
+              (ErrMacroCallDecl
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  (macro-missing-export-message name)))])])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -20257,12 +20414,12 @@
   [call-expr : AstExpr]) : bool
   (match (macro-call-callee-name func)
     [(TcSomeString name)
-      ;; A QUALIFIED call (`mod/x`) always resolves through the qualified path,
-      ;; which returns a macro decl OR a diagnostic (private/missing-export) --
-      ;; never "not a macro" -- so it must never be pre-filtered out. An
-      ;; UNQUALIFIED call only needs the precise (allocating) resolution when its
-      ;; name matches a declared macro or `when`/`unless`; otherwise it is a plain
-      ;; function call that the macro pass leaves untouched, so skip it cheaply.
+      ;; A QUALIFIED call (`mod/x`) may be an imported macro, a macro diagnostic,
+      ;; or a real value call that should fall through to ordinary typechecking.
+      ;; It still needs precise resolution. An UNQUALIFIED call only needs the
+      ;; precise (allocating) resolution when its name matches a declared macro or
+      ;; `when`/`unless`; otherwise it is a plain function call that the macro
+      ;; pass leaves untouched, so skip it cheaply.
       (if (or
         (tc-name-qualified? name)
         (tc-string-list-contains macro-expand-macro-names name))

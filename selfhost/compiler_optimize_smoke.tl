@@ -22,6 +22,127 @@
 ;; only when every self-test passes.
 (import "compiler_optimize.tl")
 
+(define (smoke-bounds-object-length-check-fragment
+  [ptr-var : i64]
+  [length-var : i64]
+  [cast-var : i64]
+  [object : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [slot-ty : AstType]
+  [index : CompilerIrValue]
+  [label : String]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrGep ptr-var object offset slot-ty)
+    (compiler-ir-instr-cons
+      (IrInstrLoad length-var (IrValueVar ptr-var) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrCast cast-var (IrValueVar length-var) (AstTyI64) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrBoundsCheck index (IrValueVar cast-var) label)
+          tail)))))
+
+(define (smoke-bounds-object-pair
+  [second-object : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [slot-ty : AstType]) : CompilerIrInstrList
+  (smoke-bounds-object-length-check-fragment
+    10
+    11
+    12
+    (IrValueVar 1)
+    offset
+    slot-ty
+    (IrValueVar 0)
+    "bounds_ok.0"
+    (smoke-bounds-object-length-check-fragment
+      20
+      21
+      22
+      second-object
+      offset
+      slot-ty
+      (IrValueVar 0)
+      "bounds_ok.1"
+      (IrInstrNil))))
+
+(define (smoke-bounds-object-call-barrier) : CompilerIrInstrList
+  (smoke-bounds-object-length-check-fragment
+    10
+    11
+    12
+    (IrValueVar 1)
+    (IrValueI64 1)
+    (AstTyI64)
+    (IrValueVar 0)
+    "bounds_ok.0"
+    (compiler-ir-instr-cons
+      (IrInstrCall 30 "touch" (IrCallArgsNil) (AstTyUnit))
+      (smoke-bounds-object-length-check-fragment
+        20
+        21
+        22
+        (IrValueVar 1)
+        (IrValueI64 1)
+        (AstTyI64)
+        (IrValueVar 0)
+        "bounds_ok.1"
+        (IrInstrNil)))))
+
+(define (smoke-bounds-object-store-barrier) : CompilerIrInstrList
+  (smoke-bounds-object-length-check-fragment
+    10
+    11
+    12
+    (IrValueVar 1)
+    (IrValueI64 1)
+    (AstTyI64)
+    (IrValueVar 0)
+    "bounds_ok.0"
+    (compiler-ir-instr-cons
+      (IrInstrStorePtr (IrValueVar 99) (IrValueI64 7) (AstTyI64))
+      (smoke-bounds-object-length-check-fragment
+        20
+        21
+        22
+        (IrValueVar 1)
+        (IrValueI64 1)
+        (AstTyI64)
+        (IrValueVar 0)
+        "bounds_ok.1"
+        (IrInstrNil)))))
+
+(define (smoke-object-bounds-self-test) : i64
+  (let
+    [object-array : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (smoke-bounds-object-pair (IrValueVar 1) (IrValueI64 1) (AstTyI64)))]
+    [object-string : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (smoke-bounds-object-pair (IrValueVar 1) (IrValueI64 8) (AstTyU8)))]
+    [object-mismatch : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (smoke-bounds-object-pair (IrValueVar 2) (IrValueI64 1) (AstTyI64)))]
+    [object-call : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-call-barrier))]
+    [object-store : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-store-barrier))]
+    (core/cond
+      (not (= (opt-count-bounds-instrs object-array) 1))
+      1
+      (not (= (opt-count-bounds-instrs object-string) 1))
+      2
+      (not (= (opt-count-bounds-instrs object-mismatch) 2))
+      3
+      (not (= (opt-count-bounds-instrs object-call) 2))
+      4
+      (not (= (opt-count-bounds-instrs object-store) 2))
+      5
+      42)))
+
 (define (main) : i64
   (begin
     (unless (= (compiler-optimize-self-test) 42) (return 1))
@@ -32,6 +153,7 @@
     (unless (= (compiler-optimize-cse-self-test) 42) (return 1))
     (unless (= (compiler-optimize-copy-self-test) 42) (return 1))
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))
+    (unless (= (smoke-object-bounds-self-test) 42) (return 1))
     (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cfg-self-test) 42) (return 1))

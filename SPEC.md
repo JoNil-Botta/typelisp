@@ -2038,13 +2038,13 @@ Example:
   letters, digits, `-`, and `_`; duplicate aliases are rejected.
 - `entry` is resolved relative to the manifest directory.
 - Relative dependency paths are resolved relative to the manifest directory;
-  absolute dependency paths are used as written. GitHub remote entries fetch
-  with `git` into `target/typelisp/git-deps/<alias>` below the declaring
-  package root, then checkout the requested `rev`, `tag`, or `branch` before
-  the graph consumes the dependency. A pre-existing fetched root with
-  `typelisp.pkg` is used as-is unless it has a `.git` directory, in which case
-  the checkout is refreshed. Build-time lockfile replay and update-policy
-  behavior is not yet specified.
+  absolute dependency paths are used as written. GitHub remote entries use
+  `typelisp.lock` and the package cache before falling back to `git`; resolved
+  commits are written as deterministic lock entries. Remote dependencies are
+  consumed through either the package cache or the legacy
+  `target/typelisp/git-deps/<alias>` checkout root. A pre-existing legacy
+  fetched root with `typelisp.pkg` is used as-is unless it has a `.git`
+  directory, in which case the checkout is refreshed.
 - `typelisp.lock` is a deterministic v1 S-expression lockfile for resolved
   remote package pins:
 
@@ -2063,20 +2063,27 @@ Example:
   kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. Duplicate
   aliases, duplicate fields, missing required fields, malformed entries,
   non-string values, and unknown versions are rejected. Emitters write stable,
-  human-readable entries sorted by alias. The lockfile helper only parses and
-  emits this data model; it does not fetch remotes, resolve pins, replay locked
-  builds, or update the file during package builds.
+  human-readable entries sorted by alias. Package builds load `typelisp.lock`
+  from the declaring package root. A lock entry is replayed only when its alias,
+  URL, pin kind, and pin value match the manifest dependency; replay converts
+  the dependency to the recorded exact `rev` commit before fetching. Missing or
+  stale entries are resolved from the manifest pin and included in the next
+  emitted lockfile. The build writes a deterministic lockfile whenever the
+  package has remote dependencies or a prior lockfile exists. Explicit locked
+  and update/refresh policy flags are not implemented yet (#2665).
 - Remote package cache helpers use a deterministic v1 root below the package
   root at `target/typelisp/cache/packages/v1`. Entry paths are derived from the
   normalized remote URL and an exact `rev` commit pin; `tag` and `branch` pins
   must be resolved before key construction. A cache entry is reusable only when
   its metadata file matches the URL/commit key and its completion marker is
-  present and valid. Missing markers, missing metadata, and metadata mismatches
-  are partial/corrupt hits, not reusable hits. The helper layer plans staging
-  and final rename paths but does not fetch remotes or update lockfiles.
-  Finalization delegates to the stdlib rename helper; unsupported or
-  target-defined directory rename behavior leaves the staging attempt
-  non-reusable.
+  present and valid and the cached root contains `typelisp.pkg`. Complete cache
+  entries are reused without invoking `git`. Missing markers, missing metadata,
+  metadata mismatches, and missing package manifests are partial/corrupt hits,
+  not reusable hits; package builds refetch them through a staging directory and
+  preserve conflicting corrupt entries with a `.corrupt.N` suffix before
+  replacement. The helper layer owns cache key/path/state/marker/finalize
+  primitives; `build_cli_core.tl` owns pin resolution, fetching, lockfile
+  updates, and package build integration.
 - Local dependency manifests are loaded into a normalized DAG keyed by manifest
   path before build execution. Transitive dependency packages build once per
   root build invocation, diamond graphs de-duplicate the common archive,
@@ -2101,10 +2108,11 @@ Example:
   Windows. Assembly and object side artifacts use the same profile directory.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
-- This first package layer has no registry, semantic-version solving,
-  implicit preludes, lockfile replay, workspace model, or dynamic/shared
-  library output. Namespace isolation and qualified symbol access are specified
-  by the selfhost module model in section 4.4, not by package resolution itself.
+- This first package layer has no registry, semantic-version solving, implicit
+  preludes, workspace model, or dynamic/shared library output. Registry,
+  version-solving, and workspace direction is tracked by #2666. Namespace
+  isolation and qualified symbol access are specified by the selfhost module
+  model in section 4.4, not by package resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
@@ -4402,7 +4410,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
-| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, lockfile parse/emit, and a deterministic package cache; registry, version solving, and build-time lockfile replay remain future work (#2549) |
+| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, build-time `typelisp.lock` replay, deterministic lockfile rewrite, and package-cache reuse/refetch; explicit lock policy flags (#2665) and registry/version/workspace direction (#2666) remain future work |
 | LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 
 ---

@@ -1,8 +1,10 @@
 ;; package_cache_core.tl - Deterministic package cache layout helpers (#2002).
 ;;
 ;; This module plans local cache entries for normalized remote package
-;; dependencies. It does not fetch, resolve tag/branch pins, update lockfiles,
-;; or alter package build behavior; #1157 owns materializing fetched sources.
+;; dependencies and classifies existing entries as reusable, missing, or
+;; partial/corrupt. It does not fetch, resolve tag/branch pins, or update
+;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
+;; cache reuse/refetch and lockfile integration.
 (import "../stdlib/core_macros.tl" module stdlib.core-macros as core)
 
 (import "../stdlib/fs.tl")

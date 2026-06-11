@@ -148,9 +148,27 @@
   (OkLowerArgs LowerState CompilerIrValueList)
   (ErrLowerArgs CompilerDiagnostic))
 
+(defenum LowerCAbiEightbyteClass
+  (LowerCAbiEightbyteEmpty)
+  (LowerCAbiEightbyteInteger)
+  (LowerCAbiEightbyteSse AstType i64)
+  (LowerCAbiEightbyteUnsupported))
+
+(defenum LowerCAbiSysvSlots
+  (LowerCAbiSysvSlots LowerCAbiEightbyteClass LowerCAbiEightbyteClass)
+  (LowerCAbiSysvSlotsUnsupported))
+
+(defenum LowerCAbiSlot
+  (LowerCAbiSlot AstType i64))
+
+(defenum LowerCAbiSlotList
+  (LowerCAbiSlotNil)
+  (LowerCAbiSlotCons LowerCAbiSlot (Box LowerCAbiSlotList)))
+
 (defenum LowerCAbiAggregate
   (LowerCAbiNoAggregate)
   (LowerCAbiIntegerAggregate AstType i64)
+  (LowerCAbiRegisterAggregate LowerCAbiSlotList i64)
   (LowerCAbiByRefAggregate i64)
   (LowerCAbiSretAggregate i64)
   (LowerCAbiUnsupportedAggregate String))
@@ -13169,7 +13187,7 @@
 (define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
     "flat scalar structs of size 1, 2, 4, or 8 bytes"
-    "integer-only structs up to 8 bytes"))
+    "System V register-class structs up to 16 bytes"))
 
 (define (lower-c-abi-unsupported-message
   [mode : CompilerLowerMode]
@@ -13184,6 +13202,207 @@
           "; this slice supports "
           (lower-c-abi-aggregate-size-message mode))))))
 
+(define (lower-c-abi-two-register-return-message [ty : AstType]) : String
+  (string-append
+    "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
+    (string-append (tc-type-render ty) "; see #1995")))
+
+(define (lower-c-abi-sysv-slot-size [size : i64] [slot-index : i64]) : i64
+  (if (= slot-index 0)
+    (if (> size 8)
+      8
+      size)
+    (- size 8)))
+
+(define (lower-c-abi-sysv-merge-integer [current : LowerCAbiEightbyteClass]) : LowerCAbiEightbyteClass
+  (match current
+    [(LowerCAbiEightbyteUnsupported) (LowerCAbiEightbyteUnsupported)]
+    [_ (LowerCAbiEightbyteInteger)]))
+
+(define (lower-c-abi-sysv-merge-sse
+  [current : LowerCAbiEightbyteClass]
+  [ty : AstType]
+  [offset : i64]) : LowerCAbiEightbyteClass
+  (match current
+    [(LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteSse ty offset)]
+    [(LowerCAbiEightbyteInteger) (LowerCAbiEightbyteInteger)]
+    [(LowerCAbiEightbyteSse _ _) (LowerCAbiEightbyteUnsupported)]
+    [(LowerCAbiEightbyteUnsupported) (LowerCAbiEightbyteUnsupported)]))
+
+(define (lower-c-abi-sysv-mark-integer-slot
+  [slots : LowerCAbiSysvSlots]
+  [slot-index : i64]) : LowerCAbiSysvSlots
+  (match slots
+    [(LowerCAbiSysvSlots first second)
+      (core/cond
+        (= slot-index 0)
+        (LowerCAbiSysvSlots (lower-c-abi-sysv-merge-integer first) second)
+        (= slot-index 1)
+        (LowerCAbiSysvSlots first (lower-c-abi-sysv-merge-integer second))
+        (LowerCAbiSysvSlotsUnsupported))]
+    [(LowerCAbiSysvSlotsUnsupported) (LowerCAbiSysvSlotsUnsupported)]))
+
+(define (lower-c-abi-sysv-mark-integer-range
+  [slots : LowerCAbiSysvSlots]
+  [offset : i64]
+  [size : i64]) : LowerCAbiSysvSlots
+  (if (<= size 0)
+    slots
+    (let
+      [first-slot : i64 (/ offset 8)]
+      [last-slot : i64 (/ (+ offset (- size 1)) 8)]
+      (if (= first-slot last-slot)
+        (lower-c-abi-sysv-mark-integer-slot slots first-slot)
+        (lower-c-abi-sysv-mark-integer-slot
+          (lower-c-abi-sysv-mark-integer-slot slots first-slot)
+          last-slot)))))
+
+(define (lower-c-abi-sysv-mark-sse-slot
+  [slots : LowerCAbiSysvSlots]
+  [ty : AstType]
+  [offset : i64]) : LowerCAbiSysvSlots
+  (let
+    [slot-index : i64 (/ offset 8)]
+    (match slots
+      [(LowerCAbiSysvSlots first second)
+        (core/cond
+          (= slot-index 0)
+          (LowerCAbiSysvSlots
+            (lower-c-abi-sysv-merge-sse first ty offset)
+            second)
+          (= slot-index 1)
+          (LowerCAbiSysvSlots
+            first
+            (lower-c-abi-sysv-merge-sse second ty offset))
+          (LowerCAbiSysvSlotsUnsupported))]
+      [(LowerCAbiSysvSlotsUnsupported) (LowerCAbiSysvSlotsUnsupported)])))
+
+(define (lower-c-abi-sysv-classify-fields
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match fields
+    [(TcInlineFieldLayoutNil) slots]
+    [(TcInlineFieldLayoutCons field rest)
+      (lower-c-abi-sysv-classify-fields
+        ctx
+        (box-get rest)
+        base-offset
+        (lower-c-abi-sysv-classify-type
+          ctx
+          (tc-inline-field-layout-type field)
+          (+ base-offset (tc-inline-field-layout-offset field))
+          slots))]))
+
+(define (lower-c-abi-sysv-classify-struct-name
+  [ctx : TcContext]
+  [name : String]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match (tc-inline-aggregate-layout-for ctx name)
+    [(OkTcInlineAggregateLayout layout)
+      (match layout
+        [(TcInlineStructLayout _ _ fields)
+          (lower-c-abi-sysv-classify-fields ctx fields base-offset slots)]
+        [(TcInlineEnumLayout _ _ _) (LowerCAbiSysvSlotsUnsupported)])]
+    [(ErrTcInlineAggregateLayout _) (LowerCAbiSysvSlotsUnsupported)]))
+
+(define (lower-c-abi-sysv-classify-type
+  [ctx : TcContext]
+  [ty : AstType]
+  [offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyStruct name)
+        (lower-c-abi-sysv-classify-struct-name
+          ctx
+          (intern-str name)
+          offset
+          slots)]
+      [(AstTyStructArgs name _)
+        (lower-c-abi-sysv-classify-struct-name
+          ctx
+          (intern-str name)
+          offset
+          slots)]
+      [(AstTyF64) (lower-c-abi-sysv-mark-sse-slot slots (AstTyF64) offset)]
+      [(AstTyF32) (lower-c-abi-sysv-mark-sse-slot slots (AstTyF32) offset)]
+      [_
+        (if (lower-c-abi-integer-field-type? ctx resolved)
+          (lower-c-abi-sysv-mark-integer-range
+            slots
+            offset
+            (lower-type-size ctx resolved))
+          (LowerCAbiSysvSlotsUnsupported))])))
+
+(define (lower-c-abi-sysv-slot-from-class
+  [class : LowerCAbiEightbyteClass]
+  [size : i64]
+  [slot-index : i64]) : LowerCAbiSlot
+  (let
+    [slot-size : i64 (lower-c-abi-sysv-slot-size size slot-index)]
+    [slot-offset : i64 (* slot-index 8)]
+    (match class
+      [(LowerCAbiEightbyteSse ty offset) (LowerCAbiSlot ty offset)]
+      [_
+        (LowerCAbiSlot (lower-c-abi-integer-scalar-type slot-size) slot-offset)])))
+
+(define (lower-c-abi-sysv-register-aggregate
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [resolved : AstType]
+  [size : i64]
+  [fields : TcInlineFieldLayoutList]
+  [allow-return? : bool]) : LowerCAbiAggregate
+  (core/cond
+    (or (<= size 0) (> size 16))
+    (LowerCAbiUnsupportedAggregate
+      (lower-c-abi-unsupported-message mode resolved))
+    (and
+      (lower-c-abi-register-aggregate-size? mode size)
+      (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
+    (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
+    (match (lower-c-abi-sysv-classify-fields
+      ctx
+      fields
+      0
+      (LowerCAbiSysvSlots (LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteEmpty)))
+      [(LowerCAbiSysvSlots first second)
+        (match first
+          [(LowerCAbiEightbyteUnsupported)
+            (LowerCAbiUnsupportedAggregate
+              (lower-c-abi-unsupported-message mode resolved))]
+          [_
+            (match second
+              [(LowerCAbiEightbyteUnsupported)
+                (LowerCAbiUnsupportedAggregate
+                  (lower-c-abi-unsupported-message mode resolved))]
+              [_
+                (core/cond
+                  (and allow-return? (> size 8))
+                  (LowerCAbiUnsupportedAggregate
+                    (lower-c-abi-two-register-return-message resolved))
+                  (> size 8)
+                  (LowerCAbiRegisterAggregate
+                    (LowerCAbiSlotCons
+                      (lower-c-abi-sysv-slot-from-class first size 0)
+                      (box
+                        (LowerCAbiSlotCons
+                          (lower-c-abi-sysv-slot-from-class second size 1)
+                          (box (LowerCAbiSlotNil)))))
+                    size)
+                  (LowerCAbiRegisterAggregate
+                    (LowerCAbiSlotCons
+                      (lower-c-abi-sysv-slot-from-class first size 0)
+                      (box (LowerCAbiSlotNil)))
+                    size))])])]
+      [(LowerCAbiSysvSlotsUnsupported)
+        (LowerCAbiUnsupportedAggregate
+          (lower-c-abi-unsupported-message mode resolved))])))
+
 (define (lower-c-abi-aggregate-class-from-layout
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -13193,21 +13412,29 @@
   [allow-byref? : bool]) : LowerCAbiAggregate
   (match layout
     [(TcInlineStructLayout size _ fields)
-      (core/cond
-        (and
-          (lower-c-abi-register-aggregate-size? mode size)
-          (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
-        (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
-        (and allow-sret? (and (lower-mode-windows-c-abi? mode) (> size 8)))
-        (LowerCAbiSretAggregate size)
-        (and
-          allow-byref?
+      (if (lower-mode-windows-c-abi? mode)
+        (core/cond
           (and
-            (lower-mode-windows-c-abi? mode)
-            (not (lower-c-abi-register-aggregate-size? mode size))))
-        (LowerCAbiByRefAggregate size)
-        (LowerCAbiUnsupportedAggregate
-          (lower-c-abi-unsupported-message mode resolved)))]
+            (lower-c-abi-register-aggregate-size? mode size)
+            (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
+          (LowerCAbiIntegerAggregate
+            (lower-c-abi-integer-scalar-type size)
+            size)
+          (and allow-sret? (> size 8))
+          (LowerCAbiSretAggregate size)
+          (and
+            allow-byref?
+            (not (lower-c-abi-register-aggregate-size? mode size)))
+          (LowerCAbiByRefAggregate size)
+          (LowerCAbiUnsupportedAggregate
+            (lower-c-abi-unsupported-message mode resolved)))
+        (lower-c-abi-sysv-register-aggregate
+          ctx
+          mode
+          resolved
+          size
+          fields
+          allow-sret?))]
     [(TcInlineEnumLayout _ _ _)
       (LowerCAbiUnsupportedAggregate
         (lower-c-abi-unsupported-message mode resolved))]))
@@ -13346,6 +13573,29 @@
                                       scalar-value
                                       rest-values))]
                                 [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+                        [(LowerCAbiRegisterAggregate slots _)
+                          (match (lower-c-abi-register-arg-slot-values
+                            ctx
+                            arg-state
+                            value
+                            arg-ty
+                            slots)
+                            [(OkLowerArgs slot-state slot-values)
+                              (match (lower-c-abi-args-as
+                                ctx
+                                slot-state
+                                env
+                                type-env
+                                rest-args
+                                rest-types)
+                                [(OkLowerArgs rest-state rest-values)
+                                  (OkLowerArgs
+                                    rest-state
+                                    (lower-value-list-append
+                                      slot-values
+                                      rest-values))]
+                                [(ErrLowerArgs message) (ErrLowerArgs message)])]
+                            [(ErrLowerArgs message) (ErrLowerArgs message)])]
                         [(LowerCAbiByRefAggregate _)
                           (match (lower-copy-inline-aggregate-to-heap
                             ctx
@@ -13385,6 +13635,45 @@
             (ErrLowerArgs
               (lower-diagnostic "lower: constructor arity mismatch"))]))]))
 
+(define (lower-c-abi-register-arg-slot-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [arg-ty : AstType]
+  [slots : LowerCAbiSlotList]) : ResultLowerArgs
+  (match slots
+    [(LowerCAbiSlotNil) (OkLowerArgs state IrValueNil)]
+    [(LowerCAbiSlotCons slot rest)
+      (match slot
+        [(LowerCAbiSlot scalar-ty offset)
+          (match (if (lower-type-register-resident? ctx arg-ty)
+            (if (lower-type-register-group? ctx arg-ty)
+              (lower-emit-word state value (/ offset 8) scalar-ty)
+              (LowerExpr state value scalar-ty))
+            (lower-load-at-offset state value offset scalar-ty))
+            [(LowerExpr slot-state slot-value _)
+              (match (lower-c-abi-register-arg-slot-values
+                ctx
+                slot-state
+                value
+                arg-ty
+                (box-get rest))
+                [(OkLowerArgs rest-state rest-values)
+                  (OkLowerArgs
+                    rest-state
+                    (compiler-ir-value-cons slot-value rest-values))]
+                [(ErrLowerArgs message) (ErrLowerArgs message)])])])]))
+
+(define (lower-value-list-append
+  [values : CompilerIrValueList]
+  [tail : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) tail]
+    [(IrValueCons head rest)
+      (compiler-ir-value-cons
+        head
+        (lower-value-list-append (box-get rest) tail))]))
+
 (define (lower-c-abi-finish-call-result
   [ctx : TcContext]
   [state : LowerState]
@@ -13413,6 +13702,39 @@
                 (lower-store-at-offset base-state base 0 call-value scalar-ty)
                 base
                 result-ty))]))]
+    [(LowerCAbiRegisterAggregate slots size)
+      (match slots
+        [(LowerCAbiSlotCons slot rest)
+          (match (box-get rest)
+            [(LowerCAbiSlotNil)
+              (match slot
+                [(LowerCAbiSlot scalar-ty offset)
+                  (if (lower-type-register-resident? ctx result-ty)
+                    (OkLowerExpr (LowerExpr state call-value result-ty))
+                    (match (lower-reserve-heap-storage state size result-ty)
+                      [(LowerExpr base-state base _)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-store-at-offset
+                              base-state
+                              base
+                              offset
+                              call-value
+                              scalar-ty)
+                            base
+                            result-ty))]))])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  (lower-c-abi-two-register-return-message result-ty)))])]
+        [(LowerCAbiSlotNil)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (lower-c-abi-unsupported-message
+                (lower-state-mode state)
+                result-ty)))])]
     [(LowerCAbiByRefAggregate _)
       (ErrLowerExpr
         (lower-diagnostic-at-expr
@@ -13484,6 +13806,41 @@
                   result-ty
                   (LowerCAbiIntegerAggregate scalar-ty size)
                   origin))])]
+        [(LowerCAbiRegisterAggregate slots size)
+          (match slots
+            [(LowerCAbiSlotCons slot rest)
+              (match (box-get rest)
+                [(LowerCAbiSlotNil)
+                  (match slot
+                    [(LowerCAbiSlot scalar-ty _)
+                      (match (lower-state-alloc-var args-state)
+                        [(LowerAlloc allocated var-id)
+                          (let
+                            [instr : CompilerIrInstr
+                              (IrInstrCall
+                                var-id
+                                (lower-resolve-call-name allocated env name)
+                                (compiler-ir-call-args-from-list values)
+                                scalar-ty)]
+                            (lower-c-abi-finish-call-result
+                              ctx
+                              (lower-state-emit-at-expr allocated instr origin)
+                              (IrValueVar var-id)
+                              result-ty
+                              (LowerCAbiRegisterAggregate slots size)
+                              origin))])])]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      (lower-c-abi-two-register-return-message result-ty)))])]
+            [(LowerCAbiSlotNil)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  (lower-c-abi-unsupported-message
+                    (lower-state-mode args-state)
+                    result-ty)))])]
         [(LowerCAbiByRefAggregate _)
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -13568,14 +13925,49 @@
               result-ty
               (LowerCAbiIntegerAggregate scalar-ty size)
               origin))])]
+    [(LowerCAbiRegisterAggregate slots size)
+      (match slots
+        [(LowerCAbiSlotCons slot rest)
+          (match (box-get rest)
+            [(LowerCAbiSlotNil)
+              (match slot
+                [(LowerCAbiSlot scalar-ty _)
+                  (match (lower-state-alloc-var state)
+                    [(LowerAlloc allocated var-id)
+                      (let
+                        [instr : CompilerIrInstr
+                          (IrInstrCallIndirectC
+                            var-id
+                            func-value
+                            (compiler-ir-call-args-from-list values)
+                            scalar-ty)]
+                        (lower-c-abi-finish-call-result
+                          ctx
+                          (lower-state-emit-at-expr allocated instr origin)
+                          (IrValueVar var-id)
+                          result-ty
+                          (LowerCAbiRegisterAggregate slots size)
+                          origin))])])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  (lower-c-abi-two-register-return-message result-ty)))])]
+        [(LowerCAbiSlotNil)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (lower-c-abi-unsupported-message
+                (lower-state-mode state)
+                result-ty)))])]
     [(LowerCAbiByRefAggregate _)
       (ErrLowerExpr
         (lower-diagnostic-at-expr
           origin
           (lower-c-abi-unsupported-message (lower-state-mode state) result-ty)))]
     [(LowerCAbiSretAggregate size)
-      ;; #2386: reserve the sret buffer typed as a scalar pointer (U64) — see
-      ;; lower-direct-c-abi-call — so a register-resident result type does not make
+      ;; #2386: reserve the sret buffer typed as a scalar pointer (U64) -- see
+      ;; lower-direct-c-abi-call -- so a register-resident result type does not make
       ;; the backend classify the hidden sret pointer as a 2-register group arg.
       (match (lower-reserve-heap-storage state size (AstTyU64))
         [(LowerExpr base-state base _)
@@ -31880,11 +32272,6 @@
         unit
         (set! ok false))
       (if (compiler-lower-extern-value-fnptr-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-linux-error-ok?
-        (compiler-lower-c-abi-unsupported-aggregate-source)
-        "lower: unsupported linux-x86_64 C aggregate ABI for Big; this slice supports integer-only structs up to 8 bytes")
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)

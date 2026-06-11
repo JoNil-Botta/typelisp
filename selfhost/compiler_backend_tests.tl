@@ -1205,6 +1205,57 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-c-abi-sysv-register-aggregate-arg-source) : String
+  "(defstruct Inner (lo i64))
+(defstruct Outer (inner Inner) (hi i64))
+(defstruct Mixed (tag u64) (value f64))
+(extern (outer-use [arg0 : Outer]) : i64 (:symbol \"tl_cabi_outer_use\"))
+(extern (mixed-use [arg0 : Mixed]) : i64 (:symbol \"tl_cabi_mixed_use\"))
+(define (main) : i64
+  (let
+    [outer : Outer (Outer (Inner 10) 20)]
+    [mixed : Mixed (Mixed (cast 7 : u64) 2.5)]
+    (+ (outer-use outer) (mixed-use mixed))))")
+
+(define (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-sysv-register-aggregate-arg-source)
+    (BackendTargetLinux))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_cabi_outer_use\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_mixed_use\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_outer_use\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_mixed_use\n")
+        (compiler-backend-string-contains? asm "%xmm")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "unsupported linux-x86_64 C aggregate ABI"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "two-register aggregate return ABI"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-c-abi-sysv-two-register-return-source) : String
+  "(defstruct Big (lo i64) (hi i64))
+(extern (big-make) : Big (:symbol \"tl_cabi_big_make\"))
+(define (main) : i64
+  (struct-get (big-make) lo))")
+
+(define (compiler-backend-c-abi-sysv-two-register-return-error-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-sysv-two-register-return-source)
+    (BackendTargetLinux))
+    [(ErrCompilerBackend message)
+      (string-eq
+        (compiler-diagnostic-message message)
+        "lower: unsupported linux-x86_64 C two-register aggregate return ABI for Big; see #1995")]
+    [(OkCompilerBackend _) false]))
+
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and
     (match (compiler-backend-emit-source-for-target
@@ -6056,7 +6107,11 @@
                                 (compiler-backend-c-abi-aggregate-ok?)
                                 (and
                                   (compiler-backend-c-abi-sret-aggregate-windows-ok?)
-                                  (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?)))))))
+                                  (and
+                                    (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?)
+                                    (and
+                                      (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?)
+                                      (compiler-backend-c-abi-sysv-two-register-return-error-ok?)))))))))
                       (and
                         (backend-and4
                           (compiler-backend-string-ref-shape-ok?)

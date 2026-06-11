@@ -460,7 +460,12 @@ package sources that contain top-level inline tests, plus package-local
 programs: a `main` exit status of `0` passes, while any non-zero status fails
 the package test command with exit `1`. `typelisp test --check` type-checks
 generated inline harnesses and integration test files without assembling or
-linking. Tests commonly import `stdlib/test.tl` for assertion helpers.
+linking. Package integration discovery skips reserved fixture corpora such as
+`tests/diagnostics/**`, `tests/format_golden/**`, `tests/inline/**`,
+`tests/no-libc/**`, `tests/safety/**`, and `tests/spmd/**`; it also leaves
+`tests/integration/**` to explicit integration manifests when
+`tests/integration/native-*.manifest` exists. Dedicated verification scripts
+own those files. Tests commonly import `stdlib/test.tl` for assertion helpers.
 
 CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
 test-bearing `.tl` files under `selfhost/`, `stdlib/`, `tests/integration/`,

@@ -58,8 +58,12 @@ as normal programs: a `main` exit status of `0` passes, while any non-zero
 status fails the package test command with exit `1`. `typelisp test --check`
 type-checks generated inline harnesses and integration test files without
 assembling or linking. Package integration discovery skips the reserved
-`tests/diagnostics/**` expected-error corpus; dedicated diagnostics gates own
-those fixtures.
+`tests/diagnostics/**`, `tests/format_golden/**`, `tests/golden/**`,
+`tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
+`tests/safety/**`, and `tests/spmd/**` fixture corpora. When
+`tests/integration/native-*.manifest` exists, package discovery also leaves
+`tests/integration/**` to the explicit integration runner. Dedicated
+verification scripts own those files.
 
 Package-wide source discovery for commands such as `check`, `fmt`, `lint`, and
 `doc` treats directories named `tests` as reserved package test/fixture roots

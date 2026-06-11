@@ -665,7 +665,8 @@ EOF
     TEST_PKG="$WORKDIR/inline-test-pkg"
     mkdir -p "$TEST_PKG/src/nested" "$TEST_PKG/target/ignored" \
         "$TEST_PKG/vendor/child/src" "$TEST_PKG/tests/nested" \
-        "$TEST_PKG/tests/target/ignored" "$TEST_PKG/tests/vendor/child/src"
+        "$TEST_PKG/tests/format_golden" "$TEST_PKG/tests/target/ignored" \
+        "$TEST_PKG/tests/vendor/child/src"
     cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "inline_test_pkg")
@@ -723,6 +724,10 @@ EOF
   (begin
     (assert-i64-eq (* 6 7) 42 "package nested tests dir")
     0))
+EOF
+    cat > "$TEST_PKG/tests/format_golden/fixture.tl" <<'EOF'
+;; Package test discovery must not treat formatter fixtures as integration tests.
+(define fixture-value : i64 42)
 EOF
     cat > "$TEST_PKG/tests/target/ignored/fail.tl" <<'EOF'
 (define (main) : i64 9)

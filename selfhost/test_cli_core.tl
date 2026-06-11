@@ -1817,29 +1817,131 @@
 (define (tltest-package-test-source? [source : String] [tests-prefix : String]) : bool
   (tltest-string-prefix? (compiler-load-normalize-path source) tests-prefix))
 
-(define (tltest-package-diagnostics-prefix [tests-prefix : String]) : String
-  (string-append tests-prefix "diagnostics/"))
+(define (tltest-package-tests-subdir-prefix
+  [tests-prefix : String]
+  [name : String]) : String
+  (string-append tests-prefix (string-append name "/")))
+
+(define (tltest-package-manifest-managed-integration? [tests-prefix : String]) : bool
+  (let
+    [integration-prefix : String
+      (tltest-package-tests-subdir-prefix tests-prefix "integration")]
+    (or
+      (file-exists? (string-append integration-prefix "native-linux.manifest"))
+      (file-exists?
+        (string-append integration-prefix "native-windows.manifest")))))
+
+(define (tltest-package-manifest-managed-integration-source-with?
+  [normalized : String]
+  [tests-prefix : String]
+  [manifest-managed : bool]) : bool
+  (and
+    manifest-managed
+    (tltest-string-prefix?
+      normalized
+      (tltest-package-tests-subdir-prefix tests-prefix "integration"))))
+
+(define (tltest-package-manifest-managed-integration-source?
+  [normalized : String]
+  [tests-prefix : String]) : bool
+  (tltest-package-manifest-managed-integration-source-with?
+    normalized
+    tests-prefix
+    (tltest-package-manifest-managed-integration? tests-prefix)))
+
+(define (tltest-package-reserved-fixture-source?
+  [source : String]
+  [tests-prefix : String]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path source)]
+    (or
+      (tltest-package-manifest-managed-integration-source?
+        normalized
+        tests-prefix)
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "diagnostics"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "format_golden"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "golden"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "inline"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "no-libc"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "public-tools"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "safety"))
+      (tltest-string-prefix?
+        normalized
+        (tltest-package-tests-subdir-prefix tests-prefix "spmd")))))
 
 (define (tltest-package-integration-source?
   [source : String]
   [tests-prefix : String]) : bool
-  (not
-    (tltest-string-prefix?
-      (compiler-load-normalize-path source)
-      (tltest-package-diagnostics-prefix tests-prefix))))
+  (not (tltest-package-reserved-fixture-source? source tests-prefix)))
 
 (define (tltest-package-integration-filter-self-test?) : bool
   (let
     [tests-prefix : String (tltest-package-tests-prefix "repo")]
+    [integration-source : String
+      (compiler-load-normalize-path "repo/tests/integration/hello.tl")]
     (and
+      (tltest-package-manifest-managed-integration-source-with?
+        integration-source
+        tests-prefix
+        true)
+      (not
+        (tltest-package-manifest-managed-integration-source-with?
+          integration-source
+          tests-prefix
+          false))
       (not
         (tltest-package-integration-source?
           "repo/tests/diagnostics/backend/quote_runtime_value.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/format_golden/char_literal.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/golden/tl_emit_program.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/inline/auto_discovery.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/no-libc/probe.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/public-tools/fixture.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/safety/array_bounds_trap.tl"
+          tests-prefix))
+      (not
+        (tltest-package-integration-source?
+          "repo/tests/spmd/masked_if_i64.tl"
           tests-prefix))
       (tltest-package-integration-source?
         "repo/tests/integration/hello.tl"
         tests-prefix)
       (tltest-package-integration-source? "repo/tests/basic.tl" tests-prefix)
+      (tltest-package-integration-source?
+        "repo/tests/nested/more.tl"
+        tests-prefix)
       (tltest-package-integration-source?
         "repo/tests/diagnostics_extra/example.tl"
         tests-prefix))))

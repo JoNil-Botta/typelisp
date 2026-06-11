@@ -15847,53 +15847,18 @@
           (box instr-entries))
         (+ instr-count 1))]))
 
-;; The remap previously rebuilt the "value:<function>:<var>" key string (three
-;; appends) and linearly scanned the whole instr-entry list with string
-;; compares for EVERY instruction in the program. The entries are instead
-;; indexed once per remap into a hash map (first occurrence wins, matching the
-;; prepend-shadowing list lookup), the per-function "value:<function>:" prefix
-;; is built once, and only instructions whose kind can carry a span build a
-;; key at all. The key arms mirror the kinds the replaced per-instruction
-;; prepend matcher accepted: indirect-call destinations were looked up and
-;; then dropped by its fall-through, so skipping their lookups cannot change
-;; the produced spans.
-(defstruct OptRemapSpanIndex
-  (ids StringI64Map)
-  (spans (Array AstSourceSpan)))
-
-(define (opt-remap-spans-index-fill
-  [entries : CompilerSourceSpansEntryList]
-  [ids : StringI64Map]
-  [spans : (Array AstSourceSpan)]
-  [next : i64]) : StringI64Map
-  (match entries
-    [(CompilerSourceSpansEntryNil) ids]
-    [(CompilerSourceSpansEntryCons entry rest)
-      (match entry
-        [(CompilerSourceSpansEntry key span)
-          (if (string-i64-map-contains? ids key)
-            (opt-remap-spans-index-fill (box-get rest) ids spans next)
-            (begin
-              (array-set! spans next span)
-              (opt-remap-spans-index-fill
-                (box-get rest)
-                (string-i64-map-put ids key next)
-                spans
-                (+ next 1))))])]))
-
-(define (opt-remap-spans-index-build [source-spans : CompilerSourceSpans]) : OptRemapSpanIndex
-  (match source-spans
-    [(CompilerSourceSpans _ instr-entries instr-count)
-      (let
-        [spans : (Array AstSourceSpan) (make-array AstSourceSpan instr-count)]
-        [ids : StringI64Map
-          (opt-remap-spans-index-fill
-            instr-entries
-            (string-i64-map-with-capacity (+ (* instr-count 2) 16))
-            spans
-            0)]
-        (OptRemapSpanIndex ids spans))]))
-
+;; The remap previously rebuilt the "value:<function>:<var>" key string --
+;; three appends -- for EVERY instruction in the program, then rebuilt the
+;; same key again on every hit. Now the per-function "value:<function>:"
+;; prefix is built once, each key is one append, the key is shared between
+;; lookup and prepend, and only instructions whose kind can carry a span
+;; build a key at all. The key arms mirror the kinds the replaced
+;; per-instruction prepend matcher accepted: indirect-call destinations were
+;; looked up and then dropped by its fall-through, so skipping their lookups
+;; cannot change the produced spans. The entry-list probe stays the linear
+;; first-match scan: entries are bounded by the 2049 fast-path cutoff, and a
+;; hash-indexed variant measured MORE executed instructions once #2735 moved
+;; hash-string into TypeLisp (long keys hash per instruction).
 (defenum OptRemapSpanKey
   (OptRemapSpanNoKey)
   (OptRemapSpanSomeKey String))
@@ -15967,7 +15932,7 @@
     [_ (OptRemapSpanNoKey)]))
 
 (define (opt-remap-spans-instr
-  [span-index : OptRemapSpanIndex]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [value-prefix : String]
   [function : String]
@@ -15975,16 +15940,13 @@
   (match (opt-remap-spans-instr-key value-prefix function instr)
     [(OptRemapSpanNoKey) out]
     [(OptRemapSpanSomeKey key)
-      (match (string-i64-map-get (struct-get span-index ids) key)
-        [(StringI64MapFound slot)
-          (opt-remap-spans-prepend-entry
-            out
-            key
-            (array-ref (struct-get span-index spans) slot))]
-        [(StringI64MapMissing) out])]))
+      (match (compiler-source-spans-entry-list-lookup instr-entries key)
+        [(CompilerSomeSourceSpan span)
+          (opt-remap-spans-prepend-entry out key span)]
+        [(CompilerNoSourceSpan) out])]))
 
 (define (opt-remap-spans-instr-seq-from
-  [span-index : OptRemapSpanIndex]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [value-prefix : String]
   [function : String]
@@ -15993,9 +15955,9 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     out
     (opt-remap-spans-instr-seq-from
-      span-index
+      instr-entries
       (opt-remap-spans-instr
-        span-index
+        instr-entries
         out
         value-prefix
         function
@@ -16006,15 +15968,21 @@
       (+ index 1))))
 
 (define (opt-remap-spans-instr-seq
-  [span-index : OptRemapSpanIndex]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [value-prefix : String]
   [function : String]
   [instrs : CompilerIrInstrSeq]) : CompilerSourceSpans
-  (opt-remap-spans-instr-seq-from span-index out value-prefix function instrs 0))
+  (opt-remap-spans-instr-seq-from
+    instr-entries
+    out
+    value-prefix
+    function
+    instrs
+    0))
 
 (define (opt-remap-spans-blocks
-  [span-index : OptRemapSpanIndex]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [value-prefix : String]
   [function : String]
@@ -16025,9 +15993,9 @@
       (match block
         [(IrBlock _ instrs)
           (opt-remap-spans-blocks
-            span-index
+            instr-entries
             (opt-remap-spans-instr-seq
-              span-index
+              instr-entries
               out
               value-prefix
               function
@@ -16037,35 +16005,35 @@
             (box-get rest))])]
     [(IrBlockArray seq)
       (opt-remap-spans-blocks
-        span-index
+        instr-entries
         out
         value-prefix
         function
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-remap-spans-function
-  [span-index : OptRemapSpanIndex]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [func : CompilerIrFunction]) : CompilerSourceSpans
   (match func
     [(IrFunction name _ _ _ blocks)
       (opt-remap-spans-blocks
-        span-index
+        instr-entries
         out
         (string-append (string-append "value:" name) ":")
         name
         blocks)]))
 
 (define (opt-remap-spans-functions
-  [span-index : OptRemapSpanIndex]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [funcs : CompilerIrFunctionList]) : CompilerSourceSpans
   (match funcs
     [(IrFunctionNil) out]
     [(IrFunctionCons func rest)
       (opt-remap-spans-functions
-        span-index
-        (opt-remap-spans-function span-index out func)
+        instr-entries
+        (opt-remap-spans-function instr-entries out func)
         (box-get rest))]))
 
 (define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
@@ -16076,12 +16044,14 @@
   [program : CompilerIrProgram]) : CompilerSourceSpans
   (if (opt-remap-spans-fast-path? source-spans)
     (compiler-source-spans-clear-instrs source-spans)
-    (match program
-      [(IrProgram _ functions _)
-        (opt-remap-spans-functions
-          (opt-remap-spans-index-build source-spans)
-          (compiler-source-spans-clear-instrs source-spans)
-          functions)])))
+    (match source-spans
+      [(CompilerSourceSpans _ instr-entries _)
+        (match program
+          [(IrProgram _ functions _)
+            (opt-remap-spans-functions
+              instr-entries
+              (compiler-source-spans-clear-instrs source-spans)
+              functions)])])))
 
 (define (optimize-program-with-spans-and-level
   [program : CompilerIrProgram]

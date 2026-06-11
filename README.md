@@ -409,10 +409,12 @@ fallback behavior.
 
 Under the legacy loader, imported package definitions share the same flat
 top-level namespace as local modules, so duplicate value or type names fail
-through the existing duplicate definition diagnostics. The package slice still
-has no registry, version solving, or workspace model (#2666); namespace
-isolation and qualified symbol lookup are specified for the selfhost module
-model in `SPEC.md`.
+through the existing duplicate definition diagnostics. The next package-manager
+phase keeps the explicit local-path plus git/GitHub pin model: registry support
+is deferred, semantic-version solving is a non-goal, and workspaces are deferred.
+The rationale is deterministic zero-dependency builds through the host `git` CLI
+plus checked-in `typelisp.lock` replay. Namespace isolation and qualified symbol
+lookup are specified for the selfhost module model in `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and

@@ -189,22 +189,26 @@ Documentation tests are fenced examples inside those public documentation
 comments. `typelisp doc --test <file.tl>` recognizes Markdown code fences whose
 info string starts with `typelisp` or `tl`, extracts them from `;#` module docs
 and attached `;:` item docs, and checks each example as a standalone TypeLisp
-source file. An example passes when it parses, resolves imports, and type-checks.
+source file. Multiple explicit inputs and package doctests preserve per-file
+reporting. An example passes when it parses, resolves imports, and type-checks.
 Adding `expect-error` after the language tag inverts the expectation so the
-example must fail during loading, parsing, or type checking. `run` is a reserved
-doctest option for runnable examples and is mutually exclusive with
-`expect-error`. A runnable fence must include `;; doctest-exit: <integer>` in
-the example body and may include `;; doctest-stdout: -` / `;; doctest-stderr: -`
-or `literal:<escaped text>` with `\n`, `\t`, `\r`, and `\\` escapes. Runnable
-metadata is parsed and retained by the selfhost doctest model; execution is a
-follow-up. Other fence languages are ignored; unknown TypeLisp fence options,
-empty TypeLisp examples, and unterminated TypeLisp fences are malformed
-doctests.
+example must fail during loading, parsing, or type checking. `run` is mutually
+exclusive with `expect-error`. A runnable fence must include
+`;; doctest-exit: <integer>` in the example body and may include
+`;; doctest-stdout: -` / `;; doctest-stderr: -` or `literal:<escaped text>` with
+`\n`, `\t`, `\r`, and `\\` escapes. Runnable examples execute on targets that
+support the self-hosted build/run path; unsupported targets report an
+unsupported runnable-doctest failure. Other fence languages are ignored; unknown
+TypeLisp fence options, empty TypeLisp examples, and unterminated TypeLisp
+fences are malformed doctests.
 
-The public self-hosted Markdown generator command is `typelisp doc`. In this
-slice it renders one input file to one output path via
-`typelisp doc input.tl -o output.md`; package/module graph traversal is not
-part of this command.
+The public self-hosted Markdown generator command is `typelisp doc`. Rendering
+`typelisp doc input.tl -o output.md` loads the entry file with the normal import
+resolver and emits one deterministic Markdown document for the entry plus each
+reachable imported module once, including module navigation and source/module
+sections. Package documentation uses the package source discovery path selected
+by `--manifest-path <typelisp.pkg>` or the nearest manifest when no explicit
+input is supplied; package doc generation requires `-o <out.md>`.
 
 ### 2.3 String escapes
 

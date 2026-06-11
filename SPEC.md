@@ -2119,11 +2119,24 @@ Example:
   Windows. Assembly and object side artifacts use the same profile directory.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
-- This first package layer has no registry, semantic-version solving, implicit
-  preludes, workspace model, or dynamic/shared library output. Registry,
-  version-solving, and workspace direction is tracked by #2666. Namespace
-  isolation and qualified symbol access are specified by the selfhost module
-  model in section 4.4, not by package resolution itself.
+- Package-manager roadmap boundary for the next package phase:
+  - Registry support is deferred. The implemented model is explicit local paths
+    plus git/GitHub sources fetched by the host `git` CLI and pinned by
+    `typelisp.lock`. A future registry must be optional for building checked-in
+    packages, TypeLisp-owned, and compatible with the zero third-party
+    dependency policy.
+  - Semantic-version solving is a non-goal for the next package-manager phase.
+    Manifests name exact `rev`, `tag`, or `branch` pins, and lock replay records
+    exact commits. The build does not solve version ranges, choose among
+    competing package versions, or fetch multiple candidates.
+  - Workspaces are deferred. Current package roots have independent manifests,
+    locks, target directories, and local dependency DAGs. A future workspace
+    model may group local packages and share orchestration/lock policy, but
+    every package must continue to build without a workspace file.
+  - Implicit preludes and dynamic/shared library output remain non-goals for
+    this package layer. Namespace isolation and qualified symbol access are
+    specified by the selfhost module model in section 4.4, not by package
+    resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
@@ -4501,7 +4514,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
-| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, build-time `typelisp.lock` replay, explicit lock policy flags, deterministic lockfile rewrite, and package-cache reuse/refetch; registry/version/workspace direction (#2666) remains future work |
+| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, build-time `typelisp.lock` replay, explicit lock policy flags, deterministic lockfile rewrite, and package-cache reuse/refetch; registry support is deferred, semantic-version solving is a non-goal for the next phase, and workspaces are deferred |
 | LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 
 ---

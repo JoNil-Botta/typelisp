@@ -66,7 +66,6 @@ _tl_stdlib_runtime_runtime_ptr_arg:
 .Lf0_entry:
     movq -8(%rbp), %rax
     movq %rax, -16(%rbp)
-    movq -16(%rbp), %rax
     leave
     ret
 
@@ -96,7 +95,6 @@ _tl_stdlib_runtime_runtime_os_write:
     popq %rax
     syscall
     movq %rax, -48(%rbp)
-    movq -48(%rbp), %rax
     leave
     ret
 
@@ -227,7 +225,6 @@ tl_array_fill8:
     movq -48(%rbp), %rax
     addq $1, %rax
     movq %rax, -88(%rbp)
-    movq -88(%rbp), %rax
     movq %rax, -48(%rbp)
     jmp .Lf8_while_header.0
 .Lf8_while_exit.2:
@@ -258,7 +255,6 @@ tl_array_zero:
     movq -32(%rbp), %rax
     addq $1, %rax
     movq %rax, -88(%rbp)
-    movq -88(%rbp), %rax
     movq %rax, -32(%rbp)
     jmp .Lf9_while_header.0
 .Lf9_while_exit.2:
@@ -305,7 +301,6 @@ _tl_helper_helper:
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
     movq %rax, -16(%rbp)
-    movq -16(%rbp), %rax
     leave
     ret
 
@@ -317,11 +312,9 @@ main:
 .Lf13_entry:
     call _tl_helper_helper
     movq %rax, -8(%rbp)
-    movq -8(%rbp), %rax
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
     movq %rax, -16(%rbp)
-    movq -16(%rbp), %rax
     leave
     ret
 

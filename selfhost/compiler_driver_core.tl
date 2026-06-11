@@ -467,11 +467,14 @@
                     optimized-spans
                     emit-entry))
                   [(OkCompilerBackendBuffer buf)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
-                      (OkCompilerDriverBuffer buf))]
+                    (let
+                      [peepholed : TextBuf
+                        (compiler-backend-peephole-text-buf buf)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-driver-profile-finish-phase "backend"))
+                        (OkCompilerDriverBuffer peepholed)))]
                   [(ErrCompilerBackendBuffer diag)
                     (begin
                       (cfg

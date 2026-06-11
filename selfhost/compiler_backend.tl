@@ -160,6 +160,10 @@
   (CompilerBackendNoAsm)
   (CompilerBackendSomeAsm String))
 
+(defenum CompilerBackendPeepholeMove
+  (CompilerBackendPeepholeNoMove)
+  (CompilerBackendPeepholeMove String String))
+
 (defenum CompilerBackendMaybeI64
   (CompilerBackendNoI64)
   (CompilerBackendSomeI64 i64))
@@ -18429,6 +18433,186 @@ tl_memcpy:
     spans
     true))
 
+(define (compiler-backend-peephole-line-end
+  [asm : String]
+  [start : i64]
+  [n : i64]) : i64
+  (let
+    [i : i64 start]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i n))
+        (if (= (string-ref asm i) #\newline')
+          (set! done true)
+          (set! i (+ i 1))))
+      i)))
+
+(define (compiler-backend-peephole-append-line
+  [buf : TextBuf]
+  [line : String]
+  [newline : bool]) : TextBuf
+  (let
+    [with-line : TextBuf (text-buf-append buf line)]
+    (if newline
+      (text-buf-append with-line "\n")
+      with-line)))
+
+(define (compiler-backend-peephole-find-comma-space
+  [line : String]
+  [start : i64]) : i64
+  (let
+    [n : i64 (string-length line)]
+    [i : i64 start]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (< (+ i 1) n)
+          (if (and
+            (= (string-ref line i) #,')
+            (= (string-ref line (+ i 1)) #\space'))
+            (begin
+              (set! found i)
+              (set! done true))
+            (set! i (+ i 1)))
+          (set! done true)))
+      found)))
+
+(define (compiler-backend-peephole-movq [line : String]) : CompilerBackendPeepholeMove
+  (let
+    [prefix : String "    movq "]
+    [prefix-len : i64 (string-length prefix)]
+    [n : i64 (string-length line)]
+    (if (compiler-backend-string-prefix-at? line prefix 0)
+      (let
+        [comma : i64
+          (compiler-backend-peephole-find-comma-space line prefix-len)]
+        (if (and (> comma prefix-len) (< (+ comma 2) n))
+          (CompilerBackendPeepholeMove
+            (substring line prefix-len (- comma prefix-len))
+            (substring line (+ comma 2) (- n (+ comma 2))))
+          (CompilerBackendPeepholeNoMove)))
+      (CompilerBackendPeepholeNoMove))))
+
+(define (compiler-backend-peephole-register-operand? [operand : String]) : bool
+  (and (> (string-length operand) 0) (= (string-ref operand 0) #%')))
+
+(define (compiler-backend-peephole-stack-slot-operand? [operand : String]) : bool
+  (compiler-backend-string-contains? operand "(%rbp)"))
+
+(define (compiler-backend-peephole-local-move-operand? [operand : String]) : bool
+  (or
+    (compiler-backend-peephole-register-operand? operand)
+    (compiler-backend-peephole-stack-slot-operand? operand)))
+
+(define (compiler-backend-peephole-self-move-operands?
+  [src : String]
+  [dst : String]) : bool
+  (and (string-eq src dst) (compiler-backend-peephole-local-move-operand? src)))
+
+(define (compiler-backend-peephole-redundant-move-operands?
+  [src : String]
+  [dst : String]
+  [next-src : String]
+  [next-dst : String]) : bool
+  (and
+    (compiler-backend-peephole-local-move-operand? src)
+    (compiler-backend-peephole-local-move-operand? dst)
+    (compiler-backend-peephole-local-move-operand? next-src)
+    (compiler-backend-peephole-local-move-operand? next-dst)
+    (or
+      (and (string-eq src next-src) (string-eq dst next-dst))
+      (and (string-eq src next-dst) (string-eq dst next-src)))))
+
+(define (compiler-backend-peephole-self-move? [line : String]) : bool
+  (match (compiler-backend-peephole-movq line)
+    [(CompilerBackendPeepholeMove src dst)
+      (compiler-backend-peephole-self-move-operands? src dst)]
+    [(CompilerBackendPeepholeNoMove) false]))
+
+;; Pair action: 0 emits pending, 1 drops pending, 2 keeps pending and skips next.
+(define (compiler-backend-peephole-pair-action
+  [pending : String]
+  [next : String]) : i64
+  (match (compiler-backend-peephole-movq pending)
+    [(CompilerBackendPeepholeMove src dst)
+      (if (compiler-backend-peephole-self-move-operands? src dst)
+        1
+        (match (compiler-backend-peephole-movq next)
+          [(CompilerBackendPeepholeMove next-src next-dst)
+            (if (compiler-backend-peephole-redundant-move-operands?
+              src
+              dst
+              next-src
+              next-dst)
+              2
+              0)]
+          [(CompilerBackendPeepholeNoMove) 0]))]
+    [(CompilerBackendPeepholeNoMove) 0]))
+
+(define (compiler-backend-peephole-asm-once [asm : String]) : String
+  (let
+    [n : i64 (string-length asm)]
+    [i : i64 0]
+    [out : TextBuf (text-buf-empty)]
+    [has-pending : bool false]
+    [pending-line : String ""]
+    [pending-newline : bool false]
+    (begin
+      (while (< i n)
+        (let
+          [end : i64 (compiler-backend-peephole-line-end asm i n)]
+          [next-start : i64
+            (if (< end n)
+              (+ end 1)
+              end)]
+          [line-newline : bool (< end n)]
+          [line : String (substring asm i (- end i))]
+          (begin
+            (if has-pending
+              (let
+                [action : i64
+                  (compiler-backend-peephole-pair-action pending-line line)]
+                (if (= action 1)
+                  (begin
+                    (set! pending-line line)
+                    (set! pending-newline line-newline))
+                  (if (= action 2)
+                    unit
+                    (begin
+                      (set!
+                        out
+                        (compiler-backend-peephole-append-line
+                          out
+                          pending-line
+                          pending-newline))
+                      (set! pending-line line)
+                      (set! pending-newline line-newline)))))
+              (begin
+                (set! has-pending true)
+                (set! pending-line line)
+                (set! pending-newline line-newline)))
+            (set! i next-start))))
+      (if (and
+        has-pending
+        (not (compiler-backend-peephole-self-move? pending-line)))
+        (set!
+          out
+          (compiler-backend-peephole-append-line
+            out
+            pending-line
+            pending-newline))
+        unit)
+      (text-buf-render out))))
+
+(define (compiler-backend-peephole-asm [asm : String]) : String
+  (compiler-backend-peephole-asm-once asm))
+
+(define (compiler-backend-peephole-text-buf [buf : TextBuf]) : TextBuf
+  (text-buf-append
+    (text-buf-empty)
+    (compiler-backend-peephole-asm (text-buf-render buf))))
+
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -18443,7 +18627,8 @@ tl_memcpy:
     spans
     emit-entry
     crt-entry)
-    [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
+    [(OkCompilerBackendBuffer buf)
+      (OkCompilerBackend (compiler-backend-peephole-asm (text-buf-render buf)))]
     [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-program-target-with-mode
@@ -18458,7 +18643,8 @@ tl_memcpy:
     mode
     spans
     emit-entry)
-    [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
+    [(OkCompilerBackendBuffer buf)
+      (OkCompilerBackend (compiler-backend-peephole-asm (text-buf-render buf)))]
     [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : SymI64Env

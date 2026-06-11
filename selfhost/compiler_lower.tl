@@ -5737,6 +5737,13 @@
             ctx
             (ty-node-get elem)
             stack)]
+        [(AstTyFunc params ret)
+          (and
+            (lower-supported-reference-type-list-with-stack? ctx params stack)
+            (lower-supported-reference-type-with-stack?
+              ctx
+              (ty-node-get ret)
+              stack))]
         [(AstTyStructArgs name lifetimes)
           (lower-supported-reference-struct-args-with-stack?
             ctx
@@ -9945,23 +9952,34 @@
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
-              (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
-                [(OkLowerExpr lowered)
-                  (match lowered
-                    [(LowerExpr arg-state value _)
-                      (match (lower-args-as
-                        ctx
-                        arg-state
-                        env
-                        type-env
-                        rest-args
-                        rest-types)
-                        [(OkLowerArgs rest-state rest-values)
-                          (OkLowerArgs
-                            rest-state
-                            (compiler-ir-value-cons value rest-values))]
-                        [(ErrLowerArgs message) (ErrLowerArgs message)])])]
-                [(ErrLowerExpr message) (ErrLowerArgs message)]))]
+              (match (tc-call-effective-arg-expr ctx type-env arg expected)
+                [(OkTcExpr effective-arg)
+                  (match (lower-expr-expected
+                    ctx
+                    state
+                    env
+                    type-env
+                    effective-arg
+                    arg-ty
+                    arg)
+                    [(OkLowerExpr lowered)
+                      (match lowered
+                        [(LowerExpr arg-state value _)
+                          (match (lower-args-as
+                            ctx
+                            arg-state
+                            env
+                            type-env
+                            rest-args
+                            rest-types)
+                            [(OkLowerArgs rest-state rest-values)
+                              (OkLowerArgs
+                                rest-state
+                                (compiler-ir-value-cons value rest-values))]
+                            [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+                    [(ErrLowerExpr message) (ErrLowerArgs message)])]
+                [(ErrTcExpr message)
+                  (ErrLowerArgs (lower-diagnostic-at-expr arg message))]))]
           [(AstTypeNil)
             (ErrLowerArgs
               (lower-diagnostic "lower: constructor arity mismatch"))]))]))
@@ -26222,6 +26240,11 @@
 (define (main [n : i64]) : unit
   (take (& n)))")
 
+(define (compiler-lower-reference-auto-borrow-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take n))")
+
 (define (compiler-lower-reference-return-source) : String
   "(define (ref-return [n : i64]) : (& n i64) (& n))
 (define (ref-id [r : (& n i64)]) : (& n i64) r)
@@ -33484,6 +33507,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-reference-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-reference-auto-borrow-source))
         unit
         (set! ok false))
       (if (compiler-lower-reference-values-shape-ok?)

@@ -69,6 +69,10 @@
   (OkTcExprList AstExprList)
   (ErrTcExprList String))
 
+(defenum ResultTcExpr
+  (OkTcExpr AstExpr)
+  (ErrTcExpr String))
+
 (defenum TcBorrowPlace
   (TcBorrowPlace String AstType))
 
@@ -7370,6 +7374,133 @@
                 [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)]))]
           [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")]))]))
 
+(define (tc-call-immutable-ref-formal? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyRef _ _) true]
+    [(AstTyVar _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyRef _ _) true]
+        [_ false])]
+    [(AstTyVarArgs _ _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyRef _ _) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-call-actual-reference? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
+    [(AstTyVar _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyRef _ _) true]
+        [(AstTyMutRef _ _) true]
+        [_ false])]
+    [(AstTyVarArgs _ _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyRef _ _) true]
+        [(AstTyMutRef _ _) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-call-type-list-has-immutable-ref-formal?
+  [ctx : TcContext]
+  [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head rest)
+      (let
+        [head : AstType (ty-node-get head)]
+        [rest : AstTypeList (box-get rest)]
+        (if (tc-call-immutable-ref-formal? ctx head)
+          true
+          (tc-call-type-list-has-immutable-ref-formal? ctx rest)))]))
+
+(define (tc-call-auto-borrow-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]) : ResultTcType
+  (match (tc-borrow-place ctx env arg)
+    [(OkTcBorrowPlace place)
+      (match place
+        [(TcBorrowPlace lifetime referent-ty)
+          (OkTcType (ast-ty-ref lifetime referent-ty))])]
+    [(ErrTcBorrowPlace message) (ErrTcType message)]))
+
+(define (tc-call-auto-borrow-expr [arg : AstExpr]) : AstExpr
+  (ast-node-get
+    (ast-expr-borrow false AstBorrowLifetimeInferred (ast-node-push arg))))
+
+(define (tc-call-effective-var-arg-type
+  [ctx : TcContext]
+  [name : String]
+  [got : AstType]) : ResultTcType
+  (if (tc-call-actual-reference? ctx got)
+    (OkTcType got)
+    (match (tc-borrow-place-var name got)
+      [(OkTcBorrowPlace place)
+        (match place
+          [(TcBorrowPlace lifetime referent-ty)
+            (OkTcType (ast-ty-ref lifetime referent-ty))])]
+      [(ErrTcBorrowPlace message) (ErrTcType message)])))
+
+(define (tc-call-effective-arg-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]
+  [want : AstType]) : ResultTcType
+  (if (tc-call-immutable-ref-formal? ctx want)
+    (match (ast-expr-unspan arg)
+      [(AstExprVar name)
+        (match (tc-lookup-visible-id ctx env name)
+          [(OkTcType got)
+            (tc-call-effective-var-arg-type ctx (intern-str name) got)]
+          [(ErrTcType message) (ErrTcType message)])]
+      [_
+        (match (tc-expr ctx env arg)
+          [(OkTcType got)
+            (if (tc-call-actual-reference? ctx got)
+              (OkTcType got)
+              (tc-call-auto-borrow-type ctx env arg))]
+          [(ErrTcType message) (ErrTcType message)])])
+    (tc-expr-with-expected-or-actual ctx env arg want)))
+
+(define (tc-call-effective-var-arg-expr
+  [ctx : TcContext]
+  [name : String]
+  [got : AstType]
+  [arg : AstExpr]) : ResultTcExpr
+  (if (tc-call-actual-reference? ctx got)
+    (OkTcExpr arg)
+    (match (tc-borrow-place-var name got)
+      [(OkTcBorrowPlace _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
+      [(ErrTcBorrowPlace message) (ErrTcExpr message)])))
+
+(define (tc-call-effective-arg-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]
+  [want : AstType]) : ResultTcExpr
+  (if (tc-call-immutable-ref-formal? ctx want)
+    (if (tc-call-explicit-borrow-expr? arg)
+      (OkTcExpr arg)
+      (match (ast-expr-unspan arg)
+        [(AstExprVar name)
+          (match (tc-lookup-visible-id ctx env name)
+            [(OkTcType got)
+              (tc-call-effective-var-arg-expr ctx (intern-str name) got arg)]
+            [(ErrTcType message) (ErrTcExpr message)])]
+        [_
+          (match (tc-expr ctx env arg)
+            [(OkTcType got)
+              (if (tc-call-actual-reference? ctx got)
+                (OkTcExpr arg)
+                (match (tc-call-auto-borrow-type ctx env arg)
+                  [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
+                  [(ErrTcType message) (ErrTcExpr message)]))]
+            [(ErrTcType message) (ErrTcExpr message)])]))
+    (OkTcExpr arg)))
+
 (define (tc-infer-call-lifetime-subst
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -7391,7 +7522,7 @@
             (let
               [want : AstType (ty-node-get want)]
               [rest-params : AstTypeList (box-get rest-params)]
-              (match (tc-expr ctx env arg)
+              (match (tc-call-effective-arg-type ctx env arg want)
                 [(OkTcType got)
                   (match (tc-infer-lifetime-subst-from-type
                     ctx
@@ -7409,7 +7540,8 @@
                         next-subst)]
                     [(ErrTcLifetimeSubst message)
                       (ErrTcLifetimeSubst (tc-locate-error-at-expr arg message))])]
-                [(ErrTcType message) (ErrTcLifetimeSubst message)]))]
+                [(ErrTcType message)
+                  (ErrTcLifetimeSubst (tc-locate-error-at-expr arg message))]))]
           [(AstTypeNil) (ErrTcLifetimeSubst "typecheck: arity mismatch")]))]))
 
 (define (tc-call-lifetime-constructor-type
@@ -7818,63 +7950,72 @@
             (let
               [want : AstType (ty-node-get want)]
               [rest-params : AstTypeList (box-get rest-params)]
-              (match (tc-expr-with-expected-or-actual ctx env arg want)
-                [(OkTcType got)
-                  (match (tc-expect-at-expr
-                    arg
-                    got
-                    want
-                    "typecheck: argument type mismatch")
-                    [(OkTcUnit)
-                      (match (tc-raw-c-fnptr-flow-ok
-                        ctx
-                        env
+              (match (tc-call-effective-arg-expr ctx env arg want)
+                [(OkTcExpr effective-arg)
+                  (match (tc-expr-with-expected-or-actual
+                    ctx
+                    env
+                    effective-arg
+                    want)
+                    [(OkTcType got)
+                      (match (tc-expect-at-expr
                         arg
+                        got
                         want
-                        c-abi-args)
+                        "typecheck: argument type mismatch")
                         [(OkTcUnit)
-                          (if (and
-                            (tc-type-contains-any-region got)
-                            (not allow-region-args)
-                            (not (tc-type-contains-reference? got)))
-                            (ErrTcUnit
-                              "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
-                            (match constructor-target
-                              [(AstSomeType target)
-                                (match (tc-ensure-cleanup-resource-not-stored-expr
-                                  env
-                                  arg)
-                                  [(OkTcUnit)
-                                    (match (tc-ensure-region-value-can-flow-into
+                          (match (tc-raw-c-fnptr-flow-ok
+                            ctx
+                            env
+                            effective-arg
+                            want
+                            c-abi-args)
+                            [(OkTcUnit)
+                              (if (and
+                                (tc-type-contains-any-region got)
+                                (not allow-region-args)
+                                (not (tc-type-contains-reference? got)))
+                                (ErrTcUnit
+                                  "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+                                (match constructor-target
+                                  [(AstSomeType target)
+                                    (match (tc-ensure-cleanup-resource-not-stored-expr
                                       env
-                                      target
-                                      got
-                                      "constructor result")
+                                      effective-arg)
                                       [(OkTcUnit)
-                                        (tc-check-call-args-with-message
-                                          ctx
+                                        (match (tc-ensure-region-value-can-flow-into
                                           env
-                                          rest-args
-                                          rest-params
-                                          allow-region-args
-                                          constructor-target
-                                          arity-message
-                                          c-abi-args)]
+                                          target
+                                          got
+                                          "constructor result")
+                                          [(OkTcUnit)
+                                            (tc-check-call-args-with-message
+                                              ctx
+                                              env
+                                              rest-args
+                                              rest-params
+                                              allow-region-args
+                                              constructor-target
+                                              arity-message
+                                              c-abi-args)]
+                                          [(ErrTcUnit message)
+                                            (ErrTcUnit message)])]
                                       [(ErrTcUnit message) (ErrTcUnit message)])]
-                                  [(ErrTcUnit message) (ErrTcUnit message)])]
-                              [(AstNoType)
-                                (tc-check-call-args-with-message
-                                  ctx
-                                  env
-                                  rest-args
-                                  rest-params
-                                  allow-region-args
-                                  constructor-target
-                                  arity-message
-                                  c-abi-args)]))]
+                                  [(AstNoType)
+                                    (tc-check-call-args-with-message
+                                      ctx
+                                      env
+                                      rest-args
+                                      rest-params
+                                      allow-region-args
+                                      constructor-target
+                                      arity-message
+                                      c-abi-args)]))]
+                            [(ErrTcUnit message) (ErrTcUnit message)])]
                         [(ErrTcUnit message) (ErrTcUnit message)])]
-                    [(ErrTcUnit message) (ErrTcUnit message)])]
-                [(ErrTcType message) (ErrTcUnit message)]))]
+                    [(ErrTcType message) (ErrTcUnit message)])]
+                [(ErrTcExpr message)
+                  (ErrTcUnit (tc-locate-error-at-expr arg message))]))]
           [(AstTypeNil) (ErrTcUnit arity-message)]))]))
 
 (define (tc-check-call-args
@@ -18661,7 +18802,7 @@
     TcStringNil
     body))
 
-(define (tc-move-check-exprs-with-types
+(define (tc-move-check-exprs-with-types-no-auto
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -18700,7 +18841,7 @@
                     head-expr
                     ty)
                     [(OkTcMove moved2)
-                      (tc-move-check-exprs-with-types
+                      (tc-move-check-exprs-with-types-no-auto
                         ctx
                         env
                         locals
@@ -18711,6 +18852,86 @@
                     [(ErrTcMove message) (ErrTcMove message)])]
                 [(ErrTcMove message) (ErrTcMove message)]))]
           [(AstTypeNil) (ErrTcMove "typecheck: arity mismatch")]))]))
+
+(define (tc-move-check-exprs-with-types-auto
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : TcMoveResult
+  (match exprs
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkTcMove moved)]
+        [_ (ErrTcMove "typecheck: arity mismatch")])]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (ty-node-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-call-effective-arg-expr ctx env head-expr ty)
+                [(OkTcExpr effective-head)
+                  (match (tc-move-check-expr
+                    ctx
+                    env
+                    locals
+                    loop-carried
+                    moved
+                    effective-head)
+                    [(OkTcMove moved1)
+                      (match (tc-move-after-consuming-value
+                        ctx
+                        env
+                        locals
+                        loop-carried
+                        moved1
+                        effective-head
+                        ty)
+                        [(OkTcMove moved2)
+                          (tc-move-check-exprs-with-types-auto
+                            ctx
+                            env
+                            locals
+                            loop-carried
+                            moved2
+                            rest
+                            rest-types)]
+                        [(ErrTcMove message) (ErrTcMove message)])]
+                    [(ErrTcMove message) (ErrTcMove message)])]
+                [(ErrTcExpr message) (ErrTcMove message)]))]
+          [(AstTypeNil) (ErrTcMove "typecheck: arity mismatch")]))]))
+
+(define (tc-move-check-exprs-with-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : TcMoveResult
+  (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+    (tc-move-check-exprs-with-types-auto
+      ctx
+      env
+      locals
+      loop-carried
+      moved
+      exprs
+      types)
+    (tc-move-check-exprs-with-types-no-auto
+      ctx
+      env
+      locals
+      loop-carried
+      moved
+      exprs
+      types)))
 
 (define (tc-move-call-param-types
   [ctx : TcContext]
@@ -19068,10 +19289,13 @@
     [(AstExprLambda params _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
+        [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
+        [lambda-locals : TcMovedSet
+          (tc-move-params-locals params (tc-moved-clone locals))]
         (match (tc-move-check-expr
           ctx
-          env
-          (tc-moved-clone locals)
+          lambda-env
+          lambda-locals
           (tc-moved-empty)
           (tc-moved-clone moved)
           body)
@@ -19885,25 +20109,147 @@
             (let
               [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-borrow-check-expr ctx env locals borrowed head-expr)
-                [(OkTcBorrowCheck borrowed1)
-                  (match (tc-borrow-check-after-consuming-value
+              (match (tc-call-effective-arg-expr ctx env head-expr ty)
+                [(OkTcExpr effective-head)
+                  (match (tc-borrow-check-expr
                     ctx
+                    env
+                    locals
+                    borrowed
+                    effective-head)
+                    [(OkTcBorrowCheck borrowed1)
+                      (match (tc-borrow-check-after-consuming-value
+                        ctx
+                        locals
+                        borrowed1
+                        effective-head
+                        ty)
+                        [(OkTcBorrowCheck borrowed2)
+                          (tc-borrow-check-exprs-with-types
+                            ctx
+                            env
+                            locals
+                            borrowed2
+                            rest
+                            rest-types)]
+                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                [(ErrTcExpr message)
+                  (ErrTcBorrowCheck (tc-locate-error-at-expr head-expr message))]))]
+          [(AstTypeNil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+
+(define (tc-call-explicit-borrow-expr? [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprBorrow _ _ _) true]
+    [_ false]))
+
+(define (tc-borrow-check-add-call-arg-auto-borrow
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [arg : AstExpr]
+  [ty : AstType]) : TcBorrowCheckResult
+  (if (tc-call-explicit-borrow-expr? arg)
+    (OkTcBorrowCheck borrowed)
+    (match (tc-call-effective-arg-expr ctx env arg ty)
+      [(OkTcExpr effective)
+        (match (ast-expr-unspan effective)
+          [(AstExprBorrow mutable _ place-box)
+            (let
+              [place : AstExpr (ast-node-get place-box)]
+              (tc-borrow-check-add-place-with-mutability
+                locals
+                borrowed
+                mutable
+                place))]
+          [_ (OkTcBorrowCheck borrowed)])]
+      [(ErrTcExpr message)
+        (ErrTcBorrowCheck (tc-locate-error-at-expr arg message))])))
+
+(define (tc-borrow-check-auto-borrowed-call-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : AstExprList]
+  [types : AstTypeList]) : TcBorrowCheckResult
+  (match args
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkTcBorrowCheck borrowed)]
+        [_ (ErrTcBorrowCheck "typecheck: arity mismatch")])]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (ty-node-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-borrow-check-add-call-arg-auto-borrow
+                ctx
+                env
+                locals
+                borrowed
+                head-expr
+                ty)
+                [(OkTcBorrowCheck borrowed1)
+                  (tc-borrow-check-auto-borrowed-call-args
+                    ctx
+                    env
                     locals
                     borrowed1
-                    head-expr
-                    ty)
-                    [(OkTcBorrowCheck borrowed2)
-                      (tc-borrow-check-exprs-with-types
-                        ctx
-                        env
-                        locals
-                        borrowed2
-                        rest
-                        rest-types)]
-                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                    rest
+                    rest-types)]
                 [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
           [(AstTypeNil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+
+(define (tc-borrow-check-call-args-with-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : AstExpr]
+  [func : AstExpr]
+  [args : AstExprList]
+  [types : AstTypeList]) : TcBorrowCheckResult
+  (match (tc-borrow-check-exprs-with-types
+    ctx
+    env
+    locals
+    (tc-moved-clone borrowed)
+    args
+    types)
+    [(OkTcBorrowCheck _)
+      (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+        (match (tc-borrow-check-auto-borrowed-call-args
+          ctx
+          env
+          locals
+          borrowed
+          args
+          types)
+          [(OkTcBorrowCheck borrowed2)
+            (tc-borrow-check-after-call-effects
+              ctx
+              env
+              locals
+              borrowed2
+              call-expr
+              func
+              args)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+        (tc-borrow-check-after-call-effects
+          ctx
+          env
+          locals
+          borrowed
+          call-expr
+          func
+          args))]
+    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
 
 (define (tc-borrow-check-exprs
   [ctx : TcContext]
@@ -20186,60 +20532,35 @@
                         params
                         abi)
                         [(OkTcTypeList expanded-params)
-                          (match (tc-borrow-check-exprs-with-types
-                            ctx
-                            env
-                            locals
-                            (tc-moved-clone borrowed1)
-                            args
-                            expanded-params)
-                            [(OkTcBorrowCheck _)
-                              (tc-borrow-check-after-call-effects
-                                ctx
-                                env
-                                locals
-                                borrowed1
-                                expr
-                                func
-                                args)]
-                            [(ErrTcBorrowCheck message)
-                              (ErrTcBorrowCheck message)])]
-                        [(ErrTcTypeList message) (ErrTcBorrowCheck message)])
-                      (match (tc-borrow-check-exprs-with-types
-                        ctx
-                        env
-                        locals
-                        (tc-moved-clone borrowed1)
-                        args
-                        params)
-                        [(OkTcBorrowCheck _)
-                          (tc-borrow-check-after-call-effects
+                          (tc-borrow-check-call-args-with-types
                             ctx
                             env
                             locals
                             borrowed1
                             expr
                             func
-                            args)]
-                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                            args
+                            expanded-params)]
+                        [(ErrTcTypeList message) (ErrTcBorrowCheck message)])
+                      (tc-borrow-check-call-args-with-types
+                        ctx
+                        env
+                        locals
+                        borrowed1
+                        expr
+                        func
+                        args
+                        params))]
                   [(TcNoExternAbi)
-                    (match (tc-borrow-check-exprs-with-types
+                    (tc-borrow-check-call-args-with-types
                       ctx
                       env
                       locals
-                      (tc-moved-clone borrowed1)
+                      borrowed1
+                      expr
+                      func
                       args
-                      params)
-                      [(OkTcBorrowCheck _)
-                        (tc-borrow-check-after-call-effects
-                          ctx
-                          env
-                          locals
-                          borrowed1
-                          expr
-                          func
-                          args)]
-                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
+                      params)])]
               [(ErrTcTypeList _)
                 (match (tc-borrow-check-exprs
                   ctx

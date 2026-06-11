@@ -3253,7 +3253,7 @@
   (let [view : (& text str) (& text)]
     (take view)))")
 
-(define (compiler-typecheck-reference-str-no-implicit-source) : String
+(define (compiler-typecheck-reference-str-auto-borrow-source) : String
   "(define (take [s : (& text str)]) : unit unit)
 (define (main [text : String]) : unit
   (take text))")
@@ -3406,10 +3406,9 @@
       (compiler-typecheck-ok? (compiler-typecheck-reference-projection-source))]
     [str-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-str-source))]
-    [str-no-implicit-error-ok : bool
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-reference-str-no-implicit-source)
-        "typecheck: argument type mismatch")]
+    [str-auto-borrow-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-str-auto-borrow-source))]
     [str-region-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-str-region-source))]
     [temp-error-ok : bool
@@ -3582,7 +3581,7 @@
       (if str-ok
         unit
         (set! ok false))
-      (if str-no-implicit-error-ok
+      (if str-auto-borrow-ok
         unit
         (set! ok false))
       (if str-region-ok

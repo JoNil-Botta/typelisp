@@ -13134,10 +13134,25 @@
           (tc-inline-field-layout-type field))
         (lower-c-abi-inline-fields-integer-only? ctx (box-get rest)))]))
 
+(define (lower-c-abi-win64-register-struct-name?
+  [ctx : TcContext]
+  [name : String]) : bool
+  (match (tc-inline-aggregate-layout-for ctx name)
+    [(OkTcInlineAggregateLayout layout)
+      (match layout
+        [(TcInlineStructLayout _ _ fields)
+          (lower-c-abi-inline-fields-win64-register? ctx fields)]
+        [(TcInlineEnumLayout _ _ _) false])]
+    [(ErrTcInlineAggregateLayout _) false]))
+
 (define (lower-c-abi-win64-register-field-type?
   [ctx : TcContext]
   [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct name)
+      (lower-c-abi-win64-register-struct-name? ctx (intern-str name))]
+    [(AstTyStructArgs name _)
+      (lower-c-abi-win64-register-struct-name? ctx (intern-str name))]
     [(AstTyF32) true]
     [(AstTyF64) true]
     [_ (lower-c-abi-integer-field-type? ctx ty)]))
@@ -13186,7 +13201,7 @@
 
 (define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
-    "flat scalar structs of size 1, 2, 4, or 8 bytes"
+    "scalar structs of size 1, 2, 4, or 8 bytes, including nested scalar struct fields"
     "System V register-class structs up to 16 bytes"))
 
 (define (lower-c-abi-unsupported-message
@@ -29227,12 +29242,19 @@
 (define (main) : i64
   (big-use (Big 1 2)))")
 
-(define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
+(define (compiler-lower-c-abi-windows-nested-small-aggregate-source) : String
   "(defstruct InnerFloatBox (value f64))
 (defstruct OuterFloatBox (inner InnerFloatBox))
 (extern (outer-float-box-use [arg0 : OuterFloatBox]) : i64 (:symbol \"tl_cabi_outer_float_box_use\"))
 (define (main) : i64
   (outer-float-box-use (OuterFloatBox (InnerFloatBox 1.5))))")
+
+(define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
+  "(defstruct InnerText (value String))
+(defstruct OuterText (inner InnerText))
+(extern (outer-text-use [arg0 : OuterText]) : i64 (:symbol \"tl_cabi_outer_text_use\"))
+(define (main) : i64
+  (outer-text-use (OuterText (InnerText \"not-c-scalar\"))))")
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-source) : String
   "(defstruct FloatPair
@@ -29260,6 +29282,21 @@
             ;; remains: the byref buffer the register pair is spilled into before
             ;; the call (down from two when construction also allocated).
             (>= (lower-test-function-call-count functions "main" "tl_alloc") 1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-windows-nested-small-aggregate-source)
+    (CompilerLowerWindowsScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (=
+            (lower-test-function-call-count
+              functions
+              "main"
+              "outer-float-box-use")
+            1)])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?) : bool
@@ -32280,9 +32317,12 @@
       (if (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-windows-error-ok?
         (compiler-lower-c-abi-windows-unsupported-aggregate-source)
-        "lower: unsupported windows-x86_64 C aggregate ABI for OuterFloatBox; this slice supports flat scalar structs of size 1, 2, 4, or 8 bytes")
+        "lower: unsupported windows-x86_64 C aggregate ABI for OuterText; this slice supports scalar structs of size 1, 2, 4, or 8 bytes, including nested scalar struct fields")
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)

@@ -838,6 +838,104 @@ in v1. Hygiene and binding-introducing macros are not part of v1; parser-owned
 guard/conditional forms such as `when`, `unless`, and `cond` introduce no
 user-visible bindings.
 
+#### 3.7.2.2 Stdlib-owned comptime syntax and reflection types
+
+The public macro/comptime syntax and reflection surface is owned by the stdlib,
+not by ad hoc compiler-only handles. The declarations live in the stdlib
+comptime module and are ordinary `defenum`/`defstruct` declarations, but the
+compiler treats them as **well-known types**: their module identity, type names,
+variant names, field names, field order, arity, payload types, and
+compile-time-only marker are pinned by this SPEC and verified when the stdlib is
+loaded.
+
+The well-known set for the first stdlib-owned surface is:
+
+- Syntax values: `Expr`, `ExprList`, `ExprClause`, and `ExprClauseList`.
+- Reflection values: `TypeInfo` plus the associated field, variant, payload,
+  parameter, and sequence types needed to represent the section 5.17 reflection
+  data as ordinary TypeLisp values.
+
+`Expr` is the public source-expression AST used by macros. It mirrors source
+expression forms, not checked compiler internals: literals, variable/reference
+names, calls, blocks, control-flow expressions, aggregate constructors, pattern
+forms where needed by macro operands, quote/quasiquote forms, and other section
+5 source expressions may appear as variants. It must not expose typed AST nodes,
+IR values, CFG blocks, liveness data, register allocation state, backend object
+records, or any representation that optimizer/backend work needs freedom to
+change.
+
+`TypeInfo` is the public, stable reflection value form of section 5.17. It may
+represent builtin types, arrays, functions, tuples, structs, enums, and the
+reserved/partial shapes that `type-kind` can classify. It exposes language
+metadata such as nominal identity, fields, variants, payloads, parameters, and
+opaque `type-key` identity. It must not expose runtime type objects, method
+tables, optimizer facts, layout internals beyond the explicit layout-query
+surface, or compiler symbol-table handles.
+
+The stdlib declarations choose the end-state collection shape rather than
+freezing the compiler's historical cons-list helpers. `ExprList`,
+`ExprClauseList`, and reflection sequences are dense, length-indexed sequence
+wrappers over arrays (or an equivalent compiler-verified dense representation).
+Their public API is length/index/iteration-oriented. Recursive cons cells are
+not part of the public contract, even if temporary compatibility helpers keep
+names such as `expr-list-head` during migration.
+
+The public enum variant policy follows the dotted qualified variant direction:
+stdlib declarations should use short variant names such as `Var`, `Call`,
+`Struct`, or `Enum`, and source code should refer to them through enum-qualified
+names such as `Expr.Var` and `TypeInfo.Struct` once enum-qualified variants land.
+Until that feature is available, implementation code may keep prefixed variant
+names or compatibility constructors, but those prefixed spellings are not the
+final public API.
+
+Spans, lexical context, expansion scopes, and provenance are compiler metadata
+attached to syntax values, not ordinary public fields on every `Expr` variant.
+Conceptually this is a side table keyed by compiler-owned node identity. The
+compiler must preserve that metadata through stdlib-typed manipulation:
+
+- `quote` and `quasiquote` allocate fresh syntax values whose provenance points
+  at the template source span and macro definition context.
+- `unquote` and `unquote-splicing` insert existing syntax values with their
+  existing provenance and lexical context.
+- Public constructors allocate fresh syntax values and attach the constructor
+  call span as fallback provenance unless a dedicated provenance-preserving
+  helper is used.
+- Transformations that rebuild syntax from an existing node should preserve the
+  original node's user-facing provenance when that is the least surprising
+  diagnostic source.
+
+Debug or diagnostics helpers may expose rendered spans or printable expression
+forms, but source code cannot forge lexical contexts, expansion scopes, or raw
+node identities. Any operation that feeds an `Expr` back into the expander must
+carry valid compiler provenance. This rule composes with the hygiene rules in
+section 3.7.3: quote/quasiquote template identifiers carry the macro definition
+context, and unquoted caller syntax keeps its use-site context.
+
+The verification rule is fail-closed. A `--stdlib-root` tree or embedded stdlib
+whose well-known declarations do not match the pinned contract is rejected before
+macro expansion or generated declaration evaluation. The diagnostic should name
+the module/type and the first mismatch, for example:
+
+```text
+typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected variant Call at index 4
+```
+
+Targeted diagnostics should cover at least these corpus cases once the
+implementation lands:
+
+- Missing or renamed `Expr` / `TypeInfo` variants.
+- Variant payload arity or type mismatch.
+- `ExprList` or reflection sequence declarations that expose a cons-list shape
+  instead of the dense sequence contract.
+- Runtime-usable declarations for comptime-only types.
+- A stale stdlib root whose well-known type version does not match the compiler.
+
+The compiler may use the verified stdlib declarations as its real macro-time
+representation. CTFE interpretation and compiled comptime execution must observe
+the same source-level types and produce byte-identical expanded declarations for
+the same inputs. A mismatch is a compiler bug or stdlib-version diagnostic, not
+a silent fallback to a separate internal `Expr` ABI.
+
 #### 3.7.3 Hygienic expression macros (v2 design)
 
 V2 macros use full hygienic expansion, not gensym-only renaming. Gensym is
@@ -3519,6 +3617,12 @@ compiler-owned comptime string. These strings may be compared and used to build
 generated identifiers in comptime code, but they must not be lowered as heap
 `String` values. V1 does not expose list metadata values; indexed primitives are
 used instead.
+
+The stdlib-owned `TypeInfo` surface in section 3.7.2.2 is the value-level form
+of this same reflection contract. Until that surface lands, the indexed
+primitives below remain the implemented selfhost v1 API. After it lands,
+primitive results and `TypeInfo` values must agree on kind strings, nominal
+identity, key generation, and diagnostics.
 
 V1 primitive names and signatures are fixed as follows:
 

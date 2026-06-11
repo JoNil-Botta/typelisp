@@ -848,17 +848,19 @@
   (constructor Point)
   (field Point x))
 (module main)
+(import left)
+(import right)
 (define (main) : i64
   (+
-    (left/get)
+    (left.get)
     (+
-      (right/get)
+      (right.get)
       (+
-        (let ([p : right/Point (right/Point 7)])
+        (let ([p : right.Point (right.Point 7)])
           (struct-get p x))
-        (match (right/Some 1)
-          [(right/Some v) v]
-          [right/None 0])))))")
+        (match (right.Some 1)
+          [(right.Some v) v]
+          [right.None 0])))))")
 
 (define (compiler-typecheck-module-unqualified-import-source) : String
   "(module left)
@@ -883,13 +885,13 @@
 (import \"data.tl\" module data :as d)
 (define (main) : i64
   (+
-    (d/get)
+    (d.get)
     (+
-      (let ([p : d/Point (d/Point 7)])
+      (let ([p : d.Point (d.Point 7)])
         (struct-get p x))
-      (match (d/Some 3)
-        [(d/Some v) v]
-        [d/None 0]))))")
+      (match (d.Some 3)
+        [(d.Some v) v]
+        [d.None 0]))))")
 
 (define (compiler-typecheck-dotted-import-default-alias-source) : String
   "(module pkg.data)
@@ -908,13 +910,13 @@
 (import pkg.data)
 (define (main) : i64
   (+
-    (data/get)
+    (data.get)
     (+
-      (let ([p : data/Point (data/Point 7)])
+      (let ([p : data.Point (data.Point 7)])
         (struct-get p x))
-      (match (data/Some 3)
-        [(data/Some v) v]
-        [data/None 0]))))")
+      (match (data.Some 3)
+        [(data.Some v) v]
+        [data.None 0]))))")
 
 (define (compiler-typecheck-dotted-import-default-alias-with-macro-source) : String
   "(module pkg.data)
@@ -924,7 +926,22 @@
 (defmacro (identity [x : Expr]) : Expr x)
 (module main)
 (import pkg.data)
-(define (main) : i64 (+ (data/get) 1))")
+(define (main) : i64 (+ (data.get) 1))")
+
+(define (compiler-typecheck-dotted-import-full-path-source) : String
+  "(module pkg.data)
+(define (get) : i64 20)
+(export (value get))
+(module main)
+(import pkg.data)
+(define (main) : i64 (pkg.data.get))")
+
+(define (compiler-typecheck-dotted-import-full-path-unimported-source) : String
+  "(module pkg.data)
+(define (get) : i64 20)
+(export (value get))
+(module main)
+(define (main) : i64 (pkg.data.get))")
 
 (define (compiler-typecheck-dotted-import-explicit-alias-collision-source) : String
   "(module left.same)
@@ -936,7 +953,7 @@
 (module main)
 (import left.same as l)
 (import right.same as r)
-(define (main) : i64 (+ (l/get) (r/get)))")
+(define (main) : i64 (+ (l.get) (r.get)))")
 
 (define (compiler-typecheck-dotted-import-unqualified-source) : String
   "(module pkg.data)
@@ -951,14 +968,22 @@
 (define (get) : i64 20)
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main) : i64 (missing/get))")
+(define (main) : i64 (missing.get))")
 
 (define (compiler-typecheck-import-alias-missing-member-source) : String
   "(module data)
 (define (get) : i64 20)
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main) : i64 (d/missing))")
+(define (main) : i64 (d.missing))")
+
+(define (compiler-typecheck-slash-qualified-rejected-source) : String
+  "(module data)
+(define (get) : i64 20)
+(export (value get))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 (d/get))")
 
 (define (compiler-typecheck-export-unknown-source) : String
   "(module data)
@@ -982,26 +1007,27 @@
 (import \"data.tl\" module data :as d)
 (define (main) : i64
   (+
-    (d/get)
+    (d.get)
     (+
-      (let ([p : d/Point (d/Point 7 9)])
+      (let ([p : d.Point (d.Point 7 9)])
         (struct-get p x))
-      (match (d/Some 3)
-        [(d/Some v) v]
-        [d/None 0]))))")
+      (match (d.Some 3)
+        [(d.Some v) v]
+        [d.None 0]))))")
 
 (define (compiler-typecheck-export-private-alias-value-source) : String
   "(module data)
 (define private : i64 1)
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main) : i64 d/private)")
+(define (main) : i64 d.private)")
 
 (define (compiler-typecheck-export-private-canonical-value-source) : String
   "(module data)
 (define private : i64 1)
 (module main)
-(define (main) : i64 data/private)")
+(import data)
+(define (main) : i64 data.private)")
 
 (define (compiler-typecheck-export-type-only-opaque-source) : String
   "(module data)
@@ -1009,7 +1035,7 @@
 (export (type Opaque))
 (module main)
 (import \"data.tl\" module data :as d)
-(define (id [x : d/Opaque]) : d/Opaque x)
+(define (id [x : d.Opaque]) : d.Opaque x)
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-export-type-only-constructor-source) : String
@@ -1018,7 +1044,7 @@
 (export (type Opaque))
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main) : d/Opaque (d/Opaque 1))")
+(define (main) : d.Opaque (d.Opaque 1))")
 
 (define (compiler-typecheck-export-type-only-field-source) : String
   "(module data)
@@ -1028,7 +1054,7 @@
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
-  (let ([x : d/Opaque (d/make)])
+  (let ([x : d.Opaque (d.make)])
     (struct-get x value)))")
 
 (define (compiler-typecheck-export-generated-decl-source) : String
@@ -1039,7 +1065,7 @@
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
-  (let ([x : d/Generated (d/Generated 7)])
+  (let ([x : d.Generated (d.Generated 7)])
     (struct-get x value)))")
 
 (define (compiler-typecheck-export-private-type-source) : String
@@ -1047,7 +1073,7 @@
 (defstruct Hidden (value i64))
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main [x : d/Hidden]) : i64 0)")
+(define (main [x : d.Hidden]) : i64 0)")
 
 (define (compiler-typecheck-export-private-variant-pattern-source) : String
   "(module data)
@@ -1057,9 +1083,9 @@
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
-  (match (d/make)
-    [(d/Hidden v) v]
-    [(d/Visible v) v]))")
+  (match (d.make)
+    [(d.Hidden v) v]
+    [(d.Visible v) v]))")
 
 (define (compiler-typecheck-export-same-module-private-source) : String
   "(module data)
@@ -1068,13 +1094,13 @@
 (defstruct Point (x i64))
 (define (main) : i64
   (+
-    data/private
+    data.private
     (+
-      (let ([p : data/Point (data/Point 1)])
+      (let ([p : data.Point (data.Point 1)])
         (struct-get p x))
-      (match (data/Some 2)
-        [(data/Some v) v]
-        [data/None 0]))))")
+      (match (data.Some 2)
+        [(data.Some v) v]
+        [data.None 0]))))")
 
 (define (compiler-typecheck-export-visibility-tests-ok?) : bool
   (let
@@ -1847,6 +1873,15 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        (compiler-typecheck-dotted-import-full-path-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-dotted-import-full-path-unimported-source)
+        "typecheck: unknown qualified name pkg.data.get; import the module or use a visible dotted module alias")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         (compiler-typecheck-dotted-import-explicit-alias-collision-source))
         unit
         (set! ok false))
@@ -1857,12 +1892,17 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-import-alias-missing-source)
-        "typecheck: unbound name missing/get")
+        "typecheck: unknown qualified name missing.get; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-import-alias-missing-member-source)
         "typecheck: unbound name d/missing")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-slash-qualified-rejected-source)
+        "typecheck: slash-qualified name d/get is no longer supported; use d.get")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5314,7 +5354,7 @@
 (export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
-(define (main) : i64 (f/danger 42))")
+(define (main) : i64 (f.danger 42))")
 
 (define (compiler-typecheck-unsafe-import-unsafe-call-source) : String
   "(module foreign)
@@ -5322,7 +5362,7 @@
 (export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
-(define (main) : i64 (unsafe (f/danger 42)))")
+(define (main) : i64 (unsafe (f.danger 42)))")
 
 (define (compiler-typecheck-unsafe-fn-body-still-safe-source) : String
   "(unsafe (define (read-it [p : (Ptr i64)]) : i64 (ptr-read p)))")
@@ -5764,7 +5804,7 @@
 (module main)
 (import \"bool.tl\" module bool :as b)
 (define (main) : i64
-  (if (b/and2 true true) 42 0))")
+  (if (b.and2 true true) 42 0))")
 
 (define (compiler-typecheck-macro-private-source) : String
   "(module hidden)
@@ -5773,7 +5813,7 @@
 (module main)
 (import \"hidden.tl\" module hidden :as hidden)
 (define (main) : i64
-  (if (hidden/private-and true true) 0 1))")
+  (if (hidden.private-and true true) 0 1))")
 
 (define (compiler-typecheck-macro-missing-export-source) : String
   "(module hidden)
@@ -5782,7 +5822,7 @@
 (module main)
 (import \"hidden.tl\" module hidden :as hidden)
 (define (main) : i64
-  (if (hidden/missing true true) 0 1))")
+  (if (hidden.missing true true) 0 1))")
 
 (define (compiler-typecheck-macro-late-local-source) : String
   "(define eager : bool (late true))
@@ -5818,11 +5858,11 @@
 (module main)
 (import \"stdlib/core_macros.tl\" module stdlib.core-macros :as core)
 (define (main) : i64
-  (let [value : i64 0]
+      (let [value : i64 0]
     (begin
-      (core/when true (set! value 21))
-      (core/unless false (set! value (+ value 21)))
-      (if (core/and (= value 42) (core/or false true)) value 0))))")
+      (core.when true (set! value 21))
+      (core.unless false (set! value (+ value 21)))
+      (if (core.and (= value 42) (core.or false true)) value 0))))")
 
 (define (compiler-typecheck-macro-prelude-module-source) : String
   "(module stdlib.core-macros)
@@ -5891,7 +5931,7 @@
 (import \"macros.tl\" module macros as m)
 (define (macro-helper [x : bool]) : i64 7)
 (define (main) : i64
-  (m/choose-helper false (macro-helper true)))")
+  (m.choose-helper false (macro-helper true)))")
 
 (define (compiler-typecheck-macro-dotted-import-default-alias-source) : String
   "(module pkg.macros)
@@ -5905,7 +5945,7 @@
 (import pkg.macros)
 (define (macro-helper [x : bool]) : i64 7)
 (define (main) : i64
-  (macros/choose-helper false (macro-helper true)))")
+  (macros.choose-helper false (macro-helper true)))")
 
 (define (compiler-typecheck-macro-hygiene-imported-builtin-source) : String
   "(module macros)
@@ -5915,7 +5955,7 @@
 (module main)
 (import \"macros.tl\" module macros as m)
 (define (main [items : (Array i64)]) : i64
-  (m/dyn-len items))")
+  (m.dyn-len items))")
 
 (define (compiler-typecheck-macro-hygiene-nested-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
@@ -7585,7 +7625,7 @@
 (export (value dot))
 (module app)
 (import \"kernels.tl\" module kernels :as k)
-(define (main [x : i64]) : i64 (k/dot x))")
+(define (main [x : i64]) : i64 (k.dot x))")
 
 (define (compiler-typecheck-defdispatch-tests-ok?) : bool
   (and
@@ -7650,7 +7690,8 @@
 (define (helper [x : i64]) : i64 x)
 (export (value helper))
 (module main)
-(define (main) : i64 (left/helper true))")
+(import left)
+(define (main) : i64 (left.helper true))")
 
 ;; Returns true when duplicate function/value, define/function collision,
 ;; duplicate struct and enum type names, duplicate externs, enum variants and

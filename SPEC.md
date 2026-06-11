@@ -1773,8 +1773,8 @@ explicit module declaration use the loader's normalized source identity as their
 canonical identity. Different path spellings that normalize to the same source
 file must load one module instance.
 
-The canonical identity is a slash-separated identifier path such as
-`stdlib/string`, `compiler/lower`, or `math/vector`. It must be stable across
+The canonical identity is a dotted identifier path such as
+`stdlib.string`, `compiler.lower`, or `math.vector`. It must be stable across
 platform path separators and package-root spellings. A `pkg:<alias>/...` import
 contributes the package alias to the loader identity, but an explicit `(module
 ...)` declaration inside the file remains the public source-level identity.
@@ -1786,8 +1786,8 @@ collide with an existing module alias, the import is rejected unless the source
 uses an explicit alias:
 
 ```lisp test=ignore name=module-import-alias-syntax reason="selfhost module aliases are tracked by #952"
-(import "math/vector.tl" :as vec)
-(import "io/vector.tl" :as io-vec)
+(import "math/vector.tl" module math.vector :as vec)
+(import "io/vector.tl" module io.vector :as io-vec)
 ```
 
 Selected imports remain deferred in v1. Spellings such as
@@ -1826,7 +1826,7 @@ V1 export syntax is an explicit top-level form:
 ```
 
 `(export (type Point))` exports only the nominal type name. For structs this is
-an opaque type export: external modules can mention `geometry/Point` but cannot
+an opaque type export: external modules can mention `geometry.Point` but cannot
 construct it or read fields unless the constructor and fields are also exported.
 For enums, exporting only the type keeps variants private; variants can be
 exported separately with `(variant VariantName)`. A transparent convenience
@@ -1853,20 +1853,23 @@ same local module because expression-head lookup would otherwise be ambiguous.
 
 #### 4.4.3 Qualified lookup
 
-Qualified names use `/`: `alias/name` for one alias segment and
-`module/path/name` for canonical module paths when no local alias is used.
-Unqualified lookup searches only local declarations and local bindings. It does
-not search imported modules.
+Qualified source names use `.`: `alias.name` for one alias segment and
+`module.path.name` for a full canonical module path. Full canonical paths are
+accepted only when that module identity has been imported in the current module
+or when the use appears inside the same module. Unqualified lookup searches only
+local declarations and local bindings. It does not search imported modules.
+Slash-qualified source names such as `alias/name` are rejected; `/` remains the
+ordinary division operator.
 
 Qualified lookup applies to:
 
-- Values: `(vec/dot a b)`, `config/default-timeout`.
-- Types: `[p : geometry/Point]`.
-- Enum variants and patterns: `(json/Some value)` and `[(json/Err e) ...]`.
-- Struct constructors: `(geometry/Point 3 4)`.
+- Values: `(vec.dot a b)`, `config.default-timeout`.
+- Types: `[p : geometry.Point]`.
+- Enum variants and patterns: `(json.Some value)` and `[(json.Err e) ...]`.
+- Struct constructors: `(geometry.Point 3 4)`.
 - Struct fields: `(struct-get p x)` resolves `x` through the receiver's struct
   type; exporting the field controls whether external modules may use it.
-- Macros: `(bool/and2 a b)` resolves `and2` in the imported module's macro
+- Macros: `(bool.and2 a b)` resolves `and2` in the imported module's macro
   namespace during expansion.
 - Generated declarations: generated family keys include the generator module
   identity plus the generated declaration identity.
@@ -1893,7 +1896,7 @@ Example with colliding local names:
 ;; main.tl
 (import "left.tl")
 (import "right.tl")
-(define (main) : i64 (+ (left/get) (right/get)))
+(define (main) : i64 (+ (left.get) (right.get)))
 ```
 
 #### 4.4.4 Macro export/import and expansion ordering
@@ -1909,14 +1912,14 @@ to exported macros from `stdlib.core-macros` unless a local or imported macro
 with the same name takes precedence. The module can also be loaded with an
 ordinary explicit import, for example
 `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, and its
-exports can be called through the import alias such as `core/when`,
-`core/unless`, `core/and`, `core/or`, and `core/cond`.
+exports can be called through the import alias such as `core.when`,
+`core.unless`, `core.and`, `core.or`, and `core.cond`.
 
 Before expanding a module's non-import forms, the loader parses the module,
 collects its import declarations, recursively loads imported modules, and builds
 the imported macro namespace from each dependency's exported macro items.
 Imported macros are then available to the importer for the entire expansion of
-that module through qualified names such as `bool/and2`. The imported macro's
+that module through qualified names such as `bool.and2`. The imported macro's
 typed signature is used for call-site checking in the importing module; operand
 expressions are not evaluated before expansion.
 
@@ -1954,9 +1957,9 @@ Cross-module macro use:
 (export (macro and2))
 
 ;; main.tl
-(import "bool_macros.tl" :as bool)
+(import "bool_macros.tl" module bool-macros :as bool)
 (define (main) : i64
-  (if (bool/and2 true true) 0 1))
+  (if (bool.and2 true true) 0 1))
 ```
 
 Private or missing macro diagnostic:
@@ -1968,9 +1971,9 @@ Private or missing macro diagnostic:
   (expr-if lhs rhs (expr-bool false)))
 
 ;; main.tl
-(import "hidden.tl" :as hidden)
+(import "hidden.tl" module hidden :as hidden)
 (define (main) : i64
-  (if (hidden/private-and true true) 0 1)) ; error: private macro hidden/private-and
+  (if (hidden.private-and true true) 0 1)) ; error: private macro hidden.private-and
 ```
 
 Late local macro diagnostic:
@@ -2783,7 +2786,7 @@ by the implicit core macro prelude. It expands to nested `if` expressions, so
 each test must type-check as `bool` and all branch result types must merge using
 the normal `if` rules. The argument list is `test result` pairs followed by one
 final fallback expression, so at least three arguments are required and the
-arity must be odd. Qualified calls such as `core/cond` use the same flat shape.
+arity must be odd. Qualified calls such as `core.cond` use the same flat shape.
 The legacy bracket-arm form `(cond [test expr] ... [else fallback])` is retired
 and is not accepted.
 

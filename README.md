@@ -55,14 +55,15 @@ roadmap index, and design decisions are recorded as comments on their issues.
 The following decisions are **made**; new code should anticipate them instead
 of imitating transitional patterns still present in the tree:
 
-- **Imports**: dotted module imports with aliases replace path imports
-  (#2452, #2453, #2454, #2492). The legacy `(import "path/file.tl")` spelling
-  is being removed.
+- **Imports**: dotted module imports with aliases and dotted qualified member
+  access replace path imports and slash-qualified source names (#2452, #2453,
+  #2454, #2492). The legacy `(import "path/file.tl")` spelling is being
+  removed.
 - **Stdlib names**: module-name prefixes on stdlib functions
   (`string-append`, `fs-read-dir`, ...) are flat-namespace fossils; the
-  end-state is qualified short names such as `str/append` (#2582, #2583).
+  end-state is qualified short names such as `str.append` (#2582, #2583).
 - **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
-  `cond`) are canonical; qualified `core/` calls are transitional (#2581).
+  `cond`) are canonical; qualified `core.` calls are transitional (#2581).
   Macros support bracket operands for clause-shaped surfaces (#2578), and
   `cond` returns to bracket arms `(cond [test expr] ... [else fallback])`
   when the core macro is migrated; the flat call shape is transitional (#2579).
@@ -95,7 +96,7 @@ of imitating transitional patterns still present in the tree:
   compile-speed direction (#2596).
 
 Transitional states in the current tree — do **not** imitate them in new
-code: path imports, `core/`-qualified macro calls, module-name-prefixed
+code: path imports, `core.`-qualified macro calls, module-name-prefixed
 stdlib calls, flat `cond`, `string-append` chains, copy-on-update for record
 mutation, and the in-flight aggregate-inline representation work
 (#1867/#2296/#2357).
@@ -264,9 +265,15 @@ function-head declaration: bare `...` accepts any C ABI value tail and
 
 Dotted module imports bind a module alias and keep imported definitions out of
 the local unqualified namespace: `(import stdlib.string)` binds `string`, and
-`(import stdlib.core_macros as core)` binds `core`. Legacy path imports such as
-`(import "lib/util.tl")` keep the transitional flat behavior while that spelling
-is removed; see `SPEC.md` section 4.4 for the migration contract. Macro
+`(import stdlib.core_macros as core)` binds `core`. Imported values, types,
+constructors, variants, patterns, and macros are referenced with dotted member
+access such as `(string.length text)`, `[p : geometry.Point]`, and
+`(core.when cond body)`. Full module paths such as `stdlib.string.length` are
+accepted only when that module identity has been imported in the current
+module. Slash-qualified source names such as `string/length` are rejected.
+Legacy path imports such as `(import "lib/util.tl")` keep the transitional flat
+behavior while that spelling is removed; see `SPEC.md` section 4.4 for the
+migration contract. Macro
 exports/imports use the same module loader identities and path-resolution rules,
 with macro expansion happening before ordinary runtime typechecking.
 
@@ -292,8 +299,8 @@ implicit prelude. Bare `when`, `unless`, `and`, `or`, and flat call-shaped
 `cond` resolve to `stdlib/core_macros.tl` unless a local or imported macro
 shadows them. The same module can still be imported explicitly as
 `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` for
-qualified calls such as `core/when`, `core/unless`, `core/and`, `core/or`, and
-`core/cond`.
+qualified calls such as `core.when`, `core.unless`, `core.and`, `core.or`, and
+`core.cond`.
 
 `typelisp compile` accepts `--cfg <name>` to enable source-level conditional
 compilation flags. Source may wrap a top-level declaration as

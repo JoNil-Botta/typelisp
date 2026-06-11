@@ -3399,7 +3399,7 @@
   (value answer))
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main) : i64 (d/get))")
+(define (main) : i64 (d.get))")
 
 (define (compiler-export-symbol-score
   [exports : CompilerExports]
@@ -3863,7 +3863,7 @@
 (defstruct Point (x i64))
 (module main)
 (import \"data.tl\" module data :as d)
-(define (main) : i64 (d/get))")
+(define (main) : i64 (d.get))")
 
 (define (compiler-symbols-import-alias-ok?) : bool
   (match (parse-ast-source (compiler-symbols-import-alias-source))

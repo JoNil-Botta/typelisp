@@ -3031,7 +3031,7 @@
       "target/cl_alias_entry.tl"
       "(import \"cl_alias_dep.tl\" module alias.dep :as dep)
 (module alias.entry)
-(define (main) : i64 (dep/get))")
+(define (main) : i64 (dep.get))")
     (match (compiler-load-file-with-paths
       "target/cl_alias_entry.tl"
       (sym-i64-empty))

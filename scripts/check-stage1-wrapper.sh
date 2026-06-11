@@ -336,7 +336,7 @@ echo "[host-action-cli] package build"
 EOF
     cat > "$PKG/src/main.tl" <<'EOF'
 (import "macros.tl" module stage1.macros as macros)
-(define (main) : i64 (macros/add-one-macro 41))
+(define (main) : i64 (macros.add-one-macro 41))
 EOF
     cat > "$PKG/src/macros.tl" <<'EOF'
 (module stage1.macros)

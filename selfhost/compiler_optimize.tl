@@ -15847,212 +15847,144 @@
           (box instr-entries))
         (+ instr-count 1))]))
 
-(define (opt-remap-spans-prepend-instr
-  [spans : CompilerSourceSpans]
+;; The remap previously rebuilt the "value:<function>:<var>" key string --
+;; three appends -- for EVERY instruction in the program, then rebuilt the
+;; same key again on every hit. Now the per-function "value:<function>:"
+;; prefix is built once, each key is one append, the key is shared between
+;; lookup and prepend, and only instructions whose kind can carry a span
+;; build a key at all. The key arms mirror the kinds the replaced
+;; per-instruction prepend matcher accepted: indirect-call destinations were
+;; looked up and then dropped by its fall-through, so skipping their lookups
+;; cannot change the produced spans. The entry-list probe stays the linear
+;; first-match scan: entries are bounded by the 2049 fast-path cutoff, and a
+;; hash-indexed variant measured MORE executed instructions once #2735 moved
+;; hash-string into TypeLisp (long keys hash per instruction).
+(defenum OptRemapSpanKey
+  (OptRemapSpanNoKey)
+  (OptRemapSpanSomeKey String))
+
+(define (opt-remap-spans-value-key [value-prefix : String] [dst : i64]) : String
+  (string-append value-prefix (int->string dst)))
+
+(define (opt-remap-spans-instr-key
+  [value-prefix : String]
   [function : String]
-  [instr : CompilerIrInstr]
-  [span : AstSourceSpan]) : CompilerSourceSpans
+  [instr : CompilerIrInstr]) : OptRemapSpanKey
   (match instr
     [(IrInstrMov dst _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrAlloc dst _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrAddrOf dst _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrGep dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrLoad dst _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrCast dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrBinOp dst _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrUnOp dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrLaneId dst _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrSplat dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrVectorReduce dst _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrVectorCompare dst _ _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrMaskBinOp dst _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrMaskNot dst _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrMaskReduce dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrSelect dst _ _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrVectorLoad dst _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrTailMask dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrEntryArgc dst)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrEntryArgv dst)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrEntryEnvp dst)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrCpuId dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrXgetbv dst _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrSyscall dst _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrCall dst _ _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrStore name _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-store-key function name)
-        span)]
+      (OptRemapSpanSomeKey (compiler-source-spans-store-key function name))]
     [(IrInstrPhi dst _ _)
-      (opt-remap-spans-prepend-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
-    [_ spans]))
+      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [_ (OptRemapSpanNoKey)]))
 
 (define (opt-remap-spans-instr
-  [source-spans : CompilerSourceSpans]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
+  [value-prefix : String]
   [function : String]
   [instr : CompilerIrInstr]) : CompilerSourceSpans
-  (match (compiler-source-spans-lookup-instr source-spans function instr)
-    [(CompilerSomeSourceSpan span)
-      (opt-remap-spans-prepend-instr out function instr span)]
-    [(CompilerNoSourceSpan) out]))
-
-(define (opt-remap-spans-instrs
-  [source-spans : CompilerSourceSpans]
-  [out : CompilerSourceSpans]
-  [function : String]
-  [instrs : CompilerIrInstrList]) : CompilerSourceSpans
-  (match instrs
-    [(IrInstrNil) out]
-    [(IrInstrCons instr rest)
-      (opt-remap-spans-instrs
-        source-spans
-        (opt-remap-spans-instr source-spans out function instr)
-        function
-        (box-get rest))]))
+  (match (opt-remap-spans-instr-key value-prefix function instr)
+    [(OptRemapSpanNoKey) out]
+    [(OptRemapSpanSomeKey key)
+      (match (compiler-source-spans-entry-list-lookup instr-entries key)
+        [(CompilerSomeSourceSpan span)
+          (opt-remap-spans-prepend-entry out key span)]
+        [(CompilerNoSourceSpan) out])]))
 
 (define (opt-remap-spans-instr-seq-from
-  [source-spans : CompilerSourceSpans]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
+  [value-prefix : String]
   [function : String]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerSourceSpans
   (if (>= index (compiler-ir-instr-seq-count instrs))
     out
     (opt-remap-spans-instr-seq-from
-      source-spans
+      instr-entries
       (opt-remap-spans-instr
-        source-spans
+        instr-entries
         out
+        value-prefix
         function
         (compiler-ir-instr-seq-ref instrs index))
+      value-prefix
       function
       instrs
       (+ index 1))))
 
 (define (opt-remap-spans-instr-seq
-  [source-spans : CompilerSourceSpans]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
+  [value-prefix : String]
   [function : String]
   [instrs : CompilerIrInstrSeq]) : CompilerSourceSpans
-  (opt-remap-spans-instr-seq-from source-spans out function instrs 0))
+  (opt-remap-spans-instr-seq-from
+    instr-entries
+    out
+    value-prefix
+    function
+    instrs
+    0))
 
 (define (opt-remap-spans-blocks
-  [source-spans : CompilerSourceSpans]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
+  [value-prefix : String]
   [function : String]
   [blocks : CompilerIrBlockList]) : CompilerSourceSpans
   (match blocks
@@ -16061,35 +15993,47 @@
       (match block
         [(IrBlock _ instrs)
           (opt-remap-spans-blocks
-            source-spans
-            (opt-remap-spans-instr-seq source-spans out function instrs)
+            instr-entries
+            (opt-remap-spans-instr-seq
+              instr-entries
+              out
+              value-prefix
+              function
+              instrs)
+            value-prefix
             function
             (box-get rest))])]
     [(IrBlockArray seq)
       (opt-remap-spans-blocks
-        source-spans
+        instr-entries
         out
+        value-prefix
         function
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-remap-spans-function
-  [source-spans : CompilerSourceSpans]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [func : CompilerIrFunction]) : CompilerSourceSpans
   (match func
     [(IrFunction name _ _ _ blocks)
-      (opt-remap-spans-blocks source-spans out name blocks)]))
+      (opt-remap-spans-blocks
+        instr-entries
+        out
+        (string-append (string-append "value:" name) ":")
+        name
+        blocks)]))
 
 (define (opt-remap-spans-functions
-  [source-spans : CompilerSourceSpans]
+  [instr-entries : CompilerSourceSpansEntryList]
   [out : CompilerSourceSpans]
   [funcs : CompilerIrFunctionList]) : CompilerSourceSpans
   (match funcs
     [(IrFunctionNil) out]
     [(IrFunctionCons func rest)
       (opt-remap-spans-functions
-        source-spans
-        (opt-remap-spans-function source-spans out func)
+        instr-entries
+        (opt-remap-spans-function instr-entries out func)
         (box-get rest))]))
 
 (define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
@@ -16100,12 +16044,14 @@
   [program : CompilerIrProgram]) : CompilerSourceSpans
   (if (opt-remap-spans-fast-path? source-spans)
     (compiler-source-spans-clear-instrs source-spans)
-    (match program
-      [(IrProgram _ functions _)
-        (opt-remap-spans-functions
-          source-spans
-          (compiler-source-spans-clear-instrs source-spans)
-          functions)])))
+    (match source-spans
+      [(CompilerSourceSpans _ instr-entries _)
+        (match program
+          [(IrProgram _ functions _)
+            (opt-remap-spans-functions
+              instr-entries
+              (compiler-source-spans-clear-instrs source-spans)
+              functions)])])))
 
 (define (optimize-program-with-spans-and-level
   [program : CompilerIrProgram]

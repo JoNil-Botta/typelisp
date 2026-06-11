@@ -27,8 +27,9 @@
         (cast 3 : u32)
         (cast 4 : u32)
         (cast 10 : u64))]
+    [maker : (-> u32 u32 u32 u32 u64 Wide) wide-maker]
     [via-ptr : Wide
-      (wide-maker
+      (maker
         (cast 5 : u32)
         (cast 6 : u32)
         (cast 7 : u32)

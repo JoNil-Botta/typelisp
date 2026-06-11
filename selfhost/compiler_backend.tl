@@ -192,6 +192,14 @@
   (OkCompilerBackendObject CompilerObjectImage)
   (ErrCompilerBackendObject CompilerDiagnostic))
 
+(defstruct CompilerBackendPicOutput
+  (asm String)
+  (fixups String))
+
+(defenum ResultCompilerBackendPic
+  (OkCompilerBackendPic CompilerBackendPicOutput)
+  (ErrCompilerBackendPic CompilerDiagnostic))
+
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
   (hash-string bool))
@@ -18450,6 +18458,329 @@ tl_memcpy:
                 (set! i (+ i needle-len)))
               (set! i (+ i 1))))
           count)))))
+
+(define compiler-backend-pic-image-base-label : String
+  ".L_tl_pic_image_base")
+
+(define (compiler-backend-string-find-from
+  [text : String]
+  [needle : String]
+  [start : i64]) : i64
+  (let
+    [text-len : i64 (string-length text)]
+    [needle-len : i64 (string-length needle)]
+    (if (= needle-len 0)
+      start
+      (let
+        [i : i64 start]
+        [found : i64 -1]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (if (<= (+ i needle-len) text-len)
+              (if (compiler-backend-string-prefix-at? text needle i)
+                (begin
+                  (set! found i)
+                  (set! done true))
+                (set! i (+ i 1)))
+              (set! done true)))
+          found)))))
+
+(define (compiler-backend-string-replace-all
+  [text : String]
+  [needle : String]
+  [replacement : String]) : String
+  (let
+    [text-len : i64 (string-length text)]
+    [needle-len : i64 (string-length needle)]
+    (if (= needle-len 0)
+      text
+      (let
+        [i : i64 0]
+        [out : TextBuf (text-buf-empty)]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (let
+              [pos : i64 (compiler-backend-string-find-from text needle i)]
+              (if (< pos 0)
+                (begin
+                  (if (< i text-len)
+                    (set!
+                      out
+                      (text-buf-append out (substring text i (- text-len i))))
+                    unit)
+                  (set! done true))
+                (begin
+                  (if (> pos i)
+                    (set!
+                      out
+                      (text-buf-append out (substring text i (- pos i))))
+                    unit)
+                  (set! out (text-buf-append out replacement))
+                  (set! i (+ pos needle-len))))))
+          (text-buf-render out))))))
+
+(define (compiler-backend-pic-quad-pattern [target : String]) : String
+  (backend-cat3 "    .quad " target "\n"))
+
+(define (compiler-backend-pic-quad-replacement [target : String]) : String
+  (backend-cat5
+    "    .quad "
+    target
+    " - "
+    compiler-backend-pic-image-base-label
+    "\n"))
+
+(define (compiler-backend-pic-rewrite-target [asm : String] [target : String]) : String
+  (compiler-backend-string-replace-all
+    asm
+    (compiler-backend-pic-quad-pattern target)
+    (compiler-backend-pic-quad-replacement target)))
+
+(define (compiler-backend-pic-rewrite-relocs
+  [asm : String]
+  [relocs : CompilerObjectRelocationList]) : String
+  (match relocs
+    [(ObjectRelocationNil) asm]
+    [(ObjectRelocationCons reloc rest)
+      (match reloc
+        [(ObjectRelocation _ _ kind target)
+          (compiler-backend-pic-rewrite-relocs
+            (match kind
+              [(ObjectRelocAbs64)
+                (compiler-backend-pic-rewrite-target asm target)]
+              [_ asm])
+            (box-get rest))])]))
+
+(define (compiler-backend-pic-align-offset [offset : i64] [align : i64]) : i64
+  (if (<= align 1)
+    offset
+    (let
+      [rem : i64 (% offset align)]
+      (if (= rem 0)
+        offset
+        (+ offset (- align rem))))))
+
+(define (compiler-backend-pic-data-record-end-offset
+  [record : CompilerObjectDataRecord]
+  [offset : i64]) : i64
+  (match record
+    [(ObjectDataLabel _) offset]
+    [(ObjectDataAlign align) (compiler-backend-pic-align-offset offset align)]
+    [(ObjectDataBytes bytes) (+ offset (string-length bytes))]
+    [(ObjectDataString text) (+ offset (+ (string-length text) 1))]
+    [(ObjectDataF64 _) (+ offset 8)]
+    [(ObjectDataI64 _) (+ offset 8)]
+    [(ObjectDataZero count) (+ offset count)]
+    [(ObjectDataSymbolAddress _) (+ offset 8)]))
+
+(define (compiler-backend-pic-data-label-offset-from
+  [records : CompilerObjectDataRecordList]
+  [label : String]
+  [offset : i64]) : i64
+  (match records
+    [(ObjectDataNil) -1]
+    [(ObjectDataCons record rest)
+      (match record
+        [(ObjectDataLabel found)
+          (if (string-eq found label)
+            offset
+            (compiler-backend-pic-data-label-offset-from
+              (box-get rest)
+              label
+              offset))]
+        [_
+          (compiler-backend-pic-data-label-offset-from
+            (box-get rest)
+            label
+            (compiler-backend-pic-data-record-end-offset record offset))])]))
+
+(define (compiler-backend-pic-section-label-offset
+  [image : CompilerObjectImage]
+  [kind : CompilerObjectSectionKind]
+  [label : String]) : i64
+  (match (compiler-object-section-list-find (struct-get image sections) kind)
+    [(ObjectSection _ data _)
+      (match kind
+        [(ObjectSectionText) -1]
+        [_ (compiler-backend-pic-data-label-offset-from data label 0)])]))
+
+(define (compiler-backend-pic-section-name [kind : CompilerObjectSectionKind]) : String
+  (match kind
+    [(ObjectSectionText) "text"]
+    [(ObjectSectionData) "data"]
+    [(ObjectSectionRodata) "rodata"]
+    [(ObjectSectionBss) "bss"]))
+
+(define (compiler-backend-pic-fixup-line
+  [section : CompilerObjectSectionKind]
+  [offset : i64]
+  [site : String]
+  [target : String]) : String
+  (string-append
+    (backend-cat5
+      (compiler-backend-pic-section-name section)
+      " "
+      (int->string offset)
+      " "
+      site)
+    (string-append " " (string-append target "\n"))))
+
+(define (compiler-backend-pic-fixup-table-relocs
+  [image : CompilerObjectImage]
+  [relocs : CompilerObjectRelocationList]
+  [buf : TextBuf]) : TextBuf
+  (match relocs
+    [(ObjectRelocationNil) buf]
+    [(ObjectRelocationCons reloc rest)
+      (match reloc
+        [(ObjectRelocation section site kind target)
+          (compiler-backend-pic-fixup-table-relocs
+            image
+            (box-get rest)
+            (match kind
+              [(ObjectRelocAbs64)
+                (let
+                  [offset : i64
+                    (compiler-backend-pic-section-label-offset
+                      image
+                      section
+                      site)]
+                  (if (>= offset 0)
+                    (text-buf-append
+                      buf
+                      (compiler-backend-pic-fixup-line
+                        section
+                        offset
+                        site
+                        target))
+                    buf))]
+              [_ buf]))])]))
+
+(define (compiler-backend-pic-fixup-table [image : CompilerObjectImage]) : String
+  (text-buf-render
+    (compiler-backend-pic-fixup-table-relocs
+      image
+      (struct-get image relocations)
+      (text-buf-append (text-buf-empty) "typelisp-pic-fixups v1\n"))))
+
+(define (compiler-backend-pic-symbols-have-extern?
+  [symbols : CompilerObjectSymbolList]) : bool
+  (match symbols
+    [(ObjectSymbolNil) false]
+    [(ObjectSymbolCons symbol rest)
+      (match symbol
+        [(ObjectSymbol _ binding _ _)
+          (match binding
+            [(ObjectSymbolExtern) true]
+            [_ (compiler-backend-pic-symbols-have-extern? (box-get rest))])])]))
+
+(define (compiler-backend-pic-reloc-site-valid?
+  [image : CompilerObjectImage]
+  [reloc : CompilerObjectRelocation]) : bool
+  (match reloc
+    [(ObjectRelocation section site kind _)
+      (match kind
+        [(ObjectRelocAbs64)
+          (match section
+            [(ObjectSectionData)
+              (let
+                [offset : i64
+                  (compiler-backend-pic-section-label-offset image section site)]
+                (and (>= offset 0) (= (% offset 8) 0)))]
+            [(ObjectSectionRodata)
+              (let
+                [offset : i64
+                  (compiler-backend-pic-section-label-offset image section site)]
+                (and (>= offset 0) (= (% offset 8) 0)))]
+            [_ false])]
+        [_ true])]))
+
+(define (compiler-backend-pic-relocs-valid?
+  [image : CompilerObjectImage]
+  [relocs : CompilerObjectRelocationList]) : bool
+  (match relocs
+    [(ObjectRelocationNil) true]
+    [(ObjectRelocationCons reloc rest)
+      (and
+        (compiler-backend-pic-reloc-site-valid? image reloc)
+        (compiler-backend-pic-relocs-valid? image (box-get rest)))]))
+
+(define (compiler-backend-pic-asm [asm : String] [image : CompilerObjectImage]) : String
+  (string-append
+    (backend-cat3 ".text\n" compiler-backend-pic-image-base-label ":\n")
+    (compiler-backend-pic-rewrite-relocs asm (struct-get image relocations))))
+
+(define (compiler-backend-emit-program-pic-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendPic
+  (match (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry)
+    [(OkCompilerBackendBuffer buf)
+      (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+        program
+        target
+        mode
+        spans
+        emit-entry
+        crt-entry)
+        [(OkCompilerBackendObject image)
+          (if (compiler-backend-pic-symbols-have-extern?
+            (struct-get image symbols))
+            (ErrCompilerBackendPic
+              (compiler-diagnostic-at-start
+                ""
+                "backend: --pic supports only internal references; extern symbols are not supported"))
+            (if (compiler-backend-pic-relocs-valid?
+              image
+              (struct-get image relocations))
+              (OkCompilerBackendPic
+                (CompilerBackendPicOutput
+                  (compiler-backend-pic-asm
+                    (compiler-backend-peephole-asm (text-buf-render buf))
+                    image)
+                  (compiler-backend-pic-fixup-table image)))
+              (ErrCompilerBackendPic
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: --pic could not map every absolute pointer fixup to an 8-byte data slot"))))]
+        [(ErrCompilerBackendObject diag) (ErrCompilerBackendPic diag)])]
+    [(ErrCompilerBackendBuffer diag) (ErrCompilerBackendPic diag)]))
+
+(define (compiler-backend-emit-program-pic-target-with-mode
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackendPic
+  (compiler-backend-emit-program-pic-target-with-mode-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    false))
+
+(define (compiler-backend-emit-source-pic [src : String]) : ResultCompilerBackendPic
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-pic-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeScalar)
+        spans
+        true)]
+    [(ErrCompilerLower diag) (ErrCompilerBackendPic diag)]))
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (compiler-ir-extern-cons

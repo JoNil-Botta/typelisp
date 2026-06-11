@@ -221,7 +221,7 @@ Options:
 
 (define (cli-compile-help-text) : String
   "Usage:
-    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
+    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
 
 Summary:
@@ -231,6 +231,7 @@ Options:
     -o <file>                      Output assembly or IR file
     --batch <file>                 Read input|output pairs and compile them in one process
     --emit-ir                      Emit intermediate representation
+    --pic                          Emit position-independent assembly and <output>.fixups
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level

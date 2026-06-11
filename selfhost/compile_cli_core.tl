@@ -1,7 +1,7 @@
 ;; compile_cli_core.tl - Main-free selfhost compile/check core (#565, #1639).
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the selfhost compile CLI:
-;; `compile <file.tl> [-o <file>] [--emit-ir] [--target <target>]
+;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>]
 ;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...]`,
 ;; plus `check <file.tl> [--stdlib-root <dir>...]`.
@@ -60,6 +60,7 @@
     String
     bool
     bool
+    bool
     CompilerBackendTarget
     StringVec
     CompileCliCfgNameList
@@ -106,7 +107,7 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))
@@ -189,23 +190,27 @@
   [stdlib-roots : StringVec]
   [cfg-names : CompileCliCfgNameList]
   [emit-ir : bool]
+  [pic : bool]
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]) : ResultCompileCliConfig
   (if (>= idx count)
-    (OkCompileCliConfig
-      (CompileCliConfig
-        input-path
-        (if (and emit-ir (not has-output))
-          (compile-cli-default-ir-output input-path)
-          output-path)
-        emit-ir
-        has-target
-        target
-        stdlib-roots
-        cfg-names
-        backend-mode
-        opt-level))
+    (if (and emit-ir pic)
+      (ErrCompileCliConfig "compile: --pic cannot be combined with --emit-ir")
+      (OkCompileCliConfig
+        (CompileCliConfig
+          input-path
+          (if (and emit-ir (not has-output))
+            (compile-cli-default-ir-output input-path)
+            output-path)
+          emit-ir
+          pic
+          has-target
+          target
+          stdlib-roots
+          cfg-names
+          backend-mode
+          opt-level)))
     (let
       [current : String (arg idx)]
       (core/cond
@@ -225,6 +230,7 @@
               stdlib-roots
               cfg-names
               emit-ir
+              pic
               has-opt-level
               opt-level
               backend-mode)))
@@ -242,6 +248,7 @@
             (string-vec-push stdlib-roots (arg (+ idx 1)))
             cfg-names
             emit-ir
+            pic
             has-opt-level
             opt-level
             backend-mode))
@@ -259,6 +266,7 @@
             stdlib-roots
             (compile-cli-cfg-name-cons (arg (+ idx 1)) cfg-names)
             emit-ir
+            pic
             has-opt-level
             opt-level
             backend-mode))
@@ -281,6 +289,7 @@
                   stdlib-roots
                   cfg-names
                   emit-ir
+                  pic
                   has-opt-level
                   opt-level
                   backend-mode)]
@@ -306,6 +315,7 @@
                     stdlib-roots
                     cfg-names
                     emit-ir
+                    pic
                     true
                     parsed-level
                     backend-mode)]
@@ -327,10 +337,27 @@
                 stdlib-roots
                 cfg-names
                 emit-ir
+                pic
                 has-opt-level
                 opt-level
                 parsed-mode)]
             [(ErrCompileCliBackendMode message) (ErrCompileCliConfig message)]))
+        (string-eq current "--pic")
+        (compile-cli-parse-options
+          (+ idx 1)
+          count
+          input-path
+          output-path
+          has-output
+          has-target
+          target
+          stdlib-roots
+          cfg-names
+          emit-ir
+          true
+          has-opt-level
+          opt-level
+          backend-mode)
         (string-eq current "--emit-ir")
         (compile-cli-parse-options
           (+ idx 1)
@@ -343,6 +370,7 @@
           stdlib-roots
           cfg-names
           true
+          pic
           has-opt-level
           opt-level
           backend-mode)
@@ -380,6 +408,8 @@
           "compile: --batch reads output paths from the batch file")
         (string-eq current "--emit-ir")
         (ErrCompileCliBatchConfig "compile: --batch does not support --emit-ir")
+        (string-eq current "--pic")
+        (ErrCompileCliBatchConfig "compile: --batch does not support --pic")
         (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrCompileCliBatchConfig "compile: --stdlib-root requires a value")
@@ -495,6 +525,7 @@
           (compile-cli-cfg-name-list-empty)
           false
           false
+          false
           (compiler-optimize-default-level)
           (BackendModeScalar))))))
 
@@ -605,6 +636,7 @@
   [input-path : String]
   [output-path : String]
   [emit-ir : bool]
+  [pic : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
@@ -615,7 +647,8 @@
     (compiler-driver-reset-file-state!)
     (let
       [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
-      (if emit-ir
+      (core/cond
+        emit-ir
         (compiler-driver-write-result
           (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
             input-path
@@ -625,22 +658,32 @@
             backend-mode
             cfgs)
           output-path)
-        (if has-target
-          (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-            input-path
-            output-path
-            target
-            stdlib-roots
-            opt-level
-            backend-mode
-            cfgs)
-          (compiler-driver-compile-file-with-roots-level-mode-and-cfg
-            input-path
-            output-path
-            stdlib-roots
-            opt-level
-            backend-mode
-            cfgs))))))
+        pic
+        (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
+          input-path
+          output-path
+          target
+          has-target
+          stdlib-roots
+          opt-level
+          backend-mode
+          cfgs)
+        has-target
+        (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
+          input-path
+          output-path
+          target
+          stdlib-roots
+          opt-level
+          backend-mode
+          cfgs)
+        (compiler-driver-compile-file-with-roots-level-mode-and-cfg
+          input-path
+          output-path
+          stdlib-roots
+          opt-level
+          backend-mode
+          cfgs)))))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -762,6 +805,7 @@
               input-path
               output-path
               false
+              false
               has-target
               target
               stdlib-roots
@@ -839,6 +883,7 @@
             input-path
             output-path
             emit-ir
+            pic
             has-target
             target
             stdlib-roots
@@ -849,6 +894,7 @@
             input-path
             output-path
             emit-ir
+            pic
             has-target
             target
             stdlib-roots

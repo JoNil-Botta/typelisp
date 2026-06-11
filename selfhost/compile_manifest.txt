@@ -173,6 +173,7 @@ contains|_tl_scaffold_init_run_from:
 contains|_tl_lsp_frame_run_from:
 contains|typelisp: unknown subcommand
 contains|Enable a compile-time cfg predicate name
+contains|--pic
 end
 
 # Per-command logic modules shared by the unified dispatcher (selfhost/cli.tl)
@@ -228,6 +229,7 @@ not-contains|root_list_append
 contains|_tl_compiler_cfg_enable:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_compile_file_pic_with_target_roots_level_mode_cfg:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
 contains|_tl_compiler_backend_emit_program_target_with_mode_buffer:
@@ -241,6 +243,7 @@ contains|compile: --backend-mode requires a value
 contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir
+contains|--pic
 contains|--cfg
 contains|typelisp-ir-summary v1
 contains|empty-blocks

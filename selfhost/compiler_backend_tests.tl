@@ -1698,7 +1698,7 @@
           (compiler-backend-string-contains? asm "_tl_f"))
         (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
         (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
-        (compiler-backend-string-contains? asm "    movq -24(%rbp), %rax\n")
+        (compiler-backend-string-contains? asm "    movq -32(%rbp), %rax\n")
         (compiler-backend-string-contains? asm "    imulq %r8, %rax\n")
         (not (compiler-backend-string-contains? asm "%r12"))
         true
@@ -1914,11 +1914,41 @@
           [(ErrCompilerBackend _) false])]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-post-regalloc-peephole-ok?) : bool
+  (let
+    [input : String
+      "label:
+    movq %rax, %rax
+    movq %rax, %r12
+    movq %r12, %rax
+    movq %rax, %r12
+    movq %rax, -16(%rbp)
+    movq -16(%rbp), %rax
+    movq -8(%rbp), %r8
+    addq %r8, %rax
+    movq $0, %r8
+    movq %rax, %r9
+    movq %r9, %r10
+"]
+    [want : String
+      "label:
+    movq %rax, %r12
+    movq %rax, -16(%rbp)
+    movq -8(%rbp), %r8
+    addq %r8, %rax
+    movq $0, %r8
+    movq %rax, %r9
+    movq %r9, %r10
+"]
+    [got : String (compiler-backend-peephole-asm input)]
+    (string-eq got want)))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
     (compiler-backend-peephole-asm-ok?)
+    (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-fallthrough-jump-ok?)
     (compiler-backend-branch-fallthrough-ok?)
     (compiler-backend-zero-load-ok?)

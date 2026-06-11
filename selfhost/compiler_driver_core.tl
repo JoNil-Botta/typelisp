@@ -640,7 +640,7 @@
         prelude-paths
         prelude-modules
         prelude-seen)
-      (match (compiler-load-file-with-paths-and-roots-cfg
+      (match (compiler-load-entry-file-with-paths-and-roots-cfg
         input-path
         prelude-seen
         stdlib-roots
@@ -1264,7 +1264,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
-  (match (compiler-load-file-with-paths-and-roots-cfg
+  (match (compiler-load-entry-file-with-paths-and-roots-cfg
     input-path
     (sym-i64-empty)
     stdlib-roots

@@ -16637,15 +16637,6 @@
         OkTcUnit
         (ErrTcUnit (tc-extern-abi-unsupported-message "value" ty)))]))
 
-(define (tc-check-extern-varargs-fixed-count [fixed-count : i64] [ty : AstType]) : ResultTcUnit
-  (match ty
-    [(AstTyFunc args _)
-      (if (<= fixed-count (tc-type-list-len args))
-        OkTcUnit
-        (ErrTcUnit
-          "typecheck: extern c-varargs fixed argument count exceeds parameter count"))]
-    [_ (ErrTcUnit "typecheck: extern must have function type")]))
-
 (define (tc-check-extern-varargs-tail-type
   [ctx : TcContext]
   [abi : AstExternAbi]) : ResultTcUnit
@@ -16676,11 +16667,7 @@
               (match (tc-check-extern-c-abi resolved)
                 [(OkTcUnit)
                   (if (ast-extern-abi-c-varargs? abi)
-                    (match (tc-check-extern-varargs-fixed-count
-                      (ast-extern-abi-varargs-fixed-count abi)
-                      resolved)
-                      [(OkTcUnit) (tc-check-extern-varargs-tail-type ctx abi)]
-                      [(ErrTcUnit message) (ErrTcUnit message)])
+                    (tc-check-extern-varargs-tail-type ctx abi)
                     OkTcUnit)]
                 [(ErrTcUnit message) (ErrTcUnit message)])
               OkTcUnit)]

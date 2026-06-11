@@ -4459,8 +4459,7 @@
 
 (define (parse-ast-extern-head-items
   [dispatch : SymI64Env]
-  [items : SpannedSexpr]
-  [fixed-count : i64]) : ResultAstExternHeader
+  [items : SpannedSexpr]) : ResultAstExternHeader
   (match items
     [(SpSNil _) (OkAstExternHeader "" AstTypeNil (AstExternAbiC))]
     [(SpSCons item tail _)
@@ -4471,10 +4470,7 @@
           [(OkAstExternHeadItem parsed-item)
             (match parsed-item
               [(AstExternHeadParam ty)
-                (match (parse-ast-extern-head-items
-                  dispatch
-                  tail
-                  (+ fixed-count 1))
+                (match (parse-ast-extern-head-items dispatch tail)
                   [(OkAstExternHeader _ parsed-tail parsed-abi)
                     (OkAstExternHeader
                       ""
@@ -4484,10 +4480,7 @@
               [(AstExternHeadVarargsOpen)
                 (match tail
                   [(SpSNil _)
-                    (OkAstExternHeader
-                      ""
-                      AstTypeNil
-                      (AstExternAbiCVarargsOpen fixed-count))]
+                    (OkAstExternHeader "" AstTypeNil (AstExternAbiCVarargsOpen))]
                   [_
                     (ErrAstExternHeader
                       "parse: extern varargs tail must be final")])]
@@ -4497,7 +4490,7 @@
                     (OkAstExternHeader
                       ""
                       AstTypeNil
-                      (AstExternAbiCVarargsTyped fixed-count tail-ty))]
+                      (AstExternAbiCVarargsTyped tail-ty))]
                   [_
                     (ErrAstExternHeader
                       "parse: extern varargs tail must be final")])])]
@@ -4509,12 +4502,15 @@
     [(SpSCons name-node params _)
       (match (sp-node-get name-node)
         [(SpSSym name _)
-          (match (parse-ast-extern-head-items dispatch (sp-node-get params) 0)
+          (match (parse-ast-extern-head-items dispatch (sp-node-get params))
             [(OkAstExternHeader _ param-types abi)
               (OkAstExternHeader name param-types abi)]
             [(ErrAstExternHeader message) (ErrAstExternHeader message)])]
         [_ (ErrAstExternHeader "parse: malformed extern function head")])]
     [_ (ErrAstExternHeader "parse: malformed extern function head")]))
+
+(define (parse-ast-extern-c-varargs-legacy-message) : String
+  "parse: legacy :abi c-varargs metadata is retired; use function-head ... or ...T varargs")
 
 (define (parse-ast-extern-abi-tail [tail : Sexpr]) : ResultAstExternAbi
   (match tail
@@ -4523,20 +4519,21 @@
         [(SSym name)
           (match (box-get rest)
             [(SNil)
-              (if (string-eq name "c")
+              (core/cond
+                (string-eq name "c")
                 (OkAstExternAbi (AstExternAbiC))
+                (string-eq name "c-varargs")
+                (ErrAstExternAbi (parse-ast-extern-c-varargs-legacy-message))
                 (ErrAstExternAbi
                   (string-append "parse: unknown extern ABI " name)))]
             [(SCons fixed-node end)
               (match (box-get end)
                 [(SNil)
                   (match (box-get fixed-node)
-                    [(SInt fixed-count)
+                    [(SInt _)
                       (if (string-eq name "c-varargs")
-                        (if (>= fixed-count 0)
-                          (OkAstExternAbi (AstExternAbiCVarargs fixed-count))
-                          (ErrAstExternAbi
-                            "parse: extern c-varargs fixed argument count must be nonnegative"))
+                        (ErrAstExternAbi
+                          (parse-ast-extern-c-varargs-legacy-message))
                         (ErrAstExternAbi
                           (string-append "parse: unknown extern ABI " name)))]
                     [_
@@ -4586,7 +4583,7 @@
       [(AstExternAbiC) (OkAstExternAbi base)]
       [_
         (ErrAstExternAbi
-          "parse: extern varargs tail cannot be combined with :abi c-varargs")])
+          "parse: extern varargs tail cannot be combined with another ABI")])
     (OkAstExternAbi parsed)))
 
 (define (parse-ast-extern-items
@@ -6721,77 +6718,10 @@
           [_ false]))]
     [(ErrAstProgram _) false]))
 
-(define (compiler-parse-extern-varargs-metadata-ok?) : bool
-  (match (parse-ast-source (compiler-parse-extern-varargs-metadata-source))
-    [(OkAstProgram (AstProgram decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclExtern name _ metadata ty) rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil)
-                  (and
-                    (= name (intern "snprintf"))
-                    (string-eq (ast-extern-metadata-symbol metadata) "snprintf")
-                    (match (ast-extern-metadata-abi metadata)
-                      [(AstExternAbiCVarargs fixed-count) (= fixed-count 3)]
-                      [_ false])
-                    (match ty
-                      [(AstTyFunc args ret)
-                        (match args
-                          [(AstTypeCons first rest0)
-                            (let
-                              [first : AstType (ty-node-get first)]
-                              [rest0 : AstTypeList (box-get rest0)]
-                              (and
-                                (compiler-parse-type-mut-ptr-u8? first)
-                                (match rest0
-                                  [(AstTypeCons second rest1)
-                                    (let
-                                      [second : AstType (ty-node-get second)]
-                                      [rest1 : AstTypeList (box-get rest1)]
-                                      (and
-                                        (match second
-                                          [(AstTyI64) true]
-                                          [_ false])
-                                        (match rest1
-                                          [(AstTypeCons third rest2)
-                                            (let
-                                              [third : AstType
-                                                (ty-node-get third)]
-                                              [rest2 : AstTypeList
-                                                (box-get rest2)]
-                                              (and
-                                                (compiler-parse-type-ptr-u8?
-                                                  third)
-                                                (match rest2
-                                                  [(AstTypeCons fourth rest3)
-                                                    (let
-                                                      [fourth : AstType
-                                                        (ty-node-get fourth)]
-                                                      [rest3 : AstTypeList
-                                                        (box-get rest3)]
-                                                      (and
-                                                        (match fourth
-                                                          [(AstTyF64) true]
-                                                          [_ false])
-                                                        (match rest3
-                                                          [(AstTypeNil)
-                                                            (match (ty-node-get
-                                                              ret)
-                                                              [(AstTyI32) true]
-                                                              [_ false])]
-                                                          [_ false])))]
-                                                  [_ false])))]
-                                          [_ false])))]
-                                  [_ false])))]
-                          [_ false])]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [(ErrAstProgram _) false]))
+(define (compiler-parse-extern-varargs-metadata-rejected-ok?) : bool
+  (compiler-parse-error-ok?
+    (compiler-parse-extern-varargs-metadata-source)
+    (parse-ast-extern-c-varargs-legacy-message)))
 
 (define (compiler-parse-extern-head-typed-varargs-decl-ok? [decl : AstDecl]) : bool
   (match decl
@@ -6799,12 +6729,10 @@
       (and
         (= name (intern "snprintf"))
         (match (ast-extern-metadata-abi metadata)
-          [(AstExternAbiCVarargsTyped fixed-count tail-ty)
-            (and
-              (= fixed-count 3)
-              (match tail-ty
-                [(AstTyF64) true]
-                [_ false]))]
+          [(AstExternAbiCVarargsTyped tail-ty)
+            (match tail-ty
+              [(AstTyF64) true]
+              [_ false])]
           [_ false])
         (match ty
           [(AstTyFunc args ret)
@@ -6851,7 +6779,7 @@
       (and
         (= name (intern "printf"))
         (match (ast-extern-metadata-abi metadata)
-          [(AstExternAbiCVarargsOpen fixed-count) (= fixed-count 1)]
+          [(AstExternAbiCVarargsOpen) true]
           [_ false])
         (match ty
           [(AstTyFunc args ret)
@@ -8240,12 +8168,12 @@
         (set! ok false))
       (if (compiler-parse-error-ok?
         "(extern (f) : i64 (:abi c-varargs))"
-        "parse: unknown extern ABI c-varargs")
+        (parse-ast-extern-c-varargs-legacy-message))
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
         "(extern (f) : i64 (:abi c-varargs -1))"
-        "parse: extern c-varargs fixed argument count must be nonnegative")
+        (parse-ast-extern-c-varargs-legacy-message))
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
@@ -8255,7 +8183,7 @@
         (set! ok false))
       (if (compiler-parse-error-ok?
         "(extern (f [x : i64] ...) (:abi c-varargs 1) : i64)"
-        "parse: extern varargs tail cannot be combined with :abi c-varargs")
+        (parse-ast-extern-c-varargs-legacy-message))
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
@@ -9002,9 +8930,9 @@
     (if (compiler-parse-extern-metadata-ok?)
       unit
       (panic "parse: extern metadata shape test failed"))
-    (if (compiler-parse-extern-varargs-metadata-ok?)
+    (if (compiler-parse-extern-varargs-metadata-rejected-ok?)
       unit
-      (panic "parse: extern c-varargs metadata shape test failed"))
+      (panic "parse: extern c-varargs metadata retirement test failed"))
     (if (compiler-parse-extern-function-head-varargs-ok?)
       unit
       (panic "parse: extern function-head varargs shape test failed"))
@@ -9084,7 +9012,7 @@
         (compiler-parse-cleanup-metadata-ok?)
         (compiler-parse-raw-pointer-ok?)
         (compiler-parse-extern-metadata-ok?)
-        (compiler-parse-extern-varargs-metadata-ok?)
+        (compiler-parse-extern-varargs-metadata-rejected-ok?)
         (compiler-parse-extern-function-head-varargs-ok?)
         (compiler-parse-raw-pointer-ops-ok?)
         (compiler-parse-init-ok?)

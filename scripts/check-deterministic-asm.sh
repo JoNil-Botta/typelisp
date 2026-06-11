@@ -53,7 +53,7 @@ if [ -n "$compiler_arg" ]; then
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
@@ -143,6 +143,35 @@ compile_source_for_case() {
     esac
 }
 
+# Optional reuse of the compile-manifest gate's emitted assembly. When
+# TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR points at a populated
+# verify-selfhost-compile-manifest.sh work directory, corpus entries that have
+# a `direct` manifest case take the manifest's .s as their first compile and
+# only compile once more here (with the manifest-equivalent invocation, so the
+# byte comparison stays valid). Determinism coverage is unchanged: every entry
+# is still two independent compiles by the same binary, compared byte-for-byte
+# (and the shared entries additionally assert batch/single-compile parity).
+MANIFEST_SHARE_DIR=${TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR:-}
+MANIFEST_FILE=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
+
+compiler_input_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+manifest_case_id_for_source() {
+    [ -n "$MANIFEST_SHARE_DIR" ] || return 1
+    [ -f "$MANIFEST_FILE" ] || return 1
+    _id=$(tr -d '\r' < "$MANIFEST_FILE" | awk -F'|' -v src="$1" '
+        $1 == "case" && $3 == src && $6 == "direct" { print $2; exit }
+    ')
+    [ -n "$_id" ] || return 1
+    printf '%s\n' "$_id"
+}
+
 compile_pass() {
     pass_name=$1
     out_dir=$2
@@ -155,6 +184,23 @@ compile_pass() {
             exit 1
         fi
         out="$out_dir/$name.s"
+        if case_id=$(manifest_case_id_for_source "$source"); then
+            shared_asm="$MANIFEST_SHARE_DIR/$case_id/$case_id.s"
+            if [ "$pass_name" = run1 ]; then
+                if [ ! -s "$shared_asm" ]; then
+                    echo "compile-manifest assembly missing for $name: $shared_asm" >&2
+                    echo "(run scripts/verify-selfhost-compile-manifest.sh first, or unset TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR)" >&2
+                    exit 1
+                fi
+                echo "[$pass_name] reuse compile-manifest assembly for $name"
+                cp "$shared_asm" "$out"
+            else
+                echo "[$pass_name] $source -> $out (compile-manifest invocation)"
+                "$COMPILER" compile "$(compiler_input_path "$ROOT/$source")" -o "$out" \
+                    --stdlib-root "$(compiler_input_path "$ROOT/stdlib")"
+            fi
+            continue
+        fi
         compile_source=$(compile_source_for_case "$name" "$source" "$out_dir")
         echo "[$pass_name] $compile_source -> $out"
         "$COMPILER" compile "$compile_source" -o "$out"

@@ -287,11 +287,13 @@ run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-publ
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
-run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" scripts/check-deterministic-asm.sh
-run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-codegen-target-parity.sh
 # The current cli.tl emits stage1-qualified symbols, so the manifest uses the
 # stage1 expectation mode on both hosts.
 run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+# The deterministic assembly gate reuses the manifest's emitted .s as its first
+# compile for overlapping sources, so it must run after the manifest gate.
+run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
+run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-codegen-target-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh

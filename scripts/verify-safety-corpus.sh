@@ -10,6 +10,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-retry.sh"
+. "$ROOT/scripts/lib-linux-entry.sh"
 
 HOST_OS=linux
 case "$(uname -s)" in
@@ -195,7 +196,7 @@ build_selfhost_checker() {
             show_stream_if_nonempty stderr "$err"
             fail "selfhost/check.tl assemble failed"
         fi
-        if ! ld "$obj" -o "$CHECK_BIN" -static \
+        if ! ld "$obj" -o "$CHECK_BIN" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
             fail "selfhost/check.tl link failed"
@@ -263,7 +264,7 @@ build_case_program() {
             show_stream_if_nonempty stderr "$build_err"
             fail "$case_id assemble failed"
         fi
-        if ! ld "$obj" -o "$program" -static \
+        if ! ld "$obj" -o "$program" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$build_out" 2>> "$build_err"; then
             show_stream_if_nonempty stdout "$build_out"
             show_stream_if_nonempty stderr "$build_err"

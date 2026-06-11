@@ -146,9 +146,9 @@ assemble_link() {
 
     as "$_asm" -o "$_obj"
     if [ "$_link_libc" -eq 1 ]; then
-        ld "$_obj" -o "$_bin" -static
+        ld "$_obj" -o "$_bin" -static -e _tl_start
     else
-        ld "$_obj" -o "$_bin"
+        ld "$_obj" -o "$_bin" -e _tl_start
     fi
 }
 
@@ -341,7 +341,7 @@ EOF
 
     as "$_asm" -o "$_obj"
     as "$_lib_asm" -o "$_lib_obj"
-    ld "$_obj" "$_lib_obj" -o "$_bin"
+    ld -e _tl_start "$_obj" "$_lib_obj" -o "$_bin"
     run_binary_expect extern-fnptr "$_bin" 42 - -
 }
 
@@ -378,7 +378,7 @@ EOF
         "_tl_helper_helper:" \
         "call _tl_helper_helper" \
         "_tl_shared_shared(%rip)" \
-        "_start:"
+        "_tl_start:"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-import
     done

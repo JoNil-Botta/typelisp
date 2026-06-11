@@ -1,6 +1,6 @@
     .text
     .globl main
-    .globl _start
+    .globl _tl_start
 
 main:
     push %rbp
@@ -19,7 +19,7 @@ main:
     pop %rbp
     ret
 
-_start:
+_tl_start:
     call main
     movq %rax, %rdi
     movq $60, %rax

@@ -56,7 +56,7 @@ tl_current_arena:
     .quad 0
 
 .text
-.globl _start
+.globl _tl_start
 .globl _tl_stdlib_runtime_runtime_ptr_arg
 _tl_stdlib_runtime_runtime_ptr_arg:
     pushq %rbp
@@ -406,7 +406,7 @@ tl_arena_destroy:
     pop %rbx
     ret
 
-_start:
+_tl_start:
     movq (%rsp), %rax
     movq %rax, .L_tl_argc(%rip)
     leaq 8(%rsp), %rax

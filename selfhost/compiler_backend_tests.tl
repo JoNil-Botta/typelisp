@@ -389,8 +389,8 @@
     (backend-and8
       (compiler-backend-string-contains? asm ".data\n")
       (compiler-backend-string-contains? asm ".text\n")
-      (compiler-backend-string-contains? asm ".globl _start\n")
-      (compiler-backend-string-contains? asm "_start:\n")
+      (compiler-backend-string-contains? asm ".globl _tl_start\n")
+      (compiler-backend-string-contains? asm "_tl_start:\n")
       (compiler-backend-string-contains? asm "main:\n")
       (compiler-backend-smoke-function-symbol-ok? asm)
       (or
@@ -509,7 +509,7 @@
               0)
             (compiler-object-symbol-list-contains?
               symbols
-              "_start"
+              "_tl_start"
               (ObjectSymbolExport)
               (ObjectSymbolFunction))
             (compiler-object-symbol-list-contains?
@@ -616,8 +616,8 @@
 
 (define (compiler-backend-implicit-main-linux-entry-ok? [asm : String]) : bool
   (backend-and8
-    (compiler-backend-string-contains? asm ".globl _start\n")
-    (compiler-backend-string-contains? asm "_start:\n")
+    (compiler-backend-string-contains? asm ".globl _tl_start\n")
+    (compiler-backend-string-contains? asm "_tl_start:\n")
     (compiler-backend-string-contains? asm ".globl main\n")
     (compiler-backend-string-contains? asm "main:\n")
     (compiler-backend-string-contains? asm "    call main\n")
@@ -628,8 +628,8 @@
 (define (compiler-backend-implicit-main-linux-no-entry-ok? [asm : String]) : bool
   (and
     (compiler-backend-string-contains? asm ".text\n")
-    (not (compiler-backend-string-contains? asm ".globl _start\n"))
-    (not (compiler-backend-string-contains? asm "_start:\n"))
+    (not (compiler-backend-string-contains? asm ".globl _tl_start\n"))
+    (not (compiler-backend-string-contains? asm "_tl_start:\n"))
     (not (compiler-backend-string-contains? asm "main:\n"))))
 
 (define (compiler-backend-implicit-main-windows-entry-ok? [asm : String]) : bool
@@ -1287,7 +1287,7 @@
     (compiler-backend-program-argv-entry-capture-source))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "_start:\n")
+        (compiler-backend-string-contains? asm "_tl_start:\n")
         (compiler-backend-string-contains? asm "    movq (%rsp), %rax\n")
         (compiler-backend-string-contains?
           asm
@@ -1504,7 +1504,7 @@
           (compiler-backend-runtime-global-shape-ok? asm "pair")
           (compiler-backend-runtime-global-shape-ok? asm "cells")
           (compiler-backend-runtime-global-shape-ok? asm "nested")
-          (compiler-backend-string-contains? asm "_start:\n")
+          (compiler-backend-string-contains? asm "_tl_start:\n")
           (compiler-backend-string-contains?
             asm
             ".L_tl_main_keep_stack:\n    call main\n")
@@ -2208,7 +2208,7 @@
     (= (compiler-backend-outgoing-shadow-space (BackendTargetWindows)) 32)
     (compiler-backend-string-contains?
       (compiler-backend-target-entry-text (BackendTargetLinux) true)
-      "_start")
+      "_tl_start")
     (compiler-backend-string-contains?
       (compiler-backend-target-entry-text (BackendTargetWindows) true)
       ".globl main")
@@ -2240,8 +2240,8 @@
           (and
             (compiler-backend-string-contains? asm ".text\n")
             (compiler-backend-string-contains? asm "main:\n")
-            (not (compiler-backend-string-contains? asm ".globl _start\n"))
-            (not (compiler-backend-string-contains? asm "_start:\n")))]
+            (not (compiler-backend-string-contains? asm ".globl _tl_start\n"))
+            (not (compiler-backend-string-contains? asm "_tl_start:\n")))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
@@ -2279,8 +2279,8 @@
             (compiler-backend-string-contains?
               asm
               "    call _tl___global_init_")
-            (not (compiler-backend-string-contains? asm ".globl _start\n"))
-            (not (compiler-backend-string-contains? asm "_start:\n")))]
+            (not (compiler-backend-string-contains? asm ".globl _tl_start\n"))
+            (not (compiler-backend-string-contains? asm "_tl_start:\n")))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 

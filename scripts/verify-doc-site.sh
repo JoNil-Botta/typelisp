@@ -24,6 +24,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 EXE=
 HOST_OS=linux
 case "$(uname -s)" in
@@ -94,7 +96,7 @@ compile_linux_binary() {
         sed 's/^/  /' "$_err" >&2 || true
         fail "$_source did not assemble"
     fi
-    if ! ld "$_obj" -o "$_bin" -static \
+    if ! ld "$_obj" -o "$_bin" -static -e "$(linux_entry_symbol_for_asm "$_asm")" \
         >>"$_out" 2>>"$_err"; then
         echo "$_label link failed:" >&2
         sed 's/^/  /' "$_err" >&2 || true

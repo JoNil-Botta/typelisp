@@ -12,6 +12,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -655,7 +657,7 @@ build_linux_fixture_driver() {
         show_build_streams "$_build_stdout" "$_build_stderr"
         exit 1
     fi
-    if ! ld -static "$_obj" -o "$_bin" \
+    if ! ld -static -e _tl_start "$_obj" -o "$_bin" \
         >> "$_build_stdout" 2>> "$_build_stderr"; then
         echo "FAIL: $_label link failed" >&2
         show_build_streams "$_build_stdout" "$_build_stderr"
@@ -759,7 +761,7 @@ tl_oom_abort:
 EOF
     as "$_runtime_asm" -o "$_runtime_obj"
     as "$_runtime_abort_asm" -o "$_runtime_abort_obj"
-    ld "$_runtime_obj" "$_runtime_abort_obj" -o "$_runtime_bin"
+    ld "$_runtime_obj" "$_runtime_abort_obj" -o "$_runtime_bin" -e "$(linux_entry_symbol_for_asm "$_runtime_asm")"
     set +e
     "$_runtime_bin" < /dev/null > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
     _got=$?
@@ -794,7 +796,7 @@ EOF
     done
     assert_not_contains "$_stack_asm" "backend: too many call args" backend-stack-args
     as "$_stack_asm" -o "$_stack_obj"
-    ld "$_stack_obj" -o "$_stack_bin"
+    ld "$_stack_obj" -o "$_stack_bin" -e "$(linux_entry_symbol_for_asm "$_stack_asm")"
     set +e
     "$_stack_bin" < /dev/null > "$_stack_dir/stack.stdout" 2> "$_stack_dir/stack.stderr"
     _got=$?
@@ -873,7 +875,7 @@ tl_array_fill8:
 EOF
     as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
     as "$_raw_ptr_abort_asm" -o "$_raw_ptr_abort_obj"
-    ld "$_raw_ptr_obj" "$_raw_ptr_abort_obj" -o "$_raw_ptr_bin"
+    ld "$_raw_ptr_obj" "$_raw_ptr_abort_obj" -o "$_raw_ptr_bin" -e "$(linux_entry_symbol_for_asm "$_raw_ptr_asm")"
     set +e
     "$_raw_ptr_bin" < /dev/null > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
     _got=$?
@@ -1081,7 +1083,7 @@ EOF
     assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-stderr
     assert_contains "$_driver_asm" ".globl main" windows-selfhost-compile-driver
     assert_contains "$_driver_asm" "main:" windows-selfhost-compile-driver
-    assert_contains "$_driver_asm" ".globl _start" windows-selfhost-compile-driver
+    assert_contains "$_driver_asm" ".globl _tl_start" windows-selfhost-compile-driver
 
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_driver_source")" --target linux-x86_64 -o "$(cygpath -aw "$_driver_linux_asm")"
@@ -1312,7 +1314,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             link_extra="-static"
         fi
         # shellcheck disable=SC2086
-        if ! ld "$obj" $native_objs -o "$bin" $link_extra \
+        if ! ld "$obj" $native_objs -o "$bin" $link_extra -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"

@@ -10,6 +10,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 RUNS=${TYPELISP_BENCH_RUNS:-3}
 CLANG_OPT=${TYPELISP_BENCH_CLANG_OPT:--O3}
 USE_SELFHOST=${TYPELISP_BENCH_SELFHOST:-1}
@@ -535,7 +537,7 @@ EOF
         compile_tl_stage0 "$_tl_src" "$_tl_asm" "$WORKDIR/$_name.tl.compile.stdout" "$WORKDIR/$_name.tl.compile.stderr"
     fi
     as "$_tl_asm" -o "$_tl_obj"
-    ld "$_tl_obj" -o "$_tl_bin"
+    ld "$_tl_obj" -o "$_tl_bin" -e "$(linux_entry_symbol_for_asm "$_tl_asm")"
 
     compile_c "$_c_src" "$_c_bin" "$_c_asm" "$WORKDIR/$_name.c.compile.stdout" "$WORKDIR/$_name.c.compile.stderr"
 

@@ -9,6 +9,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 FIXTURE_ROOT="$ROOT/tests/public-tools"
 WORKDIR="$ROOT/target/public-tools-corpus"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -637,7 +639,7 @@ build_selfhost_binary() {
             sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
             return 1
         fi
-        if ! ld "$obj" -o "$bin_path" -static \
+        if ! ld "$obj" -o "$bin_path" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
             printf '  FAIL selfhost %s: link failed\n' "$name" >&2
             sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true

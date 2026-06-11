@@ -627,7 +627,7 @@
                 (string-append
                   "    ret\n\n"
                   (string-append
-                    "_start:\n"
+                    "_tl_start:\n"
                     (string-append
                       "    call main\n"
                       (string-append
@@ -650,7 +650,7 @@
           (string-append
             "    .globl main\n"
             (string-append
-              "    .globl _start\n\n"
+              "    .globl _tl_start\n\n"
               (string-append
                 (emit-defs strings lc defs)
                 (emit-entry frame (emit-expr-in strings (sym-i64-empty) 0 lc e))))))))))

@@ -39,6 +39,7 @@
     BuildProfile
     bool
     i64
+    BuildPackageLockPolicy
     StringVec))
 
 (defenum ResultBuildConfig
@@ -166,6 +167,7 @@
   (mode CompilerBackendMode)
   (profile BuildProfile)
   (opt-level i64)
+  (lock-policy BuildPackageLockPolicy)
   (stdlib-roots StringVec))
 
 (defenum ResultBuildPackageWorkerConfig
@@ -199,6 +201,16 @@
 (defenum BuildProfile
   (BuildProfileDev)
   (BuildProfileRelease))
+
+(defenum BuildPackageLockPolicy
+  (BuildPackageLockDefault)
+  (BuildPackageLockLocked)
+  (BuildPackageLockUpdate))
+
+(defenum BuildPackageLockEntryStatus
+  (BuildPackageLockEntryMatched PackageLockEntry)
+  (BuildPackageLockEntryMissing)
+  (BuildPackageLockEntryStale))
 
 (defenum ResultBuildProfile
   (OkBuildProfile BuildProfile)
@@ -264,6 +276,32 @@
     (OkBuildProfile (BuildProfileRelease))
     (ErrBuildProfile (build-unknown-profile value))))
 
+(define (build-package-lock-policy-provided? [policy : BuildPackageLockPolicy]) : bool
+  (match policy
+    [(BuildPackageLockDefault) false]
+    [_ true]))
+
+(define (build-package-lock-policy-locked? [policy : BuildPackageLockPolicy]) : bool
+  (match policy
+    [(BuildPackageLockLocked) true]
+    [_ false]))
+
+(define (build-package-lock-policy-update? [policy : BuildPackageLockPolicy]) : bool
+  (match policy
+    [(BuildPackageLockUpdate) true]
+    [_ false]))
+
+(define (build-package-lock-policy-option-error) : String
+  "build: package lock policy was provided more than once")
+
+(define (build-package-lock-policy-arg
+  [args : ProcessStringList]
+  [policy : BuildPackageLockPolicy]) : ProcessStringList
+  (match policy
+    [(BuildPackageLockLocked) (source-tool-args-append args "--locked")]
+    [(BuildPackageLockUpdate) (source-tool-args-append args "--update-lock")]
+    [(BuildPackageLockDefault) args]))
+
 (define (build-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
 
@@ -304,6 +342,7 @@
   [has-profile : bool]
   [opt-level : i64]
   [has-opt-level : bool]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-lines : String]
   [stdlib-roots : StringVec]) : ResultBuildConfig
   (if (>= idx count)
@@ -344,6 +383,7 @@
               (if has-opt-level
                 opt-level
                 (build-profile-default-opt-level profile))
+              lock-policy
               stdlib-roots)))))
     (let
       [current : String (arg idx)]
@@ -369,6 +409,7 @@
               has-profile
               opt-level
               has-opt-level
+              lock-policy
               stdlib-lines
               stdlib-roots)))
         (string-eq current "--manifest-path")
@@ -393,6 +434,7 @@
               has-profile
               opt-level
               has-opt-level
+              lock-policy
               stdlib-lines
               stdlib-roots)))
         (string-eq current "--stdlib-root")
@@ -414,6 +456,7 @@
             has-profile
             opt-level
             has-opt-level
+            lock-policy
             (build-append-stdlib stdlib-lines (arg (+ idx 1)))
             (string-vec-push stdlib-roots (arg (+ idx 1)))))
         (string-eq current "--target")
@@ -438,6 +481,7 @@
                 has-profile
                 opt-level
                 has-opt-level
+                lock-policy
                 stdlib-lines
                 stdlib-roots)
               (ErrBuildConfig (build-unknown-target value)))))
@@ -463,6 +507,7 @@
                 has-profile
                 opt-level
                 has-opt-level
+                lock-policy
                 stdlib-lines
                 stdlib-roots)
               (ErrBuildConfig (build-unknown-mode value)))))
@@ -490,6 +535,7 @@
                   true
                   opt-level
                   has-opt-level
+                  lock-policy
                   stdlib-lines
                   stdlib-roots)])))
         (string-eq current "--release")
@@ -511,6 +557,7 @@
             true
             opt-level
             has-opt-level
+            lock-policy
             stdlib-lines
             stdlib-roots))
         (string-eq current "--opt-level")
@@ -539,8 +586,53 @@
                   has-profile
                   parsed
                   true
+                  lock-policy
                   stdlib-lines
                   stdlib-roots)))))
+        (string-eq current "--locked")
+        (if (build-package-lock-policy-provided? lock-policy)
+          (ErrBuildConfig (build-package-lock-policy-option-error))
+          (build-parse-options
+            (+ idx 1)
+            count
+            source
+            has-source
+            output
+            has-output
+            manifest
+            has-manifest
+            target
+            has-target
+            mode
+            profile
+            has-profile
+            opt-level
+            has-opt-level
+            (BuildPackageLockLocked)
+            stdlib-lines
+            stdlib-roots))
+        (string-eq current "--update-lock")
+        (if (build-package-lock-policy-provided? lock-policy)
+          (ErrBuildConfig (build-package-lock-policy-option-error))
+          (build-parse-options
+            (+ idx 1)
+            count
+            source
+            has-source
+            output
+            has-output
+            manifest
+            has-manifest
+            target
+            has-target
+            mode
+            profile
+            has-profile
+            opt-level
+            has-opt-level
+            (BuildPackageLockUpdate)
+            stdlib-lines
+            stdlib-roots))
         (host-plan-flag? current)
         (ErrBuildConfig (string-append "build: unknown flag " current))
         has-source
@@ -561,6 +653,7 @@
           has-profile
           opt-level
           has-opt-level
+          lock-policy
           stdlib-lines
           stdlib-roots)))))
 
@@ -584,6 +677,7 @@
     false
     build-default-opt-level
     false
+    (BuildPackageLockDefault)
     ""
     (string-vec-new)))
 
@@ -596,6 +690,7 @@
   [mode : CompilerBackendMode]
   [profile : BuildProfile]
   [opt-level : i64]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
@@ -607,6 +702,7 @@
           mode
           profile
           opt-level
+          lock-policy
           stdlib-roots))
       (ErrBuildPackageWorkerConfig
         "build: --package-worker requires --manifest-path"))
@@ -626,6 +722,7 @@
             mode
             profile
             opt-level
+            lock-policy
             stdlib-roots))
         (string-eq current "--target")
         (if (>= (+ idx 1) count)
@@ -643,6 +740,7 @@
                   mode
                   profile
                   opt-level
+                  lock-policy
                   stdlib-roots)]
               [(ErrSourceToolTarget _)
                 (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))
@@ -662,6 +760,7 @@
                   parsed-mode
                   profile
                   opt-level
+                  lock-policy
                   stdlib-roots)]
               [(ErrSourceToolBackendMode message)
                 (ErrBuildPackageWorkerConfig message)])))
@@ -680,6 +779,7 @@
                 mode
                 parsed-profile
                 opt-level
+                lock-policy
                 stdlib-roots)]))
         (string-eq current "--release")
         (build-package-worker-parse-options
@@ -691,6 +791,7 @@
           mode
           (BuildProfileRelease)
           opt-level
+          lock-policy
           stdlib-roots)
         (string-eq current "--opt-level")
         (if (>= (+ idx 1) count)
@@ -707,8 +808,37 @@
                 mode
                 profile
                 (string->int value)
+                lock-policy
                 stdlib-roots)
               (ErrBuildPackageWorkerConfig (build-unknown-opt-level value)))))
+        (string-eq current "--locked")
+        (if (build-package-lock-policy-provided? lock-policy)
+          (ErrBuildPackageWorkerConfig (build-package-lock-policy-option-error))
+          (build-package-worker-parse-options
+            (+ idx 1)
+            count
+            manifest-path
+            has-manifest
+            target
+            mode
+            profile
+            opt-level
+            (BuildPackageLockLocked)
+            stdlib-roots))
+        (string-eq current "--update-lock")
+        (if (build-package-lock-policy-provided? lock-policy)
+          (ErrBuildPackageWorkerConfig (build-package-lock-policy-option-error))
+          (build-package-worker-parse-options
+            (+ idx 1)
+            count
+            manifest-path
+            has-manifest
+            target
+            mode
+            profile
+            opt-level
+            (BuildPackageLockUpdate)
+            stdlib-roots))
         (string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrBuildPackageWorkerConfig "build: --stdlib-root requires a value")
@@ -721,6 +851,7 @@
             mode
             profile
             opt-level
+            lock-policy
             (string-vec-push stdlib-roots (arg (+ idx 1)))))
         (host-plan-flag? current)
         (ErrBuildPackageWorkerConfig
@@ -738,6 +869,7 @@
     (BackendModeScalar)
     (build-default-profile)
     build-default-opt-level
+    (BuildPackageLockDefault)
     (string-vec-new)))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
@@ -1094,6 +1226,29 @@
       (if (build-package-lock-entry-matches? entry alias dep)
         (BuildSomeLockEntry entry)
         (BuildNoLockEntry))]))
+
+(define (build-package-lock-entry-status
+  [entries : PackageLockEntryList]
+  [alias : String]
+  [dep : BuildGitDependency]) : BuildPackageLockEntryStatus
+  (match (package-lock-entry-list-lookup entries alias)
+    [(PackageLockNoEntry) (BuildPackageLockEntryMissing)]
+    [(PackageLockSomeEntry entry)
+      (if (build-package-lock-entry-matches? entry alias dep)
+        (BuildPackageLockEntryMatched entry)
+        (BuildPackageLockEntryStale))]))
+
+(define (build-package-lock-missing-message [alias : String]) : String
+  (str-cat
+    "build: --locked requires typelisp.lock entry for remote dependency `"
+    alias
+    "`; run with --update-lock to refresh typelisp.lock"))
+
+(define (build-package-lock-stale-message [alias : String]) : String
+  (str-cat
+    "build: package lock entry for remote dependency `"
+    alias
+    "` is stale; run with --update-lock to refresh typelisp.lock"))
 
 (define (build-package-lock-entry
   [alias : String]
@@ -1624,16 +1779,38 @@
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]
-  [lock-entries : PackageLockEntryList]) : ResultBuildResolvedGitDependency
-  (match (build-package-lock-matching-entry lock-entries alias dep)
-    [(BuildSomeLockEntry entry)
-      (build-resolve-github-dependency-from-lock manifest-dir alias dep entry)]
-    [(BuildNoLockEntry)
-      (build-resolve-github-dependency-without-lock manifest-dir alias dep)]))
+  [lock-entries : PackageLockEntryList]
+  [lock-policy : BuildPackageLockPolicy]) : ResultBuildResolvedGitDependency
+  (if (build-package-lock-policy-update? lock-policy)
+    (build-resolve-github-dependency-without-lock manifest-dir alias dep)
+    (if (build-package-lock-policy-locked? lock-policy)
+      (match (build-package-lock-entry-status lock-entries alias dep)
+        [(BuildPackageLockEntryMatched entry)
+          (build-resolve-github-dependency-from-lock
+            manifest-dir
+            alias
+            dep
+            entry)]
+        [(BuildPackageLockEntryMissing)
+          (ErrBuildResolvedGitDependency
+            (build-package-lock-missing-message alias))]
+        [(BuildPackageLockEntryStale)
+          (ErrBuildResolvedGitDependency
+            (build-package-lock-stale-message alias))])
+      (match (build-package-lock-matching-entry lock-entries alias dep)
+        [(BuildSomeLockEntry entry)
+          (build-resolve-github-dependency-from-lock
+            manifest-dir
+            alias
+            dep
+            entry)]
+        [(BuildNoLockEntry)
+          (build-resolve-github-dependency-without-lock manifest-dir alias dep)]))))
 
 (define (build-package-resolve-dep-with-lock
   [manifest-dir : String]
   [lock-entries : PackageLockEntryList]
+  [lock-policy : BuildPackageLockPolicy]
   [dep : CompilerPkgDep]) : ResultBuildResolvedPkgDep
   (let
     [path : String (struct-get dep path)]
@@ -1646,7 +1823,8 @@
             manifest-dir
             alias
             git-dep
-            lock-entries)
+            lock-entries
+            lock-policy)
             [(ErrBuildResolvedGitDependency message)
               (ErrBuildResolvedPkgDep message)]
             [(OkBuildResolvedGitDependency resolved)
@@ -1662,6 +1840,7 @@
   (match (build-package-resolve-dep-with-lock
     manifest-dir
     PackageLockEntryNil
+    (BuildPackageLockDefault)
     dep)
     [(ErrBuildResolvedPkgDep message) (ErrBuildPkgDep message)]
     [(OkBuildResolvedPkgDep resolved) (OkBuildPkgDep (struct-get resolved dep))]))
@@ -1673,21 +1852,88 @@
     [(BuildNoLockEntry) (OkPackageLockEntryList entries)]
     [(BuildSomeLockEntry entry) (package-lock-entry-list-insert entries entry)]))
 
+(define (build-package-lock-list-has-exact-entry?
+  [entries : PackageLockEntryList]
+  [entry : PackageLockEntry]) : bool
+  (package-lock-list-has-entry?
+    entries
+    (struct-get entry alias)
+    (struct-get entry url)
+    (struct-get entry pin-kind)
+    (struct-get entry pin-value)
+    (struct-get entry commit)))
+
+(define (build-package-lock-list-contains-all?
+  [haystack : PackageLockEntryList]
+  [needles : PackageLockEntryList]) : bool
+  (match needles
+    [(PackageLockEntryNil) true]
+    [(PackageLockEntryCons entry rest)
+      (and
+        (build-package-lock-list-has-exact-entry? haystack entry)
+        (build-package-lock-list-contains-all? haystack (box-get rest)))]))
+
+(define (build-package-lock-list-eq?
+  [left : PackageLockEntryList]
+  [right : PackageLockEntryList]) : bool
+  (and
+    (=
+      (package-lock-entry-list-count left)
+      (package-lock-entry-list-count right))
+    (build-package-lock-list-contains-all? left right)))
+
+(define (build-package-lock-policy-check
+  [policy : BuildPackageLockPolicy]
+  [lock-state : BuildPackageLockState]
+  [resolved : BuildResolvedPkgDeps]) : ResultBuildString
+  (if (build-package-lock-policy-locked? policy)
+    (if (and
+      (struct-get resolved has-remote)
+      (not (struct-get lock-state has-lock)))
+      (ErrBuildString
+        "build: --locked requires typelisp.lock for remote dependencies; run with --update-lock to refresh typelisp.lock")
+      (if (and
+        (struct-get lock-state has-lock)
+        (not
+          (build-package-lock-list-eq?
+            (struct-get lock-state entries)
+            (struct-get resolved lock-entries))))
+        (ErrBuildString
+          "build: package lock is stale; run with --update-lock to refresh typelisp.lock")
+        (OkBuildString "")))
+    (OkBuildString "")))
+
+(define (build-package-maybe-write-lock
+  [policy : BuildPackageLockPolicy]
+  [lock-state : BuildPackageLockState]
+  [resolved : BuildResolvedPkgDeps]) : ResultBuildString
+  (if (and
+    (not (build-package-lock-policy-locked? policy))
+    (or (struct-get resolved has-remote) (struct-get lock-state has-lock)))
+    (build-write-package-lock lock-state (struct-get resolved lock-entries))
+    (OkBuildString "")))
+
 (define (build-package-resolve-deps-with-lock
   [manifest-dir : String]
   [lock-entries : PackageLockEntryList]
+  [lock-policy : BuildPackageLockPolicy]
   [deps : CompilerPkgDepList]) : ResultBuildResolvedPkgDeps
   (match deps
     [(CompilerPkgDepNil)
       (OkBuildResolvedPkgDeps
         (BuildResolvedPkgDeps CompilerPkgDepNil PackageLockEntryNil false))]
     [(CompilerPkgDepCons dep rest)
-      (match (build-package-resolve-dep-with-lock manifest-dir lock-entries dep)
+      (match (build-package-resolve-dep-with-lock
+        manifest-dir
+        lock-entries
+        lock-policy
+        dep)
         [(ErrBuildResolvedPkgDep message) (ErrBuildResolvedPkgDeps message)]
         [(OkBuildResolvedPkgDep resolved-dep)
           (match (build-package-resolve-deps-with-lock
             manifest-dir
             lock-entries
+            lock-policy
             (box-get rest))
             [(ErrBuildResolvedPkgDeps message)
               (ErrBuildResolvedPkgDeps message)]
@@ -1716,6 +1962,7 @@
   (match (build-package-resolve-deps-with-lock
     manifest-dir
     PackageLockEntryNil
+    (BuildPackageLockDefault)
     deps)
     [(ErrBuildResolvedPkgDeps message) (ErrBuildPkgDepList message)]
     [(OkBuildResolvedPkgDeps resolved)
@@ -1723,7 +1970,8 @@
 
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]) : ResultBuildManifest
+  [manifest : CompilerPkgManifest]
+  [lock-policy : BuildPackageLockPolicy]) : ResultBuildManifest
   (let
     [manifest-dir : String (compiler-load-dirname manifest-path)]
     (match (build-load-package-lock manifest-dir)
@@ -1732,26 +1980,29 @@
         (match (build-package-resolve-deps-with-lock
           manifest-dir
           (struct-get lock-state entries)
+          lock-policy
           (compiler-pkg-deps-list (struct-get manifest deps)))
           [(ErrBuildResolvedPkgDeps message) (ErrBuildManifest message)]
           [(OkBuildResolvedPkgDeps resolved)
-            (begin
-              (if (or
-                (struct-get resolved has-remote)
-                (struct-get lock-state has-lock))
-                (match (build-write-package-lock
+            (match (build-package-lock-policy-check
+              lock-policy
+              lock-state
+              resolved)
+              [(ErrBuildString message) (ErrBuildManifest message)]
+              [(OkBuildString _)
+                (match (build-package-maybe-write-lock
+                  lock-policy
                   lock-state
-                  (struct-get resolved lock-entries))
-                  [(ErrBuildString message) (return (ErrBuildManifest message))]
-                  [(OkBuildString _) unit])
-                unit)
-              (OkBuildManifest
-                (CompilerPkgManifest
-                  (struct-get manifest name)
-                  (struct-get manifest version)
-                  (struct-get manifest kind)
-                  (struct-get manifest entry)
-                  (compiler-pkg-deps-from-list (struct-get resolved deps)))))])])))
+                  resolved)
+                  [(ErrBuildString message) (ErrBuildManifest message)]
+                  [(OkBuildString _)
+                    (OkBuildManifest
+                      (CompilerPkgManifest
+                        (struct-get manifest name)
+                        (struct-get manifest version)
+                        (struct-get manifest kind)
+                        (struct-get manifest entry)
+                        (compiler-pkg-deps-from-list (struct-get resolved deps))))])])])])))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))
@@ -1856,7 +2107,8 @@
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
-  [dep : CompilerPkgDep]) : ResultBuildPackageGraphNode
+  [dep : CompilerPkgDep]
+  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphNode
   (match (build-package-resolve-dep manifest-dir dep)
     [(ErrBuildPkgDep message) (ErrBuildPackageGraphNode message)]
     [(OkBuildPkgDep resolved-dep)
@@ -1874,7 +2126,8 @@
           [(OkBuildManifest dep-manifest)
             (match (build-package-resolve-manifest-deps
               dep-manifest-path
-              dep-manifest)
+              dep-manifest
+              lock-policy)
               [(ErrBuildManifest message) (ErrBuildPackageGraphNode message)]
               [(OkBuildManifest resolved-manifest)
                 (if (not
@@ -1895,7 +2148,8 @@
 (define (build-package-graph-add-node
   [node : BuildPackageGraphNode]
   [state : BuildPackageGraphState]
-  [stack : BuildPackagePathList]) : ResultBuildPackageGraphState
+  [stack : BuildPackagePathList]
+  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (let
     [manifest-path : String (struct-get node manifest-path)]
     (match (string-i64-map-get (struct-get state seen) manifest-path)
@@ -1919,7 +2173,8 @@
             manifest-dir
             (compiler-pkg-deps-list (struct-get manifest deps))
             visiting
-            next-stack)
+            next-stack
+            lock-policy)
             [(ErrBuildPackageGraphState message)
               (ErrBuildPackageGraphState message)]
             [(OkBuildPackageGraphState with-deps)
@@ -1935,14 +2190,15 @@
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
   [state : BuildPackageGraphState]
-  [stack : BuildPackagePathList]) : ResultBuildPackageGraphState
+  [stack : BuildPackagePathList]
+  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (match deps
     [(CompilerPkgDepNil) (OkBuildPackageGraphState state)]
     [(CompilerPkgDepCons dep rest)
-      (match (build-package-load-dep-node manifest-dir dep)
+      (match (build-package-load-dep-node manifest-dir dep lock-policy)
         [(ErrBuildPackageGraphNode message) (ErrBuildPackageGraphState message)]
         [(OkBuildPackageGraphNode node)
-          (match (build-package-graph-add-node node state stack)
+          (match (build-package-graph-add-node node state stack lock-policy)
             [(ErrBuildPackageGraphState message)
               (ErrBuildPackageGraphState message)]
             [(OkBuildPackageGraphState next-state)
@@ -1950,11 +2206,13 @@
                 manifest-dir
                 (box-get rest)
                 next-state
-                stack)])])]))
+                stack
+                lock-policy)])])]))
 
 (define (build-package-dependency-graph
   [manifest-path : String]
-  [manifest : CompilerPkgManifest]) : ResultBuildPackageGraph
+  [manifest : CompilerPkgManifest]
+  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraph
   (let
     [root-path : String (build-package-normalize-manifest-path manifest-path)]
     [root-dir : String (compiler-load-dirname root-path)]
@@ -1971,7 +2229,8 @@
       root-dir
       (compiler-pkg-deps-list (struct-get manifest deps))
       initial
-      stack)
+      stack
+      lock-policy)
       [(ErrBuildPackageGraphState message) (ErrBuildPackageGraph message)]
       [(OkBuildPackageGraphState state)
         (OkBuildPackageGraph (BuildPackageGraph (struct-get state order)))])))
@@ -2129,6 +2388,7 @@
       0
       (BuildProfileRelease)
       (BackendModeScalar)
+      (BuildPackageLockDefault)
       (string-vec-new)
       (build-package-graph-worker-vec-new))
       [(ErrBuildPackageSchedulePass _) false]
@@ -2270,6 +2530,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : ProcessStringList
   (let
     [args0 : ProcessStringList
@@ -2298,7 +2559,9 @@
         args5
         "--opt-level"
         (int->string opt-level))]
-    (build-package-worker-append-stdlib-roots args6 stdlib-roots)))
+    [args7 : ProcessStringList
+      (build-package-lock-policy-arg args6 lock-policy)]
+    (build-package-worker-append-stdlib-roots args7 stdlib-roots)))
 
 (define (build-package-worker-command
   [manifest-path : String]
@@ -2306,6 +2569,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : ProcessCommand
   (process-command
     (arg 0)
@@ -2315,6 +2579,7 @@
       opt-level
       profile
       mode
+      lock-policy
       stdlib-roots)))
 
 (define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
@@ -2336,7 +2601,8 @@
           [(OkBuildManifest manifest)
             (match (build-package-resolve-manifest-deps
               normalized-path
-              manifest)
+              manifest
+              (struct-get config lock-policy))
               [(ErrBuildManifest message)
                 (begin
                   (print-error message)
@@ -2470,6 +2736,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String (struct-get node manifest-path)]
@@ -2482,6 +2749,7 @@
         opt-level
         profile
         mode
+        lock-policy
         stdlib-roots)]
     (match (process-start command)
       [(OkProcessChild child)
@@ -2502,6 +2770,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]
   [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
   (let
@@ -2527,6 +2796,7 @@
                   opt-level
                   profile
                   mode
+                  lock-policy
                   stdlib-roots)
                   [(ErrBuildPackageGraphWorker message)
                     (begin
@@ -2646,6 +2916,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]
   [scheduled : StringI64Map]
   [built : StringI64Map]) : i64
@@ -2659,6 +2930,7 @@
       opt-level
       profile
       mode
+      lock-policy
       stdlib-roots
       (build-package-graph-worker-vec-with-capacity
         (build-package-graph-node-vec-len nodes)))
@@ -2683,6 +2955,7 @@
                   opt-level
                   profile
                   mode
+                  lock-policy
                   stdlib-roots
                   (struct-get pass scheduled)
                   next-built)])))])))
@@ -2693,6 +2966,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (build-package-emit-graph-nodes-parallel-loop
     nodes
@@ -2700,6 +2974,7 @@
     opt-level
     profile
     mode
+    lock-policy
     stdlib-roots
     (string-i64-map-with-capacity 32)
     (string-i64-map-with-capacity 32)))
@@ -2710,6 +2985,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (let
     [index : i64 0]
@@ -2752,6 +3028,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (if (build-package-async-process-supported?)
     (build-package-emit-graph-nodes-parallel
@@ -2760,6 +3037,7 @@
       opt-level
       profile
       mode
+      lock-policy
       stdlib-roots)
     (build-package-emit-graph-nodes-serial
       nodes
@@ -2767,6 +3045,7 @@
       opt-level
       profile
       mode
+      lock-policy
       stdlib-roots)))
 
 (define (build-package-emit
@@ -2777,6 +3056,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (match (build-parse-target target-text)
     [(ErrBuildTarget message)
@@ -2787,7 +3067,10 @@
       (let
         [normalized-path : String
           (build-package-normalize-manifest-path manifest-path)]
-        (match (build-package-resolve-manifest-deps normalized-path manifest)
+        (match (build-package-resolve-manifest-deps
+          normalized-path
+          manifest
+          lock-policy)
           [(ErrBuildManifest message)
             (begin
               (print-error message)
@@ -2795,7 +3078,8 @@
           [(OkBuildManifest resolved-manifest)
             (match (build-package-dependency-graph
               normalized-path
-              resolved-manifest)
+              resolved-manifest
+              lock-policy)
               [(ErrBuildPackageGraph message)
                 (begin
                   (print-error message)
@@ -2810,6 +3094,7 @@
                       opt-level
                       profile
                       mode
+                      lock-policy
                       stdlib-roots)]
                   (if (= dep-status 0)
                     (build-package-emit-one
@@ -2830,6 +3115,7 @@
   [mode : String]
   [opt-level : i64]
   [profile : BuildProfile]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (match (source-tool-backend-mode "build" mode)
     [(ErrSourceToolBackendMode message)
@@ -2851,6 +3137,7 @@
             opt-level
             profile
             backend-mode
+            lock-policy
             stdlib-roots)])]))
 
 (define (build-package [config : BuildConfig]) : i64
@@ -2864,6 +3151,7 @@
         profile
         _
         opt-level
+        lock-policy
         stdlib-roots)
       (let
         [resolved-manifest : CompilerLoadMaybePath
@@ -2884,6 +3172,7 @@
               mode
               opt-level
               profile
+              lock-policy
               stdlib-roots)]))]
     [_ 1]))
 
@@ -2895,7 +3184,7 @@
           (begin
             (print-string (build-source-plan-render config))
             0)]
-        [(BuildPackageConfig _ _ _ _ _ _ _ _ _) (build-package config)])]
+        [(BuildPackageConfig _ _ _ _ _ _ _ _ _ _) (build-package config)])]
     [(ErrBuildConfig message)
       (begin
         (print-error message)
@@ -2926,14 +3215,21 @@
   (BuildCliOptionLinkSearch)
   (BuildCliOptionLinkArg)
   (BuildCliOptionManifestPath)
+  (BuildCliOptionLocked)
+  (BuildCliOptionUpdateLock)
   (BuildCliOptionOther))
 
 (define (build-cli-option-rest6 [current : String]) : BuildCliOption
-  (if (string-eq current "--link-arg")
+  (core/cond
+    (string-eq current "--link-arg")
     (BuildCliOptionLinkArg)
-    (if (string-eq current "--manifest-path")
-      (BuildCliOptionManifestPath)
-      (BuildCliOptionOther))))
+    (string-eq current "--manifest-path")
+    (BuildCliOptionManifestPath)
+    (string-eq current "--locked")
+    (BuildCliOptionLocked)
+    (string-eq current "--update-lock")
+    (BuildCliOptionUpdateLock)
+    (BuildCliOptionOther)))
 
 (define (build-cli-option-rest5 [current : String]) : BuildCliOption
   (if (string-eq current "--link-search")
@@ -2991,6 +3287,8 @@
             (build-args-have-source? (+ idx 1) count)
             true)]
         [(BuildCliOptionRelease) (build-args-have-source? (+ idx 1) count)]
+        [(BuildCliOptionLocked) (build-args-have-source? (+ idx 1) count)]
+        [(BuildCliOptionUpdateLock) (build-args-have-source? (+ idx 1) count)]
         [_ (build-args-have-source? (+ idx 2) count)]))))
 
 (define (build-cli-parse-options
@@ -3122,6 +3420,11 @@
         [(BuildCliOptionRelease)
           (ErrBuildCliConfig
             "build: --release is only valid for package builds")]
+        [(BuildCliOptionLocked)
+          (ErrBuildCliConfig "build: --locked is only valid for package builds")]
+        [(BuildCliOptionUpdateLock)
+          (ErrBuildCliConfig
+            "build: --update-lock is only valid for package builds")]
         [(BuildCliOptionLinkLib)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --link-lib requires a value")

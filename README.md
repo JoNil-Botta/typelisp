@@ -335,11 +335,13 @@ and the shorthand normalizes to
 through `typelisp.lock` and the package cache. When an existing lock entry
 matches the manifest alias, normalized URL, and requested `rev`/`tag`/`branch`
 pin, package builds replay the recorded commit as an exact `rev`; otherwise the
-requested pin is resolved and the lockfile is rewritten deterministically. A
+requested pin is resolved and the lockfile is rewritten deterministically.
+`--locked` requires matching lock entries and never rewrites `typelisp.lock`;
+missing, stale, or extra lock entries fail with a diagnostic. `--update-lock`
+intentionally refreshes remote pins and rewrites `typelisp.lock`. A
 pre-existing legacy fetch root under `target/typelisp/git-deps/<alias>` with
 `typelisp.pkg` is used as-is unless it has a `.git` directory, in which case the
-checkout is refreshed. Explicit locked/update policy flags remain future work
-(#2665).
+checkout is refreshed.
 
 Resolved remote package pins can be represented in `typelisp.lock`, a
 deterministic v1 S-expression lockfile:
@@ -361,18 +363,21 @@ lockfile helper parses this format with duplicate, missing-field, malformed,
 non-string, and unknown-version diagnostics, and emits entries in stable alias
 order. Package builds consume that model through `build_cli_core.tl`: matching
 entries pin remote dependencies to the recorded commit, missing or stale entries
-are refreshed from the manifest pin, and a deterministic lockfile is written
-when remote dependencies or a prior lockfile are present.
+are refreshed from the manifest pin by default, and a deterministic lockfile is
+written when remote dependencies or a prior lockfile are present. `--locked`
+turns missing or stale entries into errors, while `--update-lock` refreshes
+remote pins intentionally.
 
 Remote package cache helpers use a deterministic v1 layout under the package
 root at `target/typelisp/cache/packages/v1`. Cache entries are keyed by the
 normalized remote URL plus an exact `rev` commit pin; `tag` and `branch` pins
 must be resolved, either from `typelisp.lock` or from `git`, before they can be
 reused as cache entries. Complete entries with matching metadata, completion
-marker, and `typelisp.pkg` are reused without invoking `git`. Missing entries,
-partial writes, corrupt metadata, or stale marker state are fetched into a
-staging directory and finalized through the package-cache helpers; conflicting
-corrupt entries are preserved with a `.corrupt.N` suffix before replacement.
+marker, and `typelisp.pkg` are reused without invoking `git`, including during
+locked replay. Missing entries, partial writes, corrupt metadata, or stale
+marker state are fetched into a staging directory and finalized through the
+package-cache helpers; conflicting corrupt entries are preserved with a
+`.corrupt.N` suffix before replacement.
 
 The repository root is also a package. From a checkout, `typelisp build` builds
 the unified selfhost CLI from `selfhost/cli.tl` and writes
@@ -755,8 +760,8 @@ Commands:
 
 Common options include `--target <target>`, `--backend-mode <mode>`,
 `--manifest-path <file>`, `--stdlib-root <dir>`, `--opt-level <0|1|2>`,
-and `--cfg <name>`. Run `typelisp <command> --help` for command-specific
-usage.
+`--locked`, `--update-lock`, and `--cfg <name>`. Run command-specific help with
+`typelisp <command> --help`.
 
 The `typelisp repl` command provides a stdio command loop for `.help`,
 `.type <expr>`, and `.exit`. Top-level declarations are remembered for later
@@ -808,6 +813,9 @@ register allocation and inlining.
 Higher levels may spend more compile time but must preserve program semantics —
 the exit/output of a program never depends on the level. The package-build flags
 report missing/duplicate/invalid diagnostics.
+Package builds also accept `--locked` to require a matching `typelisp.lock`
+without rewriting it, and `--update-lock` to refresh remote pins and rewrite the
+lockfile. These flags are rejected for source-file builds.
 
 ## Status
 

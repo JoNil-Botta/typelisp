@@ -412,6 +412,8 @@ assert_subcommand_help_pair() {
 assert_subcommand_help_pair build "typelisp build"
 if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
     assert_contains "$err" "--opt-level <0|1|2>            Package-build optimizer level"
+    assert_contains "$err" "--locked"
+    assert_contains "$err" "--update-lock"
 fi
 assert_subcommand_help_pair run "typelisp run"
 assert_subcommand_help_pair check "typelisp check"
@@ -1044,6 +1046,16 @@ EOF
     run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
     assert_code 23
     assert_stderr_empty
+
+    run_cmd selfhost-build-source-locked "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --locked
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --locked is only valid for package builds"
+
+    run_cmd selfhost-build-source-update-lock "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --update-lock
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --update-lock is only valid for package builds"
 
     if [ "$HOST_OS" = linux ]; then
     LINK_LIB_DIR="$SELFHOST_PLANNER_DIR/native-lib"

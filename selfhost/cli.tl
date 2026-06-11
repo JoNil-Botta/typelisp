@@ -95,7 +95,7 @@ Run `typelisp <command> --help` for command-specific usage.
 (define (cli-build-help-text) : String
   "Usage:
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
-    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
 
 Summary:
     Build a source file or package artifact.
@@ -108,6 +108,8 @@ Options:
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Package-build optimizer level
+    --locked                       Require matching typelisp.lock; do not rewrite
+    --update-lock                  Refresh remote pins and rewrite typelisp.lock
     --link-lib <name>              Link a named native library for source builds
     --link-search <dir>            Add a native linker library search directory
     --link-arg <arg>               Pass a raw native linker argument

@@ -2044,7 +2044,10 @@ Example:
   consumed through either the package cache or the legacy
   `target/typelisp/git-deps/<alias>` checkout root. A pre-existing legacy
   fetched root with `typelisp.pkg` is used as-is unless it has a `.git`
-  directory, in which case the checkout is refreshed.
+  directory, in which case the checkout is refreshed. `--locked` requires
+  matching lock entries and never rewrites `typelisp.lock`; missing, stale, or
+  extra lock entries fail. `--update-lock` intentionally refreshes remote pins
+  and rewrites `typelisp.lock`.
 - `typelisp.lock` is a deterministic v1 S-expression lockfile for resolved
   remote package pins:
 
@@ -2068,22 +2071,23 @@ Example:
   URL, pin kind, and pin value match the manifest dependency; replay converts
   the dependency to the recorded exact `rev` commit before fetching. Missing or
   stale entries are resolved from the manifest pin and included in the next
-  emitted lockfile. The build writes a deterministic lockfile whenever the
-  package has remote dependencies or a prior lockfile exists. Explicit locked
-  and update/refresh policy flags are not implemented yet (#2665).
+  emitted lockfile by default. The build writes a deterministic lockfile
+  whenever the package has remote dependencies or a prior lockfile exists.
+  `--locked` turns missing or stale entries into errors, while `--update-lock`
+  refreshes remote pins intentionally.
 - Remote package cache helpers use a deterministic v1 root below the package
   root at `target/typelisp/cache/packages/v1`. Entry paths are derived from the
   normalized remote URL and an exact `rev` commit pin; `tag` and `branch` pins
   must be resolved before key construction. A cache entry is reusable only when
   its metadata file matches the URL/commit key and its completion marker is
   present and valid and the cached root contains `typelisp.pkg`. Complete cache
-  entries are reused without invoking `git`. Missing markers, missing metadata,
-  metadata mismatches, and missing package manifests are partial/corrupt hits,
-  not reusable hits; package builds refetch them through a staging directory and
-  preserve conflicting corrupt entries with a `.corrupt.N` suffix before
-  replacement. The helper layer owns cache key/path/state/marker/finalize
-  primitives; `build_cli_core.tl` owns pin resolution, fetching, lockfile
-  updates, and package build integration.
+  entries are reused without invoking `git`, including during locked replay.
+  Missing markers, missing metadata, metadata mismatches, and missing package
+  manifests are partial/corrupt hits, not reusable hits; package builds refetch
+  them through a staging directory and preserve conflicting corrupt entries with
+  a `.corrupt.N` suffix before replacement. The helper layer owns cache
+  key/path/state/marker/finalize primitives; `build_cli_core.tl` owns pin
+  resolution, fetching, lockfile updates, and package build integration.
 - Local dependency manifests are loaded into a normalized DAG keyed by manifest
   path before build execution. Transitive dependency packages build once per
   root build invocation, diamond graphs de-duplicate the common archive,
@@ -2101,6 +2105,10 @@ Example:
   profile is `release`; `--release` is an alias for `--profile release`.
   `--opt-level 0|1|2` overrides the profile's optimizer level. Without an
   explicit level, `release` uses level 2 and `dev` uses level 0.
+- Package builds accept `--locked` to require a matching `typelisp.lock`
+  without rewriting it, and `--update-lock` to refresh remote pins and rewrite
+  the lockfile. These flags are rejected for source-file builds and non-package
+  commands.
 - Build outputs are written under
   `target/<profile>/` in the package root. `bin` packages produce
   `<package-name>` on Linux and `<package-name>.exe` on Windows. `staticlib`
@@ -4410,7 +4418,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
-| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, build-time `typelisp.lock` replay, deterministic lockfile rewrite, and package-cache reuse/refetch; explicit lock policy flags (#2665) and registry/version/workspace direction (#2666) remain future work |
+| Package manager | Implemented v1: `typelisp.pkg` manifests, path and git/GitHub dependencies, dependency-DAG package builds, build-time `typelisp.lock` replay, explicit lock policy flags, deterministic lockfile rewrite, and package-cache reuse/refetch; registry/version/workspace direction (#2666) remains future work |
 | LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 
 ---
@@ -4665,7 +4673,7 @@ Selected Command Forms:
   typelisp compile <file.tl> [-o <file>] [--emit-ir]
   typelisp compile --batch <input-output-list>
   typelisp build <file.tl> [-o <exe>]
-  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release]
+  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
   typelisp run <file.tl> [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
@@ -4678,7 +4686,10 @@ forms. `compile -o <file>` writes assembly or IR to the given path,
 `compile --batch <file>` reads input|output pairs in one compiler process.
 `build --profile dev|release` selects the package build profile, `build
 --release` aliases `--profile release`, and `build --manifest-path <file>` uses
-an explicit package manifest. `fmt --check` reports files that would change
+an explicit package manifest. `build --locked` requires a matching
+`typelisp.lock` and does not rewrite it; `build --update-lock` refreshes remote
+pins and rewrites `typelisp.lock`. These lock-policy flags are valid only for
+package builds. `fmt --check` reports files that would change
 without writing them, while `lint --check` exits non-zero when lint findings are
 present. `lint --deprecated-string-concat` enables the staged deprecation rule
 for user-facing concat primitives. Without explicit files, `fmt` and `lint`

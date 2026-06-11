@@ -1028,8 +1028,11 @@ Borrow expressions are specified as:
   lifetime/arena name to be `arena`; otherwise the checker reports a type error.
 - `(&mut place)` and `(&mut arena place)` create mutable references with the
   same lifetime inference and explicit-lifetime check.
-- Borrow expressions are explicit. There is no implicit conversion from `T` to
-  `(& arena T)` in v1.
+- Borrow expressions are the explicit spelling. At call sites, a parameter of
+  type `(& lifetime T)` may also auto-borrow an argument place under the same
+  immutable borrow rules below. There is no general implicit conversion from
+  `T` to `(& lifetime T)` outside typed calls, and mutable references still
+  require explicit `(&mut ...)`.
 - The referent type is the place's value type, except that borrowing a `String`
   place produces `(& lifetime str)`. When the place type is an arena-tagged
   wrapper `(in arena T)`, the reference type is `(& arena T)`, not
@@ -1067,6 +1070,27 @@ For `(& name place)`, `name` must match the inferred lifetime. In function
 parameter types, lifetime names are signature-local binders for incoming
 references. Multiple parameters using the same name require the same caller
 lifetime.
+
+**Immutable call-site auto-borrowing.** When a typed TypeLisp call, function
+value/lambda call, or constructor call has a formal parameter of type
+`(& lifetime T)`, the checker may treat the corresponding source argument as
+`(& argument)` if the argument is a borrowable place and the inferred referent
+type is compatible with `T`. The inferred lifetime participates in ordinary
+call lifetime substitution: repeated formal lifetime names must infer the same
+caller lifetime, and fixed lifetime names must match exactly. The synthesized
+borrow lives to the end of the innermost lexical scope containing the call,
+matching an explicit borrow expression. Macros are checked after expansion.
+Extern C ABI calls remain out of scope while safe reference types are not legal
+C ABI parameter values. Arbitrary rvalues and temporaries are still rejected
+because they have no stable lexical owner:
+
+```lisp test=ignore name=auto-borrow-reject-temporary reason="negative example for immutable call-site auto-borrowing"
+(define (takes-ref [n : (& value i64)]) : i64
+  (read-ref n))
+
+(define (bad-auto-borrow-temporary [n : i64]) : i64
+  (takes-ref (+ n 1)))
+```
 
 The first #804 stored-reference slice accepts reference lifetimes written
 directly in structural container types: fixed arrays such as
@@ -1492,14 +1516,15 @@ Borrowing a `String` place produces a borrowed `str` reference:
     (text-len view)))
 ```
 
-Borrow expressions stay explicit. A call that expects `(& lifetime str)` does
-not implicitly borrow a `String` argument:
+The call-site auto-borrowing rule from section 3.10 applies to `String` places
+through the same referent mapping, so a `String` argument place may satisfy a
+parameter of type `(& lifetime str)`:
 
-```lisp test=ignore name=string-borrow-reject-implicit reason="negative example for the borrowed str checker"
+```lisp test=ignore name=string-auto-borrow-arg reason="illustrative borrowed str example; not a standalone program"
 (define (text-len [text : (& input str)]) : i64
   (string-length text))
 
-(define (bad-implicit-borrow [input : String]) : i64
+(define (auto-borrow-owned-string [input : String]) : i64
   (text-len input))
 ```
 

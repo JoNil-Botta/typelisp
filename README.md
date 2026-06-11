@@ -587,7 +587,9 @@ specified model.
 `SPEC.md` also defines the v1 owned `String` / borrowed `str` direction:
 string literals remain owned `String` values, `str` is a borrowed-only referent
 used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
-`str` view. The `str` frontend and stdlib API migration are implemented
+`str` view. Typed calls auto-borrow borrowable places for immutable reference
+parameters, including `String` places passed to `(& lifetime str)`. The `str`
+frontend and stdlib API migration are implemented
 (#1453, #1454); several compiler builtins keep compatibility `String`
 signatures.
 

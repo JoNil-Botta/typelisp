@@ -197,6 +197,71 @@
 (define (main) : unit
   (let [items : (Array Loop) (make-array Loop 0)] unit))")
 
+(define (compiler-typecheck-auto-borrow-ok-source) : String
+  "(defstruct RefBox (:lifetimes owner) (value (& owner i64)))
+(define (take [n : (& n i64)]) : i64 1)
+(define (len [text : (& text str)]) : i64 1)
+(define (main [n : i64] [text : String]) : i64
+  (let
+    [direct : i64 (take n)]
+    [box : (RefBox n) (RefBox n)]
+    [from-box : i64 (take (struct-get box value))]
+    [f : (-> (& n i64) i64) (lambda ([r : (& n i64)]) : i64 (take r))]
+    [via-f : i64 (f n)]
+    [text-len : i64 (len text)]
+    [after-scope : i64 (let [inner : i64 (len text)] 1)]
+    (+ direct (+ from-box (+ via-f (+ text-len after-scope))))))")
+
+(define (compiler-typecheck-auto-borrow-temporary-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64]) : i64
+  (take (+ n 1)))")
+
+(define (compiler-typecheck-auto-borrow-shared-lifetime-source) : String
+  "(define (same-owner [left : (& same str)] [right : (& same str)]) : i64 1)
+(define (main [left : String] [right : String]) : i64
+  (same-owner left right))")
+
+(define (compiler-typecheck-auto-borrow-mutable-param-source) : String
+  "(define (take-mut [n : (&mut n i64)]) : i64 1)
+(define (main [n : i64]) : i64
+  (take-mut n))")
+
+(define (compiler-typecheck-auto-borrow-assignment-live-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64]) : i64
+  (begin
+    (take n)
+    (set! n 2)
+    n))")
+
+(define (compiler-typecheck-auto-borrow-move-live-source) : String
+  "(define (len [text : (& text str)]) : i64 1)
+(define (main) : i64
+  (let [text : String \"move\"]
+    (begin
+      (len text)
+      (let [moved : String text] 1))))")
+
+(define (compiler-typecheck-auto-borrow-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-auto-borrow-ok-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-auto-borrow-temporary-source)
+      "typecheck: borrow requires a local, parameter, or aggregate place")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-auto-borrow-shared-lifetime-source)
+      "typecheck: constructor lifetime mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-auto-borrow-mutable-param-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-auto-borrow-assignment-live-source)
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-auto-borrow-move-live-source)
+      "typecheck: cannot move borrowed place `text`")))
+
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -304,12 +369,14 @@
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
-    (if (and
+    (unless
       (compiler-typecheck-reference-escape-tests-ok?)
-      (compiler-typecheck-macro-alias-cache-collision-ok?))
-      (begin
-        (macro-alias-cache-reset!)
-        42)
-      (begin
-        (panic "typecheck: reference escape tests failed")
-        0))))
+      (panic "typecheck: reference escape tests failed"))
+    (unless
+      (compiler-typecheck-auto-borrow-tests-ok?)
+      (panic "typecheck: auto-borrow tests failed"))
+    (unless
+      (compiler-typecheck-macro-alias-cache-collision-ok?)
+      (panic "typecheck: macro alias cache collision test failed"))
+    (macro-alias-cache-reset!)
+    42))

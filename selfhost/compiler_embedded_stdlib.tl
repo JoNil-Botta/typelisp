@@ -7,6 +7,8 @@
 
 (include-str compiler-embedded-stdlib-arena "stdlib/arena.tl")
 
+(include-str compiler-embedded-stdlib-args "stdlib/args.tl")
+
 (include-str compiler-embedded-stdlib-cpu "stdlib/cpu.tl")
 
 (include-str compiler-embedded-stdlib-core-macros "stdlib/core_macros.tl")
@@ -60,6 +62,8 @@
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf "stdlib/tests/arena_policy_escape_text_buf.tl")
 
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed "stdlib/tests/arena_policy_escape_text_buf_borrowed.tl")
+
+(include-str compiler-embedded-stdlib-tests-args-api "stdlib/tests/args_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-borrowed-str-gate "stdlib/tests/borrowed_str_gate.tl")
 
@@ -131,10 +135,12 @@
 
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
 
-(define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
+(define (compiler-embedded-stdlib-lookup-modules [suffix : String]) : CompilerEmbeddedStdlibSource
   (core/cond
     (string-eq suffix "arena.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)
+    (string-eq suffix "args.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-args)
     (string-eq suffix "cpu.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)
     (string-eq suffix "core_macros.tl")
@@ -177,6 +183,17 @@
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)
     (string-eq suffix "thread.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-thread)
+    (string-eq suffix "text_buf.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)
+    (string-eq suffix "text_buf_borrowed.tl")
+    (CompilerEmbeddedStdlibSomeSource
+      compiler-embedded-stdlib-text-buf-borrowed)
+    (string-eq suffix "vector.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)
+    (CompilerEmbeddedStdlibNoSource)))
+
+(define (compiler-embedded-stdlib-lookup-tests [suffix : String]) : CompilerEmbeddedStdlibSource
+  (core/cond
     (string-eq suffix "tests/arena_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-arena-api)
     (string-eq suffix "tests/arena_patterns.tl")
@@ -194,6 +211,8 @@
     (string-eq suffix "tests/arena_policy_escape_text_buf_borrowed.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed)
+    (string-eq suffix "tests/args_api.tl")
+    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-args-api)
     (string-eq suffix "tests/borrowed_str_gate.tl")
     (CompilerEmbeddedStdlibSomeSource
       compiler-embedded-stdlib-tests-borrowed-str-gate)
@@ -279,11 +298,11 @@
       compiler-embedded-stdlib-tests-text-buf-borrowed-check)
     (string-eq suffix "tests/vector_api.tl")
     (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-vector-api)
-    (string-eq suffix "text_buf.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)
-    (string-eq suffix "text_buf_borrowed.tl")
-    (CompilerEmbeddedStdlibSomeSource
-      compiler-embedded-stdlib-text-buf-borrowed)
-    (string-eq suffix "vector.tl")
-    (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)
     (CompilerEmbeddedStdlibNoSource)))
+
+(define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
+  (match (compiler-embedded-stdlib-lookup-modules suffix)
+    [(CompilerEmbeddedStdlibSomeSource source)
+      (CompilerEmbeddedStdlibSomeSource source)]
+    [(CompilerEmbeddedStdlibNoSource)
+      (compiler-embedded-stdlib-lookup-tests suffix)]))

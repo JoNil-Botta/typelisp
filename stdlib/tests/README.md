@@ -20,6 +20,10 @@ Coverage notes:
 - `arena_patterns.tl` covers the standard safe scratch workflows: temporary
   scalar-only work inside `with-arena` and clone-out from a reusable
   first-class scratch arena through `with-escape`.
+- `args_api.tl` covers the reusable argv parser for empty argv, positional-only
+  argv, flags before and after positionals, `--` end-of-options handling,
+  missing-value diagnostics, unknown-option diagnostics, repeated short/long
+  options, and the intentionally unsupported `--name=value` spelling.
 - `string_edges.tl` covers the public string equality/parsing predicates,
   trimming helpers, replacement paths, and prefix checks, including empty
   strings, empty needles, misses, prefix positions, legacy `string->int` edge

@@ -17333,30 +17333,38 @@ tl_memcpy:
               (cfg compile-profile (compiler-backend-profile-start))
               (match program
                 [(IrProgram globals functions externs)
-                  (match (compiler-backend-emit-globals-buffer-into
-                    target
-                    globals
-                    (text-buf-append (text-buf-empty) ".data\n")
-                    (compiler-backend-program-index-build functions externs))
-                    [(OkCompilerBackendBuffer globals-buf)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "globals"))
-                        (cfg compile-profile (compiler-backend-profile-start))
-                        (let
-                          [entry-functions : CompilerIrFunctionList
-                            (compiler-backend-functions-with-implicit-main
-                              functions
-                              emit-entry)]
-                          [program-index : CompilerBackendProgramIndex
-                            (compiler-backend-program-index-build
-                              entry-functions
-                              externs)]
+                  ;; Build the program index ONCE over the entry function list
+                  ;; and share it with the globals emission: each build walks
+                  ;; every function body for the register-group counts, so the
+                  ;; former second build doubled both that walk and its ~120MB
+                  ;; of transient allocation. The entry list is a superset of
+                  ;; `functions` (at most the synthesized implicit main, which
+                  ;; no global initializer can reference), so globals resolve
+                  ;; identically against the shared index.
+                  (let
+                    [entry-functions : CompilerIrFunctionList
+                      (compiler-backend-functions-with-implicit-main
+                        functions
+                        emit-entry)]
+                    [program-index : CompilerBackendProgramIndex
+                      (compiler-backend-program-index-build
+                        entry-functions
+                        externs)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "index"))
+                      (cfg compile-profile (compiler-backend-profile-start))
+                      (match (compiler-backend-emit-globals-buffer-into
+                        target
+                        globals
+                        (text-buf-append (text-buf-empty) ".data\n")
+                        program-index)
+                        [(OkCompilerBackendBuffer globals-buf)
                           (begin
                             (cfg
                               compile-profile
-                              (compiler-backend-profile-finish "index"))
+                              (compiler-backend-profile-finish "globals"))
                             (cfg
                               compile-profile
                               (compiler-backend-profile-start))
@@ -17381,13 +17389,13 @@ tl_memcpy:
                                   emit-entry
                                   crt-entry)]
                               [(ErrCompilerBackendSymbolValidation message)
-                                (ErrCompilerBackendBuffer message)]))))]
-                    [(ErrCompilerBackendBuffer message)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "globals"))
-                        (ErrCompilerBackendBuffer message))])]))
+                                (ErrCompilerBackendBuffer message)]))]
+                        [(ErrCompilerBackendBuffer message)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-backend-profile-finish "globals"))
+                            (ErrCompilerBackendBuffer message))])))]))
             (begin
               (cfg
                 compile-profile

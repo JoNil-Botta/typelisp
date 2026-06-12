@@ -21,7 +21,7 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback: fetch the published stage0 (CI passes TYPELISP_BIN).
+    # Local-development fallback: fetch the published stage0 (CI passes TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi

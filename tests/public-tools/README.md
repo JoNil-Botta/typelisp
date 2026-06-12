@@ -1,4 +1,4 @@
-# Public Tools No-Rust Test Fixtures
+# Public Tools Test Fixtures
 
 This directory contains REPL transcript fixtures and LSP JSON-RPC protocol fixtures
 that replace the corresponding Rust test cases in `tests/cli.rs`.
@@ -52,7 +52,7 @@ The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by
 `verify-public-tools.sh`.
 
 `cli-command-surface.txt` is the explicit command-surface manifest for the
-freshly built `selfhost/cli.tl` binary in the no-Rust gate. Each row is
+freshly built `selfhost/cli.tl` binary in the CI gate. Each row is
 `status|command|issue`, where `active` commands must have a smoke assertion in
 `scripts/verify-selfhost-cli-build-run.sh`, and `pending` commands must return a
 `cli-pending` diagnostic with the listed tracking issue.

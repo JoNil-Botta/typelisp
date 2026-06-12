@@ -3,9 +3,11 @@ set -eu
 
 # verify-selfhost-cli-build-run.sh - focused public build/run smoke for cli.tl.
 #
-# This is run against a freshly built selfhost/cli.tl binary in the no-Rust gate,
-# so it verifies the branch's public `typelisp build` / `typelisp run` behavior
-# instead of the already-published seed compiler.
+# This is run against the freshly bootstrapped stage2 cli.tl binary in the
+# CI gate (TYPELISP_BIN), so it verifies the branch's public
+# `typelisp build` / `typelisp run` behavior instead of the already-published
+# seed compiler. The compiler itself is built once by the bootstrap fixpoint
+# gate; this smoke does not rebuild it.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -57,9 +59,6 @@ compiler_batch_path() {
         printf '%s\n' "$path"
     fi
 }
-
-. "$ROOT/scripts/lib-native-link.sh"
-native_link_detect_host
 
 fail() {
     echo "FAIL: $*" >&2
@@ -130,13 +129,6 @@ assert_file_nonempty() {
     [ -s "$file" ] || fail "$label expected nonempty file $file"
 }
 
-record_refreshed_compiler_path() {
-    if [ -n "${TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE:-}" ]; then
-        mkdir -p "$(dirname -- "$TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE")"
-        printf '%s\n' "$COMPILER" > "$TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE"
-    fi
-}
-
 run_cli_capture() {
     label=$1
     shift
@@ -157,66 +149,6 @@ run_cli_capture_in_dir() {
     ) > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
     status=$?
     set -e
-}
-
-refresh_compiler_for_host_actions() {
-    stage1_asm="$WORKDIR/refreshed-stage1.s"
-    stage1_obj="$WORKDIR/refreshed-stage1.$NL_OBJ_EXT"
-    stage1_bin="$WORKDIR/refreshed-stage1$NL_BIN_EXT"
-    stage1_out="$WORKDIR/refreshed-stage1-compile.out"
-    stage1_err="$WORKDIR/refreshed-stage1-compile.err"
-    refresh_asm="$WORKDIR/refreshed-cli.s"
-    refresh_obj="$WORKDIR/refreshed-cli.$NL_OBJ_EXT"
-    refresh_bin="$WORKDIR/refreshed-typelisp$NL_BIN_EXT"
-    refresh_out="$WORKDIR/refreshed-cli-compile.out"
-    refresh_err="$WORKDIR/refreshed-cli-compile.err"
-
-    configure_toolchain
-    echo "[selfhost-cli-build-run] refreshing compiler-only stage"
-    if ! run_with_heartbeat_capture "refresh compile.tl" "$stage1_out" "$stage1_err" \
-        "$COMPILER" compile selfhost/compile.tl -o "$stage1_asm" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib --stdlib-root selfhost --opt-level 1; then
-        echo "refresh stage1 stdout:" >&2
-        sed 's/^/  /' "$stage1_out" >&2 || true
-        echo "refresh stage1 stderr:" >&2
-        sed 's/^/  /' "$stage1_err" >&2 || true
-        fail "could not compile refreshed selfhost compile.tl"
-    fi
-    assemble_and_link "selfhost-cli-build-run refreshed stage1" "$stage1_asm" "$stage1_obj" "$stage1_bin" \
-        > "$WORKDIR/refreshed-stage1-link.out" 2> "$WORKDIR/refreshed-stage1-link.err" || {
-        echo "refresh stage1 linker stdout:" >&2
-        sed 's/^/  /' "$WORKDIR/refreshed-stage1-link.out" >&2 || true
-        echo "refresh stage1 linker stderr:" >&2
-        sed 's/^/  /' "$WORKDIR/refreshed-stage1-link.err" >&2 || true
-        fail "could not link refreshed selfhost compile.tl"
-    }
-    [ -s "$stage1_bin" ] || fail "refreshed stage1 compiler is empty: $stage1_bin"
-
-    echo "[selfhost-cli-build-run] refreshing full cli"
-    if ! run_with_heartbeat_capture "refresh cli.tl" "$refresh_out" "$refresh_err" \
-        "$stage1_bin" compile selfhost/cli.tl -o "$refresh_asm" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib --stdlib-root selfhost --opt-level 1; then
-        echo "refresh cli stdout:" >&2
-        sed 's/^/  /' "$refresh_out" >&2 || true
-        echo "refresh cli stderr:" >&2
-        sed 's/^/  /' "$refresh_err" >&2 || true
-        fail "could not compile refreshed selfhost cli.tl"
-    fi
-    assemble_and_link "selfhost-cli-build-run refreshed cli" "$refresh_asm" "$refresh_obj" "$refresh_bin" \
-        > "$WORKDIR/refreshed-cli-link.out" 2> "$WORKDIR/refreshed-cli-link.err" || {
-        echo "refresh cli linker stdout:" >&2
-        sed 's/^/  /' "$WORKDIR/refreshed-cli-link.out" >&2 || true
-        echo "refresh cli linker stderr:" >&2
-        sed 's/^/  /' "$WORKDIR/refreshed-cli-link.err" >&2 || true
-        fail "could not link refreshed selfhost cli"
-    }
-    [ -s "$refresh_bin" ] || fail "refreshed compiler is empty: $refresh_bin"
-    COMPILER=$refresh_bin
-    record_refreshed_compiler_path
 }
 
 lsp_frame_append() {
@@ -654,8 +586,6 @@ run_cli_command_surface_matrix() {
         esac
     done < "$CLI_SURFACE_MANIFEST"
 }
-
-refresh_compiler_for_host_actions
 
 COMPILE_SRC="$WORKDIR/compile-main.tl"
 COMPILE_ASM="$WORKDIR/compile-main.s"

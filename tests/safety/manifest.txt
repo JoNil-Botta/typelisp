@@ -2,7 +2,7 @@
 # mode is check-ok, check-fail, run-exit, or run-trap.
 #
 # This corpus consolidates the SPEC.md "Safe code: no undefined behavior"
-# contract into no-Rust fixtures. Comments name the safety area each fixture
+# contract into TypeLisp fixtures. Comments name the safety area each fixture
 # locks down.
 
 # Integer overflow wraps; supported integer/char casts have defined results.

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-safety-corpus.sh - no-Rust safe-code contract corpus (#1102).
+# verify-safety-corpus.sh - safe-code contract corpus (#1102).
 #
 # The manifest pairs small TypeLisp fixtures with check/run expectations for the
 # SPEC.md "Safe code: no undefined behavior" table.
@@ -25,7 +25,7 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1

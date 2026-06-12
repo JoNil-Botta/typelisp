@@ -90,14 +90,13 @@ Compile/symbol smoke coverage is driven by
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
 and checks representative symbol/literal markers in the emitted assembly.
-By default those markers are checked in `stage0` mode (the published seed's
-symbol coverage). `_tl_foo` and `call _tl_foo` markers are logical symbol
+`_tl_foo` and `call _tl_foo` markers are logical symbol
 markers, so both expectation modes accept direct labels such as `_tl_foo` and
 emitted module/path-qualified labels such as `_tl_calc_foo` without changing the
-manifest list. The Linux capability tier also runs the same manifest through the
-freshly bootstrapped stage1 compiler with
-`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode symbol markers
-also accept compact selfhost symbol metadata.
+manifest list. CI runs the manifest on the bootstrapped stage2 compiler with
+`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1` on both hosts; in that mode
+symbol markers also accept compact selfhost symbol metadata. The default
+`stage0` mode remains for standalone runs against the published seed.
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
 for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
@@ -188,11 +187,11 @@ toolchain command (compile/build/run/check/fmt/lint/test/doc/repl/lsp/new/init)
 in-process. The `Bootstrap Stage0` workflow is
 self-perpetuating: it fetches the previously published stage0 and uses it to
 build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0.sh)
-(`compile selfhost/cli.tl` + native link). There is no Rust seed.
+(`compile selfhost/cli.tl` + native link).
 
 The checkout root also has a `typelisp.pkg` whose binary entry is
 `selfhost/cli.tl`, so `typelisp build` from the repository root builds the
-selfhost CLI package into `target/release/`. The no-Rust smoke keeps a
+selfhost CLI package into `target/release/`. The CI smoke keeps a
 root package-build check in `scripts/verify-selfhost-cli-build-run.sh`; the
 published stage0 workflow intentionally keeps using the direct
 `compile selfhost/cli.tl` path plus native linking so a seed compiler can build
@@ -208,7 +207,7 @@ move the named gate to `selfhost/cli.tl` or to an equivalent focused smoke.
 
 | Driver | Classification | Reason retained |
 |--------|----------------|-----------------|
-| `selfhost/compile.tl` | Required bootstrap entry | `scripts/check-bootstrap-fixpoint.sh` compiles it to produce each compiler stage, keeping bootstrap compile-only and independent of `build`. |
+| `selfhost/compile.tl` | Required focused compatibility/coverage entry | Compile-manifest (`selfhost_compile`), integration-corpus, and bootstrap-smoke coverage keep the compile-only entry typechecked and exercised. The bootstrap fixpoint itself compiles `selfhost/cli.tl`. |
 | `selfhost/build.tl` | Required focused compatibility/coverage entry | `scripts/verify-public-tools.sh`, `scripts/verify-native-link-windows.sh`, and `scripts/analyze-selfhost-build-asm-size.sh` compile or run the build command as a smaller focused tool. |
 | `selfhost/run.tl` | Required focused compatibility/coverage entry | Public-tool and Windows link gates compile or run the run command as a focused host-action tool. |
 | `selfhost/check.tl` | Required focused compatibility/coverage entry | Stdlib selfhost and safety-corpus gates build a smaller frontend checker binary rather than the full CLI. |
@@ -238,23 +237,17 @@ scripts/ci-verify.sh
 ```
 
 That script fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
-as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` as
-defense-in-depth so no gate can shell out to a language toolchain. On every host
-it first builds a fresh `selfhost/cli.tl` binary from the seed and smoke-tests
-public `compile`, `build`, `run`, package build, staticlib build, and chooser
-execution through that fresh binary. On Linux it then runs the stage1-build path
-in `check-bootstrap-fixpoint.sh`, captures the freshly bootstrapped compile-only
-stage1 compiler, and routes compile-native capability gates through that
-artifact via `compile`/`check` plus the host `as`/`ld` pipeline. The old seed
-path remains only as an explicit fallback for old artifacts or missing command
-drivers, with the remaining command-tier gaps tracked by #1662. On Windows it
-uses the seed compiler for host-supported gates, then runs the native MSVC
-`link.exe` build/run smoke and the full stage2/stage3 Windows fixpoint when the
-seed has the required staged runtime symbols.
+as the seed compiler. The seed performs the single compiler build of the flow:
+the stage1->stage2->stage3 bootstrap fixpoint in `check-bootstrap-fixpoint.sh`
+over `selfhost/cli.tl`.
+Every remaining gate then runs on the captured stage2 compiler — the
+branch-built full CLI — after a fail-closed probe confirms it can compile,
+assemble, link, and run a native program on the host (`as`/`ld` on Linux,
+`clang`/`lld-link` on Windows).
 
-The verify-*/check-* scripts that previously fell back to `cargo build` when
-`TYPELISP_BIN` is unset now fetch the published stage0 instead (via
-`scripts/lib-stage0.sh`); CI always passes `TYPELISP_BIN` explicitly.
+The verify-*/check-* scripts fetch the published stage0 when `TYPELISP_BIN` is
+unset (via `scripts/lib-stage0.sh`); CI always passes `TYPELISP_BIN`
+explicitly.
 
 `scripts/check-bootstrap-fixpoint.sh` is host-sensitive. Linux uses the existing
 `as` plus `ld` path and compares Linux `stage2.s` with `stage3.s`. Git
@@ -282,23 +275,20 @@ powershell -ep Bypass -f scripts\fetch-stage0.ps1
 bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
 ```
 
-The bootstrapped stage1 compiler captured by the no-Rust gate is intentionally
-compile-focused. It serves `compile` and `check` directly, which is enough for
-the Linux deterministic assembly gate, selfhost compile manifest, safety corpus,
-native integration corpus, examples, stdlib module/fixture verifier, and
-borrowed-str source gate. Those runnable corpora assemble and link with the host
-toolchain after stage1 emits assembly. Public `build`/`run`/package behavior and
-the chooser smoke are covered by the separately built fresh `cli.tl` binary on
-both Linux and Windows. Larger command-tier gates that require full
-`build`/`run`/`doc`/`test` execution from the bootstrapped stage1 stay on an
-explicit fallback or skip path until #1662 and the resource-heavy blockers such
-as #1437 are closed.
+The bootstrapped stage2 compiler captured by the CI gate is the full
+`selfhost/cli.tl` toolchain binary, so a single artifact serves every gate:
+the compile-path corpora (deterministic assembly, selfhost compile manifest,
+safety corpus, native integration corpus, examples, stdlib module/fixture
+verifier) assemble and link with the host toolchain after stage2 emits
+assembly, and the host-action gates (public `build`/`run`/package behavior,
+chooser smoke, `doc`, `test`, fmt/lint, REPL/LSP public tools) run the same
+stage2 binary directly on both Linux and Windows.
 
 ### Staged backend primitives (#1114)
 
-The Linux gate runs capability checks with a freshly bootstrapped
-stage1 compiler, so source-only selfhost changes should not need a staging
-marker just because the published `stage0-latest` artifact lags `main`.
+The gate runs every check with a freshly bootstrapped stage2 compiler, so
+source-only selfhost changes should not need a staging marker just because the
+published `stage0-latest` artifact lags `main`.
 `requires-stage0-symbol` covers the narrower case of a backend/runtime
 primitive that the *published* stage0 (the seed/Windows-driving compiler) cannot
 emit yet, even though the in-tree `selfhost/compiler_backend.tl` source already
@@ -371,7 +361,7 @@ deterministic file output, and import-aware driver behavior.
 The integration manifests live in `tests/integration/native-linux.manifest` and
 `tests/integration/native-windows.manifest`. When a program or smoke driver
 needs another imported module, add the dependency to the owning manifest row so
-the no-Rust runner exercises the same import graph reviewers see locally. The
+the CI runner exercises the same import graph reviewers see locally. The
 same script also owns host-specific backend/compiler-driver fixture checks that
 are too low-level for a manifest row.
 
@@ -413,7 +403,7 @@ runner commands.
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
 module and item documentation comments, generates Markdown through
 `typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. It is a
-command-tier gate, so the Linux no-Rust lane runs it through the selected
+command-tier gate, so the Linux CI lane runs it through the selected
 host-action CLI compiler when the doc command is available; otherwise the
 explicit fallback/skip path is tied to #1662 and #1437.
 
@@ -425,7 +415,7 @@ canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
 one `typelisp doc --test --batch <listfile>` process with `--stdlib-root`.
 This gate does not use a hand-maintained file manifest, so adding documented
 TypeLisp source with fenced examples automatically adds doctest coverage. In
-no-Rust command-tier lanes it runs through the compiler selected by
+CI command-tier lanes it runs through the compiler selected by
 `scripts/ci-verify.sh`; runnable doctest files are required and executed on both
 Linux and Windows.
 

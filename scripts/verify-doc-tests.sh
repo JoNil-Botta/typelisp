@@ -5,7 +5,7 @@ set -eu
 # batched `typelisp doc --test --batch` process. This intentionally uses a built
 # compiler from TYPELISP_BIN so CI can run it without relying on the Rust test
 # harness.
-# In no-Rust lanes, TYPELISP_BIN is the command-tier compiler selected by the
+# In CI, TYPELISP_BIN is the command-tier compiler selected by the
 # caller. Seed fallback is only a compatibility path for older artifacts and
 # cannot verify future stdlib borrowed-`str` doctests.
 # refs #946
@@ -29,7 +29,7 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published
+    # Local-development fallback: fetch the published
     # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
@@ -73,7 +73,7 @@ safe_name() {
 
 # Extract a staged-primitive directive `;; requires-stage0-symbol: <name>` from a
 # source file (first match), else empty. Repository doctests run through the
-# published seed compiler on some no-Rust lanes, so documented files that import
+# published seed compiler on some lanes, so documented files that import
 # a newly staged runtime primitive need the same narrow skip used by manifests.
 staged_symbol_for() {
     sed -n 's/^;;[[:space:]]*requires-stage0-symbol:[[:space:]]*\([^[:space:]][^[:space:]]*\).*/\1/p' "$1" | head -n 1
@@ -127,7 +127,7 @@ run_doc_tests_per_file() {
         if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
             "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
             if should_skip_staged "$requires_symbol" "$stderr"; then
-                echo "[doc-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
+                echo "[doc-tests] SKIP $source (awaiting stage0 compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi

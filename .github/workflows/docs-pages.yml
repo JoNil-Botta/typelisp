@@ -6,7 +6,7 @@ name: Publish Docs
 #
 # The site is generated entirely by the selfhost builder selfhost/doc_site.tl,
 # compiled with the published stage0 compiler fetched via scripts/fetch-stage0.sh
-# (no Rust docs code, no Cargo rebuild in this workflow).
+# (no extra toolchain is involved in this workflow).
 #
 # Prerequisite (one-time, repo setting): Settings -> Pages -> Build and
 # deployment -> Source = "GitHub Actions". Until that is set, the deploy job's

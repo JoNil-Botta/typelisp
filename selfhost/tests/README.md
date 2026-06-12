@@ -47,6 +47,6 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 ```
 
-The same step runs in the no-Rust verification gate. The corpus makes cases
+The same step runs in the CI verification gate. The corpus makes cases
 reviewable as standalone programs and extendable through manifest entries
 without touching implementation-language harnesses.

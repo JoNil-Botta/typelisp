@@ -5,7 +5,7 @@ name: Bootstrap Stage0
 # "stage0-latest" release is recreated with the same assets, giving CI a stable
 # download URL while permanent releases remain.
 #
-# Self-perpetuation (no Rust): there is no Rust seed compiler anymore. The new
+# Self-perpetuation: the new
 # stage0 is built by FETCHING THE PREVIOUSLY PUBLISHED stage0 (the last cli.tl
 # binary, via scripts/fetch-stage0.sh) and using THAT compiler to compile
 # selfhost/cli.tl to assembly, then assembling + linking it into the next stage0

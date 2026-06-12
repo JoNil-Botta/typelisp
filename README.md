@@ -10,7 +10,7 @@ Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector. Supported targets are `linux-x86_64` and `windows-x86_64`; macOS and ARM are not supported yet and are not near-term goals.
-- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`selfhost/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; there is no Rust (or other-language) implementation in the toolchain.
+- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`selfhost/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; the toolchain has no other-language implementation.
 - **Zero dependencies**: No third-party packages. The only build inputs are the native assembler/linker toolchain.
 - **Fast**: Generated code quality should approach LLVM (`clang -O2`) on the benchmark corpus while compilation itself stays fast. Performance is tracked deterministically — paired C baselines under [`benchmarks/`](benchmarks) and a cachegrind instruction-count CI gate under [`perf/`](perf) — rather than by wall-clock noise. The codegen-quality roadmap is #2559.
 
@@ -463,7 +463,7 @@ when the example is intended to fail. `typelisp run` / `tl run` fences are
 recognized as runnable examples: they must include `;; doctest-exit: <integer>`
 and may include `;; doctest-stdout: -` / `;; doctest-stderr: -` or
 `literal:<escaped text>` (`\n`, `\t`, `\r`, `\\`). On Linux, runnable examples
-compile and run through the self-hosted no-Rust build/run path and compare exact
+compile and run through the self-hosted build/run path and compare exact
 exit status, stdout, and stderr. Unsupported hosts report an unsupported
 runnable doctest diagnostic. Ordinary `;` and `;;` comments are not
 documentation and are ignored by the doctest scanner. `;#` and `;:` are the
@@ -672,7 +672,7 @@ The published stage0 is a single self-hosted [`selfhost/cli.tl`](selfhost/cli.tl
 binary per OS (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that
 handles every toolchain command in-process. The `Bootstrap Stage0` workflow
 ([`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml))
-is **self-perpetuating with no Rust**: on each merge to `main` it fetches the
+is **self-perpetuating**: on each merge to `main` it fetches the
 previously published stage0, uses *that* compiler to build the next stage0 from
 `selfhost/cli.tl`, and publishes the result to the `stage0-latest` and immutable
 `stage0-*` releases. Each stage0 therefore builds its own successor. To reproduce
@@ -698,13 +698,10 @@ download the single host asset and install it as the command under
 
 To run the same stage0 verification gate used by CI, run
 `scripts/ci-verify.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset. On Linux, that gate uses the published compiler as the
-bootstrap seed, checks the stage0-to-stage1 bootstrap, then runs deterministic
-assembly and the toolchain capability gates through the freshly bootstrapped
-stage1 compiler directly. On Windows, the host-supported gates run against the
-published stage0 compiler and the gate also runs the native MSVC link smoke plus
-the stage2/stage3 Windows fixpoint when the seed has the required staged runtime
-symbols.
+`TYPELISP_BIN` is unset. The gate performs a single compiler build on every
+host: the published compiler seeds the stage1->stage2->stage3 bootstrap
+fixpoint over `selfhost/cli.tl`, and every remaining gate then runs on the
+freshly bootstrapped stage2 compiler (the branch-built full CLI).
 
 The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits
 and compares Linux assembly through `as` and `ld`; on Git Bash/MSYS/Cygwin for

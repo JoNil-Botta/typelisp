@@ -1,9 +1,9 @@
-# lib-stage0.sh — shared no-Rust stage0 compiler resolver for verify-*/check-* scripts.
+# lib-stage0.sh — shared stage0 compiler resolver for verify-*/check-* scripts.
 #
 # With the Rust compiler removed (#795), scripts that previously fell back to a
 # local `cargo build --release` when TYPELISP_BIN was unset now fall back to the
 # published self-hosted stage0 compiler instead. CI always sets TYPELISP_BIN
-# explicitly (the no-Rust gate fetches stage0 once and threads it through every
+# explicitly (the CI gate fetches stage0 once and threads it through every
 # gate), so this fallback only fires for local developer runs that did not set
 # TYPELISP_BIN.
 #
@@ -41,7 +41,7 @@ fetch_stage0_compiler() {
 }
 
 # resolve_stage0_compiler ROOT
-#   Echo the path to a usable no-Rust stage0 compiler. Always refreshes the
+#   Echo the path to a usable stage0 compiler. Always refreshes the
 #   published stage0 first so mutable stage0-latest caches do not silently go
 #   stale. Honours the same TYPELISP_STAGE0_* environment knobs as
 #   scripts/fetch-stage0.sh.
@@ -50,7 +50,7 @@ resolve_stage0_compiler() {
     fetch_stage0_compiler "$_ls0_root" || return 1
     _ls0_bin=$(stage0_compiler_path "$_ls0_root")
     if [ ! -x "$_ls0_bin" ]; then
-        echo "no-Rust stage0 compiler unavailable after fetch: $_ls0_bin" >&2
+        echo "stage0 compiler unavailable after fetch: $_ls0_bin" >&2
         echo "set TYPELISP_BIN to a stage0 binary, or run scripts/fetch-stage0.sh" >&2
         return 1
     fi

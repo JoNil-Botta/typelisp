@@ -3,14 +3,17 @@ set -eu
 
 # check-bootstrap-fixpoint.sh - selfhost compiler stage2/stage3 fixpoint gate.
 #
-# A seed TypeLisp compiler builds the selfhost compiler to stage1. stage1 then
-# compiles the same selfhost source to stage2.s, stage2 repeats that compile to
-# stage3.s, and the selfhost-emitted stage2/stage3 assembly must be
-# byte-identical.
+# A seed TypeLisp compiler builds the full selfhost toolchain (selfhost/cli.tl)
+# to stage1. stage1 then compiles the same source to stage2.s, stage2 repeats
+# that compile to stage3.s, and the selfhost-emitted stage2/stage3 assembly must
+# be byte-identical. The stages use the same compile flags as the stage0
+# publication build (scripts/build-stage0.sh), so the stage2 binary is the
+# branch-built full CLI and CI reuses it for every downstream gate.
 #
-# Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE to persist the stage1 compiler path for
-# callers that want to reuse the freshly bootstrapped compiler. Normal CI runs
-# must continue through the stage2/stage3 fixpoint.
+# Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE / TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
+# to persist the stage1/stage2 compiler paths for callers that want to reuse the
+# freshly bootstrapped compilers. Normal CI runs must continue through the
+# stage2/stage3 fixpoint.
 #
 # refs #47.
 
@@ -34,7 +37,7 @@ if [ "$#" -eq 1 ]; then
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # No-Rust fallback for local development: fetch the published self-hosted
+    # Local-development fallback: fetch the published self-hosted
     # stage0 (CI passes a fetched/bootstrapped compiler via TYPELISP_BIN).
     . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
@@ -138,6 +141,15 @@ write_stage1_path() {
     fi
 }
 
+write_stage2_path() {
+    if [ -n "${TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE:-}" ]; then
+        STAGE2_PATH_DIR=$(dirname -- "$TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE")
+        mkdir -p "$STAGE2_PATH_DIR"
+        printf '%s\n' "$STAGE2_BIN" > "$TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE"
+        echo "[bootstrap] stage2 compiler: $STAGE2_BIN"
+    fi
+}
+
 check_stage1_compile_cli() {
     echo "[bootstrap] stage1 compile CLI smoke"
     run_stage1_cli_capture \
@@ -165,10 +177,10 @@ check_stage1_compile_cli() {
     assert_contains "$STAGE1_CLI_IR" "typelisp-ir-summary v1"
 
     run_stage1_cli_capture stage1-help "$STAGE1_BIN" help
-    assert_contains "$WORKDIR/stage1-help.stderr" "typelisp compile <file.tl>"
+    assert_contains "$WORKDIR/stage1-help.stderr" "Usage:"
+    assert_contains "$WORKDIR/stage1-help.stderr" "typelisp compile"
 
     run_stage1_cli_expect_failure stage1-missing-command "$STAGE1_BIN"
-    assert_contains "$WORKDIR/stage1-missing-command.stderr" "typelisp: expected command"
     assert_contains "$WORKDIR/stage1-missing-command.stderr" "Usage:"
 
     run_stage1_cli_expect_failure stage1-missing-source "$STAGE1_BIN" compile
@@ -246,24 +258,30 @@ EOF
     assert_contains "$WORKDIR/stage1-check-local-stdlib-shadow.stdout" "Type checking passed!"
 
     run_stage1_cli_expect_failure stage1-unknown-command "$STAGE1_BIN" definitely-not-a-command
-    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Unknown command: definitely-not-a-command"
+    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "typelisp: unknown subcommand definitely-not-a-command"
     assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Usage:"
 }
 
+# Bootstrap the full toolchain entry with the same flags as the stage0
+# publication build (scripts/build-stage0.sh), so the stage2 produced here is
+# the branch-built equivalent of a published stage0 and CI can run every
+# downstream gate on it.
+BOOTSTRAP_SRC=selfhost/cli.tl
+
 echo "[bootstrap] stage0 -> stage1.s"
-run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args)
+run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level 1
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 check_stage1_compile_cli
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile selfhost/compile.tl -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args)
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level 1
 
 assemble_and_link_stage2
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile selfhost/compile.tl -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args)
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root selfhost --opt-level 1
 
 echo "[bootstrap] compare stage2.s and stage3.s"
 if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then
@@ -282,4 +300,5 @@ fi
 
 wc -l "$STAGE2_ASM" "$STAGE3_ASM"
 write_stage1_path
+write_stage2_path
 echo "bootstrap fixpoint check passed"

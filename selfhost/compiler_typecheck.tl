@@ -7657,7 +7657,7 @@
 ;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through
 ;; build-compiler-symbols / build-compiler-registries during typechecking, so the
-;; no-Rust typecheck smoke exercises them. Builtin shadowing remains accepted to
+;; CI typecheck smoke exercises them. Builtin shadowing remains accepted to
 ;; match the Rust reference behavior from #677.
 (define (compiler-typecheck-dup-function-source) : String
   "(define (foo [x : i64]) : i64 x)

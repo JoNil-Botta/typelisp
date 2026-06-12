@@ -354,6 +354,47 @@
   (unsafe
     (ptr-write! (ptr-offset items index) value)))
 
+;: Clear all per-handle table state for a closed or reusable handle slot.
+(define (io-file-handle-clear! [handle : i64]) : unit
+  (begin
+    (io-file-i64-set! (io-file-fds-ptr) handle 0)
+    (io-file-i64-set! (io-file-modes-ptr) handle 0)
+    (io-file-i64-set! (io-file-states-ptr) handle 0)
+    (io-file-bool-set! (io-file-eofs-ptr) handle false)
+    (io-file-bool-set! (io-file-last-ready-ptr) handle false)
+    (io-file-string-set! (io-file-last-bytes-ptr) handle "")
+    unit))
+
+;: Return the first currently closed file-handle slot at or after `start`.
+(define (io-file-find-free-handle-from [start : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (< i io-file-handle-cap)
+        (begin
+          (when (= (io-file-i64-ref (io-file-states-ptr) i) 0) (return i))
+          (set! i (+ i 1))))
+      -1)))
+
+;: Reserve a stdlib file-handle slot, reusing closed slots before failing.
+(define (io-file-alloc-handle!) : i64
+  (begin
+    (io-file-table-init!)
+    (let
+      [handle : i64 (io-file-find-free-handle-from io-file-handle-next)]
+      [fallback : i64
+        (if (< handle 0)
+          (io-file-find-free-handle-from 1)
+          handle)]
+      (if (< fallback 0)
+        -1
+        (begin
+          (set! io-file-handle-next (+ fallback 1))
+          (if (>= io-file-handle-next io-file-handle-cap)
+            (set! io-file-handle-next 1)
+            unit)
+          fallback)))))
+
 ;; #2357: the table pointers are stored as raw integer addresses the region
 ;; checker cannot see, and this init can fire inside a (with-arena ...) region
 ;; (the batch compile driver scopes each entry). Allocate the tables in a
@@ -1280,14 +1321,12 @@
       (if (< fd 0)
         (io-neg-status (io-last-error-code))
         (let
-          [handle : i64 io-file-handle-next]
-          [handle-cap : i64 io-file-handle-cap]
-          (if (>= handle handle-cap)
+          [handle : i64 (io-file-alloc-handle!)]
+          (if (< handle 0)
             (begin
               (io-platform-close fd)
               (io-neg-status 38))
             (begin
-              (set! io-file-handle-next (+ handle 1))
               (io-file-i64-set! (io-file-fds-ptr) handle fd)
               (io-file-i64-set! (io-file-modes-ptr) handle mode)
               (io-file-i64-set! (io-file-states-ptr) handle 1)
@@ -1302,7 +1341,10 @@
       [fd : i64 (io-file-i64-ref (io-file-fds-ptr) raw)]
       [status : i64 (io-platform-close fd)]
       (begin
-        (io-file-i64-set! (io-file-states-ptr) raw 0)
+        (io-file-handle-clear! raw)
+        (if (< raw io-file-handle-next)
+          (set! io-file-handle-next raw)
+          unit)
         (if (< status 0)
           (io-last-error-code)
           0)))

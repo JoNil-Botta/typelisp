@@ -281,6 +281,10 @@ run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verif
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
 run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" scripts/bench.sh --correctness
 run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus correctness" scripts/run-optimization-benchmarks.sh --correctness
+if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \
+        scripts/run-optimization-benchmarks.sh --correctness --tl-opt-level 2
+fi
 run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/verify-stdlib.sh
 
 if [ "$HOST_OS" = linux ]; then

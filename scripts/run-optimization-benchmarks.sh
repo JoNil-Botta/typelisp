@@ -17,6 +17,7 @@ CLANG_OPT=${TYPELISP_BENCH_CLANG_OPT:--O3}
 USE_SELFHOST=${TYPELISP_BENCH_SELFHOST:-1}
 FILTER=
 CORRECTNESS=0
+TL_CORRECTNESS_OPT_LEVEL=${TYPELISP_BENCH_TL_OPT_LEVEL:-}
 
 usage() {
     cat <<'EOF'
@@ -28,6 +29,7 @@ Options:
   --runs N          Runtime repetitions per case (default: TYPELISP_BENCH_RUNS or 3)
   --filter NAME    Run manifest cases whose names match NAME or start with NAME
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
+  --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
   --selfhost       In timing mode, compile through selfhost/compiler_driver.tl (default)
   --rust-stage0    In timing mode, compile through typelisp compile
   -h, --help       Show this help
@@ -64,6 +66,14 @@ while [ "$#" -gt 0 ]; do
             CLANG_OPT=$2
             shift 2
             ;;
+        --tl-opt-level)
+            [ "$#" -ge 2 ] || {
+                echo "missing value for --tl-opt-level" >&2
+                exit 1
+            }
+            TL_CORRECTNESS_OPT_LEVEL=$2
+            shift 2
+            ;;
         --selfhost)
             USE_SELFHOST=1
             shift
@@ -88,6 +98,14 @@ case "$CLANG_OPT" in
     -O0 | -O1 | -O2 | -O3 | -Os | -Oz | -Og) ;;
     *)
         echo "--clang-opt must be a single clang optimization flag: $CLANG_OPT" >&2
+        exit 1
+        ;;
+esac
+
+case "$TL_CORRECTNESS_OPT_LEVEL" in
+    "" | 0 | 1 | 2) ;;
+    *)
+        echo "--tl-opt-level must be 0, 1, or 2: $TL_CORRECTNESS_OPT_LEVEL" >&2
         exit 1
         ;;
 esac
@@ -389,8 +407,13 @@ compile_tl_correctness() {
     _err=$6
 
     set +e
-    # shellcheck disable=SC2086
-    "$COMPILER" compile "$_src" -o "$_asm" $TL_COMPILE_TARGET_ARGS > "$_out" 2> "$_err"
+    if [ -n "$TL_CORRECTNESS_OPT_LEVEL" ]; then
+        # shellcheck disable=SC2086
+        "$COMPILER" compile "$_src" -o "$_asm" $TL_COMPILE_TARGET_ARGS --opt-level "$TL_CORRECTNESS_OPT_LEVEL" > "$_out" 2> "$_err"
+    else
+        # shellcheck disable=SC2086
+        "$COMPILER" compile "$_src" -o "$_asm" $TL_COMPILE_TARGET_ARGS > "$_out" 2> "$_err"
+    fi
     _status=$?
     set -e
 
@@ -448,6 +471,9 @@ fi
 if [ "$CORRECTNESS" -eq 1 ]; then
     printf 'optimization correctness harness (host=%s, clang %s, no timing)\n' "$HOST_OS" "$CLANG_OPT"
     printf 'compiler: %s\n\n' "$COMPILER"
+    if [ -n "$TL_CORRECTNESS_OPT_LEVEL" ]; then
+        printf 'typelisp opt-level: %s\n\n' "$TL_CORRECTNESS_OPT_LEVEL"
+    fi
 else
     printf 'case,category,tl_ms,c_ms,ratio,tl_compile_ms,c_compile_ms,tl_exe_bytes,c_exe_bytes,tl_asm_bytes,c_asm_bytes,tl_insns,c_insns\n'
 fi

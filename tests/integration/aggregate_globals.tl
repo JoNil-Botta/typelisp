@@ -31,7 +31,7 @@
   (Pair x y))
 
 (define (reset-pair!) : unit
-  (set! pair (make-pair 10 11)))
+  (set! pair (make-pair 12 9)))
 
 (define (clobber-pair-stack [n : i64]) : i64
   (let

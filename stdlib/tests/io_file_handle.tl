@@ -299,6 +299,24 @@
             "created"
             "append-created file contains written bytes"))))))
 
+(define (exercise-linux-file-handle-reuse) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (assert-ok-unit
+        (test-try-write-file handle-read-file "reuse")
+        "seed reusable handle file: ")
+      (while (< i 1100)
+        (let
+          [handle : FileHandle
+            (expect-open-ok
+              (test-file-open handle-read-file OpenRead)
+              "reopen reusable read handle: ")]
+          (begin
+            (assert-ok-unit (file-close handle) "close reusable handle: ")
+            (set! i (+ i 1)))))
+      unit)))
+
 (define (main) : i64
   (begin
     (if (fs-windows?)
@@ -317,5 +335,7 @@
           (file-flush (FileHandle 1))
           "flush"
           "windows file flush is unsupported"))
-      (exercise-linux-file-handles))
+      (begin
+        (exercise-linux-file-handles)
+        (exercise-linux-file-handle-reuse)))
     42))

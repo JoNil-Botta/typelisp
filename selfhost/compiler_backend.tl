@@ -6464,15 +6464,33 @@
               [(StringI64MapInsertFull next) next]))))]
     [_ map]))
 
-(define (compiler-backend-collect-group-counts-instrs
+;; #2386 memory: walk the instruction seq by index instead of materializing a
+;; boxed cons list per block (each cons copies a multi-word inline IrInstr).
+(define (compiler-backend-collect-group-counts-instr-seq
   [map : StringI64Map]
-  [instrs : CompilerIrInstrList]) : StringI64Map
-  (match instrs
-    [(IrInstrNil) map]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-group-counts-instrs
-        (compiler-backend-collect-group-counts-instr map instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : StringI64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    map
+    (compiler-backend-collect-group-counts-instr-seq
+      (compiler-backend-collect-group-counts-instr
+        map
+        (compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1))))
+
+(define (compiler-backend-collect-group-counts-block-seq
+  [map : StringI64Map]
+  [seq : CompilerIrBlockSeq]
+  [index : i64]) : StringI64Map
+  (if (>= index (compiler-ir-block-seq-count seq))
+    map
+    (compiler-backend-collect-group-counts-block-seq
+      (match (compiler-ir-block-seq-ref seq index)
+        [(IrBlock _ instrs)
+          (compiler-backend-collect-group-counts-instr-seq map instrs 0)])
+      seq
+      (+ index 1))))
 
 (define (compiler-backend-collect-group-counts-blocks
   [map : StringI64Map]
@@ -6483,14 +6501,10 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-collect-group-counts-blocks
-            (compiler-backend-collect-group-counts-instrs
-              map
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-backend-collect-group-counts-instr-seq map instrs 0)
             (box-get rest))])]
     [(IrBlockArray seq)
-      (compiler-backend-collect-group-counts-blocks
-        map
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-collect-group-counts-block-seq map seq 0)]))
 
 (define (compiler-backend-collect-group-counts-functions
   [map : StringI64Map]

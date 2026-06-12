@@ -12998,24 +12998,27 @@
 ;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
 ;; (the #2441 scratch-arena hazard makes a grown map / cached field-list dangle):
 ;; so it is a FIXED global i64 array, allocated once at startup (persistent, like
-;; the AST node pool) and only read/written thereafter. Keyed by the type's symbol
-;; handle (dense per-kind index; struct vs enum disambiguated by the low bit), so
-;; no key strings are stored either. A size is encoded as size+1 (0 = uncached);
-;; only fully-resolved layouts are cached (Err forward-refs stay uncached until
-;; their nested types resolve). Entries are valid only for the current program;
-;; tc-agg-caches-reset! forces the next query to clear them at lower boundaries.
+;; the AST node pool) and only read/written thereafter. Keyed by the intern id of
+;; the nominal type name: symbol handles can be reassigned when specialization
+;; rebuilds the symbol table, while intern ids are append-only until intern-reset!.
+;; A size is encoded as size+1 (0 = uncached); only fully-resolved layouts are
+;; cached (Err forward-refs stay uncached until their nested types resolve).
+;; Entries are valid only for the current program; tc-agg-caches-reset! forces
+;; the next query to clear them at lower boundaries.
+(define tc-agg-scalar-cache-capacity : i64
+  400000)
+
 (define tc-agg-size-cache : (Array i64)
   (make-array i64 400000))
 
-;; #2386: the cache is keyed by symbol-handle INDEX, which is only meaningful
-;; within one program's symbol table. Batch compilation (compile/test --batch)
-;; reuses handle indices across files, so the cache MUST be cleared per program
-;; or a later file reads a prior file's stale struct size at the same index --
-;; mis-classifying its register-residency (observed: a register-group struct
-;; const-folded to a scalar, tripping the IrInstrWord assertion when compiling
-;; cli.tl after other sources). Intern generation remains the cheap clear token
-;; inside one compile, while tc-agg-caches-reset! covers lower/test paths that
-;; reuse symbol-handle indices without resetting the intern table.
+;; #2624: these scalar caches used to be keyed by symbol-handle INDEX, which is
+;; only meaningful for one snapshot of a program's symbol table. Specialization
+;; rebuilds that table after inserting generated declarations, so a cached value
+;; under an old handle index could be returned for a different type whose new
+;; handle reuses the same index. Intern ids are stable across that rebuild.
+;; Intern generation remains the cheap clear token across programs, while
+;; tc-agg-caches-reset! covers lower/test paths that reuse cache arrays without
+;; resetting the intern table.
 (define tc-agg-size-cache-generation : i64
   -1)
 
@@ -13025,53 +13028,42 @@
     (let
       [i : i64 0]
       (begin
-        (while (< i 400000)
+        (while (< i tc-agg-scalar-cache-capacity)
           (begin
             (array-set! tc-agg-size-cache i 0)
             (set! i (+ i 1))))
         (set! tc-agg-size-cache-generation (intern-generation))))))
 
-(define (tc-agg-size-cache-key [handle : i64]) : i64
-  (let
-    [index : i64 (compiler-symbol-handle-index handle)]
-    (if (>= index 199999)
-      (- 0 1)
-      (+
-        (* index 2)
-        (if (=
-          (compiler-symbol-handle-kind handle)
-          (compiler-symbol-kind-defenum))
-          1
-          0)))))
+(define (tc-agg-scalar-cache-key-id [name-id : i64]) : i64
+  (if (>= name-id tc-agg-scalar-cache-capacity)
+    (- 0 1)
+    name-id))
 
 (define (tc-inline-aggregate-size-cached
   [ctx : TcContext]
-  [name : String]
+  [name-id : i64]
   [fallback : i64]) : i64
   (begin
     (tc-agg-size-cache-ensure!)
-    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
-      [(SomeI64 handle)
+    (let
+      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+      (if (< key 0)
+        (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+          [(OkTcInlineAggregateLayout layout)
+            (tc-inline-aggregate-layout-size layout)]
+          [(ErrTcInlineAggregateLayout _) fallback])
         (let
-          [key : i64 (tc-agg-size-cache-key handle)]
-          (if (< key 0)
-            (match (tc-inline-aggregate-layout-for ctx name)
+          [cached : i64 (array-ref tc-agg-size-cache key)]
+          (if (> cached 0)
+            (- cached 1)
+            (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
               [(OkTcInlineAggregateLayout layout)
-                (tc-inline-aggregate-layout-size layout)]
-              [(ErrTcInlineAggregateLayout _) fallback])
-            (let
-              [cached : i64 (array-ref tc-agg-size-cache key)]
-              (if (> cached 0)
-                (- cached 1)
-                (match (tc-inline-aggregate-layout-for ctx name)
-                  [(OkTcInlineAggregateLayout layout)
-                    (let
-                      [size : i64 (tc-inline-aggregate-layout-size layout)]
-                      (begin
-                        (array-set! tc-agg-size-cache key (+ size 1))
-                        size))]
-                  [(ErrTcInlineAggregateLayout _) fallback])))))]
-      [(NoneI64) fallback])))
+                (let
+                  [size : i64 (tc-inline-aggregate-layout-size layout)]
+                  (begin
+                    (array-set! tc-agg-size-cache key (+ size 1))
+                    size))]
+              [(ErrTcInlineAggregateLayout _) fallback])))))))
 
 ;; #2609: same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
@@ -13088,7 +13080,7 @@
     (let
       [i : i64 0]
       (begin
-        (while (< i 400000)
+        (while (< i tc-agg-scalar-cache-capacity)
           (begin
             (array-set! tc-agg-align-cache i 0)
             (set! i (+ i 1))))
@@ -13096,43 +13088,40 @@
 
 (define (tc-inline-aggregate-align-cached
   [ctx : TcContext]
-  [name : String]
+  [name-id : i64]
   [fallback : i64]) : i64
   (begin
     (tc-agg-align-cache-ensure!)
-    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
-      [(SomeI64 handle)
+    (let
+      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+      (if (< key 0)
+        (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+          [(OkTcInlineAggregateLayout layout)
+            (tc-inline-aggregate-layout-align layout)]
+          [(ErrTcInlineAggregateLayout _) fallback])
         (let
-          [key : i64 (tc-agg-size-cache-key handle)]
-          (if (< key 0)
-            (match (tc-inline-aggregate-layout-for ctx name)
+          [cached : i64 (array-ref tc-agg-align-cache key)]
+          (if (> cached 0)
+            (- cached 1)
+            (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
               [(OkTcInlineAggregateLayout layout)
-                (tc-inline-aggregate-layout-align layout)]
-              [(ErrTcInlineAggregateLayout _) fallback])
-            (let
-              [cached : i64 (array-ref tc-agg-align-cache key)]
-              (if (> cached 0)
-                (- cached 1)
-                (match (tc-inline-aggregate-layout-for ctx name)
-                  [(OkTcInlineAggregateLayout layout)
-                    (let
-                      [align : i64 (tc-inline-aggregate-layout-align layout)]
-                      (begin
-                        (array-set! tc-agg-align-cache key (+ align 1))
-                        align))]
-                  [(ErrTcInlineAggregateLayout _) fallback])))))]
-      [(NoneI64) fallback])))
+                (let
+                  [align : i64 (tc-inline-aggregate-layout-align layout)]
+                  (begin
+                    (array-set! tc-agg-align-cache key (+ align 1))
+                    align))]
+              [(ErrTcInlineAggregateLayout _) fallback])))))))
 
 ;; #2386 (compile-time): memoize a bare aggregate's register-resident word count
-;; (0 = not register-resident, else 1 or 2). Same arena-safe handle-indexed fixed
-;; array as the size cache; this is the hot query for every aggregate construct /
-;; struct-get / copy (lower-name-register-words). Encoded as words+1 (0 =
-;; uncached). Only fully-resolved layouts are cached.
+;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
+;; fixed array as the size cache; this is the hot query for every aggregate
+;; construct / struct-get / copy (lower-name-register-words). Encoded as
+;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
 (define tc-agg-regwords-cache : (Array i64)
   (make-array i64 400000))
 
-;; #2386: same per-program handle-index keying as tc-agg-size-cache, so it is
-;; gated on intern-generation and explicitly invalidated at lower boundaries.
+;; Same per-program keying as tc-agg-size-cache, so it is gated on
+;; intern-generation and explicitly invalidated at lower boundaries.
 (define tc-agg-regwords-cache-generation : i64
   -1)
 
@@ -13149,46 +13138,42 @@
     (let
       [i : i64 0]
       (begin
-        (while (< i 400000)
+        (while (< i tc-agg-scalar-cache-capacity)
           (begin
             (array-set! tc-agg-regwords-cache i 0)
             (set! i (+ i 1))))
         (set! tc-agg-regwords-cache-generation (intern-generation))))))
 
-(define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name : String]) : i64
-  (match (tc-inline-aggregate-layout-for ctx name)
+(define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name-id : i64]) : i64
+  (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
     [(OkTcInlineAggregateLayout layout)
       (if (tc-inline-aggregate-layout-register-resident? layout)
         (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
         0)]
     [(ErrTcInlineAggregateLayout _) 0]))
 
-(define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name : String]) : i64
+(define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name-id : i64]) : i64
   (begin
     (tc-agg-regwords-cache-ensure!)
-    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
-      [(SomeI64 handle)
+    (let
+      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+      (if (< key 0)
+        (tc-inline-aggregate-regwords-compute ctx name-id)
         (let
-          [key : i64 (tc-agg-size-cache-key handle)]
-          (if (< key 0)
-            (tc-inline-aggregate-regwords-compute ctx name)
-            (let
-              [cached : i64 (array-ref tc-agg-regwords-cache key)]
-              (if (> cached 0)
-                (- cached 1)
-                (match (tc-inline-aggregate-layout-for ctx name)
-                  [(OkTcInlineAggregateLayout layout)
-                    (let
-                      [words : i64
-                        (if (tc-inline-aggregate-layout-register-resident?
-                          layout)
-                          (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
-                          0)]
-                      (begin
-                        (array-set! tc-agg-regwords-cache key (+ words 1))
-                        words))]
-                  [(ErrTcInlineAggregateLayout _) 0])))))]
-      [(NoneI64) 0])))
+          [cached : i64 (array-ref tc-agg-regwords-cache key)]
+          (if (> cached 0)
+            (- cached 1)
+            (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+              [(OkTcInlineAggregateLayout layout)
+                (let
+                  [words : i64
+                    (if (tc-inline-aggregate-layout-register-resident? layout)
+                      (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
+                      0)]
+                  (begin
+                    (array-set! tc-agg-regwords-cache key (+ words 1))
+                    words))]
+              [(ErrTcInlineAggregateLayout _) 0])))))))
 
 ;; #2386: a struct/enum layout is "register-resident (1-word)" when it fits in a
 ;; single 8-byte machine word and is built only of word-class data. Such a value

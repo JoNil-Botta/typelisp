@@ -4222,14 +4222,13 @@
   [fallback : i64])
   :
   i64
-  ;; #2386 (compile-time): a bare struct/enum size is memoized by symbol handle
+  ;; #2386/#2624 (compile-time): a bare struct/enum size is memoized by stable
+  ;; interned type-name id
   ;; (its size is stable; this is the hot type-size query in lowering). Generic
   ;; ...Args / tuples / arrays depend on type arguments, so keep the uncached path.
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyStruct name)
-      (tc-inline-aggregate-size-cached ctx (intern-str name) fallback)]
-    [(AstTyEnum name)
-      (tc-inline-aggregate-size-cached ctx (intern-str name) fallback)]
+    [(AstTyStruct name) (tc-inline-aggregate-size-cached ctx name fallback)]
+    [(AstTyEnum name) (tc-inline-aggregate-size-cached ctx name fallback)]
     [_
       (match (tc-inline-aggregate-type-layout ctx ty)
         [(OkTcLayoutInfo info) (tc-layout-info-size info)]
@@ -4240,10 +4239,8 @@
   [ty : AstType]
   [fallback : i64]) : i64
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyStruct name)
-      (tc-inline-aggregate-align-cached ctx (intern-str name) fallback)]
-    [(AstTyEnum name)
-      (tc-inline-aggregate-align-cached ctx (intern-str name) fallback)]
+    [(AstTyStruct name) (tc-inline-aggregate-align-cached ctx name fallback)]
+    [(AstTyEnum name) (tc-inline-aggregate-align-cached ctx name fallback)]
     [_
       (match (tc-inline-aggregate-type-layout ctx ty)
         [(OkTcLayoutInfo info) (tc-layout-info-align info)]
@@ -4713,15 +4710,12 @@
 ;; path so the per-function scratch arena keeps the same transient-allocation
 ;; profile as before this slice (excess rebuilds there overflowed it into a second
 ;; chunk whose rewind leaked into later lowering).
-(define (lower-name-register-words [ctx : TcContext] [name : String]) : i64
-  (tc-inline-aggregate-regwords-cached ctx name))
-
 (define (lower-type-register-words [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyStruct name) (lower-name-register-words ctx (intern-str name))]
-    [(AstTyStructArgs name _) (lower-name-register-words ctx (intern-str name))]
-    [(AstTyEnum name) (lower-name-register-words ctx (intern-str name))]
-    [(AstTyEnumArgs name _) (lower-name-register-words ctx (intern-str name))]
+    [(AstTyStruct name) (tc-inline-aggregate-regwords-cached ctx name)]
+    [(AstTyStructArgs name _) (tc-inline-aggregate-regwords-cached ctx name)]
+    [(AstTyEnum name) (tc-inline-aggregate-regwords-cached ctx name)]
+    [(AstTyEnumArgs name _) (tc-inline-aggregate-regwords-cached ctx name)]
     [_ 0]))
 
 (define (lower-type-signed? [ty : AstType]) : bool
